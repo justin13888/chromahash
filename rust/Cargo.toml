@@ -1,0 +1,10 @@
+[package]
+name = "chromahash"
+version = "0.1.0"
+edition = "2024"
+description = "Modern, high-quality image placeholder representation for professional formats"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+
+[dev-dependencies]

@@ -1,0 +1,15 @@
+pre-commit:
+  commands:
+    format-fix:
+      run: just format-fix
+    lint-fix:
+      run: just lint-fix
+
+pre-push:
+  commands:
+    format-check:
+      run: just format-check
+    lint-check:
+      run: just lint
+    test:
+      run: just test

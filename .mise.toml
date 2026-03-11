@@ -1,0 +1,7 @@
+[tools]
+node = "24"
+gradle = "9.4.0"
+swift = "6.2.4"
+
+[settings]
+experimental = true

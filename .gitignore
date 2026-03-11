@@ -1,0 +1,78 @@
+# === Node ===
+node_modules/
+dist/
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/releases
+!.yarn/plugins
+!.yarn/sdks
+!.yarn/versions
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.env
+.env.local
+.env.*.local
+
+# === Rust ===
+rust/target/
+**/*.rs.bk
+Cargo.lock
+
+# === Gradle / Kotlin ===
+kotlin/.gradle/
+kotlin/build/
+kotlin/out/
+*.class
+*.jar
+!kotlin/gradle/wrapper/gradle-wrapper.jar
+*.war
+*.nar
+*.ear
+*.zip
+*.tar.gz
+*.rar
+.gradle/
+build/
+
+# === Swift / SPM ===
+swift/.build/
+swift/.swiftpm/
+swift/*.xcodeproj
+swift/DerivedData/
+*.xcworkspace
+*.xcuserstate
+Packages/
+
+# === Linux ===
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# === macOS ===
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# === Editors ===
+.vscode/
+.idea/
+*.iml
