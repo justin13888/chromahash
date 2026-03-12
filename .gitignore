@@ -76,3 +76,4 @@ Temporary Items
 .vscode/
 .idea/
 *.iml
+.todos/
