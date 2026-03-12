@@ -42,6 +42,7 @@ lint-rust:
 
 lint-fix-rust:
     cargo clippy --manifest-path rust/Cargo.toml --fix --allow-staged --allow-dirty
+    cargo clippy --manifest-path rust/Cargo.toml -- -D warnings
 
 test-rust:
     cargo test --manifest-path rust/Cargo.toml

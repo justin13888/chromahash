@@ -1,9 +1,12 @@
 pre-commit:
+  piped: true
   commands:
     format-fix:
       run: just format-fix
     lint-fix:
       run: just lint-fix
+    check-clean:
+      run: git diff --exit-code
 
 pre-push:
   commands:
