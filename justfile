@@ -7,25 +7,25 @@ default:
 # ─── All languages ───────────────────────────────────────────────────────────
 
 # Format all implementations
-format: format-rust format-ts format-kotlin format-swift
+format: format-rust format-ts format-kotlin format-swift format-go
 
 # Lint all implementations
-lint: lint-rust lint-ts lint-kotlin lint-swift
+lint: lint-rust lint-ts lint-kotlin lint-swift lint-go
 
 # Auto-fix formatting in all implementations
-format-fix: format-fix-rust format-fix-ts format-fix-kotlin format-fix-swift
+format-fix: format-fix-rust format-fix-ts format-fix-kotlin format-fix-swift format-fix-go
 
 # Auto-fix linting in all implementations
-lint-fix: lint-fix-rust lint-fix-ts lint-fix-kotlin lint-fix-swift
+lint-fix: lint-fix-rust lint-fix-ts lint-fix-kotlin lint-fix-swift lint-fix-go
 
 # Run all tests
-test: test-rust test-ts test-kotlin test-swift
+test: test-rust test-ts test-kotlin test-swift test-go
 
 # Build all implementations
-build: build-rust build-ts build-kotlin build-swift
+build: build-rust build-ts build-kotlin build-swift build-go
 
 # Check formatting (no writes) across all implementations
-format-check: format-check-rust format-check-ts format-check-kotlin format-check-swift
+format-check: format-check-rust format-check-ts format-check-kotlin format-check-swift format-check-go
 
 # ─── Rust ────────────────────────────────────────────────────────────────────
 
@@ -111,3 +111,24 @@ test-swift:
 
 build-swift:
     cd swift && mise exec swift@6.2.4 -- swift build
+
+# ─── Go ──────────────────────────────────────────────────────────────────────
+
+format-go:
+    cd go && gofmt -w .
+
+format-fix-go: format-go
+
+format-check-go:
+    cd go && test -z "$(gofmt -l .)"
+
+lint-go:
+    cd go && go vet ./...
+
+lint-fix-go: lint-go
+
+test-go:
+    cd go && go test ./... -v
+
+build-go:
+    cd go && go build ./...
