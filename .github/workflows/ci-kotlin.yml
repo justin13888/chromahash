@@ -2,7 +2,7 @@ name: CI (Kotlin)
 
 on:
   push:
-    branches: [main]
+    branches: [master]
     paths: ["kotlin/**", ".github/workflows/ci-kotlin.yml"]
   pull_request:
     paths: ["kotlin/**", ".github/workflows/ci-kotlin.yml"]
