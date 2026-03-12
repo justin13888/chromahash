@@ -9,7 +9,7 @@ import kotlin.math.max
  * Compute the triangular scan order for an nx*ny grid, excluding DC.
  * Per spec: row-major, condition cx*ny < nx*(ny-cy), skip (0,0).
  */
-fun triangularScanOrder(
+internal fun triangularScanOrder(
     nx: Int,
     ny: Int,
 ): List<Pair<Int, Int>> {
@@ -29,7 +29,7 @@ fun triangularScanOrder(
  * Forward DCT encode for a channel. Per spec dctEncode.
  * Returns Triple(dc, acCoefficients, scale).
  */
-fun dctEncode(
+internal fun dctEncode(
     channel: DoubleArray,
     w: Int,
     h: Int,
@@ -78,7 +78,7 @@ fun dctEncode(
 }
 
 /** Inverse DCT at a single pixel (x, y) for a channel. */
-fun dctDecodePixel(
+internal fun dctDecodePixel(
     dc: Double,
     ac: DoubleArray,
     scanOrder: List<Pair<Int, Int>>,

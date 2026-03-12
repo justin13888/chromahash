@@ -1,7 +1,7 @@
 mod aspect;
 mod bitpack;
 mod color;
-pub mod constants;
+mod constants;
 mod dct;
 mod decode;
 mod encode;

@@ -10,7 +10,7 @@ enum class Gamut {
     ;
 
     /** Return the M1 matrix for this gamut. */
-    fun m1Matrix(): Array<DoubleArray> =
+    internal fun m1Matrix(): Array<DoubleArray> =
         when (this) {
             SRGB -> M1_SRGB
             DISPLAY_P3 -> M1_DISPLAY_P3
@@ -21,18 +21,18 @@ enum class Gamut {
 }
 
 /** mu-law companding parameter. */
-const val MU: Double = 5.0
+internal const val MU: Double = 5.0
 
 /** Scale factor maximums. */
-const val MAX_CHROMA_A: Double = 0.5
-const val MAX_CHROMA_B: Double = 0.5
-const val MAX_L_SCALE: Double = 0.5
-const val MAX_A_SCALE: Double = 0.5
-const val MAX_B_SCALE: Double = 0.5
-const val MAX_A_ALPHA_SCALE: Double = 0.5
+internal const val MAX_CHROMA_A: Double = 0.5
+internal const val MAX_CHROMA_B: Double = 0.5
+internal const val MAX_L_SCALE: Double = 0.5
+internal const val MAX_A_SCALE: Double = 0.5
+internal const val MAX_B_SCALE: Double = 0.5
+internal const val MAX_A_ALPHA_SCALE: Double = 0.5
 
 /** M2: LMS (cube-root) -> OKLAB [L, a, b] (Ottosson). */
-val M2: Array<DoubleArray> =
+internal val M2: Array<DoubleArray> =
     arrayOf(
         doubleArrayOf(0.2104542553, 0.7936177850, -0.0040720468),
         doubleArrayOf(1.9779984951, -2.4285922050, 0.4505937099),
@@ -40,7 +40,7 @@ val M2: Array<DoubleArray> =
     )
 
 /** M2_INV: OKLAB [L, a, b] -> LMS (cube-root). */
-val M2_INV: Array<DoubleArray> =
+internal val M2_INV: Array<DoubleArray> =
     arrayOf(
         doubleArrayOf(1.0000000000, 0.3963377774, 0.2158037573),
         doubleArrayOf(1.0000000000, -0.1055613458, -0.0638541728),
@@ -48,7 +48,7 @@ val M2_INV: Array<DoubleArray> =
     )
 
 /** M1[sRGB]: Linear sRGB -> LMS (Ottosson published). */
-val M1_SRGB: Array<DoubleArray> =
+internal val M1_SRGB: Array<DoubleArray> =
     arrayOf(
         doubleArrayOf(0.4122214708, 0.5363325363, 0.0514459929),
         doubleArrayOf(0.2119034982, 0.6806995451, 0.1073969566),
@@ -56,7 +56,7 @@ val M1_SRGB: Array<DoubleArray> =
     )
 
 /** M1[Display P3]: Linear Display P3 -> LMS. */
-val M1_DISPLAY_P3: Array<DoubleArray> =
+internal val M1_DISPLAY_P3: Array<DoubleArray> =
     arrayOf(
         doubleArrayOf(0.4813798544, 0.4621183697, 0.0565017758),
         doubleArrayOf(0.2288319449, 0.6532168128, 0.1179512422),
@@ -64,7 +64,7 @@ val M1_DISPLAY_P3: Array<DoubleArray> =
     )
 
 /** M1[Adobe RGB]: Linear Adobe RGB -> LMS. */
-val M1_ADOBE_RGB: Array<DoubleArray> =
+internal val M1_ADOBE_RGB: Array<DoubleArray> =
     arrayOf(
         doubleArrayOf(0.5764322615, 0.3699132211, 0.0536545174),
         doubleArrayOf(0.2963164739, 0.5916761266, 0.1120073994),
@@ -72,7 +72,7 @@ val M1_ADOBE_RGB: Array<DoubleArray> =
     )
 
 /** M1 for BT.2020: Linear BT.2020 -> LMS. */
-val M1_BT2020: Array<DoubleArray> =
+internal val M1_BT2020: Array<DoubleArray> =
     arrayOf(
         doubleArrayOf(0.6167557872, 0.3601983994, 0.0230458134),
         doubleArrayOf(0.2651330640, 0.6358393641, 0.0990275718),
@@ -80,7 +80,7 @@ val M1_BT2020: Array<DoubleArray> =
     )
 
 /** M1[ProPhoto RGB]: Linear ProPhoto RGB -> LMS (includes Bradford D50->D65). */
-val M1_PROPHOTO_RGB: Array<DoubleArray> =
+internal val M1_PROPHOTO_RGB: Array<DoubleArray> =
     arrayOf(
         doubleArrayOf(0.7154484635, 0.3527915480, -0.0682400115),
         doubleArrayOf(0.2744116551, 0.6677976408, 0.0577907040),
@@ -88,7 +88,7 @@ val M1_PROPHOTO_RGB: Array<DoubleArray> =
     )
 
 /** M1_INV[sRGB]: LMS -> Linear sRGB (decoder matrix, Ottosson published). */
-val M1_INV_SRGB: Array<DoubleArray> =
+internal val M1_INV_SRGB: Array<DoubleArray> =
     arrayOf(
         doubleArrayOf(4.0767416621, -3.3077115913, 0.2309699292),
         doubleArrayOf(-1.2684380046, 2.6097574011, -0.3413193965),

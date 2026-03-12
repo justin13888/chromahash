@@ -77,7 +77,7 @@ pub const M1_INV_SRGB: [[f64; 3]; 3] = [
 
 impl Gamut {
     /// Return the M1 matrix for this gamut.
-    pub fn m1_matrix(self) -> &'static [[f64; 3]; 3] {
+    pub(crate) fn m1_matrix(self) -> &'static [[f64; 3]; 3] {
         match self {
             Gamut::Srgb => &M1_SRGB,
             Gamut::DisplayP3 => &M1_DISPLAY_P3,

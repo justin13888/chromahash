@@ -1,7 +1,7 @@
 package chromahash
 
 /** Convert linear RGB to OKLAB using the specified source gamut's M1 matrix. */
-fun linearRgbToOklab(
+internal fun linearRgbToOklab(
     rgb: DoubleArray,
     gamut: Gamut,
 ): DoubleArray {
@@ -17,7 +17,7 @@ fun linearRgbToOklab(
 }
 
 /** Convert OKLAB to linear sRGB. */
-fun oklabToLinearSrgb(lab: DoubleArray): DoubleArray {
+internal fun oklabToLinearSrgb(lab: DoubleArray): DoubleArray {
     val lmsCbrt = matvec3(M2_INV, lab)
     val lms =
         doubleArrayOf(
@@ -29,7 +29,7 @@ fun oklabToLinearSrgb(lab: DoubleArray): DoubleArray {
 }
 
 /** Convert gamma-encoded source RGB to OKLAB. */
-fun gammaRgbToOklab(
+internal fun gammaRgbToOklab(
     r: Double,
     g: Double,
     b: Double,
@@ -46,7 +46,7 @@ fun gammaRgbToOklab(
 }
 
 /** Convert OKLAB to gamma-encoded sRGB [0,1] with clamping. */
-fun oklabToSrgb(lab: DoubleArray): DoubleArray {
+internal fun oklabToSrgb(lab: DoubleArray): DoubleArray {
     val rgbLinear = oklabToLinearSrgb(lab)
     return doubleArrayOf(
         srgbGamma(clamp01(rgbLinear[0])),

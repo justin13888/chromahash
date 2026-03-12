@@ -3,21 +3,21 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import {
-  ChromaHash,
-  _decodeAspect as decodeAspect,
-  _decodeOutputSize as decodeOutputSize,
-  _encodeAspect as encodeAspect,
-  _gammaRgbToOklab as gammaRgbToOklab,
-  _linearRgbToOklab as linearRgbToOklab,
-  _muCompress as muCompress,
-  _muExpand as muExpand,
-  _muLawDequantize as muLawDequantize,
-  _muLawQuantize as muLawQuantize,
-  _roundHalfAwayFromZero as roundHalfAwayFromZero,
-  _triangularScanOrder as triangularScanOrder,
-} from "./index.ts";
+import { ChromaHash } from "./index.ts";
 import type { Gamut } from "./index.ts";
+import {
+  decodeAspect,
+  decodeOutputSize,
+  encodeAspect,
+  gammaRgbToOklab,
+  linearRgbToOklab,
+  muCompress,
+  muExpand,
+  muLawDequantize,
+  muLawQuantize,
+  roundHalfAwayFromZero,
+  triangularScanOrder,
+} from "./internals.ts";
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const specDir = resolve(currentDir, "../../spec/test-vectors");

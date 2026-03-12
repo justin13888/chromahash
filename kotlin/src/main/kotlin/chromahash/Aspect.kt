@@ -5,7 +5,7 @@ import kotlin.math.max
 import kotlin.math.pow
 
 /** Encode aspect ratio as a single byte. Per spec. */
-fun encodeAspect(
+internal fun encodeAspect(
     w: Int,
     h: Int,
 ): Int {
@@ -16,10 +16,10 @@ fun encodeAspect(
 }
 
 /** Decode aspect ratio from byte. Per spec. */
-fun decodeAspect(byte: Int): Double = 2.0.pow(byte.toDouble() / 255.0 * 4.0 - 2.0)
+internal fun decodeAspect(byte: Int): Double = 2.0.pow(byte.toDouble() / 255.0 * 4.0 - 2.0)
 
 /** Decode output size from aspect byte. Longer side = 32px. Per spec. */
-fun decodeOutputSize(byte: Int): Pair<Int, Int> {
+internal fun decodeOutputSize(byte: Int): Pair<Int, Int> {
     val ratio = decodeAspect(byte)
     return if (ratio > 1.0) {
         val h = max(roundHalfAwayFromZero(32.0 / ratio).toInt(), 1)

@@ -355,7 +355,7 @@ class ChromaHashTest {
         val rgba = solidImage(4, 4, 128, 128, 128, 255)
         val hash = ChromaHash.encode(4, 4, rgba, Gamut.SRGB)
         val avg = hash.averageColor()
-        assertContentEquals(intArrayOf(128, 128, 128, 255), avg)
+        assertEquals(RgbaColor(128, 128, 128, 255), avg)
     }
 
     @Test
@@ -363,7 +363,7 @@ class ChromaHashTest {
         val rgba = solidImage(4, 4, 255, 0, 0, 255)
         val hash = ChromaHash.encode(4, 4, rgba, Gamut.SRGB)
         val avg = hash.averageColor()
-        assertContentEquals(intArrayOf(255, 11, 0, 255), avg)
+        assertEquals(RgbaColor(255, 11, 0, 255), avg)
     }
 
     @Test
@@ -371,7 +371,7 @@ class ChromaHashTest {
         val rgba = solidImage(4, 4, 0, 255, 0, 255)
         val hash = ChromaHash.encode(4, 4, rgba, Gamut.SRGB)
         val avg = hash.averageColor()
-        assertContentEquals(intArrayOf(39, 254, 0, 255), avg)
+        assertEquals(RgbaColor(39, 254, 0, 255), avg)
     }
 
     @Test
@@ -379,7 +379,7 @@ class ChromaHashTest {
         val rgba = solidImage(4, 4, 0, 0, 255, 255)
         val hash = ChromaHash.encode(4, 4, rgba, Gamut.SRGB)
         val avg = hash.averageColor()
-        assertContentEquals(intArrayOf(1, 0, 253, 255), avg)
+        assertEquals(RgbaColor(1, 0, 253, 255), avg)
     }
 
     @Test
@@ -387,7 +387,7 @@ class ChromaHashTest {
         val rgba = solidImage(4, 4, 255, 255, 255, 255)
         val hash = ChromaHash.encode(4, 4, rgba, Gamut.SRGB)
         val avg = hash.averageColor()
-        assertContentEquals(intArrayOf(255, 255, 255, 255), avg)
+        assertEquals(RgbaColor(255, 255, 255, 255), avg)
     }
 
     @Test
@@ -395,7 +395,7 @@ class ChromaHashTest {
         val rgba = solidImage(4, 4, 0, 0, 0, 255)
         val hash = ChromaHash.encode(4, 4, rgba, Gamut.SRGB)
         val avg = hash.averageColor()
-        assertContentEquals(intArrayOf(0, 0, 0, 255), avg)
+        assertEquals(RgbaColor(0, 0, 0, 255), avg)
     }
 
     @Test
@@ -403,7 +403,7 @@ class ChromaHashTest {
         val rgba = buildCheckerboardAlpha8x8()
         val hash = ChromaHash.encode(8, 8, rgba, Gamut.SRGB)
         val avg = hash.averageColor()
-        assertContentEquals(intArrayOf(255, 11, 0, 132), avg)
+        assertEquals(RgbaColor(255, 11, 0, 132), avg)
     }
 
     // ---- Decode tests ----

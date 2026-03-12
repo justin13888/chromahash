@@ -6,16 +6,16 @@ import kotlin.math.pow
 import kotlin.math.sign
 
 /** mu-law compress: value in [-1, 1] -> compressed in [-1, 1]. */
-fun muCompress(value: Double): Double {
+internal fun muCompress(value: Double): Double {
     val v = value.coerceIn(-1.0, 1.0)
     return sign(v) * ln(1.0 + MU * abs(v)) / ln(1.0 + MU)
 }
 
 /** mu-law expand: compressed in [-1, 1] -> value in [-1, 1]. */
-fun muExpand(compressed: Double): Double = sign(compressed) * ((1.0 + MU).pow(abs(compressed)) - 1.0) / MU
+internal fun muExpand(compressed: Double): Double = sign(compressed) * ((1.0 + MU).pow(abs(compressed)) - 1.0) / MU
 
 /** Quantize a value in [-1, 1] using mu-law to an integer index. */
-fun muLawQuantize(
+internal fun muLawQuantize(
     value: Double,
     bits: Int,
 ): Int {
@@ -26,7 +26,7 @@ fun muLawQuantize(
 }
 
 /** Dequantize an integer index back to a value in [-1, 1] using mu-law. */
-fun muLawDequantize(
+internal fun muLawDequantize(
     index: Int,
     bits: Int,
 ): Double {

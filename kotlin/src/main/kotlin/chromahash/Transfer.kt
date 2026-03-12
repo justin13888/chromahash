@@ -4,7 +4,7 @@ import kotlin.math.max
 import kotlin.math.pow
 
 /** sRGB EOTF (gamma -> linear), per spec. */
-fun srgbEotf(x: Double): Double =
+internal fun srgbEotf(x: Double): Double =
     if (x <= 0.04045) {
         x / 12.92
     } else {
@@ -12,7 +12,7 @@ fun srgbEotf(x: Double): Double =
     }
 
 /** sRGB gamma (linear -> gamma), per spec. */
-fun srgbGamma(x: Double): Double =
+internal fun srgbGamma(x: Double): Double =
     if (x <= 0.0031308) {
         12.92 * x
     } else {
@@ -20,13 +20,13 @@ fun srgbGamma(x: Double): Double =
     }
 
 /** Adobe RGB EOTF (gamma -> linear): x^2.2. */
-fun adobeRgbEotf(x: Double): Double = x.pow(2.2)
+internal fun adobeRgbEotf(x: Double): Double = x.pow(2.2)
 
 /** ProPhoto RGB EOTF (gamma -> linear): x^1.8. */
-fun proPhotoRgbEotf(x: Double): Double = x.pow(1.8)
+internal fun proPhotoRgbEotf(x: Double): Double = x.pow(1.8)
 
 /** BT.2020 PQ (ST 2084) inverse EOTF -> linear light, then Reinhard tone-map to SDR. */
-fun bt2020PqEotf(x: Double): Double {
+internal fun bt2020PqEotf(x: Double): Double {
     // PQ inverse EOTF constants (ST 2084)
     val m1 = 0.1593017578125
     val m2 = 78.84375

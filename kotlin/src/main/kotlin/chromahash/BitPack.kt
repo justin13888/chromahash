@@ -1,7 +1,7 @@
 package chromahash
 
 /** Write [count] bits of [value] starting at [bitpos] in little-endian byte order. */
-fun writeBits(
+internal fun writeBits(
     hash: ByteArray,
     bitpos: Int,
     count: Int,
@@ -17,7 +17,7 @@ fun writeBits(
 }
 
 /** Read [count] bits starting at [bitpos] in little-endian byte order. */
-fun readBits(
+internal fun readBits(
     hash: ByteArray,
     bitpos: Int,
     count: Int,

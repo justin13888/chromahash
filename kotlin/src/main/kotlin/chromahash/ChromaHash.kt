@@ -192,9 +192,9 @@ class ChromaHash private constructor(
 
     /**
      * Decode a ChromaHash into an RGBA image.
-     * Returns Triple(width, height, rgba_pixels).
+     * Returns a [DecodeResult] with width, height, and rgba_pixels.
      */
-    fun decode(): Triple<Int, Int, ByteArray> {
+    fun decode(): DecodeResult {
         // 1. Unpack header (48 bits)
         var header = 0L
         for (i in 0 until 6) {
@@ -327,14 +327,14 @@ class ChromaHash private constructor(
             }
         }
 
-        return Triple(outW, outH, rgba)
+        return DecodeResult(outW, outH, rgba)
     }
 
     /**
      * Extract the average color without full decode.
-     * Returns [r, g, b, a] as 0-255 values.
+     * Returns an [RgbaColor] with components in [0, 255].
      */
-    fun averageColor(): IntArray {
+    fun averageColor(): RgbaColor {
         var header = 0L
         for (i in 0 until 6) {
             header = header or ((hash[i].toInt() and 0xFF).toLong() shl (i * 8))
@@ -358,11 +358,11 @@ class ChromaHash private constructor(
                 1.0
             }
 
-        return intArrayOf(
-            roundHalfAwayFromZero(255.0 * clamp01(srgb[0])).toInt(),
-            roundHalfAwayFromZero(255.0 * clamp01(srgb[1])).toInt(),
-            roundHalfAwayFromZero(255.0 * clamp01(srgb[2])).toInt(),
-            roundHalfAwayFromZero(255.0 * clamp01(alpha)).toInt(),
+        return RgbaColor(
+            r = roundHalfAwayFromZero(255.0 * clamp01(srgb[0])).toInt(),
+            g = roundHalfAwayFromZero(255.0 * clamp01(srgb[1])).toInt(),
+            b = roundHalfAwayFromZero(255.0 * clamp01(srgb[2])).toInt(),
+            a = roundHalfAwayFromZero(255.0 * clamp01(alpha)).toInt(),
         )
     }
 

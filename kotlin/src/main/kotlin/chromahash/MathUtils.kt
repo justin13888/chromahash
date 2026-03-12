@@ -8,7 +8,7 @@ import kotlin.math.floor
  * Per spec: round(x) = floor(x + 0.5) for x >= 0, ceil(x - 0.5) for x < 0.
  * Adding 0.0 eliminates negative zero from IEEE 754.
  */
-fun roundHalfAwayFromZero(x: Double): Double =
+internal fun roundHalfAwayFromZero(x: Double): Double =
     if (x >= 0.0) {
         floor(x + 0.5)
     } else {
@@ -19,16 +19,16 @@ fun roundHalfAwayFromZero(x: Double): Double =
  * Signed cube root per spec: cbrt(x) = sign(x) * |x|^(1/3).
  * Uses Math.cbrt which is correctly rounded on modern JVMs (HotSpot JDK 21+).
  */
-fun cbrtSigned(x: Double): Double = Math.cbrt(x)
+internal fun cbrtSigned(x: Double): Double = Math.cbrt(x)
 
 /** Clamp to [0, 1]. */
-fun clamp01(x: Double): Double = x.coerceIn(0.0, 1.0)
+internal fun clamp01(x: Double): Double = x.coerceIn(0.0, 1.0)
 
 /** Clamp to [-1, 1]. */
-fun clampNeg1To1(x: Double): Double = x.coerceIn(-1.0, 1.0)
+internal fun clampNeg1To1(x: Double): Double = x.coerceIn(-1.0, 1.0)
 
 /** 3x3 matrix * 3-vector multiplication. */
-fun matvec3(
+internal fun matvec3(
     m: Array<DoubleArray>,
     v: DoubleArray,
 ): DoubleArray =
