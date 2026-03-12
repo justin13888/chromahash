@@ -2,6 +2,7 @@
 node = "24"
 gradle = "9.4.0"
 swift = "6.2.4"
+java = "21"
 
 [settings]
 experimental = true

@@ -74,23 +74,23 @@ build-ts:
 # ─── Kotlin ──────────────────────────────────────────────────────────────────
 
 format-kotlin:
-    cd kotlin && ./gradlew ktlintFormat
+    mise exec java@21 gradle@9.4.0 -- sh -c 'cd kotlin && ./gradlew ktlintFormat'
 
 format-fix-kotlin: format-kotlin
 
 format-check-kotlin:
-    cd kotlin && ./gradlew ktlintCheck
+    mise exec java@21 gradle@9.4.0 -- sh -c 'cd kotlin && ./gradlew ktlintCheck'
 
 lint-kotlin:
-    cd kotlin && ./gradlew ktlintCheck
+    mise exec java@21 gradle@9.4.0 -- sh -c 'cd kotlin && ./gradlew ktlintCheck'
 
 lint-fix-kotlin: format-kotlin
 
 test-kotlin:
-    cd kotlin && ./gradlew test
+    mise exec java@21 gradle@9.4.0 -- sh -c 'cd kotlin && ./gradlew test'
 
 build-kotlin:
-    cd kotlin && ./gradlew build
+    mise exec java@21 gradle@9.4.0 -- sh -c 'cd kotlin && ./gradlew build'
 
 # ─── Swift ───────────────────────────────────────────────────────────────────
 

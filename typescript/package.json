@@ -8,9 +8,9 @@
   "types": "./dist/index.d.ts",
   "scripts": {
     "build": "tsc",
-    "test": "node --experimental-test-runner --test",
+    "test": "node --test",
     "format": "biome format --write .",
-    "format:check": "biome format --check .",
+    "format:check": "biome format .",
     "lint": "biome lint .",
     "lint:fix": "biome lint --fix .",
     "check": "biome check .",
