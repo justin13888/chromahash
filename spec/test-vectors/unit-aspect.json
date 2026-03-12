@@ -1,0 +1,47 @@
+[
+  {
+    "name": "aspect_1:1",
+    "input": { "width": 1, "height": 1 },
+    "expected": { "byte": 128, "decoded_ratio": 1.0054512527764397, "output_width": 32, "output_height": 32 }
+  },
+  {
+    "name": "aspect_3:2",
+    "input": { "width": 3, "height": 2 },
+    "expected": { "byte": 165, "decoded_ratio": 1.503406653856055, "output_width": 32, "output_height": 21 }
+  },
+  {
+    "name": "aspect_4:3",
+    "input": { "width": 4, "height": 3 },
+    "expected": { "byte": 154, "decoded_ratio": 1.333933063801182, "output_width": 32, "output_height": 24 }
+  },
+  {
+    "name": "aspect_16:9",
+    "input": { "width": 16, "height": 9 },
+    "expected": { "byte": 180, "decoded_ratio": 1.7697301721873238, "output_width": 32, "output_height": 18 }
+  },
+  {
+    "name": "aspect_4:1",
+    "input": { "width": 4, "height": 1 },
+    "expected": { "byte": 255, "decoded_ratio": 4, "output_width": 32, "output_height": 8 }
+  },
+  {
+    "name": "aspect_1:4",
+    "input": { "width": 1, "height": 4 },
+    "expected": { "byte": 0, "decoded_ratio": 0.25, "output_width": 8, "output_height": 32 }
+  },
+  {
+    "name": "aspect_2:1",
+    "input": { "width": 2, "height": 1 },
+    "expected": { "byte": 191, "decoded_ratio": 1.9945709335778188, "output_width": 32, "output_height": 16 }
+  },
+  {
+    "name": "aspect_1:2",
+    "input": { "width": 1, "height": 2 },
+    "expected": { "byte": 64, "decoded_ratio": 0.5013609609793227, "output_width": 16, "output_height": 32 }
+  },
+  {
+    "name": "aspect_100:25",
+    "input": { "width": 100, "height": 25 },
+    "expected": { "byte": 255, "decoded_ratio": 4, "output_width": 32, "output_height": 8 }
+  }
+]

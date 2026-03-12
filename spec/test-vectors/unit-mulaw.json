@@ -1,0 +1,137 @@
+[
+  {
+    "name": "v=-1_bits=4",
+    "input": { "value": -1, "bits": 4 },
+    "expected": { "compressed": -1, "expanded": -1, "quantized": 0, "dequantized": -1 }
+  },
+  {
+    "name": "v=-1_bits=5",
+    "input": { "value": -1, "bits": 5 },
+    "expected": { "compressed": -1, "expanded": -1, "quantized": 0, "dequantized": -1 }
+  },
+  {
+    "name": "v=-1_bits=6",
+    "input": { "value": -1, "bits": 6 },
+    "expected": { "compressed": -1, "expanded": -1, "quantized": 0, "dequantized": -1 }
+  },
+  {
+    "name": "v=-0.75_bits=4",
+    "input": { "value": -0.75, "bits": 4 },
+    "expected": { "compressed": -0.8696170690354138, "expanded": -0.75, "quantized": 1, "dequantized": -0.7449911602454297 }
+  },
+  {
+    "name": "v=-0.75_bits=5",
+    "input": { "value": -0.75, "bits": 5 },
+    "expected": { "compressed": -0.8696170690354138, "expanded": -0.75, "quantized": 2, "dequantized": -0.7523018611322915 }
+  },
+  {
+    "name": "v=-0.75_bits=6",
+    "input": { "value": -0.75, "bits": 6 },
+    "expected": { "compressed": -0.8696170690354138, "expanded": -0.75, "quantized": 4, "dequantized": -0.7558029989864092 }
+  },
+  {
+    "name": "v=-0.5_bits=4",
+    "input": { "value": -0.5, "bits": 4 },
+    "expected": { "compressed": -0.6991803252671503, "expanded": -0.5000000000000001, "quantized": 2, "dequantized": -0.5441735774516695 }
+  },
+  {
+    "name": "v=-0.5_bits=5",
+    "input": { "value": -0.5, "bits": 5 },
+    "expected": { "compressed": -0.6991803252671503, "expanded": -0.5000000000000001, "quantized": 5, "dequantized": -0.4732319426854296 }
+  },
+  {
+    "name": "v=-0.5_bits=6",
+    "input": { "value": -0.5, "bits": 6 },
+    "expected": { "compressed": -0.6991803252671503, "expanded": -0.5000000000000001, "quantized": 9, "dequantized": -0.5192043696541107 }
+  },
+  {
+    "name": "v=-0.25_bits=4",
+    "input": { "value": -0.25, "bits": 4 },
+    "expected": { "compressed": -0.45258877106183365, "expanded": -0.25, "quantized": 4, "dequantized": -0.26149526114767985 }
+  },
+  {
+    "name": "v=-0.25_bits=5",
+    "input": { "value": -0.25, "bits": 5 },
+    "expected": { "compressed": -0.45258877106183365, "expanded": -0.25, "quantized": 8, "dequantized": -0.2759428361434593 }
+  },
+  {
+    "name": "v=-0.25_bits=6",
+    "input": { "value": -0.25, "bits": 6 },
+    "expected": { "compressed": -0.45258877106183365, "expanded": -0.25, "quantized": 17, "dequantized": -0.2562749256302707 }
+  },
+  {
+    "name": "v=0_bits=4",
+    "input": { "value": 0, "bits": 4 },
+    "expected": { "compressed": 0, "expanded": 0, "quantized": 8, "dequantized": 0.025375522038165288 }
+  },
+  {
+    "name": "v=0_bits=5",
+    "input": { "value": 0, "bits": 5 },
+    "expected": { "compressed": 0, "expanded": 0, "quantized": 16, "dequantized": 0.011900337732745925 }
+  },
+  {
+    "name": "v=0_bits=6",
+    "input": { "value": 0, "bits": 6 },
+    "expected": { "compressed": 0, "expanded": 0, "quantized": 32, "dequantized": 0.005769784531016331 }
+  },
+  {
+    "name": "v=0.25_bits=4",
+    "input": { "value": 0.25, "bits": 4 },
+    "expected": { "compressed": 0.45258877106183365, "expanded": 0.25, "quantized": 11, "dequantized": 0.2614952611476798 }
+  },
+  {
+    "name": "v=0.25_bits=5",
+    "input": { "value": 0.25, "bits": 5 },
+    "expected": { "compressed": 0.45258877106183365, "expanded": 0.25, "quantized": 23, "dequantized": 0.2759428361434593 }
+  },
+  {
+    "name": "v=0.25_bits=6",
+    "input": { "value": 0.25, "bits": 6 },
+    "expected": { "compressed": 0.45258877106183365, "expanded": 0.25, "quantized": 46, "dequantized": 0.25627492563027066 }
+  },
+  {
+    "name": "v=0.5_bits=4",
+    "input": { "value": 0.5, "bits": 4 },
+    "expected": { "compressed": 0.6991803252671503, "expanded": 0.5000000000000001, "quantized": 13, "dequantized": 0.5441735774516695 }
+  },
+  {
+    "name": "v=0.5_bits=5",
+    "input": { "value": 0.5, "bits": 5 },
+    "expected": { "compressed": 0.6991803252671503, "expanded": 0.5000000000000001, "quantized": 26, "dequantized": 0.4732319426854296 }
+  },
+  {
+    "name": "v=0.5_bits=6",
+    "input": { "value": 0.5, "bits": 6 },
+    "expected": { "compressed": 0.6991803252671503, "expanded": 0.5000000000000001, "quantized": 54, "dequantized": 0.5192043696541104 }
+  },
+  {
+    "name": "v=0.75_bits=4",
+    "input": { "value": 0.75, "bits": 4 },
+    "expected": { "compressed": 0.8696170690354138, "expanded": 0.75, "quantized": 14, "dequantized": 0.7449911602454297 }
+  },
+  {
+    "name": "v=0.75_bits=5",
+    "input": { "value": 0.75, "bits": 5 },
+    "expected": { "compressed": 0.8696170690354138, "expanded": 0.75, "quantized": 29, "dequantized": 0.7523018611322912 }
+  },
+  {
+    "name": "v=0.75_bits=6",
+    "input": { "value": 0.75, "bits": 6 },
+    "expected": { "compressed": 0.8696170690354138, "expanded": 0.75, "quantized": 59, "dequantized": 0.7558029989864092 }
+  },
+  {
+    "name": "v=1_bits=4",
+    "input": { "value": 1, "bits": 4 },
+    "expected": { "compressed": 1, "expanded": 1, "quantized": 15, "dequantized": 1 }
+  },
+  {
+    "name": "v=1_bits=5",
+    "input": { "value": 1, "bits": 5 },
+    "expected": { "compressed": 1, "expanded": 1, "quantized": 31, "dequantized": 1 }
+  },
+  {
+    "name": "v=1_bits=6",
+    "input": { "value": 1, "bits": 6 },
+    "expected": { "compressed": 1, "expanded": 1, "quantized": 63, "dequantized": 1 }
+  }
+]
