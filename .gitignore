@@ -72,6 +72,14 @@ Network Trash Folder
 Temporary Items
 .apdisk
 
+# === Python ===
+__pycache__/
+*.py[cod]
+*.pyo
+python/.venv/
+python/*.egg-info/
+python/dist/
+
 # === Editors ===
 .vscode/
 .idea/
