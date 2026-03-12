@@ -75,8 +75,13 @@ round(x) = floor(x + 0.5)    for x ≥ 0
 round(x) = ceil(x − 0.5)     for x < 0
 ```
 
-Implementations MUST use this rounding mode. Other modes (banker's rounding, truncation)
-produce different quantized values and will fail cross-implementation conformance tests.
+Implementations MUST use this rounding mode. Banker's rounding (round half to even) is
+statistically unbiased but is the default in only some target languages (e.g. Python 3),
+requiring an explicit override in all others — offering no practical advantage over RHAFZ
+while adding implementation complexity. Truncation introduces systematic negative bias and
+is unsuitable for perceptual quantization. Cross-implementation bit-exactness is the
+primary constraint; at the bit depths used here (5–7 bits) the bias from RHAFZ is
+imperceptible.
 
 ### 2.3 Numerical Precision
 
