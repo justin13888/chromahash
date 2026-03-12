@@ -12,7 +12,7 @@ Use td usage -q after first read.
 
 Modern, high-quality image placeholder representation for professional formats (LQIP).
 
-This is a **monorepo** with five language implementations of the same format specification.
+This is a **monorepo** with six language implementations of the same format specification.
 
 ## Tech Stack
 
@@ -23,6 +23,7 @@ This is a **monorepo** with five language implementations of the same format spe
 | Kotlin     | Gradle 9.4 + JDK 21  | ktlint         | ktlint       |
 | Swift      | SPM (Swift 6.2)      | swift-format   | swift-format |
 | Go         | go 1.24              | gofmt          | go vet       |
+| Python     | Python 3.13 + uv     | Ruff           | Ruff         |
 
 Tool versions are pinned in `.mise.toml`. Use `mise install` to get all of them.
 
@@ -35,6 +36,7 @@ chromahash/
 ├── kotlin/             # Kotlin implementation (Gradle + ktlint)
 ├── swift/              # Swift implementation (SPM)
 ├── go/                 # Go implementation (standard library only)
+├── python/             # Python implementation (uv + Ruff)
 ├── spec/               # Format specification
 ├── .github/workflows/  # Per-language GitHub Actions CI
 ├── justfile            # Cross-language task runner
@@ -55,6 +57,7 @@ mise install          # install all pinned tools
 lefthook install      # activate git hooks
 cd typescript && pnpm install
 cd kotlin && ./gradlew dependencies
+cd python && uv sync
 ```
 
 ### Cross-language commands (via just)
@@ -72,24 +75,26 @@ just lint-fix     # auto-fix lint errors everywhere
 ### Per-language commands
 
 ```bash
-just format-rust / lint-rust / test-rust / build-rust
-just format-ts   / lint-ts   / test-ts   / build-ts
+just format-rust   / lint-rust   / test-rust   / build-rust
+just format-ts     / lint-ts     / test-ts     / build-ts
 just format-kotlin / lint-kotlin / test-kotlin / build-kotlin
 just format-swift  / lint-swift  / test-swift  / build-swift
 just format-go     / lint-go     / test-go     / build-go
+just format-python / lint-python / test-python / build-python
 ```
 
 ## Conventions
 
-- All five implementations MUST produce identical output for the same input — the spec in `spec/` is the source of truth
+- All six implementations MUST produce identical output for the same input — the spec in `spec/` is the source of truth
 - Use strict TypeScript — no `any` types
 - Rust: `#![deny(warnings)]` on public crates once stable
 - Kotlin: Kotlin DSL only (`.gradle.kts`), target JVM 21
 - Swift: Swift 6 concurrency model, no `@unchecked Sendable` hacks
 - Write tests for all public API surface
 - Go: zero external dependencies, all math uses `float64`, use `roundHalfAwayFromZero` (not `math.Round`)
-- Use conventional commits: `type(scope): description` — scope = `rust`, `ts`, `kotlin`, `swift`, `go`, or `spec`
-- Keep implementations in sync — a feature in one language should land in all five
+- Use conventional commits: `type(scope): description` — scope = `rust`, `ts`, `kotlin`, `swift`, `go`, `py`, or `spec`
+- Keep implementations in sync — a feature in one language should land in all six
+- Python: zero external runtime dependencies, use `round_half_away_from_zero` (not Python's built-in `round()`), use Ruff for both formatting and linting
 
 ## Architecture
 
