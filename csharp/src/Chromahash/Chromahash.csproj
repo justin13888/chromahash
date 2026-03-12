@@ -1,0 +1,15 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>ChromaHash</RootNamespace>
+    <AssemblyName>ChromaHash</AssemblyName>
+    <Version>0.1.0</Version>
+    <Description>ChromaHash: modern LQIP (Low Quality Image Placeholder) format</Description>
+  </PropertyGroup>
+
+</Project>

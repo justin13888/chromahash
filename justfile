@@ -7,25 +7,25 @@ default:
 # ─── All languages ───────────────────────────────────────────────────────────
 
 # Format all implementations
-format: format-rust format-ts format-kotlin format-swift format-go format-python
+format: format-rust format-ts format-kotlin format-swift format-go format-python format-csharp
 
 # Lint all implementations
-lint: lint-rust lint-ts lint-kotlin lint-swift lint-go lint-python
+lint: lint-rust lint-ts lint-kotlin lint-swift lint-go lint-python lint-csharp
 
 # Auto-fix formatting in all implementations
-format-fix: format-fix-rust format-fix-ts format-fix-kotlin format-fix-swift format-fix-go format-fix-python
+format-fix: format-fix-rust format-fix-ts format-fix-kotlin format-fix-swift format-fix-go format-fix-python format-fix-csharp
 
 # Auto-fix linting in all implementations
-lint-fix: lint-fix-rust lint-fix-ts lint-fix-kotlin lint-fix-swift lint-fix-go lint-fix-python
+lint-fix: lint-fix-rust lint-fix-ts lint-fix-kotlin lint-fix-swift lint-fix-go lint-fix-python lint-fix-csharp
 
 # Run all tests
-test: test-rust test-ts test-kotlin test-swift test-go test-python
+test: test-rust test-ts test-kotlin test-swift test-go test-python test-csharp
 
 # Build all implementations
-build: build-rust build-ts build-kotlin build-swift build-go build-python
+build: build-rust build-ts build-kotlin build-swift build-go build-python build-csharp
 
 # Check formatting (no writes) across all implementations
-format-check: format-check-rust format-check-ts format-check-kotlin format-check-swift format-check-go format-check-python
+format-check: format-check-rust format-check-ts format-check-kotlin format-check-swift format-check-go format-check-python format-check-csharp
 
 # ─── Rust ────────────────────────────────────────────────────────────────────
 
@@ -155,3 +155,24 @@ test-python:
 
 build-python:
     cd python && uv build
+
+# ─── C# ──────────────────────────────────────────────────────────────────────
+
+format-csharp:
+    mise exec dotnet@9 -- dotnet format csharp/Chromahash.sln --verbosity quiet
+
+format-fix-csharp: format-csharp
+
+format-check-csharp:
+    mise exec dotnet@9 -- dotnet format csharp/Chromahash.sln --verify-no-changes --verbosity quiet
+
+lint-csharp:
+    mise exec dotnet@9 -- dotnet build csharp/Chromahash.sln -warnaserror --verbosity quiet
+
+lint-fix-csharp: lint-csharp
+
+test-csharp:
+    mise exec dotnet@9 -- dotnet test csharp/Chromahash.sln --verbosity quiet
+
+build-csharp:
+    mise exec dotnet@9 -- dotnet build csharp/Chromahash.sln --verbosity quiet

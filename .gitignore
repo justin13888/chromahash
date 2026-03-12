@@ -80,6 +80,14 @@ python/.venv/
 python/*.egg-info/
 python/dist/
 
+# === C# / .NET ===
+csharp/**/bin/
+csharp/**/obj/
+csharp/*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
 # === Editors ===
 .vscode/
 .idea/
