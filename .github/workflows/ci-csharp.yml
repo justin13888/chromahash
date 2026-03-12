@@ -1,0 +1,31 @@
+name: CI (C#)
+
+on:
+  push:
+    branches: [master]
+    paths: ["csharp/**", ".github/workflows/ci-csharp.yml"]
+  pull_request:
+    paths: ["csharp/**", ".github/workflows/ci-csharp.yml"]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: csharp
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.x"
+
+      - name: Format check
+        run: dotnet format Chromahash.sln --verify-no-changes --verbosity quiet
+
+      - name: Lint
+        run: dotnet build Chromahash.sln -warnaserror --verbosity quiet
+
+      - name: Test
+        run: dotnet test Chromahash.sln --verbosity quiet

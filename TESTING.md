@@ -2,24 +2,7 @@
 
 Complete testing procedure for the ChromaHash monorepo. Run this after any change to be confident all implementations are correct and in sync.
 
-## Prerequisites
-
-```bash
-mise install          # install pinned tool versions (node 24, java 21, gradle 9.4.0, swift 6.2.4)
-lefthook install      # activate git hooks
-cd typescript && pnpm install && cd ..
-cd kotlin && ./gradlew dependencies && cd ..
-```
-
-Verify tools are available:
-
-```bash
-cargo --version       # Rust stable
-node --version        # 24.x
-pnpm --version
-java --version        # 21
-swift --version       # 6.2.4
-```
+See [README.md](README.md) for setup and prerequisites (mise, lefthook, per-language dependencies).
 
 ---
 
@@ -29,7 +12,7 @@ swift --version       # 6.2.4
 just test
 ```
 
-This runs all four language test suites sequentially: Rust, TypeScript, Kotlin, Swift. If this passes, the implementations agree on all golden test vectors.
+This runs all seven language test suites sequentially: Rust, TypeScript, Kotlin, Swift, Go, Python, C#. If this passes, the implementations agree on all golden test vectors.
 
 ---
 
@@ -59,13 +42,7 @@ Confirms triangular coefficient scan orders produce the expected AC counts (3x3=
 just format-check
 ```
 
-Checks formatting across all four languages without modifying files:
-- Rust: `cargo fmt --check`
-- TypeScript: Biome format check
-- Kotlin: ktlint check
-- Swift: swift-format lint
-
-If this fails, run `just format-fix` and re-check.
+Checks formatting across all implementations without modifying files. If this fails, run `just format-fix` and re-check.
 
 ### Step 4: Lint
 
@@ -73,13 +50,7 @@ If this fails, run `just format-fix` and re-check.
 just lint
 ```
 
-Runs linters across all four languages:
-- Rust: `cargo clippy -- -D warnings`
-- TypeScript: Biome lint
-- Kotlin: ktlint check
-- Swift: swift-format lint
-
-If this fails, run `just lint-fix` for auto-fixable issues.
+Runs linters across all implementations. If this fails, run `just lint-fix` for auto-fixable issues.
 
 ### Step 5: Build
 
@@ -87,7 +58,7 @@ If this fails, run `just lint-fix` for auto-fixable issues.
 just build
 ```
 
-Compiles all four implementations. Catches type errors, missing imports, and compilation issues that tests alone might not surface (e.g., TypeScript type checking).
+Compiles all seven implementations. Catches type errors, missing imports, and compilation issues that tests alone might not surface (e.g., TypeScript type checking).
 
 ### Step 6: Test all implementations
 
@@ -106,7 +77,7 @@ cd rust && cargo test -- --ignored generate_test_vectors --nocapture && cd ..
 just test
 ```
 
-This regenerates all JSON test vectors from the Rust implementation, then re-runs every language's tests against the new vectors. All four must still pass.
+This regenerates all JSON test vectors from the Rust implementation, then re-runs every language's tests against the new vectors. All seven must still pass.
 
 ---
 
@@ -122,13 +93,13 @@ This regenerates all JSON test vectors from the Rust implementation, then re-run
 
 When iterating on a single language, use the targeted commands to save time:
 
-| Action | Rust | TypeScript | Kotlin | Swift |
-|--------|------|------------|--------|-------|
-| Format check | `just format-check-rust` | `just format-check-ts` | `just format-check-kotlin` | `just format-check-swift` |
-| Format fix | `just format-fix-rust` | `just format-fix-ts` | `just format-fix-kotlin` | `just format-fix-swift` |
-| Lint | `just lint-rust` | `just lint-ts` | `just lint-kotlin` | `just lint-swift` |
-| Test | `just test-rust` | `just test-ts` | `just test-kotlin` | `just test-swift` |
-| Build | `just build-rust` | `just build-ts` | `just build-kotlin` | `just build-swift` |
+| Action | Rust | TypeScript | Kotlin | Swift | Go | Python | C# |
+|--------|------|------------|--------|-------|----|--------|----|
+| Format check | `just format-check-rust` | `just format-check-ts` | `just format-check-kotlin` | `just format-check-swift` | `just format-check-go` | `just format-check-python` | `just format-check-csharp` |
+| Format fix | `just format-fix-rust` | `just format-fix-ts` | `just format-fix-kotlin` | `just format-fix-swift` | `just format-fix-go` | `just format-fix-python` | `just format-fix-csharp` |
+| Lint | `just lint-rust` | `just lint-ts` | `just lint-kotlin` | `just lint-swift` | `just lint-go` | `just lint-python` | `just lint-csharp` |
+| Test | `just test-rust` | `just test-ts` | `just test-kotlin` | `just test-swift` | `just test-go` | `just test-python` | `just test-csharp` |
+| Build | `just build-rust` | `just build-ts` | `just build-kotlin` | `just build-swift` | `just build-go` | `just build-python` | `just build-csharp` |
 
 ---
 
@@ -299,7 +270,7 @@ Encode→decode round-trips do not recover the exact original pixels (lossy form
 |-------|---------------|
 | Encode determinism | Same input → same 32 bytes, across multiple calls |
 | Decode determinism | Same hash → same pixel array, across multiple calls |
-| Cross-implementation | Rust hash == TypeScript hash == Kotlin hash == Swift hash == Go hash == Python hash for the same input |
+| Cross-implementation | Rust hash == TypeScript hash == Kotlin hash == Swift hash == Go hash == Python hash == C# hash for the same input |
 | Decode output dimensions | Decoder output w/h are derived from aspect byte, not stored exactly — verify they match the spec formula |
 
 ### Current Coverage Gaps
@@ -322,19 +293,19 @@ The following cases are not yet represented in `spec/test-vectors/` and should b
 ### Changed a constant or matrix in `spec/constants.py`
 
 1. `python3 spec/validate.py` — verify derivation still holds
-2. Update the constant in ALL four implementations
+2. Update the constant in ALL seven implementations
 3. Regenerate test vectors from Rust: `cd rust && cargo test -- --ignored generate_test_vectors --nocapture`
-4. `just test` — all four must pass
+4. `just test` — all seven must pass
 
 ### Changed encoding logic
 
-1. Update in ALL four implementations (they must stay in sync)
+1. Update in ALL seven implementations (they must stay in sync)
 2. Regenerate test vectors from Rust (it is the reference)
-3. `just test` — all four must pass against new vectors
+3. `just test` — all seven must pass against new vectors
 
 ### Changed decoding logic
 
-1. Update in ALL four implementations
+1. Update in ALL seven implementations
 2. Regenerate decode test vectors from Rust
 3. `just test`
 
@@ -346,7 +317,7 @@ The following cases are not yet represented in `spec/test-vectors/` and should b
 ### Changed the spec (`spec/README.md`)
 
 1. Verify the spec text matches `constants.py`: `python3 spec/validate.py`
-2. If the spec describes new behavior, ensure all four implementations and test vectors reflect it
+2. If the spec describes new behavior, ensure all seven implementations and test vectors reflect it
 3. `just test`
 
 ---
@@ -374,6 +345,9 @@ Each language has an independent CI workflow triggered only when its directory c
 | `ci-typescript.yml` | `typescript/**` | fmt check, lint, build, test |
 | `ci-kotlin.yml` | `kotlin/**` | ktlint check, test, build |
 | `ci-swift.yml` | `swift/**` | build, test |
+| `ci-go.yml` | `go/**` | fmt check, vet, test |
+| `ci-python.yml` | `python/**` | fmt check, lint, test |
+| `ci-csharp.yml` | `csharp/**` | fmt check, build (lint), test |
 
 CI mirrors the local `just` commands. If local checks pass, CI should pass.
 
