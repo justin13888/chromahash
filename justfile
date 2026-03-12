@@ -41,7 +41,7 @@ lint-rust:
     cargo clippy --manifest-path rust/Cargo.toml -- -D warnings
 
 lint-fix-rust:
-    cargo clippy --manifest-path rust/Cargo.toml --fix --allow-staged
+    cargo clippy --manifest-path rust/Cargo.toml --fix --allow-staged --allow-dirty
 
 test-rust:
     cargo test --manifest-path rust/Cargo.toml
@@ -52,24 +52,24 @@ build-rust:
 # ─── TypeScript ──────────────────────────────────────────────────────────────
 
 format-ts:
-    pnpm --prefix typescript run format
+    mise exec node@24 -- pnpm --prefix typescript run format
 
 format-fix-ts: format-ts
 
 format-check-ts:
-    pnpm --prefix typescript run format:check
+    mise exec node@24 -- pnpm --prefix typescript run format:check
 
 lint-ts:
-    pnpm --prefix typescript run lint
+    mise exec node@24 -- pnpm --prefix typescript run lint
 
 lint-fix-ts:
-    pnpm --prefix typescript run lint:fix
+    mise exec node@24 -- pnpm --prefix typescript run lint:fix
 
 test-ts:
-    pnpm --prefix typescript run test
+    mise exec node@24 -- pnpm --prefix typescript run test
 
 build-ts:
-    pnpm --prefix typescript run build
+    mise exec node@24 -- pnpm --prefix typescript run build
 
 # ─── Kotlin ──────────────────────────────────────────────────────────────────
 
