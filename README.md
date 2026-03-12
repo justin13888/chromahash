@@ -35,6 +35,9 @@ cd typescript && pnpm install
 
 # Kotlin (pre-cache Gradle dependencies)
 cd kotlin && ./gradlew dependencies
+
+# Python
+cd python && uv sync
 ```
 
 Install git hooks:
