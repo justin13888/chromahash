@@ -37,6 +37,21 @@ build-compare:
 compare:
     mise exec -- pnpm --prefix tools/comparison run compare
 
+# ─── Benchmark ──────────────────────────────────────────────────────────────
+
+# Build benchmark harnesses (release mode)
+build-benchmark:
+    cargo build --manifest-path rust/Cargo.toml --release --example encode_stdin
+    mise exec node@24 -- pnpm --prefix typescript run build
+    cd go && go build -o encode-stdin ./cmd/encode-stdin
+    mise exec java@21 gradle@9.4.0 -- sh -c 'cd kotlin && ./gradlew installDist -q'
+    cd swift && mise exec swift@6.2.4 -- swift build -c release
+    mise exec dotnet@9 -- dotnet build csharp/src/Chromahash.Cli -c Release --verbosity quiet
+
+# Run performance benchmark
+benchmark: build-benchmark
+    cd tools/benchmark && uv run benchmark.py
+
 # ─── Rust ────────────────────────────────────────────────────────────────────
 
 format-rust:

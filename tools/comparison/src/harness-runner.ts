@@ -154,7 +154,7 @@ function runHarness(
   rgba: Uint8Array,
 ): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const cmdArgs = [...config.args, String(w), String(h), gamut];
+    const cmdArgs = [...config.args, "encode", String(w), String(h), gamut];
 
     const child = execFile(
       config.command,
