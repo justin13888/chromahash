@@ -1,5 +1,3 @@
-import Foundation
-
 /// Compute the triangular scan order for an nx*ny grid, excluding DC.
 /// Per spec: row-major, condition cx*ny < nx*(ny-cy), skip (0,0).
 func triangularScanOrder(nx: Int, ny: Int) -> [(Int, Int)] {
@@ -30,11 +28,11 @@ func dctEncode(
     while cx * ny < nx * (ny - cy) {
       var f = 0.0
       for y in 0..<h {
-        let fy = cos(Double.pi / Double(h) * Double(cy) * (Double(y) + 0.5))
+        let fy = portableCos(Double.pi / Double(h) * Double(cy) * (Double(y) + 0.5))
         for x in 0..<w {
           f +=
             channel[x + y * w]
-            * cos(Double.pi / Double(w) * Double(cx) * (Double(x) + 0.5))
+            * portableCos(Double.pi / Double(w) * Double(cx) * (Double(x) + 0.5))
             * fy
         }
       }
@@ -70,8 +68,8 @@ func dctDecodePixel(
     let (cx, cy) = pair
     let cxFactor: Double = cx > 0 ? 2.0 : 1.0
     let cyFactor: Double = cy > 0 ? 2.0 : 1.0
-    let fx = cos(Double.pi / Double(w) * Double(cx) * (Double(x) + 0.5))
-    let fy = cos(Double.pi / Double(h) * Double(cy) * (Double(y) + 0.5))
+    let fx = portableCos(Double.pi / Double(w) * Double(cx) * (Double(x) + 0.5))
+    let fy = portableCos(Double.pi / Double(h) * Double(cy) * (Double(y) + 0.5))
     value += ac[j] * fx * fy * cxFactor * cyFactor
   }
   return value

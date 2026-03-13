@@ -1,9 +1,11 @@
+use crate::math_utils::portable_pow;
+
 /// sRGB EOTF (gamma → linear), per spec §5.4.
 pub fn srgb_eotf(x: f64) -> f64 {
     if x <= 0.04045 {
         x / 12.92
     } else {
-        ((x + 0.055) / 1.055).powf(2.4)
+        portable_pow((x + 0.055) / 1.055, 2.4)
     }
 }
 
@@ -12,18 +14,18 @@ pub fn srgb_gamma(x: f64) -> f64 {
     if x <= 0.0031308 {
         12.92 * x
     } else {
-        1.055 * x.powf(1.0 / 2.4) - 0.055
+        1.055 * portable_pow(x, 1.0 / 2.4) - 0.055
     }
 }
 
 /// Adobe RGB EOTF (gamma → linear): x^2.2.
 pub fn adobe_rgb_eotf(x: f64) -> f64 {
-    x.powf(2.2)
+    portable_pow(x, 2.2)
 }
 
 /// ProPhoto RGB EOTF (gamma → linear): x^1.8.
 pub fn prophoto_rgb_eotf(x: f64) -> f64 {
-    x.powf(1.8)
+    portable_pow(x, 1.8)
 }
 
 /// BT.2020 PQ (ST 2084) inverse EOTF → linear light, then Reinhard tone-map to SDR.
@@ -35,10 +37,10 @@ pub fn bt2020_pq_eotf(x: f64) -> f64 {
     const C2: f64 = 18.8515625;
     const C3: f64 = 18.6875;
 
-    let n = x.powf(1.0 / M2);
+    let n = portable_pow(x, 1.0 / M2);
     let num = (n - C1).max(0.0);
     let den = C2 - C3 * n;
-    let y_linear = (num / den).powf(1.0 / M1);
+    let y_linear = portable_pow(num / den, 1.0 / M1);
 
     // PQ output is in [0, 10000] cd/m²
     let y_nits = y_linear * 10000.0;

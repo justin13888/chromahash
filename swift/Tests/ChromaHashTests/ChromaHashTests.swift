@@ -309,8 +309,8 @@ func solidImage(w: Int, h: Int, r: UInt8, g: UInt8, b: UInt8, a: UInt8) -> [UInt
   let rgba: [UInt8] = [200, 100, 50, 255]
   let hash = ChromaHash.encode(width: 1, height: 1, rgba: rgba, gamut: .sRGB)
   let expected: [UInt8] = [
-    206, 102, 243, 111, 12, 32, 16, 188, 15, 1, 132, 15, 66, 8, 222, 135,
-    224, 65, 8, 63, 4, 16, 2, 132, 67, 60, 184, 67, 56, 196, 131, 59,
+    206, 102, 243, 111, 12, 32, 16, 192, 15, 1, 132, 15, 66, 8, 222, 127,
+    0, 194, 7, 63, 4, 16, 2, 4, 68, 60, 56, 68, 64, 196, 131, 67,
   ]
   #expect(hash.hash == expected, "solid 1x1 hash mismatch")
 }
@@ -414,7 +414,7 @@ func solidImage(w: Int, h: Int, r: UInt8, g: UInt8, b: UInt8, a: UInt8) -> [UInt
   let hash = ChromaHash.encode(width: 8, height: 4, rgba: rgba, gamut: .sRGB)
   let expected: [UInt8] = [
     72, 164, 142, 96, 206, 47, 199, 187, 250, 100, 0, 200, 185, 215, 239, 123,
-    48, 66, 248, 222, 123, 238, 9, 64, 100, 189, 186, 179, 60, 168, 51, 68,
+    48, 66, 248, 224, 131, 238, 9, 64, 100, 189, 186, 179, 60, 168, 51, 68,
   ]
   #expect(hash.hash == expected, "gradient 8x4 hash mismatch")
 }
@@ -432,7 +432,7 @@ func solidImage(w: Int, h: Int, r: UInt8, g: UInt8, b: UInt8, a: UInt8) -> [UInt
   ]
   let hash = ChromaHash.encode(width: 4, height: 8, rgba: rgba, gamut: .sRGB)
   let expected: [UInt8] = [
-    201, 228, 142, 104, 12, 16, 229, 187, 23, 65, 0, 8, 190, 183, 237, 115,
+    201, 228, 142, 104, 12, 16, 229, 59, 24, 65, 0, 8, 190, 183, 237, 115,
     16, 62, 8, 169, 132, 239, 69, 64, 228, 60, 187, 43, 61, 168, 179, 59,
   ]
   #expect(hash.hash == expected, "gradient 4x8 hash mismatch")

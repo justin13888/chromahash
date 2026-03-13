@@ -88,8 +88,13 @@ csharp/*.user
 *.userosscache
 *.sln.docstates
 
+# === Comparison tool ===
+tools/comparison/output/
+tools/comparison/fixtures/synthetic/
+
 # === Editors ===
 .vscode/
 .idea/
 *.iml
 .todos/
+go/encode-stdin

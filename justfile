@@ -27,6 +27,16 @@ build: build-rust build-ts build-kotlin build-swift build-go build-python build-
 # Check formatting (no writes) across all implementations
 format-check: format-check-rust format-check-ts format-check-kotlin format-check-swift format-check-go format-check-python format-check-csharp
 
+# ─── Comparison tool ────────────────────────────────────────────────────────
+
+# Build the comparison tool
+build-compare:
+    mise exec -- pnpm --prefix tools/comparison run build
+
+# Run the visual comparison (generates HTML report)
+compare:
+    mise exec -- pnpm --prefix tools/comparison run compare
+
 # ─── Rust ────────────────────────────────────────────────────────────────────
 
 format-rust:

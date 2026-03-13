@@ -1,5 +1,7 @@
 use std::f64::consts::PI;
 
+use crate::math_utils::portable_cos;
+
 /// Compute the triangular scan order for an nx×ny grid, excluding DC.
 /// Per spec §6.6: row-major, condition cx*ny < nx*(ny-cy), skip (0,0).
 pub fn triangular_scan_order(nx: usize, ny: usize) -> Vec<(usize, usize)> {
@@ -34,10 +36,10 @@ pub fn dct_encode(
         while cx * ny < nx * (ny - cy) {
             let mut f = 0.0;
             for y in 0..h {
-                let fy = (PI / h as f64 * cy as f64 * (y as f64 + 0.5)).cos();
+                let fy = portable_cos(PI / h as f64 * cy as f64 * (y as f64 + 0.5));
                 for x in 0..w {
                     f += channel[x + y * w]
-                        * (PI / w as f64 * cx as f64 * (x as f64 + 0.5)).cos()
+                        * portable_cos(PI / w as f64 * cx as f64 * (x as f64 + 0.5))
                         * fy;
                 }
             }
@@ -78,8 +80,8 @@ pub fn dct_decode_pixel(
     for (j, &(cx, cy)) in scan_order.iter().enumerate() {
         let cx_factor = if cx > 0 { 2.0 } else { 1.0 };
         let cy_factor = if cy > 0 { 2.0 } else { 1.0 };
-        let fx = (PI / w as f64 * cx as f64 * (x as f64 + 0.5)).cos();
-        let fy = (PI / h as f64 * cy as f64 * (y as f64 + 0.5)).cos();
+        let fx = portable_cos(PI / w as f64 * cx as f64 * (x as f64 + 0.5));
+        let fy = portable_cos(PI / h as f64 * cy as f64 * (y as f64 + 0.5));
         value += ac[j] * fx * fy * cx_factor * cy_factor;
     }
     value

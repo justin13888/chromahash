@@ -47,10 +47,10 @@ internal static class Dct
                 double f = 0.0;
                 for (int y = 0; y < h; y++)
                 {
-                    double fy = Math.Cos(Math.PI / h * cy * (y + 0.5));
+                    double fy = MathUtils.PortableCos(Math.PI / h * cy * (y + 0.5));
                     for (int x = 0; x < w; x++)
                     {
-                        f += channel[x + y * w] * Math.Cos(Math.PI / w * cx * (x + 0.5)) * fy;
+                        f += channel[x + y * w] * MathUtils.PortableCos(Math.PI / w * cx * (x + 0.5)) * fy;
                     }
                 }
                 f /= wh;
@@ -95,8 +95,8 @@ internal static class Dct
             (int cx, int cy) = scanOrder[j];
             double cxFactor = cx > 0 ? 2.0 : 1.0;
             double cyFactor = cy > 0 ? 2.0 : 1.0;
-            double fx = Math.Cos(Math.PI / w * cx * (x + 0.5));
-            double fy = Math.Cos(Math.PI / h * cy * (y + 0.5));
+            double fx = MathUtils.PortableCos(Math.PI / w * cx * (x + 0.5));
+            double fy = MathUtils.PortableCos(Math.PI / h * cy * (y + 0.5));
             value += ac[j] * fx * fy * cxFactor * cyFactor;
         }
         return value;

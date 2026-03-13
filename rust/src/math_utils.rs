@@ -8,13 +8,161 @@ pub fn round_half_away_from_zero(x: f64) -> f64 {
     }
 }
 
+/// Portable natural logarithm using only basic IEEE 754 arithmetic.
+/// Range-reduces to [1, 2) then uses the series ln(m) = 2·Σ u^(2k+1)/(2k+1)
+/// where u = (m-1)/(m+1).
+#[allow(clippy::approx_constant)]
+pub fn portable_ln(x: f64) -> f64 {
+    const LN2: f64 = 0.6931471805599453;
+
+    if x <= 0.0 {
+        return f64::NEG_INFINITY;
+    }
+    if x == 1.0 {
+        return 0.0;
+    }
+
+    // Range reduce to m ∈ [1, 2)
+    let mut m = x;
+    let mut e: i32 = 0;
+    while m >= 2.0 {
+        m /= 2.0;
+        e += 1;
+    }
+    while m < 1.0 {
+        m *= 2.0;
+        e -= 1;
+    }
+
+    // Series: ln(m) = 2·(u + u³/3 + u⁵/5 + ...) where u = (m-1)/(m+1)
+    // For m ∈ [1, 2), u ∈ [0, 1/3), converges fast
+    let u = (m - 1.0) / (m + 1.0);
+    let u2 = u * u;
+    let mut term = u;
+    let mut sum = u;
+    let mut k: i32 = 1;
+    while k <= 20 {
+        term *= u2;
+        sum += term / (2 * k + 1) as f64;
+        k += 1;
+    }
+
+    2.0 * sum + e as f64 * LN2
+}
+
+/// Portable exponential using only basic IEEE 754 arithmetic.
+/// Range-reduces via exp(x) = 2^k · exp(r) where r ∈ [-ln2/2, ln2/2],
+/// then uses a degree-25 Taylor polynomial for exp(r).
+#[allow(clippy::approx_constant)]
+pub fn portable_exp(x: f64) -> f64 {
+    const LN2: f64 = 0.6931471805599453;
+
+    if x == 0.0 {
+        return 1.0;
+    }
+
+    // Range reduction: k = round(x / ln2), r = x - k·ln2
+    let k = (x / LN2 + 0.5).floor() as i32;
+    let r = x - k as f64 * LN2;
+
+    // Taylor polynomial for exp(r), |r| < 0.347
+    let mut term = 1.0;
+    let mut sum = 1.0;
+    let mut i: i32 = 1;
+    while i <= 25 {
+        term *= r / i as f64;
+        sum += term;
+        i += 1;
+    }
+
+    // Multiply by 2^k
+    let mut result = sum;
+    if k >= 0 {
+        let mut j = 0;
+        while j < k {
+            result *= 2.0;
+            j += 1;
+        }
+    } else {
+        let mut j = 0;
+        while j < -k {
+            result /= 2.0;
+            j += 1;
+        }
+    }
+
+    result
+}
+
+/// Portable power function: base^exponent using only basic IEEE 754 arithmetic.
+/// Computes exp(exponent · ln(base)).
+pub fn portable_pow(base: f64, exponent: f64) -> f64 {
+    if base == 0.0 {
+        return 0.0;
+    }
+    if exponent == 0.0 {
+        return 1.0;
+    }
+    if base == 1.0 {
+        return 1.0;
+    }
+    portable_exp(exponent * portable_ln(base))
+}
+
 /// Signed cube root per spec §2.4: cbrt(x) = sign(x) × |x|^(1/3).
+/// Uses portable_pow for cross-platform determinism.
 pub fn cbrt_signed(x: f64) -> f64 {
     if x == 0.0 {
         0.0
+    } else if x > 0.0 {
+        portable_pow(x, 1.0 / 3.0)
     } else {
-        x.signum() * x.abs().cbrt()
+        -portable_pow(-x, 1.0 / 3.0)
     }
+}
+
+/// Portable cosine using only basic IEEE 754 arithmetic (+, -, *, /).
+/// Produces bit-identical results across all platforms, unlike platform-specific
+/// cos() which can differ at the last ULP due to different libm implementations.
+/// Uses a degree-16 Taylor polynomial with range reduction.
+#[allow(clippy::approx_constant)]
+pub fn portable_cos(x: f64) -> f64 {
+    const PI: f64 = 3.141592653589793;
+    const TWO_PI: f64 = 6.283185307179586;
+    const HALF_PI: f64 = 1.5707963267948966;
+
+    // cos is even
+    let mut x = if x < 0.0 { -x } else { x };
+
+    // Range reduce to [0, 2π)
+    if x >= TWO_PI {
+        x -= (x / TWO_PI).floor() * TWO_PI;
+    }
+
+    // Reduce to [0, π] using cos(2π - x) = cos(x)
+    if x > PI {
+        x = TWO_PI - x;
+    }
+
+    // Reduce to [0, π/2] using cos(π - x) = -cos(x)
+    let negate = x > HALF_PI;
+    if negate {
+        x = PI - x;
+    }
+
+    // Horner form of degree-16 Taylor polynomial for cos(x) on [0, π/2]
+    // Coefficients: (-1)^n / (2n)! for n = 0..8
+    let x2 = x * x;
+    let r = 1.0
+        + x2 * (-1.0 / 2.0
+            + x2 * (1.0 / 24.0
+                + x2 * (-1.0 / 720.0
+                    + x2 * (1.0 / 40320.0
+                        + x2 * (-1.0 / 3628800.0
+                            + x2 * (1.0 / 479001600.0
+                                + x2 * (-1.0 / 87178291200.0 + x2 * (1.0 / 20922789888000.0))))))));
+
+    if negate { -r } else { r }
 }
 
 /// Clamp to [0, 1].
@@ -86,6 +234,43 @@ mod tests {
         assert_eq!(clamp01(-0.5), 0.0);
         assert_eq!(clamp01(0.5), 0.5);
         assert_eq!(clamp01(1.5), 1.0);
+    }
+
+    #[test]
+    fn portable_cos_known_values() {
+        let pi = std::f64::consts::PI;
+        assert!((portable_cos(0.0) - 1.0).abs() < 1e-15);
+        assert!(portable_cos(pi / 2.0).abs() < 1e-8);
+        assert!((portable_cos(pi) - (-1.0)).abs() < 1e-15);
+        assert!((portable_cos(2.0 * pi) - 1.0).abs() < 1e-14);
+        // Check accuracy for a typical DCT argument
+        assert!((portable_cos(pi / 16.0 * 3.0 * 7.5) - (-0.2902846772544624)).abs() < 1e-10);
+    }
+
+    #[test]
+    fn portable_ln_known_values() {
+        assert!((portable_ln(1.0) - 0.0).abs() < 1e-14);
+        assert!((portable_ln(std::f64::consts::E) - 1.0).abs() < 1e-12);
+        assert!((portable_ln(2.0) - std::f64::consts::LN_2).abs() < 1e-14);
+        assert!((portable_ln(0.5) - (-std::f64::consts::LN_2)).abs() < 1e-14);
+        assert!((portable_ln(10.0) - std::f64::consts::LN_10).abs() < 1e-12);
+    }
+
+    #[test]
+    fn portable_exp_known_values() {
+        assert!((portable_exp(0.0) - 1.0).abs() < 1e-15);
+        assert!((portable_exp(1.0) - std::f64::consts::E).abs() < 1e-12);
+        assert!((portable_exp(-1.0) - 1.0 / std::f64::consts::E).abs() < 1e-12);
+        assert!((portable_exp(std::f64::consts::LN_2) - 2.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn portable_pow_known_values() {
+        assert!((portable_pow(2.0, 10.0) - 1024.0).abs() < 1e-8);
+        assert!((portable_pow(0.5, 2.4) - 0.5_f64.powf(2.4)).abs() < 1e-12);
+        assert!((portable_pow(0.8, 2.4) - 0.8_f64.powf(2.4)).abs() < 1e-12);
+        assert_eq!(portable_pow(0.0, 2.4), 0.0);
+        assert_eq!(portable_pow(1.0, 2.4), 1.0);
     }
 
     #[test]

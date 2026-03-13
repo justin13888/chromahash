@@ -1,0 +1,80 @@
+name: CI (Comparison Tool)
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "tools/comparison/**"
+      - "typescript/**"
+      - ".github/workflows/ci-comparison.yml"
+  pull_request:
+    paths:
+      - "tools/comparison/**"
+      - "typescript/**"
+      - ".github/workflows/ci-comparison.yml"
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: latest
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: |
+            typescript/pnpm-lock.yaml
+            tools/comparison/pnpm-lock.yaml
+
+      # Build the TypeScript library dependency first
+      - name: Install TypeScript lib dependencies
+        run: pnpm --prefix typescript install --frozen-lockfile
+
+      - name: Build TypeScript lib
+        run: pnpm --prefix typescript run build
+
+      # Build the comparison tool
+      - name: Install comparison tool dependencies
+        run: pnpm --prefix tools/comparison install --frozen-lockfile
+
+      - name: Format check
+        run: pnpm --prefix tools/comparison run format:check
+
+      - name: Lint
+        run: pnpm --prefix tools/comparison run lint
+
+      - name: Build
+        run: pnpm --prefix tools/comparison run build
+
+      # Build CLI harnesses (verify they compile)
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Rust harness
+        run: cargo build --manifest-path rust/Cargo.toml --example encode_stdin
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: go/go.sum
+
+      - name: Build Go harness
+        run: cd go && go build ./cmd/encode-stdin
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Verify Python harness syntax
+        run: python -m py_compile python/chromahash/encode_stdin.py
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0"
+
+      - name: Build C# solution (includes CLI)
+        run: dotnet build csharp/Chromahash.sln --verbosity quiet

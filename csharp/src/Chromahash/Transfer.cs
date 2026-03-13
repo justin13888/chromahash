@@ -8,7 +8,7 @@ internal static class Transfer
         if (x <= 0.04045)
             return x / 12.92;
         else
-            return Math.Pow((x + 0.055) / 1.055, 2.4);
+            return MathUtils.PortablePow((x + 0.055) / 1.055, 2.4);
     }
 
     /// <summary>sRGB gamma (linear → gamma), per spec §12.7.</summary>
@@ -17,14 +17,14 @@ internal static class Transfer
         if (x <= 0.0031308)
             return 12.92 * x;
         else
-            return 1.055 * Math.Pow(x, 1.0 / 2.4) - 0.055;
+            return 1.055 * MathUtils.PortablePow(x, 1.0 / 2.4) - 0.055;
     }
 
     /// <summary>Adobe RGB EOTF (gamma → linear): x^2.2.</summary>
-    public static double AdobeRgbEotf(double x) => Math.Pow(x, 2.2);
+    public static double AdobeRgbEotf(double x) => MathUtils.PortablePow(x, 2.2);
 
     /// <summary>ProPhoto RGB EOTF (gamma → linear): x^1.8.</summary>
-    public static double ProPhotoRgbEotf(double x) => Math.Pow(x, 1.8);
+    public static double ProPhotoRgbEotf(double x) => MathUtils.PortablePow(x, 1.8);
 
     /// <summary>BT.2020 PQ (ST 2084) inverse EOTF → linear light, then Reinhard tone-map to SDR.</summary>
     public static double Bt2020PqEotf(double x)
@@ -35,10 +35,10 @@ internal static class Transfer
         const double c2 = 18.8515625;
         const double c3 = 18.6875;
 
-        double n = Math.Pow(x, 1.0 / m2);
+        double n = MathUtils.PortablePow(x, 1.0 / m2);
         double num = Math.Max(n - c1, 0.0);
         double den = c2 - c3 * n;
-        double yLinear = Math.Pow(num / den, 1.0 / m1);
+        double yLinear = MathUtils.PortablePow(num / den, 1.0 / m1);
 
         // PQ output is in [0, 10000] cd/m²
         double yNits = yLinear * 10000.0;

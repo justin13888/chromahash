@@ -36,10 +36,10 @@ func dctEncode(channel []float64, w, h, nx, ny int) (float64, []float64, float64
 		for cx := 0; cx*ny < nx*(ny-cy); cx++ {
 			f := 0.0
 			for y := 0; y < h; y++ {
-				fy := math.Cos(math.Pi / float64(h) * float64(cy) * (float64(y) + 0.5))
+				fy := portableCos(math.Pi / float64(h) * float64(cy) * (float64(y) + 0.5))
 				for x := 0; x < w; x++ {
 					f += channel[x+y*w] *
-						math.Cos(math.Pi/float64(w)*float64(cx)*(float64(x)+0.5)) *
+						portableCos(math.Pi/float64(w)*float64(cx)*(float64(x)+0.5)) *
 						fy
 				}
 			}
@@ -83,8 +83,8 @@ func dctDecodePixel(dc float64, ac []float64, scanOrder [][2]int, x, y, w, h int
 		if cy > 0 {
 			cyFactor = 2.0
 		}
-		fx := math.Cos(math.Pi / float64(w) * float64(cx) * (float64(x) + 0.5))
-		fy := math.Cos(math.Pi / float64(h) * float64(cy) * (float64(y) + 0.5))
+		fx := portableCos(math.Pi / float64(w) * float64(cx) * (float64(x) + 0.5))
+		fy := portableCos(math.Pi / float64(h) * float64(cy) * (float64(y) + 0.5))
 		value += ac[j] * fx * fy * cxFactor * cyFactor
 	}
 	return value

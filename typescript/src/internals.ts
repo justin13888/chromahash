@@ -182,7 +182,159 @@ export function roundHalfAwayFromZero(x: number): number {
 /** Signed cube root: cbrt(x) = sign(x) * |x|^(1/3). */
 export function cbrtSigned(x: number): number {
   if (x === 0) return 0;
-  return Math.cbrt(x);
+  if (x > 0) return portablePow(x, 1.0 / 3.0);
+  return -portablePow(-x, 1.0 / 3.0);
+}
+
+/**
+ * Portable cosine using only basic IEEE 754 arithmetic (+, -, *, /).
+ * Produces bit-identical results across all platforms, unlike Math.cos()
+ * which can differ at the last ULP due to different engine implementations.
+ */
+export function portableCos(x: number): number {
+  // biome-ignore lint/suspicious/noApproximativeNumericConstant: explicit literal required for cross-platform bit-identical results
+  const PI = 3.141592653589793;
+  const TWO_PI = 6.283185307179586;
+  const HALF_PI = 1.5707963267948966;
+
+  // cos is even — use a local variable to avoid reassigning the parameter
+  let t = x < 0 ? -x : x;
+
+  // Range reduce to [0, 2π)
+  if (t >= TWO_PI) {
+    t -= Math.floor(t / TWO_PI) * TWO_PI;
+  }
+
+  // Reduce to [0, π] using cos(2π - t) = cos(t)
+  if (t > PI) {
+    t = TWO_PI - t;
+  }
+
+  // Reduce to [0, π/2] using cos(π - t) = -cos(t)
+  const negate = t > HALF_PI;
+  if (negate) {
+    t = PI - t;
+  }
+
+  // Horner form of degree-16 Taylor polynomial for cos(t) on [0, π/2]
+  const x2 = t * t;
+  const r =
+    1.0 +
+    x2 *
+      (-1.0 / 2.0 +
+        x2 *
+          (1.0 / 24.0 +
+            x2 *
+              (-1.0 / 720.0 +
+                x2 *
+                  (1.0 / 40320.0 +
+                    x2 *
+                      (-1.0 / 3628800.0 +
+                        x2 *
+                          (1.0 / 479001600.0 +
+                            x2 *
+                              (-1.0 / 87178291200.0 +
+                                x2 * (1.0 / 20922789888000.0))))))));
+
+  return negate ? -r : r;
+}
+
+/**
+ * Portable natural logarithm using only basic IEEE 754 arithmetic (+, -, *, /).
+ * Range-reduces to [1, 2) then uses the series ln(m) = 2 * sum(u^(2k+1)/(2k+1))
+ * where u = (m-1)/(m+1).
+ */
+export function portableLn(x: number): number {
+  // biome-ignore lint/suspicious/noApproximativeNumericConstant: explicit constant for cross-platform determinism
+  const LN2 = 0.6931471805599453;
+
+  if (x <= 0.0) {
+    return Number.NEGATIVE_INFINITY;
+  }
+  if (x === 1.0) {
+    return 0.0;
+  }
+
+  // Range reduce to m in [1, 2)
+  let m = x;
+  let e = 0;
+  while (m >= 2.0) {
+    m /= 2.0;
+    e += 1;
+  }
+  while (m < 1.0) {
+    m *= 2.0;
+    e -= 1;
+  }
+
+  // Series: ln(m) = 2*(u + u^3/3 + u^5/5 + ...) where u = (m-1)/(m+1)
+  const u = (m - 1.0) / (m + 1.0);
+  const u2 = u * u;
+  let term = u;
+  let sum = u;
+  for (let k = 1; k <= 20; k++) {
+    term *= u2;
+    sum += term / (2 * k + 1);
+  }
+
+  return 2.0 * sum + e * LN2;
+}
+
+/**
+ * Portable exponential using only basic IEEE 754 arithmetic (+, -, *, /).
+ * Range-reduces via exp(x) = 2^k * exp(r) where r in [-ln2/2, ln2/2],
+ * then uses a degree-25 Taylor polynomial for exp(r).
+ */
+export function portableExp(x: number): number {
+  // biome-ignore lint/suspicious/noApproximativeNumericConstant: explicit constant for cross-platform determinism
+  const LN2 = 0.6931471805599453;
+
+  if (x === 0.0) {
+    return 1.0;
+  }
+
+  // Range reduction: k = round(x / ln2), r = x - k*ln2
+  const k = Math.floor(x / LN2 + 0.5);
+  const r = x - k * LN2;
+
+  // Taylor polynomial for exp(r), |r| < 0.347
+  let term = 1.0;
+  let sum = 1.0;
+  for (let i = 1; i <= 25; i++) {
+    term *= r / i;
+    sum += term;
+  }
+
+  // Multiply by 2^k
+  let result = sum;
+  if (k >= 0) {
+    for (let j = 0; j < k; j++) {
+      result *= 2.0;
+    }
+  } else {
+    for (let j = 0; j < -k; j++) {
+      result /= 2.0;
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Portable power function: base^exponent using only basic IEEE 754 arithmetic.
+ * Computes exp(exponent * ln(base)).
+ */
+export function portablePow(base: number, exponent: number): number {
+  if (base === 0.0) {
+    return 0.0;
+  }
+  if (exponent === 0.0) {
+    return 1.0;
+  }
+  if (base === 1.0) {
+    return 1.0;
+  }
+  return portableExp(exponent * portableLn(base));
 }
 
 /** Clamp to [0, 1]. */
@@ -216,7 +368,7 @@ export function srgbEotf(x: number): number {
   if (x <= 0.04045) {
     return x / 12.92;
   }
-  return ((x + 0.055) / 1.055) ** 2.4;
+  return portablePow((x + 0.055) / 1.055, 2.4);
 }
 
 /** sRGB gamma (linear -> gamma). */
@@ -224,17 +376,17 @@ export function srgbGamma(x: number): number {
   if (x <= 0.0031308) {
     return 12.92 * x;
   }
-  return 1.055 * x ** (1.0 / 2.4) - 0.055;
+  return 1.055 * portablePow(x, 1.0 / 2.4) - 0.055;
 }
 
 /** Adobe RGB EOTF (gamma -> linear): x^2.2. */
 export function adobeRgbEotf(x: number): number {
-  return x ** 2.2;
+  return portablePow(x, 2.2);
 }
 
 /** ProPhoto RGB EOTF (gamma -> linear): x^1.8. */
 export function proPhotoRgbEotf(x: number): number {
-  return x ** 1.8;
+  return portablePow(x, 1.8);
 }
 
 /** BT.2020 PQ (ST 2084) inverse EOTF -> linear, then Reinhard tone-map to SDR. */
@@ -245,10 +397,10 @@ export function bt2020PqEotf(x: number): number {
   const C2 = 18.8515625;
   const C3 = 18.6875;
 
-  const n = x ** (1.0 / M2_PQ);
+  const n = portablePow(x, 1.0 / M2_PQ);
   const num = Math.max(n - C1, 0);
   const den = C2 - C3 * n;
-  const yLinear = (num / den) ** (1.0 / M1_PQ);
+  const yLinear = portablePow(num / den, 1.0 / M1_PQ);
 
   const yNits = yLinear * 10000.0;
   const l = yNits / 203.0;
@@ -463,11 +615,11 @@ export function dctEncode(
     while (cx * ny < nx * (ny - cy)) {
       let f = 0;
       for (let y = 0; y < h; y++) {
-        const fy = Math.cos((Math.PI / h) * cy * (y + 0.5));
+        const fy = portableCos((Math.PI / h) * cy * (y + 0.5));
         for (let x = 0; x < w; x++) {
           f +=
             f64(channel, x + y * w) *
-            Math.cos((Math.PI / w) * cx * (x + 0.5)) *
+            portableCos((Math.PI / w) * cx * (x + 0.5)) *
             fy;
         }
       }
@@ -506,8 +658,8 @@ export function dctDecodePixel(
     const [cx, cy] = atPair(scanOrder, j);
     const cxFactor = cx > 0 ? 2.0 : 1.0;
     const cyFactor = cy > 0 ? 2.0 : 1.0;
-    const fx = Math.cos((Math.PI / w) * cx * (x + 0.5));
-    const fy = Math.cos((Math.PI / h) * cy * (y + 0.5));
+    const fx = portableCos((Math.PI / w) * cx * (x + 0.5));
+    const fy = portableCos((Math.PI / h) * cy * (y + 0.5));
     value += at(ac, j) * fx * fy * cxFactor * cyFactor;
   }
   return value;

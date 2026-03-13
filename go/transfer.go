@@ -7,7 +7,7 @@ func srgbEotf(x float64) float64 {
 	if x <= 0.04045 {
 		return x / 12.92
 	}
-	return math.Pow((x+0.055)/1.055, 2.4)
+	return portablePow((x+0.055)/1.055, 2.4)
 }
 
 // srgbGamma converts linear to sRGB gamma-encoded value, per spec §12.7.
@@ -15,17 +15,17 @@ func srgbGamma(x float64) float64 {
 	if x <= 0.0031308 {
 		return 12.92 * x
 	}
-	return 1.055*math.Pow(x, 1.0/2.4) - 0.055
+	return 1.055*portablePow(x, 1.0/2.4) - 0.055
 }
 
 // adobeRgbEotf converts Adobe RGB gamma-encoded value to linear: x^2.2.
 func adobeRgbEotf(x float64) float64 {
-	return math.Pow(x, 2.2)
+	return portablePow(x, 2.2)
 }
 
 // proPhotoRgbEotf converts ProPhoto RGB gamma-encoded value to linear: x^1.8.
 func proPhotoRgbEotf(x float64) float64 {
-	return math.Pow(x, 1.8)
+	return portablePow(x, 1.8)
 }
 
 // bt2020PqEotf converts BT.2020 PQ (ST 2084) signal to linear light,
@@ -39,10 +39,10 @@ func bt2020PqEotf(x float64) float64 {
 		pqC3 = 18.6875
 	)
 
-	n := math.Pow(x, 1.0/pqM2)
+	n := portablePow(x, 1.0/pqM2)
 	num := math.Max(n-pqC1, 0.0)
 	den := pqC2 - pqC3*n
-	yLinear := math.Pow(num/den, 1.0/pqM1)
+	yLinear := portablePow(num/den, 1.0/pqM1)
 
 	// PQ output is in [0, 10000] cd/m²
 	yNits := yLinear * 10000.0

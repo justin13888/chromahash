@@ -2,6 +2,8 @@
 
 import math
 
+from chromahash._math_utils import portable_cos
+
 
 def triangular_scan_order(nx: int, ny: int) -> list[tuple[int, int]]:
     """Compute the triangular scan order for an nx×ny grid, excluding DC.
@@ -36,9 +38,9 @@ def dct_encode(
         while cx * ny < nx * (ny - cy):
             f = 0.0
             for y in range(h):
-                fy = math.cos(math.pi / h * cy * (y + 0.5))
+                fy = portable_cos(math.pi / h * cy * (y + 0.5))
                 for x in range(w):
-                    f += channel[x + y * w] * math.cos(math.pi / w * cx * (x + 0.5)) * fy
+                    f += channel[x + y * w] * portable_cos(math.pi / w * cx * (x + 0.5)) * fy
             f /= wh
             if cx > 0 or cy > 0:
                 ac.append(f)
@@ -72,7 +74,7 @@ def dct_decode_pixel(
     for j, (cx, cy) in enumerate(scan_order):
         cx_factor = 2.0 if cx > 0 else 1.0
         cy_factor = 2.0 if cy > 0 else 1.0
-        fx = math.cos(math.pi / w * cx * (x + 0.5))
-        fy = math.cos(math.pi / h * cy * (y + 0.5))
+        fx = portable_cos(math.pi / w * cx * (x + 0.5))
+        fy = portable_cos(math.pi / h * cy * (y + 0.5))
         value += ac[j] * fx * fy * cx_factor * cy_factor
     return value

@@ -2,7 +2,6 @@ package chromahash
 
 import kotlin.math.PI
 import kotlin.math.abs
-import kotlin.math.cos
 import kotlin.math.max
 
 /**
@@ -46,11 +45,11 @@ internal fun dctEncode(
         while (cx * ny < nx * (ny - cy)) {
             var f = 0.0
             for (y in 0 until h) {
-                val fy = cos(PI / h.toDouble() * cy.toDouble() * (y.toDouble() + 0.5))
+                val fy = portableCos(PI / h.toDouble() * cy.toDouble() * (y.toDouble() + 0.5))
                 for (x in 0 until w) {
                     f +=
                         channel[x + y * w] *
-                        cos(PI / w.toDouble() * cx.toDouble() * (x.toDouble() + 0.5)) *
+                        portableCos(PI / w.toDouble() * cx.toDouble() * (x.toDouble() + 0.5)) *
                         fy
                 }
             }
@@ -92,8 +91,8 @@ internal fun dctDecodePixel(
         val (cx, cy) = pair
         val cxFactor = if (cx > 0) 2.0 else 1.0
         val cyFactor = if (cy > 0) 2.0 else 1.0
-        val fx = cos(PI / w.toDouble() * cx.toDouble() * (x.toDouble() + 0.5))
-        val fy = cos(PI / h.toDouble() * cy.toDouble() * (y.toDouble() + 0.5))
+        val fx = portableCos(PI / w.toDouble() * cx.toDouble() * (x.toDouble() + 0.5))
+        val fy = portableCos(PI / h.toDouble() * cy.toDouble() * (y.toDouble() + 0.5))
         value += ac[j] * fx * fy * cxFactor * cyFactor
     }
     return value
