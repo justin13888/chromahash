@@ -366,8 +366,9 @@ export async function generateFixtures(): Promise<void> {
 
 // Run directly if invoked as main
 const isMain =
-  process.argv[1]?.endsWith("generate-fixtures.js") ||
-  process.argv[1]?.endsWith("generate-fixtures.ts");
+  import.meta.filename !== undefined &&
+  process.argv[1] !== undefined &&
+  path.resolve(process.argv[1]) === import.meta.filename;
 if (isMain) {
   generateFixtures().catch((err) => {
     console.error(err);

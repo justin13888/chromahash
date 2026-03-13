@@ -16,7 +16,6 @@
   "dependencies": {
     "@chromahash/typescript": "file:../../typescript",
     "@unpic/placeholder": "^0.1.2",
-    "@unpic/pixels": "^1.2.2",
     "blurhash": "^2.0.5",
     "lqip-modern": "^2.2.1",
     "sharp": "^0.33.5",

@@ -78,3 +78,6 @@ jobs:
 
       - name: Build C# solution (includes CLI)
         run: dotnet build csharp/Chromahash.sln --verbosity quiet
+
+      - name: Run comparison (skip cross-language harnesses)
+        run: pnpm --prefix tools/comparison run compare --skip-harnesses

@@ -99,6 +99,18 @@ async function main(): Promise<void> {
     console.log(`Processing: ${name} (${category})`);
 
     const input = await loadImage(imagePath);
+
+    // Determine gamut from filename (used by both adapters and harnesses)
+    const gamutMap: Record<string, string> = {
+      "gamut-srgb": "srgb",
+      "gamut-p3": "displayp3",
+      "gamut-adobe-rgb": "adobergb",
+      "gamut-bt2020": "bt2020",
+      "gamut-prophoto": "prophoto",
+    };
+    const gamut = gamutMap[name] ?? "srgb";
+    input.gamut = gamut;
+
     const originalDataUri = await rgbaToDataUri(
       input.smallRgba,
       input.smallWidth,
@@ -109,8 +121,6 @@ async function main(): Promise<void> {
     const formatResults: FormatResult[] = [];
     for (const adapter of adapters) {
       try {
-        // For gamut images, ChromaHash should use the appropriate gamut
-        // but other formats always get sRGB pixels
         const result = await adapter.process(input, iterations);
         formatResults.push(result);
       } catch (err) {
@@ -124,15 +134,6 @@ async function main(): Promise<void> {
     let harnessResults: HarnessResult[] = [];
     if (!skipHarnesses) {
       try {
-        // Determine gamut from filename
-        const gamutMap: Record<string, string> = {
-          "gamut-srgb": "srgb",
-          "gamut-p3": "displayp3",
-          "gamut-adobe-rgb": "adobergb",
-          "gamut-bt2020": "bt2020",
-          "gamut-prophoto": "prophoto",
-        };
-        const gamut = gamutMap[name] ?? "srgb";
         harnessResults = await runAllHarnesses(input, gamut);
       } catch (err) {
         console.warn(

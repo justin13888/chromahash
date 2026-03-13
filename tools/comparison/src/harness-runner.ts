@@ -258,6 +258,11 @@ export async function runAllHarnesses(
         result.hash.length === 32 &&
         referenceHash.every((b, i) => b === result.hash[i]);
     }
+  } else {
+    // No reference hash available — mark all as non-matching
+    for (const result of results) {
+      result.matches = false;
+    }
   }
 
   return results;

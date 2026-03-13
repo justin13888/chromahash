@@ -23,7 +23,7 @@ export class LqipModernAdapter implements FormatAdapter {
     }, iterations);
 
     const metadata = result.metadata;
-    const encodedSizeBytes = metadata.dataURIBase64.length;
+    const encodedSizeBytes = result.content.length;
     const dataUri = metadata.dataURIBase64;
 
     // Decode the lqip output back to RGBA for PSNR computation

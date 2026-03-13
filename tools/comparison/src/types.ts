@@ -14,6 +14,8 @@ export interface ImageInput {
   smallRgba: Uint8Array;
   /** Original file as a Buffer. */
   fileBuffer: Buffer;
+  /** Source gamut identifier (e.g. "srgb", "displayp3"). */
+  gamut?: string;
 }
 
 /** Result of encoding/decoding with a particular format. */

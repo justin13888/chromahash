@@ -53,7 +53,11 @@ export function generateReport(entries: ImageEntry[]): string {
   });
 
   // Check cross-language consistency
+  const harnessesSkipped = entries.every((e) => e.harnessResults.length === 0);
   const langPassFail = languages.map((lang) => {
+    if (harnessesSkipped) {
+      return { language: lang, pass: null as boolean | null };
+    }
     const allMatch = entries.every((e) => {
       const result = e.harnessResults.find((r) => r.language === lang);
       return result?.matches ?? false;
@@ -117,8 +121,8 @@ export function generateReport(entries: ImageEntry[]): string {
 <body>
 <h1>ChromaHash Visual Comparison Report</h1>
 <div class="controls">
-  <button class="active" onclick="switchTab('formats')">LQIP Formats</button>
-  <button onclick="switchTab('implementations')">ChromaHash Implementations</button>
+  <button class="active" onclick="switchTab('formats', event)">LQIP Formats</button>
+  <button onclick="switchTab('implementations', event)">ChromaHash Implementations</button>
   <button onclick="toggleTheme()">Toggle Light/Dark</button>
 </div>
 
@@ -187,7 +191,7 @@ ${catEntries
 ${langPassFail
   .map(
     (l) =>
-      `<tr><td>${l.language}</td><td class="${l.pass ? "pass" : "fail"}">${l.pass ? "PASS" : "FAIL"}</td></tr>`,
+      `<tr><td>${l.language}</td><td class="${l.pass === null ? "" : l.pass ? "pass" : "fail"}">${l.pass === null ? "N/A" : l.pass ? "PASS" : "FAIL"}</td></tr>`,
   )
   .join("\n")}
 </table>
@@ -223,11 +227,11 @@ ${catEntries
 </div>
 
 <script>
-function switchTab(tab) {
+function switchTab(tab, evt) {
   document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.controls button').forEach(el => el.classList.remove('active'));
   document.getElementById('tab-' + tab).classList.add('active');
-  event.target.classList.add('active');
+  evt.target.classList.add('active');
 }
 function toggleTheme() {
   document.body.classList.toggle('light');
