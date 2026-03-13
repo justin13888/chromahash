@@ -89,20 +89,6 @@ This regenerates all JSON test vectors from the Rust implementation, then re-run
 
 ---
 
-## Per-Language Commands
-
-When iterating on a single language, use the targeted commands to save time:
-
-| Action | Rust | TypeScript | Kotlin | Swift | Go | Python | C# |
-|--------|------|------------|--------|-------|----|--------|----|
-| Format check | `just format-check-rust` | `just format-check-ts` | `just format-check-kotlin` | `just format-check-swift` | `just format-check-go` | `just format-check-python` | `just format-check-csharp` |
-| Format fix | `just format-fix-rust` | `just format-fix-ts` | `just format-fix-kotlin` | `just format-fix-swift` | `just format-fix-go` | `just format-fix-python` | `just format-fix-csharp` |
-| Lint | `just lint-rust` | `just lint-ts` | `just lint-kotlin` | `just lint-swift` | `just lint-go` | `just lint-python` | `just lint-csharp` |
-| Test | `just test-rust` | `just test-ts` | `just test-kotlin` | `just test-swift` | `just test-go` | `just test-python` | `just test-csharp` |
-| Build | `just build-rust` | `just build-ts` | `just build-kotlin` | `just build-swift` | `just build-go` | `just build-python` | `just build-csharp` |
-
----
-
 ## Test Architecture
 
 ### Golden Test Vectors
@@ -357,7 +343,7 @@ CI mirrors the local `just` commands. If local checks pass, CI should pass.
 
 ### Tests pass locally but fail in CI
 
-- Check tool versions match `.mise.toml` (node 24, java 21, gradle 9.4.0, swift 6.2.4)
+- Check tool versions match `.mise.toml` (node 24, java 21, gradle 9.4.0, swift 6.2.4, go 1.24, python 3.13, dotnet 9)
 - CI installs specific versions; local `mise install` should match
 
 ### One language passes but another fails on the same test vector

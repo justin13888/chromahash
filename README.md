@@ -2,16 +2,19 @@
 
 > Modern, high-quality image placeholder representation for professional formats (LQIP)
 
-chromahash is a multi-language library implementing a compact, high-fidelity Low Quality Image Placeholder (LQIP) format. All four implementations are spec-compatible — identical input produces identical output across languages.
+chromahash is a multi-language library implementing a compact, high-fidelity Low Quality Image Placeholder (LQIP) format. All seven implementations are spec-compatible — identical input produces identical output across languages.
 
 ## Implementations
 
-| Language   | Directory      | Runtime / Build     | Status |
-| ---------- | -------------- | ------------------- | ------ |
-| Rust       | [`rust/`]      | Cargo (stable)      | WIP    |
-| TypeScript | [`typescript/`]| Node 24 + pnpm      | WIP    |
-| Kotlin     | [`kotlin/`]    | Gradle 9.4 + JDK 21 | WIP    |
-| Swift      | [`swift/`]     | SPM (Swift 6.2)     | WIP    |
+| Language   | Directory        | Runtime / Build     | Status |
+| ---------- | ---------------- | ------------------- | ------ |
+| Rust       | [`rust/`]        | Cargo (stable)      | WIP    |
+| TypeScript | [`typescript/`]  | Node 24 + pnpm      | WIP    |
+| Kotlin     | [`kotlin/`]      | Gradle 9.4 + JDK 21 | WIP    |
+| Swift      | [`swift/`]       | SPM (Swift 6.2)     | WIP    |
+| Go         | [`go/`]          | Go 1.24             | WIP    |
+| Python     | [`python/`]      | Python 3.13 + uv    | WIP    |
+| C#         | [`csharp/`]      | .NET 9              | WIP    |
 
 The canonical format is defined in [`spec/`](spec/).
 
@@ -25,7 +28,7 @@ Install all pinned tools via [mise](https://mise.jdx.dev/):
 mise install
 ```
 
-This installs: Node 24, Gradle 9.4.0, Swift 6.2.4.
+This installs: Node 24, Gradle 9.4.0, Swift 6.2.4, Go 1.24, Python 3.13, .NET 9.
 
 Then install per-language dependencies:
 
@@ -38,6 +41,9 @@ cd kotlin && ./gradlew dependencies
 
 # Python
 cd python && uv sync
+
+# C#
+cd csharp && dotnet restore
 ```
 
 Install git hooks:
@@ -55,6 +61,9 @@ All tool versions are pinned in [`.mise.toml`](.mise.toml).
 | Node.js  | 24      |
 | Gradle   | 9.4.0   |
 | Swift    | 6.2.4   |
+| Go       | 1.24    |
+| Python   | 3.13    |
+| .NET     | 9       |
 
 Rust is managed via [`rust/rust-toolchain.toml`](rust/rust-toolchain.toml) (stable channel).
 
@@ -77,20 +86,26 @@ just lint-fix   # auto-fix lint errors everywhere
 ### Per-language commands
 
 ```bash
-just format-rust   / just lint-rust   / just test-rust   / just build-rust
-just format-ts     / just lint-ts     / just test-ts     / just build-ts
-just format-kotlin / just lint-kotlin / just test-kotlin / just build-kotlin
-just format-swift  / just lint-swift  / just test-swift  / just build-swift
+just format-check-rust   / just format-fix-rust   / just lint-rust   / just test-rust   / just build-rust
+just format-check-ts     / just format-fix-ts     / just lint-ts     / just test-ts     / just build-ts
+just format-check-kotlin / just format-fix-kotlin / just lint-kotlin / just test-kotlin / just build-kotlin
+just format-check-swift  / just format-fix-swift  / just lint-swift  / just test-swift  / just build-swift
+just format-check-go     / just format-fix-go     / just lint-go     / just test-go     / just build-go
+just format-check-python / just format-fix-python / just lint-python / just test-python / just build-python
+just format-check-csharp / just format-fix-csharp / just lint-csharp / just test-csharp / just build-csharp
 ```
 
 ### Formatting & linting tools
 
-| Language   | Formatter    | Linter       |
-| ---------- | ------------ | ------------ |
-| Rust       | rustfmt      | Clippy       |
-| TypeScript | Biome        | Biome        |
-| Kotlin     | ktlint       | ktlint       |
-| Swift      | swift-format | swift-format |
+| Language   | Formatter      | Linter                    |
+| ---------- | -------------- | ------------------------- |
+| Rust       | rustfmt        | Clippy                    |
+| TypeScript | Biome          | Biome                     |
+| Kotlin     | ktlint         | ktlint                    |
+| Swift      | swift-format   | swift-format              |
+| Go         | gofmt          | go vet                    |
+| Python     | Ruff           | Ruff                      |
+| C#         | dotnet-format  | build -warnaserror        |
 
 ## Git hooks
 
@@ -111,6 +126,9 @@ GitHub Actions runs a separate workflow per language, triggered only when files 
 | [ci-typescript](.github/workflows/ci-typescript.yml) | `typescript/**`     |
 | [ci-kotlin](.github/workflows/ci-kotlin.yml)         | `kotlin/**`         |
 | [ci-swift](.github/workflows/ci-swift.yml)           | `swift/**`          |
+| [ci-go](.github/workflows/ci-go.yml)                 | `go/**`             |
+| [ci-python](.github/workflows/ci-python.yml)         | `python/**`         |
+| [ci-csharp](.github/workflows/ci-csharp.yml)         | `csharp/**`         |
 
 Each workflow runs format check, lint, and tests.
 
@@ -122,7 +140,11 @@ chromahash/
 ├── typescript/         # TypeScript implementation (pnpm + Biome)
 ├── kotlin/             # Kotlin implementation (Gradle + ktlint)
 ├── swift/              # Swift implementation (SPM)
+├── go/                 # Go implementation (standard library only)
+├── python/             # Python implementation (uv + Ruff)
+├── csharp/             # C# implementation (.NET 9)
 ├── spec/               # Format specification and test vectors
+├── tools/              # Shared developer tooling (comparison, benchmarks)
 ├── .github/workflows/  # Per-language GitHub Actions CI
 ├── justfile            # Cross-language task runner
 ├── lefthook.yml        # Git hooks (pre-commit fix, pre-push check)
@@ -134,14 +156,16 @@ chromahash/
 
 ## Conventions
 
-- All four implementations **must** produce identical output for the same input — [`spec/`](spec/) is the source of truth
+- All seven implementations **must** produce identical output for the same input — [`spec/`](spec/) is the source of truth
 - Strict TypeScript — no `any` types
 - Kotlin DSL only (`.gradle.kts`), target JVM 21
 - Swift 6 concurrency model, no `@unchecked Sendable` hacks
+- Go: zero external dependencies, all math uses `float64`, use `roundHalfAwayFromZero`
+- Python: zero external runtime dependencies, use `round_half_away_from_zero`, use Ruff for formatting and linting
 - Write tests for all public API surface
 - Use [conventional commits](https://www.conventionalcommits.org/): `type(scope): description`
-  - scope = `rust`, `ts`, `kotlin`, `swift`, or `spec`
-- Keep implementations in sync — a feature in one language should land in all four
+  - scope = `rust`, `ts`, `kotlin`, `swift`, `go`, `py`, `csharp`, or `spec`
+- Keep implementations in sync — a feature in one language should land in all seven
 
 ## License
 
