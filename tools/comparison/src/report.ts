@@ -102,11 +102,11 @@ export function generateReport(entries: ImageEntry[]): string {
   .image-row { display: flex; gap: 8px; align-items: flex-start; flex-wrap: wrap; margin: 8px 0; padding: 8px; background: #222244; border-radius: 4px; }
   body.light .image-row { background: #fff; border: 1px solid #ddd; }
   .image-cell { text-align: center; min-width: 80px; }
-  .image-cell img { max-width: 200px; max-height: 200px; image-rendering: pixelated; border: 1px solid #555; }
+  .image-cell img { height: 150px; width: auto; image-rendering: pixelated; border: 1px solid #555; }
   body.light .image-cell img { border-color: #ccc; }
   .image-cell .label { font-size: 0.75rem; margin-top: 2px; color: #aaa; }
   body.light .image-cell .label { color: #666; }
-  .image-cell .css-preview { width: 200px; height: 200px; border: 1px solid #555; }
+  .image-cell .css-preview { width: 150px; height: 150px; border: 1px solid #555; }
   .image-name { font-weight: bold; font-size: 0.85rem; min-width: 120px; display: flex; align-items: center; }
   .pass { color: #4caf50; }
   .fail { color: #f44336; font-weight: bold; }
@@ -214,7 +214,7 @@ ${catEntries
   ${entry.harnessResults
     .map(
       (r) => `<div class="image-cell">
-    ${r.dataUri ? `<img src="${r.dataUri}" alt="${r.language}" class="${r.matches ? "" : "mismatch"}">` : '<div style="width:200px;height:200px;background:#333;display:flex;align-items:center;justify-content:center;color:#f44">Error</div>'}
+    ${r.dataUri ? `<img src="${r.dataUri}" alt="${r.language}" class="${r.matches ? "" : "mismatch"}">` : '<div style="width:80px;height:150px;background:#333;display:flex;align-items:center;justify-content:center;color:#f44">Error</div>'}
     <div class="label ${r.matches ? "pass" : "fail"}">${r.language}</div>
   </div>`,
     )
