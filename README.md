@@ -81,6 +81,8 @@ just test       # test all implementations
 just build      # build all implementations
 just format-fix # auto-fix formatting everywhere
 just lint-fix   # auto-fix lint errors everywhere
+just compare    # generate LQIP comparison report
+just benchmark  # run performance benchmark
 ```
 
 ### Per-language commands

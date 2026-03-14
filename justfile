@@ -34,7 +34,7 @@ build-compare:
     mise exec -- pnpm --prefix tools/comparison run build
 
 # Run the visual comparison (generates HTML report)
-compare:
+compare: build-compare
     mise exec -- pnpm --prefix tools/comparison run compare
 
 # ─── Benchmark ──────────────────────────────────────────────────────────────
