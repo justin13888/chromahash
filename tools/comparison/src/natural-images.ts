@@ -1,6 +1,5 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import sharp from "sharp";
 
 const NATURAL_DIR = path.resolve(import.meta.dirname, "../fixtures/natural");
 
@@ -9,33 +8,36 @@ interface NaturalImageSpec {
   id: number;
   /** Short descriptive label used in the filename. */
   label: string;
+  /** Native width on Picsum (must satisfy width*height >= 12MP). */
+  width: number;
+  /** Native height on Picsum (must satisfy width*height >= 12MP). */
+  height: number;
 }
 
-/** Curated set of diverse natural photographs from Picsum Photos (Unsplash). */
+/**
+ * Curated set of diverse natural photographs from Picsum Photos (Unsplash).
+ * Every image MUST have a native resolution of at least 12 megapixels.
+ */
 const CURATED_IMAGES: NaturalImageSpec[] = [
-  { id: 10, label: "forest" },
-  { id: 29, label: "mountains" },
-  { id: 100, label: "coast" },
-  { id: 180, label: "tomatoes" },
-  { id: 237, label: "dog" },
-  { id: 312, label: "waterfall" },
-  { id: 429, label: "bread" },
-  { id: 433, label: "ocean-sunset" },
-  { id: 582, label: "flowers" },
-  { id: 651, label: "bicycle" },
-  { id: 870, label: "sunset" },
-  { id: 1011, label: "lake" },
-  { id: 1025, label: "pug" },
-  { id: 1043, label: "autumn" },
-  { id: 1074, label: "building" },
+  { id: 326, label: "food", width: 4928, height: 3264 },
+  { id: 350, label: "coast", width: 5000, height: 3338 },
+  { id: 392, label: "bridge", width: 5000, height: 3333 },
+  { id: 433, label: "ocean-sunset", width: 4752, height: 3168 },
+  { id: 434, label: "river", width: 4928, height: 3264 },
+  { id: 491, label: "tools", width: 5000, height: 4061 },
+  { id: 870, label: "sunset", width: 2900, height: 4334 },
+  { id: 964, label: "mountains", width: 5000, height: 3490 },
+  { id: 976, label: "tulips", width: 5000, height: 2901 },
+  { id: 1011, label: "lake", width: 5000, height: 3333 },
+  { id: 1025, label: "pug", width: 4951, height: 3301 },
+  { id: 1037, label: "forest", width: 5000, height: 3333 },
+  { id: 1043, label: "autumn", width: 5000, height: 3333 },
+  { id: 1067, label: "city", width: 5000, height: 3333 },
+  { id: 1074, label: "building", width: 5000, height: 3333 },
 ];
 
-/** Download resolution — the comparison pipeline downscales to <=100x100 anyway. */
-const DOWNLOAD_WIDTH = 400;
-const DOWNLOAD_HEIGHT = 300;
-
 /**
- * Ensure natural images are downloaded and cached locally as PNG.
+ * Ensure natural images are downloaded and cached locally as JPEG at native resolution.
  * Skips images that are already cached. Returns paths of available images.
  * Gracefully handles network failures (returns whatever is cached).
  */
@@ -45,8 +47,8 @@ export async function ensureNaturalImages(): Promise<string[]> {
   const paths: string[] = [];
   let downloadCount = 0;
 
-  for (const { id, label } of CURATED_IMAGES) {
-    const fileName = `natural-${label}.png`;
+  for (const { id, label, width, height } of CURATED_IMAGES) {
+    const fileName = `natural-${label}.jpg`;
     const filePath = path.join(NATURAL_DIR, fileName);
 
     // Use cached version if available
@@ -59,7 +61,7 @@ export async function ensureNaturalImages(): Promise<string[]> {
     }
 
     try {
-      const url = `https://picsum.photos/id/${id}/${DOWNLOAD_WIDTH}/${DOWNLOAD_HEIGHT}`;
+      const url = `https://picsum.photos/id/${id}/${width}/${height}`;
       const response = await fetch(url, { redirect: "follow" });
 
       if (!response.ok) {
@@ -71,8 +73,8 @@ export async function ensureNaturalImages(): Promise<string[]> {
 
       const buffer = Buffer.from(await response.arrayBuffer());
 
-      // Convert JPEG to PNG for consistency with the comparison pipeline
-      await sharp(buffer).png().toFile(filePath);
+      // Save as JPEG at native resolution to keep file sizes manageable
+      await fs.writeFile(filePath, buffer);
 
       downloadCount++;
       paths.push(filePath);

@@ -7,7 +7,11 @@ import { ThumbHashAdapter } from "./adapters/thumbhash.ts";
 import { BlurHashAdapter } from "./adapters/blurhash.ts";
 import { LqipModernAdapter } from "./adapters/lqip-modern.ts";
 import { UnpicAdapter } from "./adapters/unpic.ts";
-import { loadImage, rgbaToDataUri } from "./image-loader.ts";
+import {
+  loadImage,
+  rgbaToDataUri,
+  fileBufferToDisplayDataUri,
+} from "./image-loader.ts";
 import { buildHarnesses, runAllHarnesses } from "./harness-runner.ts";
 import { generateReport, categorizeImage } from "./report.ts";
 import { generateFixtures } from "./generate-fixtures.ts";
@@ -21,7 +25,7 @@ import type {
 
 const { values } = parseArgs({
   options: {
-    images: { type: "string", default: "fixtures/**/*.png" },
+    images: { type: "string", default: "fixtures/**/*.{png,jpg}" },
     output: { type: "string", default: "output/report.html" },
     iterations: { type: "string", default: "10" },
     "skip-harnesses": { type: "boolean", default: false },
@@ -30,7 +34,7 @@ const { values } = parseArgs({
   },
 });
 
-const imagesGlob = values.images ?? "fixtures/**/*.png";
+const imagesGlob = values.images ?? "fixtures/**/*.{png,jpg}";
 const outputPath = values.output ?? "output/report.html";
 const iterations = Number.parseInt(values.iterations ?? "10", 10);
 const skipHarnesses = values["skip-harnesses"] ?? false;
@@ -68,7 +72,7 @@ async function main(): Promise<void> {
   const resolvedGlob = path.resolve(toolRoot, imagesGlob);
   const imagePaths: string[] = [];
   for await (const entry of glob(resolvedGlob)) {
-    if (entry.endsWith(".png")) {
+    if (entry.endsWith(".png") || entry.endsWith(".jpg")) {
       imagePaths.push(entry);
     }
   }
@@ -100,7 +104,10 @@ async function main(): Promise<void> {
   const entries: Array<{
     name: string;
     category: ImageCategory;
+    originalWidth: number;
+    originalHeight: number;
     originalDataUri: string;
+    loResDataUri: string;
     formatResults: FormatResult[];
     harnessResults: HarnessResult[];
   }> = [];
@@ -125,7 +132,8 @@ async function main(): Promise<void> {
     const gamut = gamutMap[name] ?? "srgb";
     input.gamut = gamut;
 
-    const originalDataUri = await rgbaToDataUri(
+    const originalDataUri = await fileBufferToDisplayDataUri(input.fileBuffer);
+    const loResDataUri = await rgbaToDataUri(
       input.smallRgba,
       input.smallWidth,
       input.smallHeight,
@@ -159,7 +167,10 @@ async function main(): Promise<void> {
     entries.push({
       name,
       category,
+      originalWidth: input.originalWidth,
+      originalHeight: input.originalHeight,
       originalDataUri,
+      loResDataUri,
       formatResults,
       harnessResults,
     });

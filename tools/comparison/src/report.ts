@@ -3,7 +3,10 @@ import type { FormatResult, HarnessResult, ImageCategory } from "./types.ts";
 interface ImageEntry {
   name: string;
   category: ImageCategory;
+  originalWidth: number;
+  originalHeight: number;
   originalDataUri: string;
+  loResDataUri: string;
   formatResults: FormatResult[];
   harnessResults: HarnessResult[];
 }
@@ -104,6 +107,11 @@ export function generateReport(entries: ImageEntry[]): string {
   body.light .image-row { background: #fff; border: 1px solid #ddd; }
   .image-cell { text-align: center; min-width: 80px; }
   .image-cell img { height: 150px; width: auto; image-rendering: pixelated; border: 1px solid #555; }
+  body.blur .image-cell img { image-rendering: auto; }
+  .original-wrap { position: relative; display: inline-block; }
+  .original-wrap .img-lores { position: absolute; top: 0; left: 0; opacity: 0; transition: opacity 0.15s; }
+  .original-wrap:hover .img-lores { opacity: 1; }
+  .original-wrap .img-hires { image-rendering: auto; }
   body.light .image-cell img { border-color: #ccc; }
   .image-cell .label { font-size: 0.75rem; margin-top: 2px; color: #aaa; }
   body.light .image-cell .label { color: #666; }
@@ -125,6 +133,7 @@ export function generateReport(entries: ImageEntry[]): string {
   <button class="active" onclick="switchTab('formats', event)">LQIP Formats</button>
   <button onclick="switchTab('implementations', event)">ChromaHash Implementations</button>
   <button onclick="toggleTheme()">Toggle Light/Dark</button>
+  <button onclick="toggleBlur()">Toggle Blur</button>
 </div>
 
 <!-- Tab 1: LQIP Formats -->
@@ -158,8 +167,11 @@ ${catEntries
 <div class="image-row">
   <div class="image-name">${entry.name}</div>
   <div class="image-cell">
-    <img src="${entry.originalDataUri}" alt="Original">
-    <div class="label">Original</div>
+    <div class="original-wrap">
+      <img class="img-hires" src="${entry.originalDataUri}" alt="Original">
+      <img class="img-lores" src="${entry.loResDataUri}" alt="Encoder input">
+    </div>
+    <div class="label">Original<br>${entry.originalWidth}x${entry.originalHeight}px</div>
   </div>
   ${entry.formatResults
     .map((r) => {
@@ -167,12 +179,12 @@ ${catEntries
         const css = r.dataUri.slice(4);
         return `<div class="image-cell">
       <div class="css-preview" style="${css}"></div>
-      <div class="label">${r.formatName}<br>${r.encodedSizeBytes}B</div>
+      <div class="label">${r.formatName}<br>${r.decodedWidth}x${r.decodedHeight}px | ${r.encodedSizeBytes}B</div>
     </div>`;
       }
       return `<div class="image-cell">
       <img src="${r.dataUri}" alt="${r.formatName}">
-      <div class="label">${r.formatName}<br>${r.encodedSizeBytes}B | ${r.psnrDb !== null ? `${r.psnrDb.toFixed(1)}dB` : ""}</div>
+      <div class="label">${r.formatName}<br>${r.decodedWidth}x${r.decodedHeight}px | ${r.encodedSizeBytes}B | ${r.psnrDb !== null ? `${r.psnrDb.toFixed(1)}dB` : ""}</div>
     </div>`;
     })
     .join("\n  ")}
@@ -209,8 +221,11 @@ ${catEntries
 <div class="image-row">
   <div class="image-name">${entry.name}</div>
   <div class="image-cell">
-    <img src="${entry.originalDataUri}" alt="Original">
-    <div class="label">Original</div>
+    <div class="original-wrap">
+      <img class="img-hires" src="${entry.originalDataUri}" alt="Original">
+      <img class="img-lores" src="${entry.loResDataUri}" alt="Encoder input">
+    </div>
+    <div class="label">Original<br>${entry.originalWidth}x${entry.originalHeight}px</div>
   </div>
   ${entry.harnessResults
     .map(
@@ -236,6 +251,9 @@ function switchTab(tab, evt) {
 }
 function toggleTheme() {
   document.body.classList.toggle('light');
+}
+function toggleBlur() {
+  document.body.classList.toggle('blur');
 }
 </script>
 </body>

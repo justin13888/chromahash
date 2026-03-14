@@ -56,3 +56,18 @@ export async function rgbaToDataUri(
     .toBuffer();
   return `data:image/png;base64,${png.toString("base64")}`;
 }
+
+/**
+ * Create a display-sized JPEG data URI from an image file buffer.
+ * Resizes to fit within maxDim×maxDim to keep the report size reasonable.
+ */
+export async function fileBufferToDisplayDataUri(
+  fileBuffer: Buffer,
+  maxDim = 600,
+): Promise<string> {
+  const jpg = await sharp(fileBuffer)
+    .resize(maxDim, maxDim, { fit: "inside", withoutEnlargement: true })
+    .jpeg({ quality: 85 })
+    .toBuffer();
+  return `data:image/jpeg;base64,${jpg.toString("base64")}`;
+}
