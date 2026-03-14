@@ -65,4 +65,5 @@ export type ImageCategory =
   | "Color Distribution"
   | "Quantization"
   | "Gamut"
+  | "Natural"
   | "Realistic";

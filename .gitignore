@@ -91,6 +91,7 @@ csharp/*.user
 # === Comparison tool ===
 tools/comparison/output/
 tools/comparison/fixtures/synthetic/
+tools/comparison/fixtures/natural/
 
 # === Editors ===
 .vscode/

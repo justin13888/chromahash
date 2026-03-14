@@ -11,6 +11,7 @@ import { loadImage, rgbaToDataUri } from "./image-loader.ts";
 import { buildHarnesses, runAllHarnesses } from "./harness-runner.ts";
 import { generateReport, categorizeImage } from "./report.ts";
 import { generateFixtures } from "./generate-fixtures.ts";
+import { ensureNaturalImages } from "./natural-images.ts";
 import type {
   FormatAdapter,
   FormatResult,
@@ -25,6 +26,7 @@ const { values } = parseArgs({
     iterations: { type: "string", default: "10" },
     "skip-harnesses": { type: "boolean", default: false },
     "generate-fixtures": { type: "boolean", default: true },
+    "skip-natural": { type: "boolean", default: false },
   },
 });
 
@@ -33,6 +35,7 @@ const outputPath = values.output ?? "output/report.html";
 const iterations = Number.parseInt(values.iterations ?? "10", 10);
 const skipHarnesses = values["skip-harnesses"] ?? false;
 const shouldGenerateFixtures = values["generate-fixtures"] ?? true;
+const skipNatural = values["skip-natural"] ?? false;
 
 async function main(): Promise<void> {
   const toolRoot = path.resolve(import.meta.dirname, "..");
@@ -47,6 +50,17 @@ async function main(): Promise<void> {
       }
     } catch {
       await generateFixtures();
+    }
+  }
+
+  // Fetch natural images from Picsum (on-demand with local cache)
+  if (!skipNatural) {
+    console.log("Ensuring natural images are cached...");
+    const naturalPaths = await ensureNaturalImages();
+    if (naturalPaths.length > 0) {
+      console.log(`${naturalPaths.length} natural image(s) available.`);
+    } else {
+      console.warn("No natural images available (network may be offline).");
     }
   }
 

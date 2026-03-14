@@ -72,6 +72,7 @@ export function generateReport(entries: ImageEntry[]): string {
     "Color Distribution",
     "Quantization",
     "Gamut",
+    "Natural",
     "Realistic",
   ];
 
@@ -262,5 +263,6 @@ export function categorizeImage(fileName: string): ImageCategory {
   )
     return "Quantization";
   if (base.startsWith("gamut-")) return "Gamut";
+  if (base.startsWith("natural-")) return "Natural";
   return "Realistic";
 }
