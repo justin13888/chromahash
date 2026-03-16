@@ -232,6 +232,7 @@ def validate_oklab_bounds():
     max_a = 0.0
     max_b = 0.0
     practical_max_a = 0.0  # Excluding ProPhoto imaginary primaries
+    practical_max_b = 0.0  # Excluding ProPhoto imaginary primaries
 
     for name, M1 in STORED_M1.items():
         for r in [0.0, 1.0]:
@@ -248,15 +249,23 @@ def validate_oklab_bounds():
 
                     if name != "ProPhoto RGB":
                         practical_max_a = max(practical_max_a, abs(lab[1]))
+                        practical_max_b = max(practical_max_b, abs(lab[2]))
 
     check(MAX_CHROMA_A >= practical_max_a,
           f"MAX_CHROMA_A={MAX_CHROMA_A} ≥ practical max |a|={practical_max_a:.4f}")
+    check(MAX_CHROMA_B >= practical_max_b,
+          f"MAX_CHROMA_B={MAX_CHROMA_B} ≥ practical max |b|={practical_max_b:.4f}")
     check(MAX_CHROMA_B >= max_b,
-          f"MAX_CHROMA_B={MAX_CHROMA_B} ≥ max |b|={max_b:.4f}")
+          f"MAX_CHROMA_B={MAX_CHROMA_B} ≥ all-gamut max |b|={max_b:.4f}")
+
+    # Check margin over BT.2020 (tightest practical constraint)
+    margin_a = MAX_CHROMA_A - practical_max_a
+    check(margin_a >= 0.03,
+          f"MAX_CHROMA_A margin over BT.2020: {margin_a:.4f} ≥ 0.03")
 
     # Note ProPhoto blue exceeds MAX_CHROMA_A (expected, documented)
     if max_a > MAX_CHROMA_A:
-        print(f"  ℹ ProPhoto RGB blue |a|={max_a:.4f} exceeds MAX_CHROMA_A={MAX_CHROMA_A} (expected)")
+        print(f"  ℹ ProPhoto RGB blue |a|={max_a:.4f} exceeds MAX_CHROMA_A={MAX_CHROMA_A} (expected, clips)")
 
 
 def validate_scale_constants():
@@ -325,6 +334,97 @@ def validate_aspect_ratio():
         check(err < 0.55, f"Aspect {label}: error={err:.3f}% < 0.55%")
 
 
+def validate_derive_grid():
+    """Check deriveGrid() produces correct grids for all aspect bytes."""
+    print("\n9. Adaptive grid derivation (deriveGrid)")
+
+    def round_half_away_from_zero(x):
+        return math.floor(x + 0.5) if x >= 0 else math.ceil(x - 0.5)
+
+    def derive_grid(aspect_byte, base_n):
+        ratio = 2.0 ** (aspect_byte / 255.0 * 4.0 - 2.0)
+        if ratio >= 1.0:
+            scale = min(ratio, 4.0)
+            nx = round_half_away_from_zero(base_n * scale ** 0.25)
+            ny = round_half_away_from_zero(base_n / scale ** 0.25)
+        else:
+            scale = min(1.0 / ratio, 4.0)
+            nx = round_half_away_from_zero(base_n / scale ** 0.25)
+            ny = round_half_away_from_zero(base_n * scale ** 0.25)
+        return (max(int(nx), 3), max(int(ny), 3))
+
+    def tri_ac(nx, ny):
+        c = 0
+        for cy in range(ny):
+            cx = 1 if cy == 0 else 0
+            while cx * ny < nx * (ny - cy):
+                c += 1
+                cx += 1
+        return c
+
+    # Channel configs: (base_n, ac_cap, label)
+    channels = [
+        (7, 27, "L no-alpha"),
+        (4, 9, "chroma"),
+        (6, 20, "L alpha"),
+        (3, 5, "alpha"),
+    ]
+
+    for base_n, cap, label in channels:
+        min_ac = 999
+        all_ok = True
+        unique_grids = set()
+        for b in range(256):
+            nx, ny = derive_grid(b, base_n)
+            ac = tri_ac(nx, ny)
+            unique_grids.add((nx, ny))
+            min_ac = min(min_ac, ac)
+            if nx < 3 or ny < 3:
+                all_ok = False
+
+        check(all_ok, f"{label} (base_n={base_n}): all grids have nx,ny ≥ 3")
+        # For all channels except alpha-mode L, min_ac >= cap
+        if base_n != 6:
+            check(min_ac >= cap,
+                  f"{label} (base_n={base_n}): min raw AC {min_ac} ≥ cap {cap}")
+        else:
+            # Alpha-mode L: 4x8 and 8x4 produce 19, cap is 20
+            check(min_ac >= cap - 1,
+                  f"{label} (base_n={base_n}): min raw AC {min_ac} ≥ cap-1 ({cap - 1})")
+
+    # Spot-check known grid values from REVISION.md tables
+    spot_checks = [
+        # (aspect_byte, base_n, expected_nx, expected_ny)
+        (0, 7, 5, 10),     # L extreme portrait
+        (128, 7, 7, 7),    # L square (approx 1:1)
+        (255, 7, 10, 5),   # L extreme landscape
+        (0, 4, 3, 6),      # chroma extreme portrait
+        (128, 4, 4, 4),    # chroma square
+        (255, 4, 6, 3),    # chroma extreme landscape
+        (0, 6, 4, 8),      # alpha-L extreme portrait
+        (128, 6, 6, 6),    # alpha-L square
+        (255, 6, 8, 4),    # alpha-L extreme landscape
+        (0, 3, 3, 4),      # alpha extreme portrait
+        (128, 3, 3, 3),    # alpha square
+        (255, 3, 4, 3),    # alpha extreme landscape
+    ]
+    for ab, bn, exp_nx, exp_ny in spot_checks:
+        nx, ny = derive_grid(ab, bn)
+        check(nx == exp_nx and ny == exp_ny,
+              f"deriveGrid({ab}, {bn}) = ({nx},{ny}), expected ({exp_nx},{exp_ny})")
+
+    # Verify portrait/landscape symmetry: grid at byte b mirrors grid at byte (255-b)
+    # with swapped nx, ny (due to log-symmetric aspect encoding)
+    sym_ok = True
+    for base_n in [7, 4, 6, 3]:
+        for b in range(128):
+            nx_lo, ny_lo = derive_grid(b, base_n)
+            nx_hi, ny_hi = derive_grid(255 - b, base_n)
+            if not (nx_lo == ny_hi and ny_lo == nx_hi):
+                sym_ok = False
+    check(sym_ok, "Portrait/landscape grid symmetry across all channels")
+
+
 # =========================================================================
 # Main
 # =========================================================================
@@ -341,6 +441,7 @@ if __name__ == "__main__":
     validate_scale_constants()
     validate_mu_law()
     validate_aspect_ratio()
+    validate_derive_grid()
 
     print(f"\n{'=' * 60}")
     print(f"Results: {passed} passed, {failed} failed")

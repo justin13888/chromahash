@@ -24,8 +24,8 @@ MU = 5
 # Preliminary values — may be tightened in a future revision after empirical
 # tuning against a reference image corpus.
 
-MAX_CHROMA_A = 0.5         # Max absolute OKLAB 'a' DC value
-MAX_CHROMA_B = 0.5         # Max absolute OKLAB 'b' DC value
+MAX_CHROMA_A = 0.45        # Max absolute OKLAB 'a' DC value (covers BT.2020 max |a|=0.416)
+MAX_CHROMA_B = 0.45        # Max absolute OKLAB 'b' DC value (covers ProPhoto max |b|=0.427)
 MAX_L_SCALE = 0.5          # Max luminance AC amplitude
 MAX_A_SCALE = 0.5          # Max chroma-a AC amplitude
 MAX_B_SCALE = 0.5          # Max chroma-b AC amplitude
