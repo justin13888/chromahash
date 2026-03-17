@@ -167,10 +167,14 @@ function deriveGrid(aspect_byte, base_n):
     return (nx, ny)
 ```
 
-All `round()` calls use **round half away from zero** (spec §2.2).
+All `round()` calls use **round half away from zero** (spec §2.2). The `round()`
+result is converted to integer before the `max()` clamping (necessary in
+languages like Python where `round()` returns float).
 
 The `scale^0.25` exponent provides **gentle adaptation** — the grid changes
-slowly with aspect ratio, avoiding abrupt transitions.
+slowly with aspect ratio, avoiding abrupt transitions. The `min(ratio, 4.0)`
+clamping is defensive; the aspect byte encoding already constrains the ratio to
+`[0.25, 4.0]`.
 
 The `base_n` parameter selects the channel type:
 
@@ -267,10 +271,10 @@ required for chroma channels.
 | 210–233 | 2.4:1 – 3.2:1 | 8 | 5 | 25 | 20 |
 | 234–255 | 3.2:1 – 4:1 | 8 | 4 | 19 | **19** |
 
-9 unique grid shapes. Two extreme grids (4×8 and 8×4) produce only 19 raw AC
-coefficients — one fewer than the cap of 20. In this case, the bit budget is
-still 107 bits: the first 7 coefficients at 6 bits (42 bits) + the remaining
-12 at 5 bits (60 bits) + 1 zero-padded slot at 5 bits (5 bits) = 107 total.
+9 unique grid shapes. The bitstream always encodes exactly 20 AC slots: 7 at 6
+bits + 13 at 5 bits = 107 bits. For the 4×8 and 8×4 grids (19 raw AC
+coefficients), the 20th slot is zero-padded by the encoder and discarded by the
+decoder.
 
 ### 3.6 Alpha Channel Grid (base_n=3) — Exhaustive
 
@@ -357,12 +361,17 @@ Input is always 8-bit RGBA → 256 possible values per channel. Precompute
 
 - Replace 36M per-pixel `portable_pow` calls with table lookups
 - Savings: 36M × 189 FLOPs → 256 × 189 FLOPs (effectively zero cost)
-- Memory: 256 × 8 bytes = **2 KB**
+- Memory: 256 × 8 bytes = **2 KB** (LUT entries are float64, matching §2.3
+  encode precision requirements)
 - Determinism preserved: LUT built with the same `portable_pow`
+- The EOTF LUT applies to RGB channels only. The alpha channel is linearly
+  normalized: `alpha = rgba[i*4+3] / 255.0` with no transfer function applied.
 
 The LUT is per-gamut (sRGB transfer function for sRGB/Display P3, gamma 2.2 for
-Adobe RGB, BT.1886 for BT.2020, gamma 1.8 for ProPhoto RGB), but only one is
-needed per encode call.
+Adobe RGB, BT.1886 for SDR BT.2020, gamma 1.8 for ProPhoto RGB), but only one
+is needed per encode call. For HDR BT.2020 PQ content (10/12-bit), the encoder
+MUST tone-map to SDR first (per v0.1 §5.4), after which BT.1886 applies to the
+8-bit SDR result.
 
 ### 5.3 IEEE 754 Bit-Seed Cube Root (eliminates bottleneck #2)
 
@@ -376,7 +385,9 @@ cbrt(x):
 
     // Seed: reinterpret double as uint64, divide biased exponent by 3
     bits = double_to_uint64(x)
-    seed = (bits - (1023 << 52)) / 3 + (1023 << 52)    // integer arithmetic
+    signed_bits = reinterpret_as_int64(bits)              // cast to signed
+    seed_signed = (signed_bits - (1023 << 52)) / 3 + (1023 << 52)  // signed int64
+    seed = reinterpret_as_uint64(seed_signed)             // cast back
     y = uint64_to_double(seed)                            // ~5% initial error
 
     // 3 Halley iterations (cubic convergence), FMA-safe decomposition:
@@ -388,6 +399,19 @@ cbrt(x):
 
     return sign ? -y : y
 ```
+
+**Signed arithmetic note:** The subtraction `signed_bits - (1023 << 52)` and
+subsequent division MUST use **signed 64-bit integer** arithmetic. For inputs
+`x < 1.0` (the common case for LMS values), the biased exponent is less than
+1023, making the subtraction result negative. In unsigned types (`u64`,
+`uint64`, `UInt64`, `ULong`), this wraps to a huge positive number, producing a
+garbage seed. All 7 target languages support signed `int64` natively with zero
+performance difference.
+
+**Division semantics:** Either truncation-toward-zero (Rust, Go, C#, Swift,
+Kotlin) or floor division (Python) is acceptable for the seed computation. Both
+produce seeds within 1 ULP of each other, and 3 Halley iterations converge
+regardless (verified: max error stays ≤ 2 ULP).
 
 **~26 FLOPs total. Verified across full LMS domain [1e-6, 3.0]: max error ≤ 2
 ULP (rel_err < 4e-16).**
@@ -405,15 +429,15 @@ cbrt dominates encode time.
 
 All seven languages have double↔uint64 reinterpretation APIs:
 
-| Language | API |
-|----------|-----|
-| Rust | `f64::to_bits()` / `f64::from_bits()` |
-| Go | `math.Float64bits()` / `math.Float64frombits()` |
-| TypeScript | `DataView.setFloat64()` / `DataView.getBigUint64()` |
-| Python | `struct.pack('d', x)` / `struct.unpack('Q', ...)` |
-| Kotlin | `Double.doubleToRawLongBits()` / `Double.longBitsToDouble()` |
-| Swift | `Double.bitPattern` / `Double(bitPattern:)` |
-| C# | `BitConverter.DoubleToInt64Bits()` / `BitConverter.Int64BitsToDouble()` |
+| Language | To bits | From bits | Signed type |
+|----------|---------|-----------|-------------|
+| Rust | `f64::to_bits()` → `u64` | `f64::from_bits(u64)` | cast `as i64` / `as u64` |
+| Go | `math.Float64bits()` → `uint64` | `math.Float64frombits(uint64)` | cast `int64(bits)` / `uint64(seed)` |
+| TypeScript | `DataView.setFloat64()` / `getBigUint64()` | `setBigUint64()` / `getFloat64()` | `BigInt` handles sign natively |
+| Python | `struct.pack('d', x)` / `struct.unpack('Q', ...)` | `struct.pack('Q', seed)` / `struct.unpack('d', ...)` | `struct.unpack('q', ...)` for signed |
+| Kotlin | `Double.doubleToRawLongBits()` → `Long` | `Double.longBitsToDouble(Long)` | `Long` is signed int64 |
+| Swift | `Double.bitPattern` → `UInt64` | `Double(bitPattern: UInt64)` | `Int64(bitPattern: bits)` |
+| C# | `BitConverter.DoubleToInt64Bits()` → `long` | `BitConverter.Int64BitsToDouble(long)` | `long` is signed int64 |
 
 **FMA hazard:** Some CPUs compute `a*b+c` with single rounding (FMA) instead of
 two. The Halley iteration above decomposes each step into explicit
@@ -527,6 +551,10 @@ function softGamutClamp(L, a, b):
     return (L, lo * h_cos, lo * h_sin)       // lo is last known in-gamut
 ```
 
+**Precondition:** L must be in [0, 1]. The caller is responsible for clamping L
+before calling this function. DCT ringing can produce `L < 0` or `L > 1`, and
+`softGamutClamp` only reduces chroma — it cannot fix L-induced gamut violations.
+
 Properties:
 - **Deterministic:** fixed 16 iterations, no early exit, uses only basic IEEE 754
   ops
@@ -536,6 +564,12 @@ Properties:
 
 Most real photos don't hit this, but when it occurs soft clamping is noticeably
 better.
+
+**FMA note:** Implementations MAY produce ±1 LSB variation at 8-bit output for
+pixels near the sRGB gamut boundary due to FMA and floating-point rounding
+differences in `oklabToLinearRgb`. This is acceptable — the decode path already
+tolerates float32 precision per §2.3, and the bisection precision (`C/2^16 <
+1.5e-5`) is far below 1/255.
 
 ### 6.2 sRGB Gamma LUT for Decode
 
@@ -563,7 +597,7 @@ function linearToSrgb8(x, lut):
 ```
 
 - Speedup: **~40× per call** (3 FLOPs vs 120 FLOPs)
-- Quality loss: **zero** (output is clamped to 8-bit regardless)
+- Quality loss: **at most ±1 LSB** (12-bit linear → 8-bit sRGB quantization)
 - Memory: 4096 × 1 byte = **4 KB**
 
 ---
@@ -625,6 +659,9 @@ are unchanged, the **semantics** differ:
 A v0.1 decoder applied to a v0.2 hash will produce subtly wrong colors and grid
 geometry. The version bit enables correct routing.
 
+A v0.2 implementation MAY support decoding v0.1 hashes (bit 47 = 0) by falling
+back to fixed grids, MAX_CHROMA=0.5, and hard gamut clamping. This is OPTIONAL.
+
 ---
 
 ## 9. v0.1 Spec Sections Affected
@@ -643,16 +680,21 @@ geometry. The version bit enables correct routing.
 | §12.7 Helpers | Add `deriveGrid`, `softGamutClamp`, replace `cbrt_signed` with bit-seed Halley |
 | §13.2 Computational Cost | Update for full-res encoding (~400ms for 12MP Rust) |
 | §13.5 Gamut Clamping | Replace hard clamp with soft Oklch bisection |
+| §3.1 Header Bit Layout | Bit 47 changes from `reserved = 0` to `version`: `0 = v0.1, 1 = v0.2` |
+| §5.3 Decode Pipeline | v0.2 inserts `clamp(L)` + `softGamutClamp` after OKLAB reconstruction and replaces per-pixel gamma with LUT |
+| §8 Aspect Encoding | Formula unchanged, but the aspect byte now also drives adaptive grid geometry via `deriveGrid` (see §3.2) |
+| §9 Alpha Support Bit Budget | Grid dimensions are no longer fixed (`L 7×7 / 6×6`); they vary per `deriveGrid(aspect, base_n=7/6)`. Bit budgets remain the same. |
+| §11.2 Average Color | Dequantize `a_dc`, `b_dc` with `MAX_CHROMA=0.45`; check version bit to select correct `MAX_CHROMA` |
+| Appendix A | Update ThumbHash comparison: grid type is now adaptive (not "7×7 fixed"); gamut clamping is now soft Oklch bisection (not hard per-channel clip); input dimensions are unlimited (not ≤100×100); decode includes gamma LUT |
 
-Sections unchanged: §3 (bit layout), §4 (OKLAB), §5 (multi-gamut), §7
-(quantization formulas), §8 (aspect encoding formula), §9 (alpha support bit
-budget).
+Sections unchanged: §4 (OKLAB), §5.1–5.2 (multi-gamut encoding), §7
+(quantization formulas).
 
 ---
 
 ## 10. Test Vectors
 
-All 6 JSON files in `spec/test-vectors/` must be **regenerated** under v0.2 due
+All 7 JSON files in `spec/test-vectors/` must be **regenerated** under v0.2 due
 to:
 - MAX_CHROMA 0.5 → 0.45 (changes DC quantization)
 - Adaptive grid geometry (changes AC coefficient assignment for non-square inputs)
@@ -660,6 +702,21 @@ to:
 
 **Action:** Regenerate from Rust reference implementation after implementing v0.2
 changes.
+
+**New test vector categories for v0.2:**
+
+- `unit-dct.json`: add non-square grid scan orders (e.g. 5×10, 8×6, 3×5, 4×8)
+  — purely mathematical, no implementation dependency
+- `unit-aspect.json`: add `deriveGrid` test cases mapping aspect bytes → (nx, ny)
+  for all `base_n` values (7, 4, 6, 3)
+- `unit-bitpack.json`: create missing file (referenced in README but absent) with
+  `writeBits`/`readBits` round-trip tests at various bit positions and widths
+- New unit tests for `softGamutClamp` (out-of-gamut inputs → clamped outputs) —
+  requires Rust reference implementation for expected values. JSON schema:
+  `{"input": {"L": float, "a": float, "b": float}, "expected": {"L": float, "a": float, "b": float}}`
+- New unit tests for Halley `cbrt` (verify ≤2 ULP vs `portable_pow` across
+  domain) — requires Rust reference implementation for expected values. JSON
+  schema: `{"input": float, "expected": float, "max_ulp_error": int}`
 
 ---
 
@@ -718,23 +775,40 @@ function encode_image(W, H, rgba, gamut):
     oklab_pixels = convert_all_to_oklab(W, H, rgba, lut)
 
     aspect_byte = encode_aspect(W, H)
-    (L_nx, L_ny) = deriveGrid(aspect_byte, base_n=7)    // or 6 for alpha mode
+    if hasAlpha:
+        (L_nx, L_ny) = deriveGrid(aspect_byte, base_n=6)
+        (A_nx, A_ny) = deriveGrid(aspect_byte, base_n=3)
+    else:
+        (L_nx, L_ny) = deriveGrid(aspect_byte, base_n=7)
     (C_nx, C_ny) = deriveGrid(aspect_byte, base_n=4)
 
     cos_x = precompute_cos_x(W, max(L_nx, C_nx))
     cos_y = precompute_cos_y(H, max(L_ny, C_ny))
+    // A_nx ≤ L_nx and A_ny ≤ L_ny for all aspect bytes (base_n=3 < base_n=6),
+    // so alpha channel reuses the same cosine tables.
 
     (L_dc, L_ac, L_scale) = dct_encode_separable(L, W, H, L_nx, L_ny, cos_x, cos_y)
     (a_dc, a_ac, a_scale) = dct_encode_separable(a, W, H, C_nx, C_ny, cos_x, cos_y)
     (b_dc, b_ac, b_scale) = dct_encode_separable(b, W, H, C_nx, C_ny, cos_x, cos_y)
 
-    // For alpha mode: also encode alpha channel
-    // (A_nx, A_ny) = deriveGrid(aspect_byte, base_n=3)
+    // For alpha mode: also encode alpha channel with (A_nx, A_ny) derived above
     // (A_dc, A_ac, A_scale) = dct_encode_separable(alpha, W, H, A_nx, A_ny, cos_x, cos_y)
 
     // Cap AC arrays: L_ac = L_ac[0..26], a_ac = a_ac[0..8], b_ac = b_ac[0..8]
     // Zero-pad if len(ac) < cap (only alpha-mode L at extreme aspects)
-    return pack_hash(...)    // AC capped at 27/9/9 (or 20/9/9/5), same bit budget
+
+    // Pack header with version bit (v0.2)
+    header = L_dc_q
+           | (a_dc_q << 7)
+           | (b_dc_q << 14)
+           | (L_scl_q << 21)
+           | (a_scl_q << 27)
+           | (b_scl_q << 33)
+           | (aspect_byte << 38)
+           | ((1 if hasAlpha else 0) << 46)
+           | (1 << 47)                          // v0.2 version bit
+
+    return pack_hash(header, L_ac, a_ac, b_ac, ...)    // AC capped at 27/9/9 (or 20/9/9/5)
 ```
 
 ## Appendix: Decode Architecture (Pseudocode)
@@ -891,7 +965,8 @@ function decode(hash):
                         cx_factor = (cx > 0) ? 2 : 1
                         alpha += A_coeff[cx][cy] * cos(π / w * cx * (x + 0.5)) * cx_factor * fy
 
-            // 9d. Soft gamut clamp (v0.2, replaces hard clamp)
+            // 9d. Clamp L from DCT ringing, then soft gamut clamp (v0.2)
+            L = clamp(L, 0.0, 1.0)
             (L, a, b) = softGamutClamp(L, a, b)
 
             // 9e. OKLAB → sRGB via LUT (v0.2)
@@ -913,6 +988,11 @@ iterating the scan order during the inverse DCT loop rather than storing a 2D
 grid. The only requirement is that grid positions beyond `cap` contribute zero
 and grid positions beyond `len(scan)` contribute zero.
 
+**Note on decode cosine precomputation:** Decode operates at 32×32 output
+resolution. Cosine precomputation (as described in §5.4 for encode) is optional
+but recommended for decode — precomputing `cos_x[cx][x]` for `x ∈ [0, w-1]`
+and `cos_y[cy][y]` for `y ∈ [0, h-1]` avoids redundant cosine evaluations.
+
 ## Appendix: Bit Allocation (256 bits, no-alpha mode)
 
 The bit positions are unchanged from v0.1 — the same 256-bit format is
@@ -933,6 +1013,26 @@ reinterpreted with adaptive grid geometry and updated constant ranges.
 | a AC (9×4b) | 36 | Grid shape varies, count fixed at 9 |
 | b AC (9×4b) | 36 | Grid shape varies, count fixed at 9 |
 | Padding | 1 | |
+
+## Appendix: Bit Allocation (256 bits, alpha mode)
+
+| Field | Bits | Notes |
+|-------|------|-------|
+| L DC | 7 | 128 levels |
+| a DC | 7 | Dequantized with MAX_CHROMA=0.45 |
+| b DC | 7 | Dequantized with MAX_CHROMA=0.45 |
+| L scale | 6 | 64 levels |
+| a scale | 6 | |
+| b scale | 5 | 32 levels |
+| Aspect | 8 | Drives grid geometry via `deriveGrid` in v0.2 |
+| hasAlpha | 1 | |
+| Version | 1 | **0 = v0.1, 1 = v0.2** |
+| Alpha DC | 5 | 32 levels |
+| Alpha scale | 4 | 16 levels |
+| L AC (7×6b + 13×5b) | 107 | Grid shape varies, slot count fixed at 20 |
+| a AC (9×4b) | 36 | Grid shape varies, count fixed at 9 |
+| b AC (9×4b) | 36 | Grid shape varies, count fixed at 9 |
+| A AC (5×4b) | 20 | Grid shape varies, count fixed at 5 |
 
 ## Appendix: Priority Ordering
 

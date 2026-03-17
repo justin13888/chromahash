@@ -43,5 +43,137 @@
     "name": "aspect_100:25",
     "input": { "width": 100, "height": 25 },
     "expected": { "byte": 255, "decoded_ratio": 4, "output_width": 32, "output_height": 8 }
+  },
+  {
+    "name": "derive_grid_byte0_extreme_portrait",
+    "input": { "aspect_byte": 0 },
+    "expected": {
+      "grid": {
+        "L_no_alpha": { "base_n": 7, "nx": 5, "ny": 10 },
+        "chroma": { "base_n": 4, "nx": 3, "ny": 6 },
+        "L_alpha": { "base_n": 6, "nx": 4, "ny": 8 },
+        "alpha": { "base_n": 3, "nx": 3, "ny": 4 }
+      }
+    }
+  },
+  {
+    "name": "derive_grid_byte128_square",
+    "input": { "aspect_byte": 128 },
+    "expected": {
+      "grid": {
+        "L_no_alpha": { "base_n": 7, "nx": 7, "ny": 7 },
+        "chroma": { "base_n": 4, "nx": 4, "ny": 4 },
+        "L_alpha": { "base_n": 6, "nx": 6, "ny": 6 },
+        "alpha": { "base_n": 3, "nx": 3, "ny": 3 }
+      }
+    }
+  },
+  {
+    "name": "derive_grid_byte255_extreme_landscape",
+    "input": { "aspect_byte": 255 },
+    "expected": {
+      "grid": {
+        "L_no_alpha": { "base_n": 7, "nx": 10, "ny": 5 },
+        "chroma": { "base_n": 4, "nx": 6, "ny": 3 },
+        "L_alpha": { "base_n": 6, "nx": 8, "ny": 4 },
+        "alpha": { "base_n": 3, "nx": 4, "ny": 3 }
+      }
+    }
+  },
+  {
+    "name": "derive_grid_byte15_L_boundary_5x10_to_5x9",
+    "input": { "aspect_byte": 15 },
+    "expected": {
+      "grid": {
+        "L_no_alpha": { "base_n": 7, "nx": 5, "ny": 10 },
+        "chroma": { "base_n": 4, "nx": 3, "ny": 5 },
+        "L_alpha": { "base_n": 6, "nx": 4, "ny": 8 },
+        "alpha": { "base_n": 3, "nx": 3, "ny": 4 }
+      }
+    }
+  },
+  {
+    "name": "derive_grid_byte16_L_boundary_5x9",
+    "input": { "aspect_byte": 16 },
+    "expected": {
+      "grid": {
+        "L_no_alpha": { "base_n": 7, "nx": 5, "ny": 9 },
+        "chroma": { "base_n": 4, "nx": 3, "ny": 5 },
+        "L_alpha": { "base_n": 6, "nx": 4, "ny": 8 },
+        "alpha": { "base_n": 3, "nx": 3, "ny": 4 }
+      }
+    }
+  },
+  {
+    "name": "derive_grid_byte84_chroma_boundary_4x5",
+    "input": { "aspect_byte": 84 },
+    "expected": {
+      "grid": {
+        "L_no_alpha": { "base_n": 7, "nx": 6, "ny": 8 },
+        "chroma": { "base_n": 4, "nx": 4, "ny": 5 },
+        "L_alpha": { "base_n": 6, "nx": 5, "ny": 7 },
+        "alpha": { "base_n": 3, "nx": 3, "ny": 3 }
+      }
+    }
+  },
+  {
+    "name": "derive_grid_byte85_chroma_boundary_4x4",
+    "input": { "aspect_byte": 85 },
+    "expected": {
+      "grid": {
+        "L_no_alpha": { "base_n": 7, "nx": 6, "ny": 8 },
+        "chroma": { "base_n": 4, "nx": 4, "ny": 4 },
+        "L_alpha": { "base_n": 6, "nx": 5, "ny": 7 },
+        "alpha": { "base_n": 3, "nx": 3, "ny": 3 }
+      }
+    }
+  },
+  {
+    "name": "derive_grid_byte10_chroma_boundary_3x6",
+    "input": { "aspect_byte": 10 },
+    "expected": {
+      "grid": {
+        "L_no_alpha": { "base_n": 7, "nx": 5, "ny": 10 },
+        "chroma": { "base_n": 4, "nx": 3, "ny": 6 },
+        "L_alpha": { "base_n": 6, "nx": 4, "ny": 8 },
+        "alpha": { "base_n": 3, "nx": 3, "ny": 4 }
+      }
+    }
+  },
+  {
+    "name": "derive_grid_byte11_chroma_boundary_3x5",
+    "input": { "aspect_byte": 11 },
+    "expected": {
+      "grid": {
+        "L_no_alpha": { "base_n": 7, "nx": 5, "ny": 10 },
+        "chroma": { "base_n": 4, "nx": 3, "ny": 5 },
+        "L_alpha": { "base_n": 6, "nx": 4, "ny": 8 },
+        "alpha": { "base_n": 3, "nx": 3, "ny": 4 }
+      }
+    }
+  },
+  {
+    "name": "derive_grid_byte103_L_square_7x7",
+    "input": { "aspect_byte": 103 },
+    "expected": {
+      "grid": {
+        "L_no_alpha": { "base_n": 7, "nx": 7, "ny": 7 },
+        "chroma": { "base_n": 4, "nx": 4, "ny": 4 },
+        "L_alpha": { "base_n": 6, "nx": 6, "ny": 6 },
+        "alpha": { "base_n": 3, "nx": 3, "ny": 3 }
+      }
+    }
+  },
+  {
+    "name": "derive_grid_byte240_L_boundary_10x5",
+    "input": { "aspect_byte": 240 },
+    "expected": {
+      "grid": {
+        "L_no_alpha": { "base_n": 7, "nx": 10, "ny": 5 },
+        "chroma": { "base_n": 4, "nx": 5, "ny": 3 },
+        "L_alpha": { "base_n": 6, "nx": 8, "ny": 4 },
+        "alpha": { "base_n": 3, "nx": 4, "ny": 3 }
+      }
+    }
   }
 ]
