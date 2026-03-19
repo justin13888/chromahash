@@ -175,5 +175,197 @@
         "alpha": { "base_n": 3, "nx": 4, "ny": 3 }
       }
     }
+  },
+  {
+    "name": "derive_grid_byte38_L_boundary_5x9",
+    "input": { "aspect_byte": 38 },
+    "expected": {
+      "grid": {
+        "L_no_alpha": { "base_n": 7, "nx": 5, "ny": 9 },
+        "chroma": { "base_n": 4, "nx": 3, "ny": 5 },
+        "L_alpha": { "base_n": 6, "nx": 5, "ny": 8 },
+        "alpha": { "base_n": 3, "nx": 3, "ny": 4 }
+      }
+    }
+  },
+  {
+    "name": "derive_grid_byte39_L_boundary_6x9",
+    "input": { "aspect_byte": 39 },
+    "expected": {
+      "grid": {
+        "L_no_alpha": { "base_n": 7, "nx": 6, "ny": 9 },
+        "chroma": { "base_n": 4, "nx": 3, "ny": 5 },
+        "L_alpha": { "base_n": 6, "nx": 5, "ny": 8 },
+        "alpha": { "base_n": 3, "nx": 3, "ny": 4 }
+      }
+    }
+  },
+  {
+    "name": "derive_grid_byte56_L_boundary_6x9",
+    "input": { "aspect_byte": 56 },
+    "expected": {
+      "grid": {
+        "L_no_alpha": { "base_n": 7, "nx": 6, "ny": 9 },
+        "chroma": { "base_n": 4, "nx": 3, "ny": 5 },
+        "L_alpha": { "base_n": 6, "nx": 5, "ny": 7 },
+        "alpha": { "base_n": 3, "nx": 3, "ny": 4 }
+      }
+    }
+  },
+  {
+    "name": "derive_grid_byte57_L_boundary_6x8",
+    "input": { "aspect_byte": 57 },
+    "expected": {
+      "grid": {
+        "L_no_alpha": { "base_n": 7, "nx": 6, "ny": 8 },
+        "chroma": { "base_n": 4, "nx": 3, "ny": 5 },
+        "L_alpha": { "base_n": 6, "nx": 5, "ny": 7 },
+        "alpha": { "base_n": 3, "nx": 3, "ny": 4 }
+      }
+    }
+  },
+  {
+    "name": "derive_grid_byte100_L_boundary_6x8",
+    "input": { "aspect_byte": 100 },
+    "expected": {
+      "grid": {
+        "L_no_alpha": { "base_n": 7, "nx": 6, "ny": 8 },
+        "chroma": { "base_n": 4, "nx": 4, "ny": 4 },
+        "L_alpha": { "base_n": 6, "nx": 6, "ny": 6 },
+        "alpha": { "base_n": 3, "nx": 3, "ny": 3 }
+      }
+    }
+  },
+  {
+    "name": "derive_grid_byte101_L_boundary_7x8",
+    "input": { "aspect_byte": 101 },
+    "expected": {
+      "grid": {
+        "L_no_alpha": { "base_n": 7, "nx": 7, "ny": 8 },
+        "chroma": { "base_n": 4, "nx": 4, "ny": 4 },
+        "L_alpha": { "base_n": 6, "nx": 6, "ny": 6 },
+        "alpha": { "base_n": 3, "nx": 3, "ny": 3 }
+      }
+    }
+  },
+  {
+    "name": "derive_grid_byte102_L_boundary_7x8",
+    "input": { "aspect_byte": 102 },
+    "expected": {
+      "grid": {
+        "L_no_alpha": { "base_n": 7, "nx": 7, "ny": 8 },
+        "chroma": { "base_n": 4, "nx": 4, "ny": 4 },
+        "L_alpha": { "base_n": 6, "nx": 6, "ny": 6 },
+        "alpha": { "base_n": 3, "nx": 3, "ny": 3 }
+      }
+    }
+  },
+  {
+    "name": "derive_grid_byte152_L_boundary_7x7",
+    "input": { "aspect_byte": 152 },
+    "expected": {
+      "grid": {
+        "L_no_alpha": { "base_n": 7, "nx": 7, "ny": 7 },
+        "chroma": { "base_n": 4, "nx": 4, "ny": 4 },
+        "L_alpha": { "base_n": 6, "nx": 6, "ny": 6 },
+        "alpha": { "base_n": 3, "nx": 3, "ny": 3 }
+      }
+    }
+  },
+  {
+    "name": "derive_grid_byte153_L_boundary_8x7",
+    "input": { "aspect_byte": 153 },
+    "expected": {
+      "grid": {
+        "L_no_alpha": { "base_n": 7, "nx": 8, "ny": 7 },
+        "chroma": { "base_n": 4, "nx": 4, "ny": 4 },
+        "L_alpha": { "base_n": 6, "nx": 6, "ny": 6 },
+        "alpha": { "base_n": 3, "nx": 3, "ny": 3 }
+      }
+    }
+  },
+  {
+    "name": "derive_grid_byte154_L_boundary_8x7",
+    "input": { "aspect_byte": 154 },
+    "expected": {
+      "grid": {
+        "L_no_alpha": { "base_n": 7, "nx": 8, "ny": 7 },
+        "chroma": { "base_n": 4, "nx": 4, "ny": 4 },
+        "L_alpha": { "base_n": 6, "nx": 6, "ny": 6 },
+        "alpha": { "base_n": 3, "nx": 3, "ny": 3 }
+      }
+    }
+  },
+  {
+    "name": "derive_grid_byte155_L_boundary_8x6",
+    "input": { "aspect_byte": 155 },
+    "expected": {
+      "grid": {
+        "L_no_alpha": { "base_n": 7, "nx": 8, "ny": 6 },
+        "chroma": { "base_n": 4, "nx": 4, "ny": 4 },
+        "L_alpha": { "base_n": 6, "nx": 6, "ny": 6 },
+        "alpha": { "base_n": 3, "nx": 3, "ny": 3 }
+      }
+    }
+  },
+  {
+    "name": "derive_grid_byte198_L_boundary_8x6",
+    "input": { "aspect_byte": 198 },
+    "expected": {
+      "grid": {
+        "L_no_alpha": { "base_n": 7, "nx": 8, "ny": 6 },
+        "chroma": { "base_n": 4, "nx": 5, "ny": 3 },
+        "L_alpha": { "base_n": 6, "nx": 7, "ny": 5 },
+        "alpha": { "base_n": 3, "nx": 4, "ny": 3 }
+      }
+    }
+  },
+  {
+    "name": "derive_grid_byte199_L_boundary_9x6",
+    "input": { "aspect_byte": 199 },
+    "expected": {
+      "grid": {
+        "L_no_alpha": { "base_n": 7, "nx": 9, "ny": 6 },
+        "chroma": { "base_n": 4, "nx": 5, "ny": 3 },
+        "L_alpha": { "base_n": 6, "nx": 7, "ny": 5 },
+        "alpha": { "base_n": 3, "nx": 4, "ny": 3 }
+      }
+    }
+  },
+  {
+    "name": "derive_grid_byte216_L_boundary_9x6",
+    "input": { "aspect_byte": 216 },
+    "expected": {
+      "grid": {
+        "L_no_alpha": { "base_n": 7, "nx": 9, "ny": 6 },
+        "chroma": { "base_n": 4, "nx": 5, "ny": 3 },
+        "L_alpha": { "base_n": 6, "nx": 8, "ny": 5 },
+        "alpha": { "base_n": 3, "nx": 4, "ny": 3 }
+      }
+    }
+  },
+  {
+    "name": "derive_grid_byte217_L_boundary_9x5",
+    "input": { "aspect_byte": 217 },
+    "expected": {
+      "grid": {
+        "L_no_alpha": { "base_n": 7, "nx": 9, "ny": 5 },
+        "chroma": { "base_n": 4, "nx": 5, "ny": 3 },
+        "L_alpha": { "base_n": 6, "nx": 8, "ny": 5 },
+        "alpha": { "base_n": 3, "nx": 4, "ny": 3 }
+      }
+    }
+  },
+  {
+    "name": "derive_grid_byte239_L_boundary_9x5",
+    "input": { "aspect_byte": 239 },
+    "expected": {
+      "grid": {
+        "L_no_alpha": { "base_n": 7, "nx": 9, "ny": 5 },
+        "chroma": { "base_n": 4, "nx": 5, "ny": 3 },
+        "L_alpha": { "base_n": 6, "nx": 8, "ny": 4 },
+        "alpha": { "base_n": 3, "nx": 4, "ny": 3 }
+      }
+    }
   }
 ]

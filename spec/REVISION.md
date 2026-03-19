@@ -373,6 +373,15 @@ is needed per encode call. For HDR BT.2020 PQ content (10/12-bit), the encoder
 MUST tone-map to SDR first (per v0.1 §5.4), after which BT.1886 applies to the
 8-bit SDR result.
 
+```
+function precompute_eotf_lut(gamut):
+    lut = array[256] of float64
+    for i in 0..255:
+        x = i / 255.0
+        lut[i] = eotf[gamut](x)    // sRGB piecewise, Adobe gamma 2.2, etc.
+    return lut
+```
+
 ### 5.3 IEEE 754 Bit-Seed Cube Root (eliminates bottleneck #2)
 
 Replace `portable_pow(x, 1/3)` with an IEEE 754 bit-manipulation seed followed
@@ -451,9 +460,14 @@ sub-expressions with named temporaries, forcing intermediate rounding.
 | TypeScript | No FMA in language spec; V8/SpiderMonkey don't use for basic ops |
 | Go | Explicit temporaries (or `go:noinline`) |
 | Python | CPython interprets bytecode — safe |
-| Kotlin/JVM | `strictfp` keyword |
+| Kotlin/JVM | `strictfp` keyword (JVM < 17); on JVM 17+ (JEP 306), strict IEEE 754 semantics are the default — `strictfp` is a no-op |
 | Swift | Explicit temporaries |
 | C# | JIT may emit FMA; use explicit temporaries; consider `[MethodImpl(MethodImplOptions.NoOptimization)]` if needed |
+
+**Python division semantics note:** Python MUST use integer floor division
+(`//`), not float division (`/`), for the seed computation. `int(bits) // 3`
+produces an integer; `int(bits) / 3` produces a float, breaking subsequent bit
+manipulation.
 
 ### 5.4 Cosine Precomputation (reduces DCT cost ~40×)
 
@@ -468,6 +482,15 @@ cx ∈ [0, max_cx], x ∈ [0, W−1] and similarly for y.
   - X table: 10 × 4000 × 8 bytes = 312 KB
   - Y table: 10 × 3000 × 8 bytes = 234 KB
   - **Total: ~547 KB**
+
+```
+function precompute_cos_table(dim, max_freq):
+    table = array[max_freq][dim] of float64
+    for freq in 0 .. max_freq-1:
+        for pos in 0 .. dim-1:
+            table[freq][pos] = portable_cos(pi / dim * freq * (pos + 0.5))
+    return table
+```
 
 ### 5.5 Combined Performance Estimate (12MP, single-threaded Rust)
 
@@ -668,6 +691,8 @@ back to fixed grids, MAX_CHROMA=0.5, and hard gamut clamping. This is OPTIONAL.
 
 | v0.1 Section | Change |
 |---|---|
+| §2.3 Numerical Precision | v0.2 requires int64/uint64 bit reinterpretation for Halley cbrt seed computation (see §5.3) |
+| §2.4 Cube Root of Negative Values | Superseded by Halley implementation: `portable_pow(x, 1/3)` replaced by bit-seed + 3 Halley iterations (see §5.3) |
 | §2.5 Reserved Bits | Bit 47: "Encoders MUST set to 1 for v0.2" (was 0) |
 | §6.3 Coefficient Count Formula | Note that `N×(N+1)/2−1` applies only to square grids; for adaptive grids use `triangular_scan_order(nx, ny)` and apply the AC cap |
 | §6.4 Triangular Patterns | Add non-square grid examples; note that v0.2 grids produce up to 11 unique shapes per channel |
@@ -771,33 +796,96 @@ function dct_encode_separable(channel, W, H, nx, ny, cos_x, cos_y):
     return (dc, ac, scale)
 
 function encode_image(W, H, rgba, gamut):
-    lut = precompute_eotf_lut(gamut)              // 256 entries, 2KB
-    oklab_pixels = convert_all_to_oklab(W, H, rgba, lut)
+    // --- Step 1: Precompute EOTF LUT ---
+    lut = precompute_eotf_lut(gamut)              // 256 entries, 2KB; v0.2
 
+    // --- Step 2: Per-pixel OKLAB conversion ---
+    oklab_pixels = array[W*H * 3] of float64
+    alpha_pixels = array[W*H] of float64
+    avg_L = 0; avg_a = 0; avg_b = 0; avg_alpha = 0
+
+    for i in 0 .. W*H-1:
+        alpha = rgba[i*4 + 3] / 255.0
+        r_lin = lut[rgba[i*4 + 0]]               // EOTF LUT lookup; v0.2
+        g_lin = lut[rgba[i*4 + 1]]               // replaces eotf(x/255.0); v0.2
+        b_lin = lut[rgba[i*4 + 2]]               // v0.2
+
+        lms = M1[gamut] × [r_lin, g_lin, b_lin]
+        lms_cbrt = [cbrt_halley(lms[0]), cbrt_halley(lms[1]), cbrt_halley(lms[2])]  // v0.2: replaces cbrt_signed
+        lab = M2 × lms_cbrt
+
+        avg_L += alpha * lab[0]
+        avg_a += alpha * lab[1]
+        avg_b += alpha * lab[2]
+        avg_alpha += alpha
+
+        oklab_pixels[i*3 + 0] = lab[0]
+        oklab_pixels[i*3 + 1] = lab[1]
+        oklab_pixels[i*3 + 2] = lab[2]
+        alpha_pixels[i] = alpha
+
+    // --- Step 3: Compute alpha-weighted average color ---
+    // (from v0.1 §10.2 step 3) If all pixels fully transparent, default to black.
+    if avg_alpha > 0:
+        avg_L /= avg_alpha
+        avg_a /= avg_alpha
+        avg_b /= avg_alpha
+    else:
+        avg_L = 0; avg_a = 0; avg_b = 0
+
+    // --- Step 4: Composite transparent pixels over average ---
+    // (from v0.1 §10.2 step 4)
+    hasAlpha = avg_alpha < W * H
+    L_chan = array[W*H] of float64
+    a_chan = array[W*H] of float64
+    b_chan = array[W*H] of float64
+
+    for i in 0 .. W*H-1:
+        alpha = alpha_pixels[i]
+        L_chan[i] = avg_L * (1 - alpha) + alpha * oklab_pixels[i*3 + 0]
+        a_chan[i] = avg_a * (1 - alpha) + alpha * oklab_pixels[i*3 + 1]
+        b_chan[i] = avg_b * (1 - alpha) + alpha * oklab_pixels[i*3 + 2]
+
+    // --- Step 5: Derive adaptive grid dimensions ---         // v0.2
     aspect_byte = encode_aspect(W, H)
     if hasAlpha:
-        (L_nx, L_ny) = deriveGrid(aspect_byte, base_n=6)
-        (A_nx, A_ny) = deriveGrid(aspect_byte, base_n=3)
+        (L_nx, L_ny) = deriveGrid(aspect_byte, base_n=6)     // v0.2
+        (A_nx, A_ny) = deriveGrid(aspect_byte, base_n=3)     // v0.2
     else:
-        (L_nx, L_ny) = deriveGrid(aspect_byte, base_n=7)
-    (C_nx, C_ny) = deriveGrid(aspect_byte, base_n=4)
+        (L_nx, L_ny) = deriveGrid(aspect_byte, base_n=7)     // v0.2
+    (C_nx, C_ny) = deriveGrid(aspect_byte, base_n=4)         // v0.2
 
-    cos_x = precompute_cos_x(W, max(L_nx, C_nx))
-    cos_y = precompute_cos_y(H, max(L_ny, C_ny))
-    // A_nx ≤ L_nx and A_ny ≤ L_ny for all aspect bytes (base_n=3 < base_n=6),
+    // --- Step 6: Precompute cosine tables ---                // v0.2
+    // A_nx ≤ L_nx and A_ny ≤ L_ny for all aspect bytes (base_n=3 ≤ base_n=6),
     // so alpha channel reuses the same cosine tables.
+    max_cx = max(L_nx, C_nx)
+    max_cy = max(L_ny, C_ny)
+    cos_x = precompute_cos_table(W, max_cx)                  // v0.2
+    cos_y = precompute_cos_table(H, max_cy)                  // v0.2
 
-    (L_dc, L_ac, L_scale) = dct_encode_separable(L, W, H, L_nx, L_ny, cos_x, cos_y)
-    (a_dc, a_ac, a_scale) = dct_encode_separable(a, W, H, C_nx, C_ny, cos_x, cos_y)
-    (b_dc, b_ac, b_scale) = dct_encode_separable(b, W, H, C_nx, C_ny, cos_x, cos_y)
+    // --- Step 7: DCT encode each channel ---
+    (L_dc, L_ac, L_scale) = dct_encode_separable(L_chan, W, H, L_nx, L_ny, cos_x, cos_y)
+    (a_dc, a_ac, a_scale) = dct_encode_separable(a_chan, W, H, C_nx, C_ny, cos_x, cos_y)
+    (b_dc, b_ac, b_scale) = dct_encode_separable(b_chan, W, H, C_nx, C_ny, cos_x, cos_y)
+    if hasAlpha:
+        (A_dc, A_ac, A_scale) = dct_encode_separable(alpha_pixels, W, H, A_nx, A_ny, cos_x, cos_y)
 
-    // For alpha mode: also encode alpha channel with (A_nx, A_ny) derived above
-    // (A_dc, A_ac, A_scale) = dct_encode_separable(alpha, W, H, A_nx, A_ny, cos_x, cos_y)
+    // Cap to bit budget; zero-pad if under cap (v0.2)
+    L_cap = 20 if hasAlpha else 27
+    L_ac = L_ac[0 .. L_cap-1]          // drop highest-frequency tail if over cap
+    while len(L_ac) < L_cap: L_ac.append(0)  // zero-pad if under cap (4×8/8×4 grids)
+    a_ac = a_ac[0..8]; b_ac = b_ac[0..8]     // chroma cap=9; always ≥9 raw AC
+    if hasAlpha: A_ac = A_ac[0..4]            // alpha cap=5; always ≥5 raw AC
 
-    // Cap AC arrays: L_ac = L_ac[0..26], a_ac = a_ac[0..8], b_ac = b_ac[0..8]
-    // Zero-pad if len(ac) < cap (only alpha-mode L at extreme aspects)
+    // --- Step 8: Quantize header values ---
+    L_dc_q  = round(127 * clamp(L_dc, 0, 1))
+    a_dc_q  = round(64 + 63 * clamp(a_dc / MAX_CHROMA_A, -1, 1))
+    b_dc_q  = round(64 + 63 * clamp(b_dc / MAX_CHROMA_B, -1, 1))
+    L_scl_q = round(63 * clamp(L_scale / MAX_L_SCALE, 0, 1))
+    a_scl_q = round(63 * clamp(a_scale / MAX_A_SCALE, 0, 1))
+    b_scl_q = round(31 * clamp(b_scale / MAX_B_SCALE, 0, 1))
 
-    // Pack header with version bit (v0.2)
+    // --- Step 9: Pack header (48 bits = 6 bytes, little-endian) ---
     header = L_dc_q
            | (a_dc_q << 7)
            | (b_dc_q << 14)
@@ -806,9 +894,52 @@ function encode_image(W, H, rgba, gamut):
            | (b_scl_q << 33)
            | (aspect_byte << 38)
            | ((1 if hasAlpha else 0) << 46)
-           | (1 << 47)                          // v0.2 version bit
+           | (1 << 47)                          // v0.2: version bit = 1
 
-    return pack_hash(header, L_ac, a_ac, b_ac, ...)    // AC capped at 27/9/9 (or 20/9/9/5)
+    hash = new byte[32]
+    for i in 0..5: hash[i] = (header >> (i * 8)) & 0xFF
+
+    // --- Step 10: Pack AC coefficients with µ-law companding ---
+    // quantizeAC: normalize by scale; when scale=0 (solid color), write midpoint
+    function quantizeAC(value, scale, mu, bits):
+        if scale == 0:
+            return muLawQuantize(0, mu, bits)
+        return muLawQuantize(value / scale, mu, bits)
+
+    bitpos = 48
+
+    if hasAlpha:
+        A_dc_q  = round(31 * clamp(A_dc, 0, 1))
+        A_scl_q = round(15 * clamp(A_scale / MAX_A_ALPHA_SCALE, 0, 1))
+        writeBits(hash, bitpos, 5, A_dc_q);  bitpos += 5
+        writeBits(hash, bitpos, 4, A_scl_q); bitpos += 4
+
+        for i in 0..6:                          // first 7 alpha-mode L AC at 6 bits
+            q = quantizeAC(L_ac[i], L_scale, 5, 6)
+            writeBits(hash, bitpos, 6, q); bitpos += 6
+        for i in 7..19:                         // remaining 13 alpha-mode L AC at 5 bits
+            q = quantizeAC(L_ac[i], L_scale, 5, 5)
+            writeBits(hash, bitpos, 5, q); bitpos += 5
+    else:
+        for i in 0..26:                         // 27 no-alpha L AC at 5 bits each
+            q = quantizeAC(L_ac[i], L_scale, 5, 5)
+            writeBits(hash, bitpos, 5, q); bitpos += 5
+
+    for i in 0..8:                              // 9 a-chroma AC at 4 bits each
+        q = quantizeAC(a_ac[i], a_scale, 5, 4)
+        writeBits(hash, bitpos, 4, q); bitpos += 4
+
+    for i in 0..8:                              // 9 b-chroma AC at 4 bits each
+        q = quantizeAC(b_ac[i], b_scale, 5, 4)
+        writeBits(hash, bitpos, 4, q); bitpos += 4
+
+    if hasAlpha:
+        for i in 0..4:                          // 5 alpha AC at 4 bits each
+            q = quantizeAC(A_ac[i], A_scale, 5, 4)
+            writeBits(hash, bitpos, 4, q); bitpos += 4
+
+    assert bitpos == 256
+    return hash
 ```
 
 ## Appendix: Decode Architecture (Pseudocode)
