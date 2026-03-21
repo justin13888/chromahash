@@ -6,7 +6,7 @@ This is a **monorepo** with six language implementations of the same format spec
 
 ## Development
 
-Language tooling is mostly managed by mise and common commands are run via `just`.
+Language tooling is mostly managed by `mise` and common commands are run via `just`.
 
 ## Implementation Notes
 
@@ -15,7 +15,7 @@ Language tooling is mostly managed by mise and common commands are run via `just
 - Rust: `#![deny(warnings)]` on public crates once stable
 - Kotlin: Kotlin DSL only (`.gradle.kts`), target JVM 21
 - Swift: Swift 6 concurrency model, no `@unchecked Sendable` hacks
-- Write tests for all public API surface
+- Write tests for all public API surface and ensure they are consistent across languages and validates the specification in `spec/` completely
 - Go: zero external dependencies, all math uses `float64`, use `roundHalfAwayFromZero` (not `math.Round`)
 - Use conventional commits: `type(scope): description` — scope = `rust`, `ts`, `kotlin`, `swift`, `go`, `py`, or `spec`
 - Keep implementations in sync — a feature in one language should land in all six
