@@ -1,0 +1,140 @@
+[
+  {
+    "name": "cbrt_0",
+    "input": 0,
+    "expected": 0,
+    "max_ulp_error": 0
+  },
+  {
+    "name": "cbrt_0.000001",
+    "input": 0.000001,
+    "expected": 0.01,
+    "max_ulp_error": 0
+  },
+  {
+    "name": "cbrt_0.001",
+    "input": 0.001,
+    "expected": 0.1,
+    "max_ulp_error": 1
+  },
+  {
+    "name": "cbrt_0.01",
+    "input": 0.01,
+    "expected": 0.21544346900318836,
+    "max_ulp_error": 1
+  },
+  {
+    "name": "cbrt_0.05",
+    "input": 0.05,
+    "expected": 0.36840314986403866,
+    "max_ulp_error": 0
+  },
+  {
+    "name": "cbrt_0.1",
+    "input": 0.1,
+    "expected": 0.4641588833612779,
+    "max_ulp_error": 1
+  },
+  {
+    "name": "cbrt_0.2",
+    "input": 0.2,
+    "expected": 0.5848035476425733,
+    "max_ulp_error": 2
+  },
+  {
+    "name": "cbrt_0.3",
+    "input": 0.3,
+    "expected": 0.6694329500821695,
+    "max_ulp_error": 0
+  },
+  {
+    "name": "cbrt_0.5",
+    "input": 0.5,
+    "expected": 0.7937005259840998,
+    "max_ulp_error": 1
+  },
+  {
+    "name": "cbrt_0.7",
+    "input": 0.7,
+    "expected": 0.8879040017426006,
+    "max_ulp_error": 1
+  },
+  {
+    "name": "cbrt_1",
+    "input": 1,
+    "expected": 1,
+    "max_ulp_error": 0
+  },
+  {
+    "name": "cbrt_1.5",
+    "input": 1.5,
+    "expected": 1.1447142425533319,
+    "max_ulp_error": 0
+  },
+  {
+    "name": "cbrt_2",
+    "input": 2,
+    "expected": 1.2599210498948732,
+    "max_ulp_error": 1
+  },
+  {
+    "name": "cbrt_2.5",
+    "input": 2.5,
+    "expected": 1.3572088082974532,
+    "max_ulp_error": 2
+  },
+  {
+    "name": "cbrt_3",
+    "input": 3,
+    "expected": 1.4422495703074085,
+    "max_ulp_error": 0
+  },
+  {
+    "name": "cbrt_8",
+    "input": 8,
+    "expected": 2,
+    "max_ulp_error": 1
+  },
+  {
+    "name": "cbrt_27",
+    "input": 27,
+    "expected": 2.9999999999999996,
+    "max_ulp_error": 1
+  },
+  {
+    "name": "cbrt_-0.001",
+    "input": -0.001,
+    "expected": -0.1,
+    "max_ulp_error": 1
+  },
+  {
+    "name": "cbrt_-0.1",
+    "input": -0.1,
+    "expected": -0.4641588833612779,
+    "max_ulp_error": 1
+  },
+  {
+    "name": "cbrt_-0.5",
+    "input": -0.5,
+    "expected": -0.7937005259840998,
+    "max_ulp_error": 1
+  },
+  {
+    "name": "cbrt_-1",
+    "input": -1,
+    "expected": -1,
+    "max_ulp_error": 0
+  },
+  {
+    "name": "cbrt_-8",
+    "input": -8,
+    "expected": -2,
+    "max_ulp_error": 1
+  },
+  {
+    "name": "cbrt_-27",
+    "input": -27,
+    "expected": -2.9999999999999996,
+    "max_ulp_error": 1
+  }
+]

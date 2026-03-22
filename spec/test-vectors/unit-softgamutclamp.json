@@ -1,0 +1,57 @@
+[
+  {
+    "name": "gray_mid",
+    "input": { "L": 0.5, "a": 0, "b": 0 },
+    "expected": { "L": 0.5, "a": 0, "b": 0 }
+  },
+  {
+    "name": "white",
+    "input": { "L": 1, "a": 0, "b": 0 },
+    "expected": { "L": 1, "a": 0, "b": 0 }
+  },
+  {
+    "name": "black",
+    "input": { "L": 0, "a": 0, "b": 0 },
+    "expected": { "L": 0, "a": 0, "b": 0 }
+  },
+  {
+    "name": "green_ish",
+    "input": { "L": 0.7, "a": -0.1, "b": 0.1 },
+    "expected": { "L": 0.7, "a": -0.1, "b": 0.1 }
+  },
+  {
+    "name": "saturated_red",
+    "input": { "L": 0.5, "a": 0.4, "b": 0.2 },
+    "expected": { "L": 0.5, "a": 0.18203125000000003, "b": 0.09101562500000002 }
+  },
+  {
+    "name": "saturated_blue",
+    "input": { "L": 0.4, "a": -0.1, "b": -0.3 },
+    "expected": { "L": 0.4, "a": -0.0373748779296875, "b": -0.11212463378906248 }
+  },
+  {
+    "name": "saturated_yellow",
+    "input": { "L": 0.8, "a": -0.05, "b": 0.3 },
+    "expected": { "L": 0.8, "a": -0.02729568481445313, "b": 0.16377410888671876 }
+  },
+  {
+    "name": "very_saturated",
+    "input": { "L": 0.5, "a": 0.45, "b": 0 },
+    "expected": { "L": 0.5, "a": 0.20269088745117186, "b": 0 }
+  },
+  {
+    "name": "very_saturated_2",
+    "input": { "L": 0.5, "a": 0, "b": 0.45 },
+    "expected": { "L": 0.5, "a": 0, "b": 0.1021728515625 }
+  },
+  {
+    "name": "achromatic_low",
+    "input": { "L": 0.1, "a": 0, "b": 0 },
+    "expected": { "L": 0.1, "a": 0, "b": 0 }
+  },
+  {
+    "name": "achromatic_high",
+    "input": { "L": 0.9, "a": 0, "b": 0 },
+    "expected": { "L": 0.9, "a": 0, "b": 0 }
+  }
+]

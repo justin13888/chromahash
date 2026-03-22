@@ -1,12 +1,30 @@
-use crate::aspect::decode_output_size;
+use crate::aspect::{decode_output_size, derive_grid};
 use crate::bitpack::read_bits;
-use crate::color::oklab_to_srgb;
+use crate::color::{oklab_to_linear_srgb, soft_gamut_clamp};
 use crate::constants::*;
 use crate::dct::{dct_decode_pixel, triangular_scan_order};
 use crate::math_utils::{clamp01, round_half_away_from_zero};
 use crate::mulaw::mu_law_dequantize;
+use crate::transfer::srgb_gamma;
 
-/// Decode a ChromaHash into RGBA pixel data. Per spec §11.
+/// Build 4096-entry sRGB gamma LUT: lut[i] = sRGB8(i/4095). Per spec §6.2.
+fn build_gamma_lut() -> [u8; 4096] {
+    let mut lut = [0u8; 4096];
+    for (i, entry) in lut.iter_mut().enumerate() {
+        let x = i as f64 / 4095.0;
+        let srgb = srgb_gamma(x);
+        *entry = round_half_away_from_zero(srgb.clamp(0.0, 1.0) * 255.0) as u8;
+    }
+    lut
+}
+
+/// Map linear [0,1] to sRGB u8 via LUT. Per spec §6.2.
+fn linear_to_srgb8(x: f64, lut: &[u8; 4096]) -> u8 {
+    let idx = (round_half_away_from_zero(x * 4095.0) as i64).clamp(0, 4095) as usize;
+    lut[idx]
+}
+
+/// Decode a ChromaHash into RGBA pixel data. Per spec §11 (v0.2).
 /// Returns (width, height, rgba_pixels).
 pub fn decode(hash: &[u8; 32]) -> (u32, u32, Vec<u8>) {
     // 1. Unpack header (48 bits)
@@ -23,8 +41,9 @@ pub fn decode(hash: &[u8; 32]) -> (u32, u32, Vec<u8>) {
     let b_scl_q = ((header >> 33) & 0x1F) as u32;
     let aspect = ((header >> 38) & 0xFF) as u8;
     let has_alpha = ((header >> 46) & 1) == 1;
+    // bit 47: version (informational; always use v0.2 logic)
 
-    // 2. Decode DC values and scale factors
+    // 2. Decode DC values and scale factors (v0.2: MAX_CHROMA = 0.45)
     let l_dc = l_dc_q as f64 / 127.0;
     let a_dc = (a_dc_q as f64 - 64.0) / 63.0 * MAX_CHROMA_A;
     let b_dc = (b_dc_q as f64 - 64.0) / 63.0 * MAX_CHROMA_B;
@@ -32,10 +51,26 @@ pub fn decode(hash: &[u8; 32]) -> (u32, u32, Vec<u8>) {
     let a_scale = a_scl_q as f64 / 63.0 * MAX_A_SCALE;
     let b_scale = b_scl_q as f64 / 31.0 * MAX_B_SCALE;
 
-    // 3-4. Decode aspect ratio and compute output size
+    // 3. Derive adaptive grid dimensions (v0.2)
+    let (l_nx, l_ny) = if has_alpha {
+        derive_grid(aspect, 6)
+    } else {
+        derive_grid(aspect, 7)
+    };
+    let (c_nx, c_ny) = derive_grid(aspect, 4);
+
+    // 4. Compute scan orders and usable AC counts
+    let l_scan = triangular_scan_order(l_nx, l_ny);
+    let chroma_scan = triangular_scan_order(c_nx, c_ny);
+    let l_cap = if has_alpha { 20usize } else { 27 };
+    let c_cap = 9usize;
+    let l_usable = l_cap.min(l_scan.len());
+    let c_usable = c_cap.min(chroma_scan.len());
+
+    // 5. Compute output size
     let (w, h) = decode_output_size(aspect);
 
-    // 5. Dequantize AC coefficients
+    // 6. Dequantize AC coefficients from bitstream (always read exactly cap values)
     let mut bitpos = 48usize;
 
     let (alpha_dc_val, alpha_scale_val) = if has_alpha {
@@ -48,7 +83,7 @@ pub fn decode(hash: &[u8; 32]) -> (u32, u32, Vec<u8>) {
         (1.0, 0.0)
     };
 
-    let (l_ac, lx, ly) = if has_alpha {
+    let l_ac = if has_alpha {
         let mut lac = Vec::with_capacity(20);
         for _ in 0..7 {
             let q = read_bits(hash, bitpos, 6);
@@ -60,7 +95,7 @@ pub fn decode(hash: &[u8; 32]) -> (u32, u32, Vec<u8>) {
             bitpos += 5;
             lac.push(mu_law_dequantize(q, 5) * l_scale);
         }
-        (lac, 6usize, 6usize)
+        lac
     } else {
         let mut lac = Vec::with_capacity(27);
         for _ in 0..27 {
@@ -68,7 +103,7 @@ pub fn decode(hash: &[u8; 32]) -> (u32, u32, Vec<u8>) {
             bitpos += 5;
             lac.push(mu_law_dequantize(q, 5) * l_scale);
         }
-        (lac, 7usize, 7usize)
+        lac
     };
 
     let mut a_ac = Vec::with_capacity(9);
@@ -85,53 +120,80 @@ pub fn decode(hash: &[u8; 32]) -> (u32, u32, Vec<u8>) {
         b_ac.push(mu_law_dequantize(q, 4) * b_scale);
     }
 
-    let alpha_ac = if has_alpha {
+    // Alpha channel: derive its adaptive grid and usable count
+    let (alpha_ac, alpha_scan, alpha_usable) = if has_alpha {
+        let (a_nx, a_ny) = derive_grid(aspect, 3);
+        let alpha_scan_inner = triangular_scan_order(a_nx, a_ny);
+        let a_usable = 5usize.min(alpha_scan_inner.len());
         let mut aac = Vec::with_capacity(5);
         for _ in 0..5 {
             let q = read_bits(hash, bitpos, 4);
             bitpos += 4;
             aac.push(mu_law_dequantize(q, 4) * alpha_scale_val);
         }
-        aac
+        (aac, alpha_scan_inner, a_usable)
     } else {
-        vec![]
+        (vec![], vec![], 0)
     };
 
-    // Precompute scan orders
-    let l_scan = triangular_scan_order(lx, ly);
-    let chroma_scan = triangular_scan_order(4, 4);
-    let alpha_scan = if has_alpha {
-        triangular_scan_order(3, 3)
-    } else {
-        vec![]
-    };
+    // 7. Build gamma LUT (v0.2)
+    let gamma_lut = build_gamma_lut();
 
-    // 6. Render output image
+    // 8. Render output image
     let w = w as usize;
     let h = h as usize;
-    let mut rgba = vec![0u8; w * h * 4];
+    let mut rgba_out = vec![0u8; w * h * 4];
 
     for y in 0..h {
         for x in 0..w {
-            let l = dct_decode_pixel(l_dc, &l_ac, &l_scan, x, y, w, h);
-            let a = dct_decode_pixel(a_dc, &a_ac, &chroma_scan, x, y, w, h);
-            let b = dct_decode_pixel(b_dc, &b_ac, &chroma_scan, x, y, w, h);
+            let l = dct_decode_pixel(l_dc, &l_ac[..l_usable], &l_scan[..l_usable], x, y, w, h);
+            let a = dct_decode_pixel(
+                a_dc,
+                &a_ac[..c_usable],
+                &chroma_scan[..c_usable],
+                x,
+                y,
+                w,
+                h,
+            );
+            let b = dct_decode_pixel(
+                b_dc,
+                &b_ac[..c_usable],
+                &chroma_scan[..c_usable],
+                x,
+                y,
+                w,
+                h,
+            );
             let alpha = if has_alpha {
-                dct_decode_pixel(alpha_dc_val, &alpha_ac, &alpha_scan, x, y, w, h)
+                dct_decode_pixel(
+                    alpha_dc_val,
+                    &alpha_ac[..alpha_usable],
+                    &alpha_scan[..alpha_usable],
+                    x,
+                    y,
+                    w,
+                    h,
+                )
             } else {
                 1.0
             };
 
-            let srgb = oklab_to_srgb([l, a, b]);
+            // Clamp L from DCT ringing, then soft gamut clamp (v0.2)
+            let l_clamped = clamp01(l);
+            let [l_out, a_out, b_out] = soft_gamut_clamp(l_clamped, a, b);
+
+            // OKLAB → linear sRGB → gamma LUT (v0.2)
+            let rgb_linear = oklab_to_linear_srgb([l_out, a_out, b_out]);
             let idx = (y * w + x) * 4;
-            rgba[idx] = round_half_away_from_zero(255.0 * clamp01(srgb[0])) as u8;
-            rgba[idx + 1] = round_half_away_from_zero(255.0 * clamp01(srgb[1])) as u8;
-            rgba[idx + 2] = round_half_away_from_zero(255.0 * clamp01(srgb[2])) as u8;
-            rgba[idx + 3] = round_half_away_from_zero(255.0 * clamp01(alpha)) as u8;
+            rgba_out[idx] = linear_to_srgb8(clamp01(rgb_linear[0]), &gamma_lut);
+            rgba_out[idx + 1] = linear_to_srgb8(clamp01(rgb_linear[1]), &gamma_lut);
+            rgba_out[idx + 2] = linear_to_srgb8(clamp01(rgb_linear[2]), &gamma_lut);
+            rgba_out[idx + 3] = round_half_away_from_zero(255.0 * clamp01(alpha)) as u8;
         }
     }
 
-    (w as u32, h as u32, rgba)
+    (w as u32, h as u32, rgba_out)
 }
 
 /// Extract the average color from a ChromaHash without full decode.
@@ -151,7 +213,12 @@ pub fn average_color(hash: &[u8; 32]) -> [u8; 4] {
     let a_dc = (a_dc_q as f64 - 64.0) / 63.0 * MAX_CHROMA_A;
     let b_dc = (b_dc_q as f64 - 64.0) / 63.0 * MAX_CHROMA_B;
 
-    let srgb = oklab_to_srgb([l_dc, a_dc, b_dc]);
+    // Apply soft gamut clamp to DC values (v0.2)
+    let l_clamped = clamp01(l_dc);
+    let [l_out, a_out, b_out] = soft_gamut_clamp(l_clamped, a_dc, b_dc);
+
+    let rgb_linear = oklab_to_linear_srgb([l_out, a_out, b_out]);
+    let gamma_lut = build_gamma_lut();
 
     let alpha = if has_alpha {
         read_bits(hash, 48, 5) as f64 / 31.0
@@ -160,9 +227,9 @@ pub fn average_color(hash: &[u8; 32]) -> [u8; 4] {
     };
 
     [
-        round_half_away_from_zero(255.0 * clamp01(srgb[0])) as u8,
-        round_half_away_from_zero(255.0 * clamp01(srgb[1])) as u8,
-        round_half_away_from_zero(255.0 * clamp01(srgb[2])) as u8,
+        linear_to_srgb8(clamp01(rgb_linear[0]), &gamma_lut),
+        linear_to_srgb8(clamp01(rgb_linear[1]), &gamma_lut),
+        linear_to_srgb8(clamp01(rgb_linear[2]), &gamma_lut),
         round_half_away_from_zero(255.0 * clamp01(alpha)) as u8,
     ]
 }

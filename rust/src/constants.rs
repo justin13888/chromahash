@@ -12,8 +12,8 @@ pub enum Gamut {
 pub const MU: f64 = 5.0;
 
 /// Scale factor maximums (§7.2, §12.1).
-pub const MAX_CHROMA_A: f64 = 0.5;
-pub const MAX_CHROMA_B: f64 = 0.5;
+pub const MAX_CHROMA_A: f64 = 0.45;
+pub const MAX_CHROMA_B: f64 = 0.45;
 pub const MAX_L_SCALE: f64 = 0.5;
 pub const MAX_A_SCALE: f64 = 0.5;
 pub const MAX_B_SCALE: f64 = 0.5;

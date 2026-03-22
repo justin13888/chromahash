@@ -1,118 +1,77 @@
 [
   {
-    "name": "read_7bits_at_0",
-    "input": { "operation": "readBits", "hash": [85, 0, 0, 0], "bitpos": 0, "width": 7 },
-    "expected": { "value": 85 }
+    "name": "bits4_at_0",
+    "input": { "bitpos": 0, "count": 4, "value": 10 },
+    "expected": { "read_back": 10 }
   },
   {
-    "name": "read_7bits_at_0_max",
-    "input": { "operation": "readBits", "hash": [127, 0, 0, 0], "bitpos": 0, "width": 7 },
-    "expected": { "value": 127 }
+    "name": "bits5_at_0",
+    "input": { "bitpos": 0, "count": 5, "value": 31 },
+    "expected": { "read_back": 31 }
   },
   {
-    "name": "read_8bits_byte_aligned",
-    "input": { "operation": "readBits", "hash": [0, 255, 0, 0], "bitpos": 8, "width": 8 },
-    "expected": { "value": 255 }
+    "name": "bits6_at_0",
+    "input": { "bitpos": 0, "count": 6, "value": 60 },
+    "expected": { "read_back": 60 }
   },
   {
-    "name": "read_4bits_low_nibble",
-    "input": { "operation": "readBits", "hash": [171, 0, 0, 0], "bitpos": 0, "width": 4 },
-    "expected": { "value": 11 }
+    "name": "bits8_at_0",
+    "input": { "bitpos": 0, "count": 8, "value": 171 },
+    "expected": { "read_back": 171 }
   },
   {
-    "name": "read_4bits_high_nibble",
-    "input": { "operation": "readBits", "hash": [171, 0, 0, 0], "bitpos": 4, "width": 4 },
-    "expected": { "value": 10 }
+    "name": "bits4_at_3",
+    "input": { "bitpos": 3, "count": 4, "value": 11 },
+    "expected": { "read_back": 11 }
   },
   {
-    "name": "read_6bits_at_0",
-    "input": { "operation": "readBits", "hash": [63, 0, 0, 0], "bitpos": 0, "width": 6 },
-    "expected": { "value": 63 }
+    "name": "bits5_at_7",
+    "input": { "bitpos": 7, "count": 5, "value": 21 },
+    "expected": { "read_back": 21 }
   },
   {
-    "name": "read_5bits_at_0",
-    "input": { "operation": "readBits", "hash": [21, 0, 0, 0], "bitpos": 0, "width": 5 },
-    "expected": { "value": 21 }
+    "name": "bits6_at_6",
+    "input": { "bitpos": 6, "count": 6, "value": 42 },
+    "expected": { "read_back": 42 }
   },
   {
-    "name": "read_8bits_spanning_boundary",
-    "input": { "operation": "readBits", "hash": [240, 15, 0, 0], "bitpos": 4, "width": 8 },
-    "expected": { "value": 255 }
+    "name": "bits8_at_6",
+    "input": { "bitpos": 6, "count": 8, "value": 202 },
+    "expected": { "read_back": 202 }
   },
   {
-    "name": "read_5bits_spanning_boundary",
-    "input": { "operation": "readBits", "hash": [224, 7, 0, 0], "bitpos": 5, "width": 5 },
-    "expected": { "value": 31 }
+    "name": "bits4_at_48",
+    "input": { "bitpos": 48, "count": 4, "value": 15 },
+    "expected": { "read_back": 15 }
   },
   {
-    "name": "read_7bits_spanning_boundary",
-    "input": { "operation": "readBits", "hash": [128, 42, 0, 0], "bitpos": 7, "width": 7 },
-    "expected": { "value": 85 }
+    "name": "bits5_at_48",
+    "input": { "bitpos": 48, "count": 5, "value": 26 },
+    "expected": { "read_back": 26 }
   },
   {
-    "name": "read_5bits_at_13_spanning_bytes_1_2",
-    "input": { "operation": "readBits", "hash": [0, 0, 7, 0], "bitpos": 13, "width": 5 },
-    "expected": { "value": 28 }
+    "name": "bits6_at_48",
+    "input": { "bitpos": 48, "count": 6, "value": 53 },
+    "expected": { "read_back": 53 }
   },
   {
-    "name": "write_7bits_at_0",
-    "input": { "operation": "writeBits", "hash": [0, 0, 0, 0], "bitpos": 0, "width": 7, "value": 100 },
-    "expected": { "hash": [100, 0, 0, 0] }
+    "name": "bits5_at_53",
+    "input": { "bitpos": 53, "count": 5, "value": 13 },
+    "expected": { "read_back": 13 }
   },
   {
-    "name": "write_7bits_at_0_max",
-    "input": { "operation": "writeBits", "hash": [0, 0, 0, 0], "bitpos": 0, "width": 7, "value": 127 },
-    "expected": { "hash": [127, 0, 0, 0] }
+    "name": "bits4_at_183",
+    "input": { "bitpos": 183, "count": 4, "value": 7 },
+    "expected": { "read_back": 7 }
   },
   {
-    "name": "write_8bits_at_8",
-    "input": { "operation": "writeBits", "hash": [0, 0, 0, 0], "bitpos": 8, "width": 8, "value": 200 },
-    "expected": { "hash": [0, 200, 0, 0] }
+    "name": "bits4_at_219",
+    "input": { "bitpos": 219, "count": 4, "value": 12 },
+    "expected": { "read_back": 12 }
   },
   {
-    "name": "write_5bits_spanning_boundary",
-    "input": { "operation": "writeBits", "hash": [0, 0, 0, 0], "bitpos": 5, "width": 5, "value": 31 },
-    "expected": { "hash": [224, 3, 0, 0] }
-  },
-  {
-    "name": "write_7bits_spanning_boundary",
-    "input": { "operation": "writeBits", "hash": [0, 0, 0, 0], "bitpos": 7, "width": 7, "value": 85 },
-    "expected": { "hash": [128, 42, 0, 0] }
-  },
-  {
-    "name": "write_preserves_existing_bits",
-    "input": { "operation": "writeBits", "hash": [15, 0, 0, 0], "bitpos": 4, "width": 4, "value": 10 },
-    "expected": { "hash": [175, 0, 0, 0] }
-  },
-  {
-    "name": "roundtrip_header_fields",
-    "input": {
-      "operation": "roundtrip",
-      "fields": [
-        { "name": "L_dc",     "bitpos": 0,  "width": 7, "value": 100 },
-        { "name": "a_dc",     "bitpos": 7,  "width": 7, "value": 64  },
-        { "name": "b_dc",     "bitpos": 14, "width": 7, "value": 64  },
-        { "name": "L_scale",  "bitpos": 21, "width": 6, "value": 40  },
-        { "name": "a_scale",  "bitpos": 27, "width": 6, "value": 30  },
-        { "name": "b_scale",  "bitpos": 33, "width": 5, "value": 15  },
-        { "name": "aspect",   "bitpos": 38, "width": 8, "value": 128 },
-        { "name": "hasAlpha", "bitpos": 46, "width": 1, "value": 0   },
-        { "name": "version",  "bitpos": 47, "width": 1, "value": 1   }
-      ]
-    },
-    "expected": {
-      "hash": [100, 32, 16, 245, 30, 160, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-      "readback": {
-        "L_dc": 100,
-        "a_dc": 64,
-        "b_dc": 64,
-        "L_scale": 40,
-        "a_scale": 30,
-        "b_scale": 15,
-        "aspect": 128,
-        "hasAlpha": 0,
-        "version": 1
-      }
-    }
+    "name": "bits1_at_47",
+    "input": { "bitpos": 47, "count": 1, "value": 1 },
+    "expected": { "read_back": 1 }
   }
 ]

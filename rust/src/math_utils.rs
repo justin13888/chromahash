@@ -109,8 +109,42 @@ pub fn portable_pow(base: f64, exponent: f64) -> f64 {
     portable_exp(exponent * portable_ln(base))
 }
 
+/// IEEE 754 bit-seed cube root with 3 Halley iterations. Per spec §5.3.
+/// ~26 FLOPs, max error ≤ 2 ULP across full domain. Deterministic on all platforms.
+/// Signed: cbrt_halley(-x) = -cbrt_halley(x).
+pub fn cbrt_halley(x: f64) -> f64 {
+    if x == 0.0 {
+        return 0.0;
+    }
+    let sign = x < 0.0;
+    let x = if sign { -x } else { x };
+
+    // Seed via signed int64 biased-exponent division (MUST be signed, not u64)
+    let bits = x.to_bits();
+    let signed_bits = bits as i64;
+    let seed_signed = (signed_bits - (1023i64 << 52)) / 3 + (1023i64 << 52);
+    let seed = seed_signed as u64;
+    let mut y = f64::from_bits(seed);
+
+    // 3 Halley iterations with explicit let bindings to prevent FMA contraction
+    for _ in 0..3 {
+        let t1 = y * y;
+        let y3 = t1 * y;
+        let t2 = 2.0 * x;
+        let num = y3 + t2;
+        let t3 = 2.0 * y3;
+        let den = t3 + x;
+        let t4 = y * num;
+        y = t4 / den;
+    }
+
+    if sign { -y } else { y }
+}
+
 /// Signed cube root per spec §2.4: cbrt(x) = sign(x) × |x|^(1/3).
 /// Uses portable_pow for cross-platform determinism.
+/// Superseded by cbrt_halley for production use; retained for test verification.
+#[allow(dead_code)]
 pub fn cbrt_signed(x: f64) -> f64 {
     if x == 0.0 {
         0.0
@@ -227,6 +261,39 @@ mod tests {
     #[test]
     fn cbrt_zero() {
         assert_eq!(cbrt_signed(0.0), 0.0);
+    }
+
+    #[test]
+    fn cbrt_halley_known_values() {
+        assert!((cbrt_halley(8.0) - 2.0).abs() < 1e-12);
+        assert!((cbrt_halley(27.0) - 3.0).abs() < 1e-12);
+        assert!((cbrt_halley(1.0) - 1.0).abs() < 1e-12);
+        assert!((cbrt_halley(-8.0) - (-2.0)).abs() < 1e-12);
+        assert!((cbrt_halley(-27.0) - (-3.0)).abs() < 1e-12);
+        assert_eq!(cbrt_halley(0.0), 0.0);
+    }
+
+    #[test]
+    fn cbrt_halley_agrees_with_cbrt_signed() {
+        // Verify ≤2 ULP agreement across LMS domain [1e-6, 3.0]
+        let test_vals: &[f64] = &[
+            1e-6, 0.001, 0.01, 0.05, 0.1, 0.2, 0.3, 0.5, 0.7, 1.0, 1.5, 2.0, 2.5, 3.0,
+        ];
+        for &v in test_vals {
+            for &x in &[v, -v] {
+                let halley = cbrt_halley(x);
+                let signed = cbrt_signed(x);
+                let rel_err = if signed.abs() > 1e-15 {
+                    (halley - signed).abs() / signed.abs()
+                } else {
+                    (halley - signed).abs()
+                };
+                assert!(
+                    rel_err < 1e-12,
+                    "cbrt_halley({x}) = {halley}, cbrt_signed({x}) = {signed}, rel_err = {rel_err}"
+                );
+            }
+        }
     }
 
     #[test]

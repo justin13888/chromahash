@@ -1,15 +1,31 @@
-use crate::aspect::encode_aspect;
+use crate::aspect::{derive_grid, encode_aspect};
 use crate::bitpack::write_bits;
-use crate::color::gamma_rgb_to_oklab;
+use crate::color::linear_rgb_to_oklab;
 use crate::constants::*;
-use crate::dct::dct_encode;
+use crate::dct::{dct_encode_separable, precompute_cos_table};
 use crate::math_utils::{clamp_neg1_1, clamp01, round_half_away_from_zero};
 use crate::mulaw::mu_law_quantize;
+use crate::transfer::{adobe_rgb_eotf, bt2020_pq_eotf, prophoto_rgb_eotf, srgb_eotf};
 
-/// Encode an image into a 32-byte ChromaHash. Per spec §10.
+/// Build a 256-entry EOTF lookup table for the given gamut. Per spec §5.2.
+fn build_eotf_lut(gamut: Gamut) -> [f64; 256] {
+    let mut lut = [0.0f64; 256];
+    for (i, entry) in lut.iter_mut().enumerate() {
+        let x = i as f64 / 255.0;
+        *entry = match gamut {
+            Gamut::Srgb | Gamut::DisplayP3 => srgb_eotf(x),
+            Gamut::AdobeRgb => adobe_rgb_eotf(x),
+            Gamut::ProPhotoRgb => prophoto_rgb_eotf(x),
+            Gamut::Bt2020 => bt2020_pq_eotf(x),
+        };
+    }
+    lut
+}
+
+/// Encode an image into a 32-byte ChromaHash. Per spec §10 (v0.2).
 pub fn encode(w: u32, h: u32, rgba: &[u8], gamut: Gamut) -> [u8; 32] {
-    assert!((1..=100).contains(&w), "width must be 1–100");
-    assert!((1..=100).contains(&h), "height must be 1–100");
+    assert!(w >= 1, "width must be >= 1");
+    assert!(h >= 1, "height must be >= 1");
     assert!(
         rgba.len() == (w as usize) * (h as usize) * 4,
         "rgba length mismatch"
@@ -19,7 +35,10 @@ pub fn encode(w: u32, h: u32, rgba: &[u8], gamut: Gamut) -> [u8; 32] {
     let h = h as usize;
     let pixel_count = w * h;
 
-    // 1-2. Convert all pixels to OKLAB, accumulate alpha-weighted average
+    // 1. Precompute EOTF LUT (256 entries, eliminates per-pixel portable_pow)
+    let eotf_lut = build_eotf_lut(gamut);
+
+    // 2. Per-pixel OKLAB conversion with alpha accumulation
     let mut oklab_pixels = vec![[0.0f64; 3]; pixel_count];
     let mut alpha_pixels = vec![0.0f64; pixel_count];
     let mut avg_l = 0.0;
@@ -28,20 +47,20 @@ pub fn encode(w: u32, h: u32, rgba: &[u8], gamut: Gamut) -> [u8; 32] {
     let mut avg_alpha = 0.0;
 
     for i in 0..pixel_count {
-        let r = rgba[i * 4] as f64 / 255.0;
-        let g = rgba[i * 4 + 1] as f64 / 255.0;
-        let b = rgba[i * 4 + 2] as f64 / 255.0;
-        let a = rgba[i * 4 + 3] as f64 / 255.0;
+        let r_lin = eotf_lut[rgba[i * 4] as usize];
+        let g_lin = eotf_lut[rgba[i * 4 + 1] as usize];
+        let b_lin = eotf_lut[rgba[i * 4 + 2] as usize];
+        let alpha = rgba[i * 4 + 3] as f64 / 255.0;
 
-        let lab = gamma_rgb_to_oklab(r, g, b, gamut);
+        let lab = linear_rgb_to_oklab([r_lin, g_lin, b_lin], gamut);
 
-        avg_l += a * lab[0];
-        avg_a += a * lab[1];
-        avg_b += a * lab[2];
-        avg_alpha += a;
+        avg_l += alpha * lab[0];
+        avg_a += alpha * lab[1];
+        avg_b += alpha * lab[2];
+        avg_alpha += alpha;
 
         oklab_pixels[i] = lab;
-        alpha_pixels[i] = a;
+        alpha_pixels[i] = alpha;
     }
 
     // 3. Compute alpha-weighted average color
@@ -64,21 +83,50 @@ pub fn encode(w: u32, h: u32, rgba: &[u8], gamut: Gamut) -> [u8; 32] {
         b_chan[i] = avg_b * (1.0 - alpha) + alpha * oklab_pixels[i][2];
     }
 
-    // 5. DCT encode each channel
-    let (l_dc, l_ac, l_scale) = if has_alpha {
-        dct_encode(&l_chan, w, h, 6, 6)
+    // 5. Derive adaptive grid dimensions
+    let aspect = encode_aspect(w as u32, h as u32);
+    let (l_nx, l_ny) = if has_alpha {
+        derive_grid(aspect, 6)
     } else {
-        dct_encode(&l_chan, w, h, 7, 7)
+        derive_grid(aspect, 7)
     };
-    let (a_dc, a_ac, a_scale) = dct_encode(&a_chan, w, h, 4, 4);
-    let (b_dc, b_ac, b_scale) = dct_encode(&b_chan, w, h, 4, 4);
-    let (alpha_dc, alpha_ac, alpha_scale) = if has_alpha {
-        dct_encode(&alpha_pixels, w, h, 3, 3)
+    let (c_nx, c_ny) = derive_grid(aspect, 4);
+    let (alpha_nx, alpha_ny) = if has_alpha {
+        derive_grid(aspect, 3)
+    } else {
+        (3, 3) // unused placeholder
+    };
+
+    // 6. Precompute cosine tables (alpha dims always <= L dims)
+    let max_cx = l_nx.max(c_nx);
+    let max_cy = l_ny.max(c_ny);
+    let cos_x = precompute_cos_table(w, max_cx);
+    let cos_y = precompute_cos_table(h, max_cy);
+
+    // 7. DCT encode each channel
+    let (l_dc, mut l_ac, l_scale) = dct_encode_separable(&l_chan, w, h, l_nx, l_ny, &cos_x, &cos_y);
+    let (a_dc, mut a_ac, a_scale) = dct_encode_separable(&a_chan, w, h, c_nx, c_ny, &cos_x, &cos_y);
+    let (b_dc, mut b_ac, b_scale) = dct_encode_separable(&b_chan, w, h, c_nx, c_ny, &cos_x, &cos_y);
+
+    let (alpha_dc, mut alpha_ac, alpha_scale) = if has_alpha {
+        dct_encode_separable(&alpha_pixels, w, h, alpha_nx, alpha_ny, &cos_x, &cos_y)
     } else {
         (0.0, vec![], 0.0)
     };
 
-    // 6. Quantize header values
+    // Cap to bit budget; zero-pad if under cap (only 4×8/8×4 alpha-mode L grids)
+    let l_cap = if has_alpha { 20 } else { 27 };
+    l_ac.truncate(l_cap);
+    while l_ac.len() < l_cap {
+        l_ac.push(0.0);
+    }
+    a_ac.truncate(9);
+    b_ac.truncate(9);
+    if has_alpha {
+        alpha_ac.truncate(5);
+    }
+
+    // 8. Quantize header values
     let l_dc_q = round_half_away_from_zero(127.0 * clamp01(l_dc)) as u64;
     let a_dc_q = round_half_away_from_zero(64.0 + 63.0 * clamp_neg1_1(a_dc / MAX_CHROMA_A)) as u64;
     let b_dc_q = round_half_away_from_zero(64.0 + 63.0 * clamp_neg1_1(b_dc / MAX_CHROMA_B)) as u64;
@@ -86,26 +134,23 @@ pub fn encode(w: u32, h: u32, rgba: &[u8], gamut: Gamut) -> [u8; 32] {
     let a_scl_q = round_half_away_from_zero(63.0 * clamp01(a_scale / MAX_A_SCALE)) as u64;
     let b_scl_q = round_half_away_from_zero(31.0 * clamp01(b_scale / MAX_B_SCALE)) as u64;
 
-    // 7. Compute aspect byte
-    let aspect = encode_aspect(w as u32, h as u32) as u64;
-
-    // 8. Pack header (48 bits = 6 bytes)
+    // 9. Pack header (48 bits = 6 bytes, little-endian); bit 47 = 1 for v0.2
     let header: u64 = l_dc_q
         | (a_dc_q << 7)
         | (b_dc_q << 14)
         | (l_scl_q << 21)
         | (a_scl_q << 27)
         | (b_scl_q << 33)
-        | (aspect << 38)
-        | (if has_alpha { 1u64 } else { 0u64 } << 46);
-    // bit 47 reserved = 0
+        | ((aspect as u64) << 38)
+        | (if has_alpha { 1u64 } else { 0u64 } << 46)
+        | (1u64 << 47); // v0.2: version bit = 1
 
     let mut hash = [0u8; 32];
     for (i, byte) in hash.iter_mut().enumerate().take(6) {
         *byte = ((header >> (i * 8)) & 0xFF) as u8;
     }
 
-    // 9. Pack AC coefficients with µ-law companding
+    // 10. Pack AC coefficients with µ-law companding
     let mut bitpos = 48usize;
 
     let quantize_ac = |value: f64, scale: f64, bits: u32| -> u32 {

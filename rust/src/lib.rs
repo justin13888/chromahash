@@ -21,7 +21,7 @@ pub struct ChromaHash {
 impl ChromaHash {
     /// Encode an image into a ChromaHash.
     ///
-    /// - `w`, `h`: image dimensions (1–100 each)
+    /// - `w`, `h`: image dimensions (>= 1 each)
     /// - `rgba`: pixel data in RGBA format (4 bytes per pixel)
     /// - `gamut`: source color space
     pub fn encode(w: u32, h: u32, rgba: &[u8], gamut: Gamut) -> Self {
@@ -251,6 +251,44 @@ mod tests {
         let rgba = horizontal_gradient(w, h);
         let hash = ChromaHash::encode(w, h, &rgba, Gamut::Srgb);
         assert_eq!(hash.as_bytes().len(), 32);
+    }
+
+    #[test]
+    fn version_bit_set() {
+        // v0.2: bit 47 of header must be 1
+        let rgba = solid_image(4, 4, 128, 128, 128, 255);
+        let hash = ChromaHash::encode(4, 4, &rgba, Gamut::Srgb);
+        let header: u64 = (0..6).fold(0u64, |acc, i| {
+            acc | ((hash.as_bytes()[i] as u64) << (i * 8))
+        });
+        let version = (header >> 47) & 1;
+        assert_eq!(version, 1, "v0.2 must set bit 47 to 1");
+    }
+
+    #[test]
+    fn large_image_encode_decode() {
+        // Full-res encoding: dimensions well beyond the old 100×100 limit
+        let w = 200u32;
+        let h = 150u32;
+        let rgba = horizontal_gradient(w, h);
+        let hash = ChromaHash::encode(w, h, &rgba, Gamut::Srgb);
+        assert_eq!(hash.as_bytes().len(), 32);
+        let (dw, dh, pixels) = hash.decode();
+        assert!(dw > 0 && dh > 0);
+        assert_eq!(pixels.len(), (dw * dh * 4) as usize);
+    }
+
+    #[test]
+    fn panorama_encode_decode() {
+        // 4:1 panorama exercises adaptive grid (should produce 10×5 for L)
+        let w = 200u32;
+        let h = 50u32;
+        let rgba = horizontal_gradient(w, h);
+        let hash = ChromaHash::encode(w, h, &rgba, Gamut::Srgb);
+        assert_eq!(hash.as_bytes().len(), 32);
+        let (dw, dh, pixels) = hash.decode();
+        assert!(dw > dh, "panorama output should be wider than tall");
+        assert_eq!(pixels.len(), (dw * dh * 4) as usize);
     }
 
     #[test]

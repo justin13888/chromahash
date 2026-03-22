@@ -19,6 +19,8 @@ pub fn triangular_scan_order(nx: usize, ny: usize) -> Vec<(usize, usize)> {
 
 /// Forward DCT encode for a channel. Per spec §12.7 dctEncode.
 /// Returns (dc, ac_coefficients, scale).
+/// Superseded by dct_encode_separable for production use; retained for test verification.
+#[allow(dead_code)]
 pub fn dct_encode(
     channel: &[f64],
     w: usize,
@@ -58,6 +60,67 @@ pub fn dct_encode(
     // floating-point noise in cosine sums produces tiny AC values. Without this
     // threshold, dividing AC/scale amplifies platform-specific ULP differences
     // (e.g. different cbrt implementations) into divergent quantized codes.
+    if scale < 1e-10 {
+        ac.fill(0.0);
+        scale = 0.0;
+    }
+
+    (dc, ac, scale)
+}
+
+/// Precompute cosine table for DCT: table[freq][pos] = cos(π/dim · freq · (pos+0.5)).
+/// Per spec §5.4. Uses portable_cos for cross-platform determinism.
+pub fn precompute_cos_table(dim: usize, max_freq: usize) -> Vec<Vec<f64>> {
+    let mut table = Vec::with_capacity(max_freq);
+    for freq in 0..max_freq {
+        let mut row = Vec::with_capacity(dim);
+        for pos in 0..dim {
+            row.push(portable_cos(
+                PI / dim as f64 * freq as f64 * (pos as f64 + 0.5),
+            ));
+        }
+        table.push(row);
+    }
+    table
+}
+
+/// Forward DCT encode using precomputed cosine tables. Per spec §5.4 (v0.2).
+/// Semantically identical to dct_encode but avoids redundant cosine evaluations.
+pub fn dct_encode_separable(
+    channel: &[f64],
+    w: usize,
+    h: usize,
+    nx: usize,
+    ny: usize,
+    cos_x: &[Vec<f64>],
+    cos_y: &[Vec<f64>],
+) -> (f64, Vec<f64>, f64) {
+    let wh = (w * h) as f64;
+    let mut dc = 0.0;
+    let mut ac = Vec::new();
+    let mut scale = 0.0_f64;
+
+    for (cy, cy_row) in cos_y[..ny].iter().enumerate() {
+        let mut cx = 0;
+        while cx * ny < nx * (ny - cy) {
+            let mut f = 0.0;
+            for y in 0..h {
+                let fy = cy_row[y];
+                for x in 0..w {
+                    f += channel[x + y * w] * cos_x[cx][x] * fy;
+                }
+            }
+            f /= wh;
+            if cx > 0 || cy > 0 {
+                ac.push(f);
+                scale = scale.max(f.abs());
+            } else {
+                dc = f;
+            }
+            cx += 1;
+        }
+    }
+
     if scale < 1e-10 {
         ac.fill(0.0);
         scale = 0.0;
@@ -168,6 +231,31 @@ mod tests {
                     "constant roundtrip failed at ({x},{y}): got {reconstructed}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn separable_matches_dct_encode() {
+        // dct_encode_separable must produce bit-identical output to dct_encode
+        let w = 8;
+        let h = 6;
+        let mut channel = vec![0.0; w * h];
+        for y in 0..h {
+            for x in 0..w {
+                channel[x + y * w] = (x as f64 * 0.13 + y as f64 * 0.07).sin();
+            }
+        }
+        let nx = 5;
+        let ny = 4;
+        let cos_x = precompute_cos_table(w, nx);
+        let cos_y = precompute_cos_table(h, ny);
+        let (dc1, ac1, s1) = dct_encode(&channel, w, h, nx, ny);
+        let (dc2, ac2, s2) = dct_encode_separable(&channel, w, h, nx, ny, &cos_x, &cos_y);
+        assert_eq!(dc1, dc2, "DC must be bit-identical");
+        assert_eq!(s1, s2, "scale must be bit-identical");
+        assert_eq!(ac1.len(), ac2.len(), "AC count must match");
+        for (i, (v1, v2)) in ac1.iter().zip(ac2.iter()).enumerate() {
+            assert_eq!(v1, v2, "AC[{i}] must be bit-identical");
         }
     }
 
