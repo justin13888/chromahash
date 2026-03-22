@@ -8,9 +8,6 @@ importers:
 
   .:
     dependencies:
-      '@chromahash/typescript':
-        specifier: file:../../typescript
-        version: file:../../typescript
       '@unpic/placeholder':
         specifier: ^0.1.2
         version: 0.1.2
@@ -95,9 +92,6 @@ packages:
     engines: {node: '>=14.21.3'}
     cpu: [x64]
     os: [win32]
-
-  '@chromahash/typescript@file:../../typescript':
-    resolution: {directory: ../../typescript, type: directory}
 
   '@emnapi/runtime@1.9.0':
     resolution: {integrity: sha512-QN75eB0IH2ywSpRpNddCRfQIhmJYBCJ1x5Lb3IscKAL8bMnVAKnRg8dCoXbHzVLLH7P38N2Z3mtulB7W0J0FKw==}
@@ -319,8 +313,6 @@ snapshots:
 
   '@biomejs/cli-win32-x64@1.9.4':
     optional: true
-
-  '@chromahash/typescript@file:../../typescript': {}
 
   '@emnapi/runtime@1.9.0':
     dependencies:

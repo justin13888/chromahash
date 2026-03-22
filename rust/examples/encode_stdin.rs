@@ -56,7 +56,11 @@ fn main() {
                 .read_exact(&mut hash)
                 .expect("failed to read hash from stdin");
             let ch = ChromaHash::from_bytes(hash);
-            let (_w, _h, rgba) = ch.decode();
+            let (w, h, rgba) = ch.decode();
+            let header = format!("{w} {h}\n");
+            io::stdout()
+                .write_all(header.as_bytes())
+                .expect("failed to write header");
             io::stdout().write_all(&rgba).expect("failed to write RGBA");
         }
         "average-color" => {

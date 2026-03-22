@@ -1,10 +1,29 @@
 import { execFile, execFileSync } from "node:child_process";
 import path from "node:path";
-import { ChromaHash } from "@chromahash/typescript";
 import type { HarnessResult, ImageInput } from "./types.ts";
 import { rgbaToDataUri } from "./image-loader.ts";
 
 const ROOT = path.resolve(import.meta.dirname, "../../..");
+const RUST_CLI = path.join(ROOT, "rust/target/debug/examples/encode_stdin");
+
+function decodeViaRust(hash: Uint8Array): {
+  w: number;
+  h: number;
+  rgba: Uint8Array;
+} {
+  const output = execFileSync(RUST_CLI, ["decode"], {
+    input: Buffer.from(hash),
+    encoding: "buffer",
+    timeout: 30_000,
+  });
+  const newline = output.indexOf(0x0a);
+  const header = output.subarray(0, newline).toString("ascii");
+  const parts = header.split(" ");
+  const w = parseInt(parts[0] ?? "0", 10);
+  const h = parseInt(parts[1] ?? "0", 10);
+  const rgba = new Uint8Array(output.subarray(newline + 1));
+  return { w, h, rgba };
+}
 
 interface HarnessConfig {
   language: string;
@@ -226,9 +245,8 @@ export async function runAllHarnesses(
         referenceHash = hash;
       }
 
-      // Decode using TypeScript implementation (deterministic across impls)
-      const ch = ChromaHash.fromBytes(hash);
-      const decoded = ch.decode();
+      // Decode using Rust reference implementation (v0.2)
+      const decoded = decodeViaRust(hash);
       const dataUri = await rgbaToDataUri(decoded.rgba, decoded.w, decoded.h);
 
       results.push({
