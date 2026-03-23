@@ -18,6 +18,26 @@ export interface ImageInput {
   gamut?: string;
 }
 
+/** Per-format quality metrics. All fields are null for CSS-only formats (e.g. unpic). */
+export interface MetricResult {
+  /** PSNR in dB vs Lanczos-downscaled ground truth. Higher is better. */
+  psnrDb: number | null;
+  /** DSSIM = (1 - SSIM) / 2. Lower is better; 0 = identical. */
+  dssim: number | null;
+  /** Unweighted mean OKLAB ΔE. Lower is better; JND ≈ 0.02. */
+  deltaEMean: number | null;
+  /** Luminance-variance saliency-weighted mean OKLAB ΔE. Lower is better. */
+  deltaEWeighted: number | null;
+  /** 95th-percentile OKLAB ΔE. */
+  deltaE95: number | null;
+  /**
+   * Composite quality score: 0.55·norm(DSSIM) + 0.45·norm(weighted ΔE).
+   * Normalized per-image across raster formats (0 = best, 1 = worst).
+   * Null until computeCompositeScores() is called.
+   */
+  compositeScore: number | null;
+}
+
 /** Result of encoding/decoding with a particular format. */
 export interface FormatResult {
   /** Name of the LQIP format. */
@@ -34,8 +54,8 @@ export interface FormatResult {
   decodeTimeMs: number;
   /** Base64 PNG data URI for HTML embedding. */
   dataUri: string;
-  /** PSNR in dB (null for CSS-only formats like unpic). */
-  psnrDb: number | null;
+  /** Quality metrics (all null for CSS-only formats like unpic). */
+  metrics: MetricResult;
 }
 
 /** An adapter that processes an image through a specific LQIP format. */

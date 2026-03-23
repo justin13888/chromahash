@@ -1,7 +1,7 @@
 import { decode, encode } from "blurhash";
 import type { FormatAdapter, FormatResult, ImageInput } from "../types.ts";
 import { rgbaToDataUri } from "../image-loader.ts";
-import { computePsnr, timeMs } from "../metrics.ts";
+import { computeAllMetrics, timeMs } from "../metrics.ts";
 
 export class BlurHashAdapter implements FormatAdapter {
   readonly name = "BlurHash";
@@ -30,7 +30,14 @@ export class BlurHashAdapter implements FormatAdapter {
     const decodedRgba = new Uint8Array(decodedPixels);
 
     const dataUri = await rgbaToDataUri(decodedRgba, decodeW, decodeH);
-    const psnrDb = computePsnr(rgba, w, h, decodedRgba, decodeW, decodeH);
+    const metrics = await computeAllMetrics(
+      rgba,
+      w,
+      h,
+      decodedRgba,
+      decodeW,
+      decodeH,
+    );
 
     return {
       formatName: this.name,
@@ -40,7 +47,7 @@ export class BlurHashAdapter implements FormatAdapter {
       encodeTimeMs,
       decodeTimeMs,
       dataUri,
-      psnrDb,
+      metrics,
     };
   }
 }

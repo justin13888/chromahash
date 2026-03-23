@@ -1,7 +1,7 @@
 import { rgbaToThumbHash, thumbHashToRGBA } from "thumbhash";
 import type { FormatAdapter, FormatResult, ImageInput } from "../types.ts";
 import { rgbaToDataUri } from "../image-loader.ts";
-import { computePsnr, timeMs } from "../metrics.ts";
+import { computeAllMetrics, timeMs } from "../metrics.ts";
 
 export class ThumbHashAdapter implements FormatAdapter {
   readonly name = "ThumbHash";
@@ -24,7 +24,7 @@ export class ThumbHashAdapter implements FormatAdapter {
 
     const { w: dw, h: dh, rgba: decodedRgba } = decoded;
     const dataUri = await rgbaToDataUri(decodedRgba, dw, dh);
-    const psnrDb = computePsnr(rgba, w, h, decodedRgba, dw, dh);
+    const metrics = await computeAllMetrics(rgba, w, h, decodedRgba, dw, dh);
 
     return {
       formatName: this.name,
@@ -34,7 +34,7 @@ export class ThumbHashAdapter implements FormatAdapter {
       encodeTimeMs,
       decodeTimeMs,
       dataUri,
-      psnrDb,
+      metrics,
     };
   }
 }

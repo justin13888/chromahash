@@ -1,7 +1,7 @@
 import { blurhashToCssGradientString } from "@unpic/placeholder";
 import { encode } from "blurhash";
 import type { FormatAdapter, FormatResult, ImageInput } from "../types.ts";
-import { timeMs } from "../metrics.ts";
+import { NULL_METRICS, timeMs } from "../metrics.ts";
 
 export class UnpicAdapter implements FormatAdapter {
   readonly name = "unpic";
@@ -33,7 +33,7 @@ export class UnpicAdapter implements FormatAdapter {
       encodeTimeMs,
       decodeTimeMs: 0,
       dataUri,
-      psnrDb: null,
+      metrics: NULL_METRICS,
     };
   }
 }

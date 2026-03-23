@@ -1,7 +1,7 @@
 import lqip from "lqip-modern";
 import sharp from "sharp";
 import type { FormatAdapter, FormatResult, ImageInput } from "../types.ts";
-import { computePsnr, timeMs } from "../metrics.ts";
+import { computeAllMetrics, timeMs } from "../metrics.ts";
 
 export class LqipModernAdapter implements FormatAdapter {
   readonly name = "lqip-modern";
@@ -40,7 +40,7 @@ export class LqipModernAdapter implements FormatAdapter {
     // Decode timing: negligible since it's just displaying a tiny image
     const decodeTimeMs = 0;
 
-    const psnrDb = computePsnr(rgba, w, h, decodedRgba, dw, dh);
+    const metrics = await computeAllMetrics(rgba, w, h, decodedRgba, dw, dh);
 
     return {
       formatName: this.name,
@@ -50,7 +50,7 @@ export class LqipModernAdapter implements FormatAdapter {
       encodeTimeMs,
       decodeTimeMs,
       dataUri,
-      psnrDb,
+      metrics,
     };
   }
 }

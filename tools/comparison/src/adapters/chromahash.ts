@@ -2,9 +2,9 @@ import { execFileSync } from "node:child_process";
 import path from "node:path";
 import type { FormatAdapter, FormatResult, ImageInput } from "../types.ts";
 import { rgbaToDataUri } from "../image-loader.ts";
-import { computePsnr, timeMs } from "../metrics.ts";
+import { computeAllMetrics, timeMs } from "../metrics.ts";
 
-const ROOT = path.resolve(import.meta.dirname, "../../..");
+const ROOT = path.resolve(import.meta.dirname, "../../../..");
 const RUST_CLI = path.join(ROOT, "rust/target/debug/examples/encode_stdin");
 
 const GAMUT_MAP: Record<string, string> = {
@@ -70,7 +70,7 @@ export class ChromaHashAdapter implements FormatAdapter {
 
     const { w: dw, h: dh, rgba: decodedRgba } = decoded;
     const dataUri = await rgbaToDataUri(decodedRgba, dw, dh);
-    const psnrDb = computePsnr(rgba, w, h, decodedRgba, dw, dh);
+    const metrics = await computeAllMetrics(rgba, w, h, decodedRgba, dw, dh);
 
     return {
       formatName: this.name,
@@ -80,7 +80,7 @@ export class ChromaHashAdapter implements FormatAdapter {
       encodeTimeMs,
       decodeTimeMs,
       dataUri,
-      psnrDb,
+      metrics,
     };
   }
 }

@@ -44,15 +44,42 @@ export function generateReport(entries: ImageEntry[]): string {
       results.reduce((s, r) => s + r.encodeTimeMs, 0) / (results.length || 1);
     const avgDecode =
       results.reduce((s, r) => s + r.decodeTimeMs, 0) / (results.length || 1);
+
+    const dssimResults = results.filter((r) => r.metrics.dssim !== null);
+    const avgDssim =
+      dssimResults.length > 0
+        ? dssimResults.reduce((s, r) => s + (r.metrics.dssim ?? 0), 0) /
+          dssimResults.length
+        : null;
+
+    const deResults = results.filter((r) => r.metrics.deltaEWeighted !== null);
+    const avgDe =
+      deResults.length > 0
+        ? deResults.reduce((s, r) => s + (r.metrics.deltaEWeighted ?? 0), 0) /
+          deResults.length
+        : null;
+
+    const compResults = results.filter(
+      (r) => r.metrics.compositeScore !== null,
+    );
+    const avgComp =
+      compResults.length > 0
+        ? compResults.reduce(
+            (s, r) => s + (r.metrics.compositeScore ?? 0),
+            0,
+          ) / compResults.length
+        : null;
+
     const psnrResults = results.filter(
-      (r) => r.psnrDb !== null && Number.isFinite(r.psnrDb),
+      (r) => r.metrics.psnrDb !== null && Number.isFinite(r.metrics.psnrDb),
     );
     const avgPsnr =
       psnrResults.length > 0
-        ? psnrResults.reduce((s, r) => s + (r.psnrDb ?? 0), 0) /
+        ? psnrResults.reduce((s, r) => s + (r.metrics.psnrDb ?? 0), 0) /
           psnrResults.length
         : null;
-    return { name, avgSize, avgEncode, avgDecode, avgPsnr };
+
+    return { name, avgSize, avgEncode, avgDecode, avgDssim, avgDe, avgComp, avgPsnr };
   });
 
   // Check cross-language consistency
@@ -125,6 +152,14 @@ export function generateReport(entries: ImageEntry[]): string {
   body.light .summary-card { background: #fff; border: 1px solid #ddd; }
   .summary-card .value { font-size: 1.2rem; font-weight: bold; }
   .summary-card .label { font-size: 0.75rem; color: #aaa; }
+  .metric-good { color: #4caf50; font-weight: 600; }
+  .metric-warn { color: #ff9800; }
+  .metric-bad  { color: #f44336; font-weight: 600; }
+  details.methodology { margin: 16px 0; border: 1px solid #555; border-radius: 4px; }
+  body.light details.methodology { border-color: #ccc; }
+  details.methodology summary { padding: 10px 14px; cursor: pointer; font-size: 0.9rem; user-select: none; }
+  details.methodology .inner { padding: 12px 16px; font-size: 0.82rem; line-height: 1.6; }
+  details.methodology table { font-size: 0.82rem; }
 </style>
 </head>
 <body>
@@ -141,19 +176,48 @@ export function generateReport(entries: ImageEntry[]): string {
 <h2 style="margin-bottom:12px">Cross-Format Comparison</h2>
 
 <table>
-<tr><th>Format</th><th>Avg Size (bytes)</th><th>Avg Encode (ms)</th><th>Avg Decode (ms)</th><th>Avg PSNR (dB)</th></tr>
+<tr><th>Format</th><th>Avg Size (B)</th><th>Encode (ms)</th><th>Decode (ms)</th><th>Avg DSSIM ↓</th><th>Avg dE wtd ↓</th><th>Avg Composite ↓</th><th>Avg PSNR (dB) ↑</th></tr>
 ${formatStats
-  .map(
-    (s) => `<tr>
-  <td>${s.name}</td>
+  .map((s) => {
+    const dssimCell =
+      s.avgDssim !== null
+        ? `<span class="${s.avgDssim < 0.05 ? "metric-good" : s.avgDssim < 0.15 ? "metric-warn" : "metric-bad"}">${s.avgDssim.toFixed(4)}</span>`
+        : "N/A";
+    const deCell =
+      s.avgDe !== null
+        ? `<span class="${s.avgDe < 0.02 ? "metric-good" : s.avgDe < 0.06 ? "metric-warn" : "metric-bad"}">${s.avgDe.toFixed(4)}</span>`
+        : "N/A";
+    const compCell =
+      s.avgComp !== null
+        ? `<span class="${s.avgComp < 0.3 ? "metric-good" : s.avgComp < 0.6 ? "metric-warn" : "metric-bad"}">${s.avgComp.toFixed(3)}</span>`
+        : "N/A";
+    return `<tr>
+  <td><strong>${s.name}</strong></td>
   <td>${s.avgSize.toFixed(1)}</td>
   <td>${s.avgEncode.toFixed(3)}</td>
   <td>${s.avgDecode.toFixed(3)}</td>
+  <td>${dssimCell}</td>
+  <td>${deCell}</td>
+  <td>${compCell}</td>
   <td>${s.avgPsnr !== null ? s.avgPsnr.toFixed(1) : "N/A"}</td>
-</tr>`,
-  )
+</tr>`;
+  })
   .join("\n")}
 </table>
+
+<details class="methodology">
+<summary>Methodology</summary>
+<div class="inner">
+<p><strong>Blur-then-compare</strong>: The encoder input is Lanczos-3 downscaled to each format's native decoded resolution before comparison, avoiding nearest-neighbor upsampling artifacts that inflate PSNR penalty.</p>
+<table style="margin:10px 0">
+<tr><th>Metric</th><th>What it measures</th><th>Good threshold</th></tr>
+<tr><td><strong>DSSIM</strong></td><td>(1−SSIM)/2 over luminance; structural fidelity ignoring uniform brightness shifts</td><td>&lt; 0.05</td></tr>
+<tr><td><strong>dE wtd</strong></td><td>OKLAB ΔE weighted by local luminance variance (saliency proxy); JND ≈ 0.02</td><td>&lt; 0.02</td></tr>
+<tr><td><strong>Composite</strong></td><td>0.55·norm(DSSIM) + 0.45·norm(dE wtd); min-max normalised per image across raster formats</td><td>0 = best</td></tr>
+<tr><td><strong>PSNR</strong></td><td>Classic pixel MSE metric; shown for familiarity but penalises intentional LQIP blur</td><td>reference only</td></tr>
+</table>
+</div>
+</details>
 
 ${categories
   .map((category) => {
@@ -182,9 +246,15 @@ ${catEntries
       <div class="label">${r.formatName}<br>${r.decodedWidth}x${r.decodedHeight}px | ${r.encodedSizeBytes}B</div>
     </div>`;
       }
+      const compStr =
+        r.metrics.compositeScore !== null
+          ? ` | C:${r.metrics.compositeScore.toFixed(2)}`
+          : "";
+      const dssimStr =
+        r.metrics.dssim !== null ? ` DSSIM:${r.metrics.dssim.toFixed(3)}` : "";
       return `<div class="image-cell">
       <img src="${r.dataUri}" alt="${r.formatName}">
-      <div class="label">${r.formatName}<br>${r.decodedWidth}x${r.decodedHeight}px | ${r.encodedSizeBytes}B | ${r.psnrDb !== null ? `${r.psnrDb.toFixed(1)}dB` : ""}</div>
+      <div class="label">${r.formatName}<br>${r.decodedWidth}x${r.decodedHeight}px | ${r.encodedSizeBytes}B${compStr}${dssimStr}</div>
     </div>`;
     })
     .join("\n  ")}
