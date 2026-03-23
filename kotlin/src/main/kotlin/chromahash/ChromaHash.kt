@@ -23,8 +23,8 @@ class ChromaHash private constructor(
             rgba: ByteArray,
             gamut: Gamut,
         ): ChromaHash {
-            require(w in 1..100) { "width must be 1-100" }
-            require(h in 1..100) { "height must be 1-100" }
+            require(w >= 1) { "width must be >= 1" }
+            require(h >= 1) { "height must be >= 1" }
             require(rgba.size == w * h * 4) { "rgba length mismatch" }
 
             val pixelCount = w * h
@@ -74,23 +74,36 @@ class ChromaHash private constructor(
                 bChan[i] = avgB * (1.0 - alpha) + alpha * oklabPixels[i][2]
             }
 
-            // 5. DCT encode each channel
-            val (lDc, lAc, lScale) =
+            // 5. Derive adaptive grid dimensions (v0.2)
+            val aspectByte = encodeAspect(w, h)
+            val (lNx, lNy) = deriveGrid(aspectByte, if (hasAlpha) 6 else 7)
+            val (cNx, cNy) = deriveGrid(aspectByte, 4)
+            val (alphaNx, alphaNy) = if (hasAlpha) deriveGrid(aspectByte, 3) else Pair(3, 3)
+
+            // 6. DCT encode each channel
+            val (lDc, lAcRaw, lScale) = dctEncode(lChan, w, h, lNx, lNy)
+            val (aDc, aAcRaw, aScale) = dctEncode(aChan, w, h, cNx, cNy)
+            val (bDc, bAcRaw, bScale) = dctEncode(bChan, w, h, cNx, cNy)
+            val (alphaDc, alphaAcRaw, alphaScale) =
                 if (hasAlpha) {
-                    dctEncode(lChan, w, h, 6, 6)
-                } else {
-                    dctEncode(lChan, w, h, 7, 7)
-                }
-            val (aDc, aAc, aScale) = dctEncode(aChan, w, h, 4, 4)
-            val (bDc, bAc, bScale) = dctEncode(bChan, w, h, 4, 4)
-            val (alphaDc, alphaAc, alphaScale) =
-                if (hasAlpha) {
-                    dctEncode(alphaPixels, w, h, 3, 3)
+                    dctEncode(alphaPixels, w, h, alphaNx, alphaNy)
                 } else {
                     Triple(0.0, DoubleArray(0), 0.0)
                 }
 
-            // 6. Quantize header values
+            // Cap to bit budget and zero-pad (per spec §10)
+            val lCap = if (hasAlpha) 20 else 27
+            val lAc = DoubleArray(lCap) { i -> if (i < lAcRaw.size) lAcRaw[i] else 0.0 }
+            val aAc = DoubleArray(9) { i -> if (i < aAcRaw.size) aAcRaw[i] else 0.0 }
+            val bAc = DoubleArray(9) { i -> if (i < bAcRaw.size) bAcRaw[i] else 0.0 }
+            val alphaAc =
+                if (hasAlpha) {
+                    DoubleArray(5) { i -> if (i < alphaAcRaw.size) alphaAcRaw[i] else 0.0 }
+                } else {
+                    DoubleArray(0)
+                }
+
+            // 7. Quantize header values
             val lDcQ = roundHalfAwayFromZero(127.0 * clamp01(lDc)).toLong()
             val aDcQ = roundHalfAwayFromZero(64.0 + 63.0 * clampNeg1To1(aDc / MAX_CHROMA_A)).toLong()
             val bDcQ = roundHalfAwayFromZero(64.0 + 63.0 * clampNeg1To1(bDc / MAX_CHROMA_B)).toLong()
@@ -98,8 +111,8 @@ class ChromaHash private constructor(
             val aSclQ = roundHalfAwayFromZero(63.0 * clamp01(aScale / MAX_A_SCALE)).toLong()
             val bSclQ = roundHalfAwayFromZero(31.0 * clamp01(bScale / MAX_B_SCALE)).toLong()
 
-            // 7. Compute aspect byte
-            val aspect = encodeAspect(w, h).toLong()
+            // Aspect byte already computed above
+            val aspect = aspectByte.toLong()
 
             // 8. Pack header (48 bits = 6 bytes)
             val header: Long =
@@ -110,8 +123,8 @@ class ChromaHash private constructor(
                     (aSclQ shl 27) or
                     (bSclQ shl 33) or
                     (aspect shl 38) or
-                    (if (hasAlpha) 1L shl 46 else 0L)
-            // bit 47 reserved = 0
+                    (if (hasAlpha) 1L shl 46 else 0L) or
+                    (1L shl 47) // version bit = 1 (v0.2+)
 
             val hashBytes = ByteArray(32)
             for (i in 0 until 6) {
@@ -318,11 +331,14 @@ class ChromaHash private constructor(
                         1.0
                     }
 
-                val srgb = oklabToSrgb(doubleArrayOf(l, a, b))
+                // Clamp L from DCT ringing, then soft gamut clamp (v0.2)
+                val lClamped = clamp01(l)
+                val gamutClamped = softGamutClamp(lClamped, a, b)
+                val rgbLinear = oklabToLinearSrgb(gamutClamped)
                 val idx = (y * outW + x) * 4
-                rgba[idx] = roundHalfAwayFromZero(255.0 * clamp01(srgb[0])).toInt().toByte()
-                rgba[idx + 1] = roundHalfAwayFromZero(255.0 * clamp01(srgb[1])).toInt().toByte()
-                rgba[idx + 2] = roundHalfAwayFromZero(255.0 * clamp01(srgb[2])).toInt().toByte()
+                rgba[idx] = linearToSrgb8(clamp01(rgbLinear[0])).toByte()
+                rgba[idx + 1] = linearToSrgb8(clamp01(rgbLinear[1])).toByte()
+                rgba[idx + 2] = linearToSrgb8(clamp01(rgbLinear[2])).toByte()
                 rgba[idx + 3] = roundHalfAwayFromZero(255.0 * clamp01(alpha)).toInt().toByte()
             }
         }
@@ -349,7 +365,10 @@ class ChromaHash private constructor(
         val aDc = (aDcQ.toDouble() - 64.0) / 63.0 * MAX_CHROMA_A
         val bDc = (bDcQ.toDouble() - 64.0) / 63.0 * MAX_CHROMA_B
 
-        val srgb = oklabToSrgb(doubleArrayOf(lDc, aDc, bDc))
+        // Apply soft gamut clamp to DC values (v0.2)
+        val lClamped = clamp01(lDc)
+        val gamutClamped = softGamutClamp(lClamped, aDc, bDc)
+        val rgbLinear = oklabToLinearSrgb(gamutClamped)
 
         val alpha =
             if (hasAlpha) {
@@ -359,9 +378,9 @@ class ChromaHash private constructor(
             }
 
         return RgbaColor(
-            r = roundHalfAwayFromZero(255.0 * clamp01(srgb[0])).toInt(),
-            g = roundHalfAwayFromZero(255.0 * clamp01(srgb[1])).toInt(),
-            b = roundHalfAwayFromZero(255.0 * clamp01(srgb[2])).toInt(),
+            r = linearToSrgb8(clamp01(rgbLinear[0])),
+            g = linearToSrgb8(clamp01(rgbLinear[1])),
+            b = linearToSrgb8(clamp01(rgbLinear[2])),
             a = roundHalfAwayFromZero(255.0 * clamp01(alpha)).toInt(),
         )
     }

@@ -16,8 +16,8 @@ internal static class Constants
     public const double Mu = 5.0;
 
     /// <summary>Scale factor maximums (§7.2, §12.1).</summary>
-    public const double MaxChromaA = 0.5;
-    public const double MaxChromaB = 0.5;
+    public const double MaxChromaA = 0.45;
+    public const double MaxChromaB = 0.45;
     public const double MaxLScale = 0.5;
     public const double MaxAScale = 0.5;
     public const double MaxBScale = 0.5;

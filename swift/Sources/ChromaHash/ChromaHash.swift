@@ -131,6 +131,7 @@ func encodeHash(w: Int, h: Int, rgba: [UInt8], gamut: Gamut) -> [UInt8] {
     | (bSclQ << 33)
     | (aspect << 38)
     | (hasAlpha ? (1 << 46) : 0)
+    | (1 << 47) // version bit = 1 (v0.2+)
 
   var hashBytes = [UInt8](repeating: 0, count: 32)
   for i in 0..<6 {
@@ -336,11 +337,13 @@ func decodeHash(hash: [UInt8]) -> (width: Int, height: Int, rgba: [UInt8]) {
         alpha = 1.0
       }
 
-      let srgb = oklabToSRGB([l, a, b])
+      let lClamped = clamp01(l)
+      let gamutClamped = softGamutClamp(lClamped, a, b)
+      let rgbLinear = oklabToLinearSRGB(gamutClamped)
       let idx = (y * w + x) * 4
-      rgbaOut[idx] = UInt8(roundHalfAwayFromZero(255.0 * clamp01(srgb[0])))
-      rgbaOut[idx + 1] = UInt8(roundHalfAwayFromZero(255.0 * clamp01(srgb[1])))
-      rgbaOut[idx + 2] = UInt8(roundHalfAwayFromZero(255.0 * clamp01(srgb[2])))
+      rgbaOut[idx] = linearToSRGB8(clamp01(rgbLinear[0]))
+      rgbaOut[idx + 1] = linearToSRGB8(clamp01(rgbLinear[1]))
+      rgbaOut[idx + 2] = linearToSRGB8(clamp01(rgbLinear[2]))
       rgbaOut[idx + 3] = UInt8(roundHalfAwayFromZero(255.0 * clamp01(alpha)))
     }
   }
@@ -367,7 +370,9 @@ func averageColorFromHash(hash: [UInt8]) -> (r: UInt8, g: UInt8, b: UInt8, a: UI
   let aDc = (Double(aDcQ) - 64.0) / 63.0 * maxChromaA
   let bDc = (Double(bDcQ) - 64.0) / 63.0 * maxChromaB
 
-  let srgb = oklabToSRGB([lDc, aDc, bDc])
+  let lClamped = clamp01(lDc)
+  let gamutClamped = softGamutClamp(lClamped, aDc, bDc)
+  let rgbLinear = oklabToLinearSRGB(gamutClamped)
 
   let alpha: Double
   if hasAlpha {
@@ -377,9 +382,9 @@ func averageColorFromHash(hash: [UInt8]) -> (r: UInt8, g: UInt8, b: UInt8, a: UI
   }
 
   return (
-    r: UInt8(roundHalfAwayFromZero(255.0 * clamp01(srgb[0]))),
-    g: UInt8(roundHalfAwayFromZero(255.0 * clamp01(srgb[1]))),
-    b: UInt8(roundHalfAwayFromZero(255.0 * clamp01(srgb[2]))),
+    r: linearToSRGB8(clamp01(rgbLinear[0])),
+    g: linearToSRGB8(clamp01(rgbLinear[1])),
+    b: linearToSRGB8(clamp01(rgbLinear[2])),
     a: UInt8(roundHalfAwayFromZero(255.0 * clamp01(alpha)))
   )
 }

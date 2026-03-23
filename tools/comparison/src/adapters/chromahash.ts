@@ -29,12 +29,18 @@ function encodeViaRust(
   return new Uint8Array(output);
 }
 
-function decodeViaRust(hash: Uint8Array): {
+function decodeViaRust(
+  hash: Uint8Array,
+  maxW?: number,
+  maxH?: number,
+): {
   w: number;
   h: number;
   rgba: Uint8Array;
 } {
-  const output = execFileSync(RUST_CLI, ["decode"], {
+  const extraArgs =
+    maxW !== undefined ? [String(maxW), String(maxH!)] : [];
+  const output = execFileSync(RUST_CLI, ["decode", ...extraArgs], {
     input: Buffer.from(hash),
     encoding: "buffer",
     timeout: 30_000,
@@ -63,9 +69,11 @@ export class ChromaHashAdapter implements FormatAdapter {
 
     const encodedSizeBytes = encoded.length;
 
-    const decoded = decodeViaRust(encoded);
+    // Decode capped to source dims so metrics are computed at source resolution.
+    // This prevents penalising ChromaHash for synthesising detail beyond the source.
+    const decoded = decodeViaRust(encoded, w, h);
     const decodeTimeMs = await timeMs(() => {
-      decodeViaRust(encoded);
+      decodeViaRust(encoded, w, h);
     }, iterations);
 
     const { w: dw, h: dh, rgba: decodedRgba } = decoded;

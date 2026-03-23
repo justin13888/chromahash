@@ -47,10 +47,15 @@ internal static class Decoder
             bitpos += 4;
         }
 
-        List<double> lAc;
-        int lx,
-            ly;
+        // Derive adaptive grid and compute usable scan orders (v0.2)
+        int lDecCap = hasAlpha ? 20 : 27;
+        (int lNx, int lNy) = Aspect.DeriveGrid(aspect, hasAlpha ? 6 : 7);
+        (int cNx, int cNy) = Aspect.DeriveGrid(aspect, 4);
 
+        var lScanFull = Dct.TriangularScanOrder(lNx, lNy);
+        int lUsable = Math.Min(lDecCap, lScanFull.Count);
+
+        List<double> lAc;
         if (hasAlpha)
         {
             lAc = new List<double>(20);
@@ -66,8 +71,6 @@ internal static class Decoder
                 bitpos += 5;
                 lAc.Add(MuLaw.MuLawDequantize(q, 5) * lScale);
             }
-            lx = 6;
-            ly = 6;
         }
         else
         {
@@ -78,9 +81,10 @@ internal static class Decoder
                 bitpos += 5;
                 lAc.Add(MuLaw.MuLawDequantize(q, 5) * lScale);
             }
-            lx = 7;
-            ly = 7;
         }
+
+        var chromaScanFull = Dct.TriangularScanOrder(cNx, cNy);
+        int cUsable = Math.Min(9, chromaScanFull.Count);
 
         var aAc = new List<double>(9);
         for (int i = 0; i < 9; i++)
@@ -99,8 +103,14 @@ internal static class Decoder
         }
 
         List<double> alphaAc = [];
+        List<(int, int)> alphaScanFull = [];
+        int aUsable = 0;
         if (hasAlpha)
         {
+            (int aNx, int aNy) = Aspect.DeriveGrid(aspect, 3);
+            alphaScanFull = Dct.TriangularScanOrder(aNx, aNy);
+            aUsable = Math.Min(5, alphaScanFull.Count);
+
             alphaAc = new List<double>(5);
             for (int i = 0; i < 5; i++)
             {
@@ -111,9 +121,13 @@ internal static class Decoder
         }
 
         // Precompute scan orders
-        var lScan = Dct.TriangularScanOrder(lx, ly);
-        var chromaScan = Dct.TriangularScanOrder(4, 4);
-        var alphaScan = hasAlpha ? Dct.TriangularScanOrder(3, 3) : [];
+        var lScan = lScanFull.Take(lUsable).ToList();
+        var lAcUsed = lAc.Take(lUsable).ToList();
+        var chromaScan = chromaScanFull.Take(cUsable).ToList();
+        var aAcUsed = aAc.Take(cUsable).ToList();
+        var bAcUsed = bAc.Take(cUsable).ToList();
+        var alphaScan = hasAlpha ? alphaScanFull.Take(aUsable).ToList() : new List<(int, int)>();
+        var alphaAcUsed = alphaAc.Take(aUsable).ToList();
 
         // 6. Render output image
         int iw = (int)w;
@@ -124,18 +138,20 @@ internal static class Decoder
         {
             for (int x = 0; x < iw; x++)
             {
-                double l = Dct.DctDecodePixel(lDc, lAc, lScan, x, y, iw, ih);
-                double a = Dct.DctDecodePixel(aDc, aAc, chromaScan, x, y, iw, ih);
-                double b = Dct.DctDecodePixel(bDc, bAc, chromaScan, x, y, iw, ih);
+                double l = Dct.DctDecodePixel(lDc, lAcUsed, lScan, x, y, iw, ih);
+                double a = Dct.DctDecodePixel(aDc, aAcUsed, chromaScan, x, y, iw, ih);
+                double b = Dct.DctDecodePixel(bDc, bAcUsed, chromaScan, x, y, iw, ih);
                 double alpha = hasAlpha
-                    ? Dct.DctDecodePixel(alphaDcVal, alphaAc, alphaScan, x, y, iw, ih)
+                    ? Dct.DctDecodePixel(alphaDcVal, alphaAcUsed, alphaScan, x, y, iw, ih)
                     : 1.0;
 
-                double[] srgb = Color.OklabToSrgb([l, a, b]);
+                double lClamped = Clamp01(l);
+                double[] gamutClamped = Color.SoftGamutClamp(lClamped, a, b);
+                double[] rgbLinear = Color.OklabToLinearSrgb(gamutClamped);
                 int idx = (y * iw + x) * 4;
-                rgba[idx] = (byte)RoundHalfAwayFromZero(255.0 * Clamp01(srgb[0]));
-                rgba[idx + 1] = (byte)RoundHalfAwayFromZero(255.0 * Clamp01(srgb[1]));
-                rgba[idx + 2] = (byte)RoundHalfAwayFromZero(255.0 * Clamp01(srgb[2]));
+                rgba[idx] = Color.LinearToSrgb8(Clamp01(rgbLinear[0]));
+                rgba[idx + 1] = Color.LinearToSrgb8(Clamp01(rgbLinear[1]));
+                rgba[idx + 2] = Color.LinearToSrgb8(Clamp01(rgbLinear[2]));
                 rgba[idx + 3] = (byte)RoundHalfAwayFromZero(255.0 * Clamp01(alpha));
             }
         }
@@ -159,15 +175,17 @@ internal static class Decoder
         double aDc = (aDcQ - 64.0) / 63.0 * MaxChromaA;
         double bDc = (bDcQ - 64.0) / 63.0 * MaxChromaB;
 
-        double[] srgb = Color.OklabToSrgb([lDc, aDc, bDc]);
+        double lClamped = Clamp01(lDc);
+        double[] gamutClamped = Color.SoftGamutClamp(lClamped, aDc, bDc);
+        double[] rgbLinear = Color.OklabToLinearSrgb(gamutClamped);
 
         double alpha = hasAlpha ? BitPack.ReadBits(hash, 48, 5) / 31.0 : 1.0;
 
         return
         [
-            (byte)RoundHalfAwayFromZero(255.0 * Clamp01(srgb[0])),
-            (byte)RoundHalfAwayFromZero(255.0 * Clamp01(srgb[1])),
-            (byte)RoundHalfAwayFromZero(255.0 * Clamp01(srgb[2])),
+            Color.LinearToSrgb8(Clamp01(rgbLinear[0])),
+            Color.LinearToSrgb8(Clamp01(rgbLinear[1])),
+            Color.LinearToSrgb8(Clamp01(rgbLinear[2])),
             (byte)RoundHalfAwayFromZero(255.0 * Clamp01(alpha)),
         ];
     }

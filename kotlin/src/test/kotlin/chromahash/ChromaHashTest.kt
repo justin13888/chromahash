@@ -33,21 +33,21 @@ class ChromaHashTest {
     }
 
     @Test
-    fun `cbrtSigned - positive values`() {
-        assertTrue(abs(cbrtSigned(8.0) - 2.0) < 1e-12)
-        assertTrue(abs(cbrtSigned(27.0) - 3.0) < 1e-12)
-        assertTrue(abs(cbrtSigned(1.0) - 1.0) < 1e-12)
+    fun `cbrtHalley - positive values`() {
+        assertTrue(abs(cbrtHalley(8.0) - 2.0) < 1e-12)
+        assertTrue(abs(cbrtHalley(27.0) - 3.0) < 1e-12)
+        assertTrue(abs(cbrtHalley(1.0) - 1.0) < 1e-12)
     }
 
     @Test
-    fun `cbrtSigned - negative values`() {
-        assertTrue(abs(cbrtSigned(-8.0) - (-2.0)) < 1e-12)
-        assertTrue(abs(cbrtSigned(-27.0) - (-3.0)) < 1e-12)
+    fun `cbrtHalley - negative values`() {
+        assertTrue(abs(cbrtHalley(-8.0) - (-2.0)) < 1e-12)
+        assertTrue(abs(cbrtHalley(-27.0) - (-3.0)) < 1e-12)
     }
 
     @Test
-    fun `cbrtSigned - zero`() {
-        assertEquals(0.0, cbrtSigned(0.0))
+    fun `cbrtHalley - zero`() {
+        assertEquals(0.0, cbrtHalley(0.0))
     }
 
     // ---- Aspect tests (from unit-aspect.json) ----
@@ -62,64 +62,83 @@ class ChromaHashTest {
 
     @Test
     fun `aspect 3 to 2`() {
-        assertEquals(165, encodeAspect(3, 2))
-        val (w, h) = decodeOutputSize(165)
+        assertEquals(146, encodeAspect(3, 2))
+        val (w, h) = decodeOutputSize(146)
         assertEquals(32, w)
         assertEquals(21, h)
     }
 
     @Test
     fun `aspect 4 to 3`() {
-        assertEquals(154, encodeAspect(4, 3))
-        val (w, h) = decodeOutputSize(154)
+        assertEquals(141, encodeAspect(4, 3))
+        val (w, h) = decodeOutputSize(141)
         assertEquals(32, w)
         assertEquals(24, h)
     }
 
     @Test
     fun `aspect 16 to 9`() {
-        assertEquals(180, encodeAspect(16, 9))
-        val (w, h) = decodeOutputSize(180)
+        assertEquals(154, encodeAspect(16, 9))
+        val (w, h) = decodeOutputSize(154)
         assertEquals(32, w)
         assertEquals(18, h)
     }
 
     @Test
     fun `aspect 4 to 1`() {
-        assertEquals(255, encodeAspect(4, 1))
-        val (w, h) = decodeOutputSize(255)
+        // 4:1 → byte 191 in v0.3 (255 is reserved for 16:1)
+        assertEquals(191, encodeAspect(4, 1))
+        val (w, h) = decodeOutputSize(191)
         assertEquals(32, w)
         assertEquals(8, h)
     }
 
     @Test
     fun `aspect 1 to 4`() {
-        assertEquals(0, encodeAspect(1, 4))
-        val (w, h) = decodeOutputSize(0)
+        // 1:4 → byte 64 in v0.3 (0 is reserved for 1:16)
+        assertEquals(64, encodeAspect(1, 4))
+        val (w, h) = decodeOutputSize(64)
         assertEquals(8, w)
         assertEquals(32, h)
     }
 
     @Test
+    fun `aspect 16 to 1`() {
+        assertEquals(255, encodeAspect(16, 1))
+        val (w, h) = decodeOutputSize(255)
+        assertEquals(32, w)
+        assertEquals(2, h)
+    }
+
+    @Test
+    fun `aspect 1 to 16`() {
+        assertEquals(0, encodeAspect(1, 16))
+        val (w, h) = decodeOutputSize(0)
+        assertEquals(2, w)
+        assertEquals(32, h)
+    }
+
+    @Test
     fun `aspect 2 to 1`() {
-        assertEquals(191, encodeAspect(2, 1))
-        val (w, h) = decodeOutputSize(191)
+        assertEquals(159, encodeAspect(2, 1))
+        val (w, h) = decodeOutputSize(159)
         assertEquals(32, w)
         assertEquals(16, h)
     }
 
     @Test
     fun `aspect 1 to 2`() {
-        assertEquals(64, encodeAspect(1, 2))
-        val (w, h) = decodeOutputSize(64)
+        assertEquals(96, encodeAspect(1, 2))
+        val (w, h) = decodeOutputSize(96)
         assertEquals(16, w)
         assertEquals(32, h)
     }
 
     @Test
-    fun `aspect 100 to 25 clamps to max`() {
-        assertEquals(255, encodeAspect(100, 25))
-        val (w, h) = decodeOutputSize(255)
+    fun `aspect 100 to 25 is 4 to 1`() {
+        // 100:25 = 4:1 → byte 191 in v0.3
+        assertEquals(191, encodeAspect(100, 25))
+        val (w, h) = decodeOutputSize(191)
         assertEquals(32, w)
         assertEquals(8, h)
     }
@@ -210,7 +229,7 @@ class ChromaHashTest {
         val hash = ChromaHash.encode(4, 4, rgba, Gamut.SRGB)
         val expected =
             intArrayOf(
-                76, 32, 16, 0, 0, 32, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
+                76, 32, 16, 0, 0, 160, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
                 16, 66, 8, 33, 132, 16, 66, 68, 68, 68, 68, 68, 68, 68, 68, 68,
             )
         assertHashEquals(expected, hash.hash)
@@ -222,7 +241,7 @@ class ChromaHashTest {
         val hash = ChromaHash.encode(4, 4, rgba, Gamut.SRGB)
         val expected =
             intArrayOf(
-                80, 46, 20, 0, 0, 32, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
+                208, 175, 20, 0, 0, 160, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
                 16, 66, 8, 33, 132, 16, 66, 68, 68, 68, 68, 68, 68, 68, 68, 68,
             )
         assertHashEquals(expected, hash.hash)
@@ -234,7 +253,7 @@ class ChromaHashTest {
         val hash = ChromaHash.encode(4, 4, rgba, Gamut.SRGB)
         val expected =
             intArrayOf(
-                238, 209, 21, 0, 0, 32, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
+                238, 79, 22, 0, 0, 160, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
                 16, 66, 8, 33, 132, 16, 66, 68, 68, 68, 68, 68, 68, 68, 68, 68,
             )
         assertHashEquals(expected, hash.hash)
@@ -246,7 +265,7 @@ class ChromaHashTest {
         val hash = ChromaHash.encode(4, 4, rgba, Gamut.SRGB)
         val expected =
             intArrayOf(
-                57, 94, 6, 0, 0, 32, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
+                185, 29, 5, 0, 0, 160, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
                 16, 66, 8, 33, 132, 16, 66, 68, 68, 68, 68, 68, 68, 68, 68, 68,
             )
         assertHashEquals(expected, hash.hash)
@@ -258,7 +277,7 @@ class ChromaHashTest {
         val hash = ChromaHash.encode(4, 4, rgba, Gamut.SRGB)
         val expected =
             intArrayOf(
-                127, 32, 16, 0, 0, 32, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
+                127, 32, 16, 0, 0, 160, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
                 16, 66, 8, 33, 132, 16, 66, 68, 68, 68, 68, 68, 68, 68, 68, 68,
             )
         assertHashEquals(expected, hash.hash)
@@ -270,7 +289,7 @@ class ChromaHashTest {
         val hash = ChromaHash.encode(4, 4, rgba, Gamut.SRGB)
         val expected =
             intArrayOf(
-                0, 32, 16, 0, 0, 32, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
+                0, 32, 16, 0, 0, 160, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
                 16, 66, 8, 33, 132, 16, 66, 68, 68, 68, 68, 68, 68, 68, 68, 68,
             )
         assertHashEquals(expected, hash.hash)
@@ -282,7 +301,7 @@ class ChromaHashTest {
         val hash = ChromaHash.encode(16, 16, rgba, Gamut.SRGB)
         val expected =
             intArrayOf(
-                198, 164, 110, 88, 12, 32, 228, 183, 250, 100, 0, 200, 185, 199, 237, 123,
+                70, 101, 110, 88, 12, 160, 228, 183, 250, 100, 0, 200, 185, 199, 237, 123,
                 15, 58, 248, 168, 132, 239, 73, 184, 227, 60, 187, 179, 60, 168, 187, 59,
             )
         assertHashEquals(expected, hash.hash)
@@ -294,8 +313,8 @@ class ChromaHashTest {
         val hash = ChromaHash.encode(8, 4, rgba, Gamut.SRGB)
         val expected =
             intArrayOf(
-                72, 164, 142, 96, 206, 47, 199, 187, 250, 100, 0, 200, 185, 215, 239, 123,
-                48, 66, 248, 224, 131, 238, 9, 64, 100, 189, 186, 179, 60, 168, 51, 68,
+                200, 100, 142, 96, 206, 167, 199, 187, 250, 228, 11, 0, 57, 247, 94, 191,
+                239, 193, 23, 33, 124, 240, 65, 64, 68, 214, 187, 178, 60, 132, 186, 51,
             )
         assertHashEquals(expected, hash.hash)
     }
@@ -306,8 +325,8 @@ class ChromaHashTest {
         val hash = ChromaHash.encode(4, 8, rgba, Gamut.SRGB)
         val expected =
             intArrayOf(
-                201, 228, 142, 104, 12, 16, 229, 59, 24, 65, 0, 8, 190, 183, 237, 115,
-                16, 62, 8, 169, 132, 239, 69, 64, 228, 60, 187, 43, 61, 168, 179, 59,
+                73, 165, 142, 104, 12, 152, 229, 59, 24, 3, 64, 240, 189, 109, 159, 131,
+                240, 65, 72, 37, 124, 15, 70, 64, 206, 179, 187, 43, 133, 58, 187, 67,
             )
         assertHashEquals(expected, hash.hash)
     }
@@ -318,7 +337,7 @@ class ChromaHashTest {
         val hash = ChromaHash.encode(8, 8, rgba, Gamut.SRGB)
         val expected =
             intArrayOf(
-                80, 46, 20, 0, 0, 96, 16, 64, 16, 4, 65, 16, 132, 16, 66, 8,
+                208, 175, 20, 0, 0, 224, 16, 64, 16, 4, 65, 16, 132, 16, 66, 8,
                 33, 132, 16, 66, 136, 136, 136, 136, 136, 136, 136, 136, 136, 136, 135, 127,
             )
         assertHashEquals(expected, hash.hash)
@@ -330,7 +349,7 @@ class ChromaHashTest {
         val hash = ChromaHash.encode(1, 1, rgba, Gamut.SRGB)
         val expected =
             intArrayOf(
-                206, 102, 243, 111, 12, 32, 16, 192, 15, 1, 132, 15, 66, 8, 222, 127,
+                78, 167, 243, 111, 12, 160, 16, 192, 15, 1, 132, 15, 66, 8, 222, 127,
                 0, 194, 7, 63, 4, 16, 2, 4, 68, 60, 56, 68, 64, 196, 131, 67,
             )
         assertHashEquals(expected, hash.hash)
@@ -342,7 +361,7 @@ class ChromaHashTest {
         val hash = ChromaHash.encode(4, 4, rgba, Gamut.DISPLAY_P3)
         val expected =
             intArrayOf(
-                79, 232, 19, 0, 0, 32, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
+                207, 40, 20, 0, 0, 160, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
                 16, 66, 8, 33, 132, 16, 66, 68, 68, 68, 68, 68, 68, 68, 68, 68,
             )
         assertHashEquals(expected, hash.hash)
@@ -363,7 +382,7 @@ class ChromaHashTest {
         val rgba = solidImage(4, 4, 255, 0, 0, 255)
         val hash = ChromaHash.encode(4, 4, rgba, Gamut.SRGB)
         val avg = hash.averageColor()
-        assertEquals(RgbaColor(255, 11, 0, 255), avg)
+        assertEquals(RgbaColor(253, 23, 0, 255), avg)
     }
 
     @Test
@@ -371,7 +390,7 @@ class ChromaHashTest {
         val rgba = solidImage(4, 4, 0, 255, 0, 255)
         val hash = ChromaHash.encode(4, 4, rgba, Gamut.SRGB)
         val avg = hash.averageColor()
-        assertEquals(RgbaColor(39, 254, 0, 255), avg)
+        assertEquals(RgbaColor(0, 255, 25, 255), avg)
     }
 
     @Test
@@ -379,7 +398,7 @@ class ChromaHashTest {
         val rgba = solidImage(4, 4, 0, 0, 255, 255)
         val hash = ChromaHash.encode(4, 4, rgba, Gamut.SRGB)
         val avg = hash.averageColor()
-        assertEquals(RgbaColor(1, 0, 253, 255), avg)
+        assertEquals(RgbaColor(0, 58, 214, 255), avg)
     }
 
     @Test
@@ -403,7 +422,7 @@ class ChromaHashTest {
         val rgba = buildCheckerboardAlpha8x8()
         val hash = ChromaHash.encode(8, 8, rgba, Gamut.SRGB)
         val avg = hash.averageColor()
-        assertEquals(RgbaColor(255, 11, 0, 132), avg)
+        assertEquals(RgbaColor(253, 23, 0, 132), avg)
     }
 
     // ---- Decode tests ----
@@ -412,7 +431,7 @@ class ChromaHashTest {
     fun `decode solid gray produces uniform pixels`() {
         val hashBytes =
             intArrayOf(
-                76, 32, 16, 0, 0, 32, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
+                76, 32, 16, 0, 0, 160, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
                 16, 66, 8, 33, 132, 16, 66, 68, 68, 68, 68, 68, 68, 68, 68, 68,
             ).map { it.toByte() }.toByteArray()
         val hash = ChromaHash.fromBytes(hashBytes)
@@ -436,7 +455,7 @@ class ChromaHashTest {
     fun `decode solid red produces uniform pixels`() {
         val hashBytes =
             intArrayOf(
-                80, 46, 20, 0, 0, 32, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
+                208, 175, 20, 0, 0, 160, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
                 16, 66, 8, 33, 132, 16, 66, 68, 68, 68, 68, 68, 68, 68, 68, 68,
             ).map { it.toByte() }.toByteArray()
         val hash = ChromaHash.fromBytes(hashBytes)
@@ -447,8 +466,8 @@ class ChromaHashTest {
             val r = rgba[i * 4].toInt() and 0xFF
             val g = rgba[i * 4 + 1].toInt() and 0xFF
             val b = rgba[i * 4 + 2].toInt() and 0xFF
-            assertTrue(abs(r - 255) <= 1, "pixel $i R=$r, expected ~255")
-            assertTrue(abs(g - 11) <= 1, "pixel $i G=$g, expected ~11")
+            assertTrue(abs(r - 253) <= 1, "pixel $i R=$r, expected ~253")
+            assertTrue(abs(g - 23) <= 1, "pixel $i G=$g, expected ~23")
             assertTrue(abs(b - 0) <= 1, "pixel $i B=$b, expected ~0")
         }
     }
@@ -457,7 +476,7 @@ class ChromaHashTest {
     fun `decode solid black all zeros`() {
         val hashBytes =
             intArrayOf(
-                0, 32, 16, 0, 0, 32, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
+                0, 32, 16, 0, 0, 160, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
                 16, 66, 8, 33, 132, 16, 66, 68, 68, 68, 68, 68, 68, 68, 68, 68,
             ).map { it.toByte() }.toByteArray()
         val hash = ChromaHash.fromBytes(hashBytes)

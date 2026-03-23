@@ -1,6 +1,6 @@
 """ChromaHash encoder. Per spec §10."""
 
-from ._aspect import encode_aspect
+from ._aspect import derive_grid, encode_aspect
 from ._bitpack import write_bits
 from ._color import gamma_rgb_to_oklab
 from ._constants import (
@@ -19,10 +19,10 @@ from ._mulaw import mu_law_quantize
 
 def encode(w: int, h: int, rgba: bytes | bytearray, gamut: Gamut) -> bytes:
     """Encode an image into a 32-byte ChromaHash. Per spec §10."""
-    if not (1 <= w <= 100):
-        raise ValueError("width must be 1–100")
-    if not (1 <= h <= 100):
-        raise ValueError("height must be 1–100")
+    if w < 1:
+        raise ValueError("width must be >= 1")
+    if h < 1:
+        raise ValueError("height must be >= 1")
     if len(rgba) != w * h * 4:
         raise ValueError("rgba length mismatch")
 
@@ -66,28 +66,35 @@ def encode(w: int, h: int, rgba: bytes | bytearray, gamut: Gamut) -> bytes:
         a_chan.append(avg_a * (1.0 - alpha) + alpha * oklab_pixels[i][1])
         b_chan.append(avg_b * (1.0 - alpha) + alpha * oklab_pixels[i][2])
 
-    # 5. DCT encode each channel
-    if has_alpha:
-        l_dc, l_ac, l_scale = dct_encode(l_chan, w, h, 6, 6)
-    else:
-        l_dc, l_ac, l_scale = dct_encode(l_chan, w, h, 7, 7)
-    a_dc, a_ac, a_scale = dct_encode(a_chan, w, h, 4, 4)
-    b_dc, b_ac, b_scale = dct_encode(b_chan, w, h, 4, 4)
-    if has_alpha:
-        alpha_dc, alpha_ac, alpha_scale = dct_encode(alpha_pixels, w, h, 3, 3)
-    else:
-        alpha_dc, alpha_ac, alpha_scale = 0.0, [], 0.0
+    # 5. Derive adaptive grid dimensions (v0.2)
+    aspect = encode_aspect(w, h)
+    l_nx, l_ny = derive_grid(aspect, 6 if has_alpha else 7)
+    c_nx, c_ny = derive_grid(aspect, 4)
+    alpha_nx, alpha_ny = derive_grid(aspect, 3) if has_alpha else (3, 3)
 
-    # 6. Quantize header values
+    # 6. DCT encode each channel
+    l_dc, l_ac_raw, l_scale = dct_encode(l_chan, w, h, l_nx, l_ny)
+    a_dc, a_ac_raw, a_scale = dct_encode(a_chan, w, h, c_nx, c_ny)
+    b_dc, b_ac_raw, b_scale = dct_encode(b_chan, w, h, c_nx, c_ny)
+    if has_alpha:
+        alpha_dc, alpha_ac_raw, alpha_scale = dct_encode(alpha_pixels, w, h, alpha_nx, alpha_ny)
+    else:
+        alpha_dc, alpha_ac_raw, alpha_scale = 0.0, [], 0.0
+
+    # Cap to bit budget and zero-pad (per spec §10)
+    l_cap = 20 if has_alpha else 27
+    l_ac = (l_ac_raw[:l_cap] + [0.0] * l_cap)[:l_cap]
+    a_ac = (a_ac_raw[:9] + [0.0] * 9)[:9]
+    b_ac = (b_ac_raw[:9] + [0.0] * 9)[:9]
+    alpha_ac = (alpha_ac_raw[:5] + [0.0] * 5)[:5] if has_alpha else []
+
+    # 7. Quantize header values
     l_dc_q = int(round_half_away_from_zero(127.0 * clamp01(l_dc)))
     a_dc_q = int(round_half_away_from_zero(64.0 + 63.0 * clamp_neg1_1(a_dc / MAX_CHROMA_A)))
     b_dc_q = int(round_half_away_from_zero(64.0 + 63.0 * clamp_neg1_1(b_dc / MAX_CHROMA_B)))
     l_scl_q = int(round_half_away_from_zero(63.0 * clamp01(l_scale / MAX_L_SCALE)))
     a_scl_q = int(round_half_away_from_zero(63.0 * clamp01(a_scale / MAX_A_SCALE)))
     b_scl_q = int(round_half_away_from_zero(31.0 * clamp01(b_scale / MAX_B_SCALE)))
-
-    # 7. Compute aspect byte
-    aspect = encode_aspect(w, h)
 
     # 8. Pack header (48 bits = 6 bytes)
     header = (
@@ -99,8 +106,8 @@ def encode(w: int, h: int, rgba: bytes | bytearray, gamut: Gamut) -> bytes:
         | (b_scl_q << 33)
         | (aspect << 38)
         | ((1 if has_alpha else 0) << 46)
+        | (1 << 47)  # version bit = 1 (v0.2+)
     )
-    # bit 47 reserved = 0
 
     buf = bytearray(32)
     for i in range(6):

@@ -1,3 +1,60 @@
+# ChromaHash v0.3 — Aspect Ratio Expansion
+
+**Status:** Implemented
+**Date:** 2026-03-23
+**Base spec:** v0.2 (2026-03-16)
+
+> This document captures changes in ChromaHash v0.3. v0.2 and v0.3 hashes are
+> **incompatible** for non-square images — the aspect byte encoding changed.
+> Square images (byte 128) are unaffected.
+
+---
+
+## Summary of v0.3 Changes
+
+### 1. Expanded Aspect Ratio Range [1:16, 16:1]
+
+**Problem:** The v0.2 aspect byte covered only [1:4, 4:1]. A 100×1 image encoded
+identically to a 4:1 image (byte 255), producing a 32×8 decoded output that was
+fundamentally wrong for a 100:1 source.
+
+**Change:** Expanded the log₂ range from [−2, +2] to [−4, +4]:
+
+```
+v0.2 encode: byte = clamp(round((log₂(ratio) + 2) / 4 × 255), 0, 255)
+v0.3 encode: byte = clamp(round((log₂(ratio) + 4) / 8 × 255), 0, 255)
+
+v0.2 decode: ratio = 2^(byte / 255 × 4 − 2)
+v0.3 decode: ratio = 2^(byte / 255 × 8 − 4)
+```
+
+**Notable byte values:**
+- 1:1 (square) → byte 128 (unchanged)
+- 4:1 → byte 191 (was 255)
+- 16:1 → byte 255 (new max)
+- 1:4 → byte 64 (was 0)
+- 1:16 → byte 0 (new min)
+
+**Max error:** ~1.09% (was ~0.54%). Acceptable trade-off for 4× wider range.
+
+**Adaptive grid:** `derive_grid` clamps updated from `min(ratio, 4.0)` to
+`min(ratio, 16.0)`. For byte=255, the grid is now 14×4 (base_n=7) vs 10×5 in v0.2.
+
+### 2. Decoder Max-Size Option
+
+The Rust CLI `encode_stdin decode` now accepts optional `max_width max_height` args:
+
+```
+encode_stdin decode [max_width max_height]
+```
+
+This caps the decoded output to source dimensions, preventing inflation of quality
+metrics when decoded output would exceed the source image size.
+
+The public API adds `ChromaHash::decode_capped(max_w, max_h)`.
+
+---
+
 # ChromaHash v0.2 — Proposed Spec Improvements
 
 **Status:** Research complete — ready for implementation

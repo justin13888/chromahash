@@ -24,8 +24,8 @@ enum class Gamut {
 internal const val MU: Double = 5.0
 
 /** Scale factor maximums. */
-internal const val MAX_CHROMA_A: Double = 0.5
-internal const val MAX_CHROMA_B: Double = 0.5
+internal const val MAX_CHROMA_A: Double = 0.45
+internal const val MAX_CHROMA_B: Double = 0.45
 internal const val MAX_L_SCALE: Double = 0.5
 internal const val MAX_A_SCALE: Double = 0.5
 internal const val MAX_B_SCALE: Double = 0.5

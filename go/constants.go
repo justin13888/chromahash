@@ -16,8 +16,8 @@ const mu = 5.0
 
 // Scale factor maximums (§7.2, §12.1).
 const (
-	maxChromaA     = 0.5
-	maxChromaB     = 0.5
+	maxChromaA     = 0.45
+	maxChromaB     = 0.45
 	maxLScale      = 0.5
 	maxAScale      = 0.5
 	maxBScale      = 0.5

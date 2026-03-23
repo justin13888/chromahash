@@ -111,15 +111,34 @@ internal fun portablePow(
 }
 
 /**
- * Signed cube root per spec: cbrt(x) = sign(x) * |x|^(1/3).
- * Uses portablePow for cross-platform determinism.
+ * Cube root via Halley's method with biased-exponent seed.
+ * Matches Rust cbrt_halley for cross-language bit-exact determinism.
  */
-internal fun cbrtSigned(x: Double): Double =
-    when {
-        x == 0.0 -> 0.0
-        x > 0.0 -> portablePow(x, 1.0 / 3.0)
-        else -> -portablePow(-x, 1.0 / 3.0)
+internal fun cbrtHalley(x: Double): Double {
+    if (x == 0.0) return 0.0
+    val sign = x < 0.0
+    val ax = if (sign) -x else x
+
+    // Seed via signed int64 biased-exponent division
+    val signedBits = java.lang.Double.doubleToRawLongBits(ax)
+    val bias = 1023L shl 52
+    val seedBits = (signedBits - bias) / 3L + bias
+    var y = java.lang.Double.longBitsToDouble(seedBits)
+
+    // 3 Halley iterations
+    repeat(3) {
+        val t1 = y * y
+        val y3 = t1 * y
+        val t2 = 2.0 * ax
+        val num = y3 + t2
+        val t3 = 2.0 * y3
+        val den = t3 + ax
+        val t4 = y * num
+        y = t4 / den
     }
+
+    return if (sign) -y else y
+}
 
 /**
  * Portable cosine using only basic IEEE 754 arithmetic (+, -, *, /).

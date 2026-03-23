@@ -103,16 +103,40 @@ func portablePow(base, exponent float64) float64 {
 	return portableExp(exponent * portableLn(base))
 }
 
-// cbrtSigned is the signed cube root per spec §2.4: sign(x) × |x|^(1/3).
-// Uses portablePow for cross-platform determinism.
-func cbrtSigned(x float64) float64 {
-	if x == 0 {
-		return 0
+// cbrtHalley computes signed cube root via Halley's method with biased-exponent seed.
+// Matches Rust cbrt_halley for cross-language bit-exact determinism.
+func cbrtHalley(x float64) float64 {
+	if x == 0.0 {
+		return 0.0
 	}
-	if x > 0 {
-		return portablePow(x, 1.0/3.0)
+	sign := x < 0.0
+	ax := x
+	if sign {
+		ax = -x
 	}
-	return -portablePow(-x, 1.0/3.0)
+
+	// Seed via signed int64 biased-exponent division
+	signedBits := int64(math.Float64bits(ax))
+	const bias = int64(1023) << 52
+	seedBits := (signedBits-bias)/3 + bias
+	y := math.Float64frombits(uint64(seedBits))
+
+	// 3 Halley iterations
+	for range 3 {
+		t1 := y * y
+		y3 := t1 * y
+		t2 := 2.0 * ax
+		num := y3 + t2
+		t3 := 2.0 * y3
+		den := t3 + ax
+		t4 := y * num
+		y = t4 / den
+	}
+
+	if sign {
+		return -y
+	}
+	return y
 }
 
 // clamp01 clamps x to [0, 1].

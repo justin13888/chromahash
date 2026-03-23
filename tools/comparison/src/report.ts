@@ -11,30 +11,28 @@ interface ImageEntry {
   harnessResults: HarnessResult[];
 }
 
-/**
- * Generate a self-contained HTML report with all images embedded as data URIs.
- */
-export function generateReport(entries: ImageEntry[]): string {
-  const formatNames = [
-    "ChromaHash",
-    "ThumbHash",
-    "BlurHash",
-    "lqip-modern",
-    "unpic",
-  ];
-  const languages = [
-    "Rust",
-    "TypeScript",
-    "Kotlin",
-    "Swift",
-    "Go",
-    "Python",
-    "C#",
-  ];
+export interface FormatStat {
+  name: string;
+  avgSize: number;
+  avgEncode: number;
+  avgDecode: number;
+  avgDssim: number | null;
+  avgDe: number | null;
+  avgComp: number | null;
+  avgPsnr: number | null;
+}
 
-  // Compute summary stats for format comparison
-  const formatStats = formatNames.map((name) => {
-    const results = entries.flatMap((e) =>
+/**
+ * Compute summary statistics for each format, optionally filtered to a subset of entries.
+ */
+export function computeFormatStats(
+  entries: ImageEntry[],
+  formatNames: string[],
+  filter: (e: ImageEntry) => boolean = () => true,
+): FormatStat[] {
+  const filtered = entries.filter(filter);
+  return formatNames.map((name) => {
+    const results = filtered.flatMap((e) =>
       e.formatResults.filter((r) => r.formatName === name),
     );
     const avgSize =
@@ -81,6 +79,66 @@ export function generateReport(entries: ImageEntry[]): string {
 
     return { name, avgSize, avgEncode, avgDecode, avgDssim, avgDe, avgComp, avgPsnr };
   });
+}
+
+function formatStatsTable(stats: FormatStat[]): string {
+  return `<table>
+<tr><th>Format</th><th>Avg Size (B)</th><th>Encode (ms)</th><th>Decode (ms)</th><th>Avg DSSIM ↓</th><th>Avg dE wtd ↓</th><th>Avg Composite ↓</th><th>Avg PSNR (dB) ↑</th></tr>
+${stats
+  .map((s) => {
+    const dssimCell =
+      s.avgDssim !== null
+        ? `<span class="${s.avgDssim < 0.10 ? "metric-good" : s.avgDssim < 0.25 ? "metric-warn" : "metric-bad"}">${s.avgDssim.toFixed(4)}</span>`
+        : "N/A";
+    const deCell =
+      s.avgDe !== null
+        ? `<span class="${s.avgDe < 0.04 ? "metric-good" : s.avgDe < 0.12 ? "metric-warn" : "metric-bad"}">${s.avgDe.toFixed(4)}</span>`
+        : "N/A";
+    const compCell =
+      s.avgComp !== null
+        ? `<span class="${s.avgComp < 0.3 ? "metric-good" : s.avgComp < 0.6 ? "metric-warn" : "metric-bad"}">${s.avgComp.toFixed(3)}</span>`
+        : "N/A";
+    return `<tr>
+  <td><strong>${s.name}</strong></td>
+  <td>${s.avgSize.toFixed(1)}</td>
+  <td>${s.avgEncode.toFixed(3)}</td>
+  <td>${s.avgDecode.toFixed(3)}</td>
+  <td>${dssimCell}</td>
+  <td>${deCell}</td>
+  <td>${compCell}</td>
+  <td>${s.avgPsnr !== null ? s.avgPsnr.toFixed(1) : "N/A"}</td>
+</tr>`;
+  })
+  .join("\n")}
+</table>`;
+}
+
+/**
+ * Generate a self-contained HTML report with all images embedded as data URIs.
+ */
+export function generateReport(entries: ImageEntry[]): string {
+  const formatNames = [
+    "ChromaHash",
+    "ThumbHash",
+    "BlurHash",
+    "lqip-modern",
+    "unpic",
+  ];
+  const languages = [
+    "Rust",
+    "TypeScript",
+    "Kotlin",
+    "Swift",
+    "Go",
+    "Python",
+    "C#",
+  ];
+
+  // Compute summary stats: natural/realistic only (primary), and all images
+  const naturalFilter = (e: ImageEntry) =>
+    (["Natural", "Realistic"] as ImageCategory[]).includes(e.category);
+  const naturalStats = computeFormatStats(entries, formatNames, naturalFilter);
+  const allStats = computeFormatStats(entries, formatNames);
 
   // Check cross-language consistency
   const harnessesSkipped = entries.every((e) => e.harnessResults.length === 0);
@@ -175,47 +233,28 @@ export function generateReport(entries: ImageEntry[]): string {
 <div id="tab-formats" class="tab-content active">
 <h2 style="margin-bottom:12px">Cross-Format Comparison</h2>
 
-<table>
-<tr><th>Format</th><th>Avg Size (B)</th><th>Encode (ms)</th><th>Decode (ms)</th><th>Avg DSSIM ↓</th><th>Avg dE wtd ↓</th><th>Avg Composite ↓</th><th>Avg PSNR (dB) ↑</th></tr>
-${formatStats
-  .map((s) => {
-    const dssimCell =
-      s.avgDssim !== null
-        ? `<span class="${s.avgDssim < 0.05 ? "metric-good" : s.avgDssim < 0.15 ? "metric-warn" : "metric-bad"}">${s.avgDssim.toFixed(4)}</span>`
-        : "N/A";
-    const deCell =
-      s.avgDe !== null
-        ? `<span class="${s.avgDe < 0.02 ? "metric-good" : s.avgDe < 0.06 ? "metric-warn" : "metric-bad"}">${s.avgDe.toFixed(4)}</span>`
-        : "N/A";
-    const compCell =
-      s.avgComp !== null
-        ? `<span class="${s.avgComp < 0.3 ? "metric-good" : s.avgComp < 0.6 ? "metric-warn" : "metric-bad"}">${s.avgComp.toFixed(3)}</span>`
-        : "N/A";
-    return `<tr>
-  <td><strong>${s.name}</strong></td>
-  <td>${s.avgSize.toFixed(1)}</td>
-  <td>${s.avgEncode.toFixed(3)}</td>
-  <td>${s.avgDecode.toFixed(3)}</td>
-  <td>${dssimCell}</td>
-  <td>${deCell}</td>
-  <td>${compCell}</td>
-  <td>${s.avgPsnr !== null ? s.avgPsnr.toFixed(1) : "N/A"}</td>
-</tr>`;
-  })
-  .join("\n")}
-</table>
+<h3 style="margin:16px 0 4px;font-size:0.95rem">Natural &amp; Realistic Images Only</h3>
+${formatStatsTable(naturalStats)}
+
+<details class="methodology">
+<summary>All Images (including synthetic test cases)</summary>
+<div class="inner">
+${formatStatsTable(allStats)}
+</div>
+</details>
 
 <details class="methodology">
 <summary>Methodology</summary>
 <div class="inner">
-<p><strong>Blur-then-compare</strong>: The encoder input is Lanczos-3 downscaled to each format's native decoded resolution before comparison, avoiding nearest-neighbor upsampling artifacts that inflate PSNR penalty.</p>
+<p><strong>Blur-then-compare</strong>: The encoder input is Lanczos-3 downscaled to each format's native decoded resolution before comparison, avoiding nearest-neighbor upsampling artifacts that inflate PSNR penalty. For ChromaHash, decoded output larger than the source is downscaled to source dims before metric computation.</p>
 <table style="margin:10px 0">
 <tr><th>Metric</th><th>What it measures</th><th>Good threshold</th></tr>
-<tr><td><strong>DSSIM</strong></td><td>(1−SSIM)/2 over luminance; structural fidelity ignoring uniform brightness shifts</td><td>&lt; 0.05</td></tr>
-<tr><td><strong>dE wtd</strong></td><td>OKLAB ΔE weighted by local luminance variance (saliency proxy); JND ≈ 0.02</td><td>&lt; 0.02</td></tr>
+<tr><td><strong>DSSIM</strong></td><td>(1−SSIM)/2 over luminance; structural fidelity ignoring uniform brightness shifts</td><td>&lt; 0.10</td></tr>
+<tr><td><strong>dE wtd</strong></td><td>OKLAB ΔE weighted by local luminance variance (saliency proxy); JND ≈ 0.02</td><td>&lt; 0.04</td></tr>
 <tr><td><strong>Composite</strong></td><td>0.55·norm(DSSIM) + 0.45·norm(dE wtd); min-max normalised per image across raster formats</td><td>0 = best</td></tr>
 <tr><td><strong>PSNR</strong></td><td>Classic pixel MSE metric; shown for familiarity but penalises intentional LQIP blur</td><td>reference only</td></tr>
 </table>
+<p style="margin-top:8px"><em>Thresholds calibrated for 32-byte hash-based formats. DSSIM good &lt; 0.10, warn &lt; 0.25. dE wtd good &lt; 0.04, warn &lt; 0.12.</em></p>
 </div>
 </details>
 

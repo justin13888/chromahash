@@ -24,8 +24,8 @@ public enum Gamut: Sendable {
 let mu: Double = 5.0
 
 /// Scale factor maximums.
-let maxChromaA: Double = 0.5
-let maxChromaB: Double = 0.5
+let maxChromaA: Double = 0.45
+let maxChromaB: Double = 0.45
 let maxLScale: Double = 0.5
 let maxAScale: Double = 0.5
 let maxBScale: Double = 0.5

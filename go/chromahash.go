@@ -9,17 +9,17 @@ type ChromaHash struct {
 
 // Encode encodes an RGBA image into a ChromaHash.
 //
-// w, h are the image dimensions (1–100 each).
+// w, h are the image dimensions (>=1 each).
 // rgba is the pixel data in RGBA format (4 bytes per pixel, row-major).
 // gamut is the source color space.
 //
 // Panics if dimensions are out of range or rgba length doesn't match.
 func Encode(w, h int, rgba []byte, gamut Gamut) ChromaHash {
-	if w < 1 || w > 100 {
-		panic("chromahash: width must be 1–100")
+	if w < 1 {
+		panic("chromahash: width must be >= 1")
 	}
-	if h < 1 || h > 100 {
-		panic("chromahash: height must be 1–100")
+	if h < 1 {
+		panic("chromahash: height must be >= 1")
 	}
 	if len(rgba) != w*h*4 {
 		panic("chromahash: rgba length mismatch")
@@ -69,24 +69,48 @@ func Encode(w, h int, rgba []byte, gamut Gamut) ChromaHash {
 		bChan[i] = avgB*(1.0-alpha) + alpha*oklabPixels[i][2]
 	}
 
-	// 5. DCT encode each channel.
-	var lDC, lScale float64
-	var lAC []float64
+	// 5. Derive adaptive grid dimensions (v0.2).
+	aspectByte := encodeAspect(w, h)
+	lBaseN := 7
 	if hasAlpha {
-		lDC, lAC, lScale = dctEncode(lChan, w, h, 6, 6)
-	} else {
-		lDC, lAC, lScale = dctEncode(lChan, w, h, 7, 7)
+		lBaseN = 6
 	}
-	aDC, aAC, aScale := dctEncode(aChan, w, h, 4, 4)
-	bDC, bAC, bScale := dctEncode(bChan, w, h, 4, 4)
+	lNx, lNy := deriveGrid(aspectByte, lBaseN)
+	cNx, cNy := deriveGrid(aspectByte, 4)
+	alphaNx, alphaNy := 3, 3
+	if hasAlpha {
+		alphaNx, alphaNy = deriveGrid(aspectByte, 3)
+	}
+
+	// 6. DCT encode each channel.
+	lDC, lACRaw, lScale := dctEncode(lChan, w, h, lNx, lNy)
+	aDC, aACRaw, aScale := dctEncode(aChan, w, h, cNx, cNy)
+	bDC, bACRaw, bScale := dctEncode(bChan, w, h, cNx, cNy)
 
 	var alphaDC, alphaScale float64
-	var alphaAC []float64
+	var alphaACRaw []float64
 	if hasAlpha {
-		alphaDC, alphaAC, alphaScale = dctEncode(alphaPixels, w, h, 3, 3)
+		alphaDC, alphaACRaw, alphaScale = dctEncode(alphaPixels, w, h, alphaNx, alphaNy)
 	}
 
-	// 6. Quantize header values.
+	// Cap to bit budget and zero-pad (per spec §10).
+	lCap := 27
+	if hasAlpha {
+		lCap = 20
+	}
+	lAC := make([]float64, lCap)
+	copy(lAC, lACRaw)
+	aAC := make([]float64, 9)
+	copy(aAC, aACRaw)
+	bAC := make([]float64, 9)
+	copy(bAC, bACRaw)
+	var alphaAC []float64
+	if hasAlpha {
+		alphaAC = make([]float64, 5)
+		copy(alphaAC, alphaACRaw)
+	}
+
+	// 7. Quantize header values.
 	lDCQ := uint64(roundHalfAwayFromZero(127.0 * clamp01(lDC)))
 	aDCQ := uint64(roundHalfAwayFromZero(64.0 + 63.0*clampNeg1To1(aDC/maxChromaA)))
 	bDCQ := uint64(roundHalfAwayFromZero(64.0 + 63.0*clampNeg1To1(bDC/maxChromaB)))
@@ -94,8 +118,8 @@ func Encode(w, h int, rgba []byte, gamut Gamut) ChromaHash {
 	aSclQ := uint64(roundHalfAwayFromZero(63.0 * clamp01(aScale/maxAScale)))
 	bSclQ := uint64(roundHalfAwayFromZero(31.0 * clamp01(bScale/maxBScale)))
 
-	// 7. Compute aspect byte.
-	aspect := uint64(encodeAspect(w, h))
+	// Aspect byte already computed above.
+	aspect := uint64(aspectByte)
 
 	// 8. Pack header (48 bits = 6 bytes), little-endian.
 	hasAlphaFlag := uint64(0)
@@ -109,8 +133,8 @@ func Encode(w, h int, rgba []byte, gamut Gamut) ChromaHash {
 		(aSclQ << 27) |
 		(bSclQ << 33) |
 		(aspect << 38) |
-		(hasAlphaFlag << 46)
-	// bit 47 reserved = 0
+		(hasAlphaFlag << 46) |
+		(1 << 47) // version bit = 1 (v0.2+)
 
 	var hash [32]byte
 	for i := 0; i < 6; i++ {
@@ -231,9 +255,7 @@ func (ch ChromaHash) Decode() (int, int, []byte) {
 	}
 
 	var lAC []float64
-	lx, ly := 7, 7
 	if hasAlpha {
-		lx, ly = 6, 6
 		lAC = make([]float64, 0, 20)
 		for i := 0; i < 7; i++ {
 			q := readBits(hash, bitpos, 6)
@@ -278,33 +300,70 @@ func (ch ChromaHash) Decode() (int, int, []byte) {
 		}
 	}
 
-	// Precompute scan orders.
-	lScan := triangularScanOrder(lx, ly)
-	chromaScan := triangularScanOrder(4, 4)
-	var alphaScan [][2]int
+	// Derive adaptive grid and compute usable scan orders (v0.2).
+	lDecCap := 27
 	if hasAlpha {
-		alphaScan = triangularScanOrder(3, 3)
+		lDecCap = 20
+	}
+	lBaseN := 7
+	if hasAlpha {
+		lBaseN = 6
+	}
+	lNx, lNy := deriveGrid(aspect, lBaseN)
+	cNx, cNy := deriveGrid(aspect, 4)
+
+	lScanFull := triangularScanOrder(lNx, lNy)
+	lUsable := lDecCap
+	if len(lScanFull) < lUsable {
+		lUsable = len(lScanFull)
+	}
+	lScan := lScanFull[:lUsable]
+	lACUsed := lAC[:lUsable]
+
+	chromaScanFull := triangularScanOrder(cNx, cNy)
+	cUsable := 9
+	if len(chromaScanFull) < cUsable {
+		cUsable = len(chromaScanFull)
+	}
+	chromaScan := chromaScanFull[:cUsable]
+	aACUsed := aAC[:cUsable]
+	bACUsed := bAC[:cUsable]
+
+	var alphaScan [][2]int
+	var alphaACUsed []float64
+	if hasAlpha {
+		aNx, aNy := deriveGrid(aspect, 3)
+		alphaScanFull := triangularScanOrder(aNx, aNy)
+		aUsable := 5
+		if len(alphaScanFull) < aUsable {
+			aUsable = len(alphaScanFull)
+		}
+		alphaScan = alphaScanFull[:aUsable]
+		alphaACUsed = alphaAC[:aUsable]
 	}
 
 	// 6. Render output image.
 	rgba := make([]byte, w*h*4)
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
-			l := dctDecodePixel(lDC, lAC, lScan, x, y, w, h)
-			a := dctDecodePixel(aDC, aAC, chromaScan, x, y, w, h)
-			b := dctDecodePixel(bDC, bAC, chromaScan, x, y, w, h)
+			l := dctDecodePixel(lDC, lACUsed, lScan, x, y, w, h)
+			a := dctDecodePixel(aDC, aACUsed, chromaScan, x, y, w, h)
+			b := dctDecodePixel(bDC, bACUsed, chromaScan, x, y, w, h)
 			var alpha float64
 			if hasAlpha {
-				alpha = dctDecodePixel(alphaDCVal, alphaAC, alphaScan, x, y, w, h)
+				alpha = dctDecodePixel(alphaDCVal, alphaACUsed, alphaScan, x, y, w, h)
 			} else {
 				alpha = 1.0
 			}
 
-			srgb := oklabToSrgb([3]float64{l, a, b})
+			// Clamp L from DCT ringing, soft gamut clamp (v0.2).
+			lClamped := clamp01(l)
+			clamped := softGamutClamp(lClamped, a, b)
+			rgbLin := oklabToLinearSrgb(clamped)
 			idx := (y*w + x) * 4
-			rgba[idx] = byte(int(roundHalfAwayFromZero(255.0 * clamp01(srgb[0]))))
-			rgba[idx+1] = byte(int(roundHalfAwayFromZero(255.0 * clamp01(srgb[1]))))
-			rgba[idx+2] = byte(int(roundHalfAwayFromZero(255.0 * clamp01(srgb[2]))))
+			rgba[idx] = linearToSrgb8(clamp01(rgbLin[0]))
+			rgba[idx+1] = linearToSrgb8(clamp01(rgbLin[1]))
+			rgba[idx+2] = linearToSrgb8(clamp01(rgbLin[2]))
 			rgba[idx+3] = byte(int(roundHalfAwayFromZero(255.0 * clamp01(alpha))))
 		}
 	}
@@ -331,7 +390,10 @@ func (ch ChromaHash) AverageColor() (r, g, b, a uint8) {
 	aDC := (float64(aDCQ) - 64.0) / 63.0 * maxChromaA
 	bDC := (float64(bDCQ) - 64.0) / 63.0 * maxChromaB
 
-	srgb := oklabToSrgb([3]float64{lDC, aDC, bDC})
+	// Apply soft gamut clamp to DC values (v0.2).
+	lClamped := clamp01(lDC)
+	clamped := softGamutClamp(lClamped, aDC, bDC)
+	rgbLin := oklabToLinearSrgb(clamped)
 
 	var alphaF float64
 	if hasAlpha {
@@ -340,9 +402,9 @@ func (ch ChromaHash) AverageColor() (r, g, b, a uint8) {
 		alphaF = 1.0
 	}
 
-	r = byte(int(roundHalfAwayFromZero(255.0 * clamp01(srgb[0]))))
-	g = byte(int(roundHalfAwayFromZero(255.0 * clamp01(srgb[1]))))
-	b = byte(int(roundHalfAwayFromZero(255.0 * clamp01(srgb[2]))))
+	r = linearToSrgb8(clamp01(rgbLin[0]))
+	g = linearToSrgb8(clamp01(rgbLin[1]))
+	b = linearToSrgb8(clamp01(rgbLin[2]))
 	a = byte(int(roundHalfAwayFromZero(255.0 * clamp01(alphaF))))
 	return
 }

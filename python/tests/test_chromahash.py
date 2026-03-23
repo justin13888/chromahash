@@ -18,7 +18,7 @@ from chromahash._color import (
     oklab_to_linear_srgb,
 )
 from chromahash._dct import dct_decode_pixel, dct_encode, triangular_scan_order
-from chromahash._math_utils import cbrt_signed, clamp01, matvec3, round_half_away_from_zero
+from chromahash._math_utils import cbrt_halley, clamp01, matvec3, round_half_away_from_zero
 from chromahash._mulaw import mu_compress, mu_expand, mu_law_dequantize, mu_law_quantize
 from chromahash._transfer import (
     adobe_rgb_eotf,
@@ -93,18 +93,18 @@ def test_round_half_away_from_zero_standard():
 
 
 def test_cbrt_positive():
-    assert abs(cbrt_signed(8.0) - 2.0) < 1e-12
-    assert abs(cbrt_signed(27.0) - 3.0) < 1e-12
-    assert abs(cbrt_signed(1.0) - 1.0) < 1e-12
+    assert abs(cbrt_halley(8.0) - 2.0) < 1e-12
+    assert abs(cbrt_halley(27.0) - 3.0) < 1e-12
+    assert abs(cbrt_halley(1.0) - 1.0) < 1e-12
 
 
 def test_cbrt_negative():
-    assert abs(cbrt_signed(-8.0) - (-2.0)) < 1e-12
-    assert abs(cbrt_signed(-27.0) - (-3.0)) < 1e-12
+    assert abs(cbrt_halley(-8.0) - (-2.0)) < 1e-12
+    assert abs(cbrt_halley(-27.0) - (-3.0)) < 1e-12
 
 
 def test_cbrt_zero():
-    assert cbrt_signed(0.0) == 0.0
+    assert cbrt_halley(0.0) == 0.0
 
 
 def test_clamp01():
@@ -354,20 +354,37 @@ def test_square_encodes_to_128():
 
 
 def test_extreme_4_1():
-    assert encode_aspect(4, 1) == 255
+    # 4:1 no longer maps to 255 in v0.3 — that's reserved for 16:1
+    assert encode_aspect(4, 1) == 191
 
 
 def test_extreme_1_4():
-    assert encode_aspect(1, 4) == 0
+    # 1:4 no longer maps to 0 in v0.3 — that's reserved for 1:16
+    assert encode_aspect(1, 4) == 64
+
+
+def test_extreme_16_1():
+    assert encode_aspect(16, 1) == 255
+
+
+def test_extreme_1_16():
+    assert encode_aspect(1, 16) == 0
 
 
 def test_known_aspect_ratios():
-    for w, h, label in [(1, 1, "1:1"), (3, 2, "3:2"), (4, 3, "4:3"), (16, 9, "16:9")]:
+    for w, h, label in [
+        (1, 1, "1:1"),
+        (3, 2, "3:2"),
+        (4, 3, "4:3"),
+        (16, 9, "16:9"),
+        (16, 1, "16:1"),
+        (1, 16, "1:16"),
+    ]:
         byte = encode_aspect(w, h)
         decoded = decode_aspect(byte)
         actual = w / h
         err = abs(decoded - actual) / actual * 100.0
-        assert err < 0.55, f"Aspect {label}: error={err:.3f}% ≥ 0.55%"
+        assert err < 1.1, f"Aspect {label}: error={err:.3f}% ≥ 1.1%"
 
 
 def test_decode_output_size_landscape():

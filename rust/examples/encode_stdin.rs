@@ -4,7 +4,7 @@ use std::io::{self, Read, Write};
 fn usage() -> ! {
     eprintln!("Usage:");
     eprintln!("  encode_stdin encode <width> <height> <gamut>");
-    eprintln!("  encode_stdin decode");
+    eprintln!("  encode_stdin decode [max_width max_height]");
     eprintln!("  encode_stdin average-color");
     std::process::exit(1);
 }
@@ -51,12 +51,22 @@ fn main() {
                 .expect("failed to write hash");
         }
         "decode" => {
+            if args.len() != 2 && args.len() != 4 {
+                eprintln!("Usage: encode_stdin decode [max_width max_height]");
+                std::process::exit(1);
+            }
             let mut hash = [0u8; 32];
             io::stdin()
                 .read_exact(&mut hash)
                 .expect("failed to read hash from stdin");
             let ch = ChromaHash::from_bytes(hash);
-            let (w, h, rgba) = ch.decode();
+            let (w, h, rgba) = if args.len() == 4 {
+                let max_w: u32 = args[2].parse().expect("invalid max_width");
+                let max_h: u32 = args[3].parse().expect("invalid max_height");
+                ch.decode_capped(max_w, max_h)
+            } else {
+                ch.decode()
+            };
             let header = format!("{w} {h}\n");
             io::stdout()
                 .write_all(header.as_bytes())

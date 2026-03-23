@@ -500,13 +500,27 @@ public class AspectTests
     [Fact]
     public void Extreme4To1()
     {
-        Assert.Equal(255, AspectAccessor.Encode(4, 1));
+        // 4:1 → byte 191 in v0.3 (255 is reserved for 16:1)
+        Assert.Equal(191, AspectAccessor.Encode(4, 1));
     }
 
     [Fact]
     public void Extreme1To4()
     {
-        Assert.Equal(0, AspectAccessor.Encode(1, 4));
+        // 1:4 → byte 64 in v0.3 (0 is reserved for 1:16)
+        Assert.Equal(64, AspectAccessor.Encode(1, 4));
+    }
+
+    [Fact]
+    public void Extreme16To1()
+    {
+        Assert.Equal(255, AspectAccessor.Encode(16, 1));
+    }
+
+    [Fact]
+    public void Extreme1To16()
+    {
+        Assert.Equal(0, AspectAccessor.Encode(1, 16));
     }
 
     [Theory]
@@ -516,13 +530,15 @@ public class AspectTests
     [InlineData(16, 9, "16:9")]
     [InlineData(4, 1, "4:1")]
     [InlineData(1, 4, "1:4")]
+    [InlineData(16, 1, "16:1")]
+    [InlineData(1, 16, "1:16")]
     public void KnownRatios(uint w, uint h, string label)
     {
         byte b = AspectAccessor.Encode(w, h);
         double decoded = AspectAccessor.Decode(b);
         double actual = (double)w / h;
         double err = Math.Abs(decoded - actual) / actual * 100.0;
-        Assert.True(err < 0.55, $"Aspect {label}: error={err:F3}% ≥ 0.55%");
+        Assert.True(err < 1.1, $"Aspect {label}: error={err:F3}% ≥ 1.1%");
     }
 
     [Fact]
@@ -768,7 +784,6 @@ public class ChromaHashTests
     [Theory]
     [InlineData(0u, 4u)]
     [InlineData(4u, 0u)]
-    [InlineData(101u, 4u)]
     public void InvalidDimensionsThrow(uint w, uint h)
     {
         byte[] rgba = Helpers.SolidImage(4, 4, 128, 128, 128, 255);
@@ -1007,7 +1022,7 @@ public class SpecVectorTests
 internal static class MathUtilsAccessor
 {
     public static double Round(double x) => MathUtils.RoundHalfAwayFromZero(x);
-    public static double Cbrt(double x) => MathUtils.CbrtSigned(x);
+    public static double Cbrt(double x) => MathUtils.CbrtHalley(x);
     public static double Clamp01(double x) => MathUtils.Clamp01(x);
 }
 

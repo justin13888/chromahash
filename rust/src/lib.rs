@@ -36,6 +36,13 @@ impl ChromaHash {
         decode::decode(&self.hash)
     }
 
+    /// Decode a ChromaHash into an RGBA image, capped at the given max dimensions.
+    /// Useful when the decoded size would exceed the source image dimensions.
+    /// Returns (width, height, rgba_pixels).
+    pub fn decode_capped(&self, max_w: u32, max_h: u32) -> (u32, u32, Vec<u8>) {
+        decode::decode_capped(&self.hash, max_w, max_h)
+    }
+
     /// Extract the average color without full decode.
     /// Returns [r, g, b, a] as u8 values.
     pub fn average_color(&self) -> [u8; 4] {

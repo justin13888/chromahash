@@ -1,8 +1,8 @@
 """ChromaHash decoder. Per spec §11."""
 
-from ._aspect import decode_output_size
+from ._aspect import decode_output_size, derive_grid
 from ._bitpack import read_bits
-from ._color import oklab_to_srgb
+from ._color import linear_to_srgb8, oklab_to_linear_srgb, oklab_to_srgb, soft_gamut_clamp
 from ._constants import (
     MAX_A_ALPHA_SCALE,
     MAX_A_SCALE,
@@ -67,14 +67,12 @@ def decode(hash_bytes: bytes) -> tuple[int, int, bytes]:
             q = read_bits(hash_bytes, bitpos, 5)
             bitpos += 5
             l_ac.append(mu_law_dequantize(q, 5) * l_scale)
-        lx, ly = 6, 6
     else:
         l_ac = []
         for _ in range(27):
             q = read_bits(hash_bytes, bitpos, 5)
             bitpos += 5
             l_ac.append(mu_law_dequantize(q, 5) * l_scale)
-        lx, ly = 7, 7
 
     a_ac: list[float] = []
     for _ in range(9):
@@ -97,30 +95,53 @@ def decode(hash_bytes: bytes) -> tuple[int, int, bytes]:
     else:
         alpha_ac = []
 
-    # Precompute scan orders
-    l_scan = triangular_scan_order(lx, ly)
-    chroma_scan = triangular_scan_order(4, 4)
-    alpha_scan = triangular_scan_order(3, 3) if has_alpha else []
+    # Derive adaptive grid and compute usable scan orders (v0.2)
+    l_dec_cap = 20 if has_alpha else 27
+    l_nx, l_ny = derive_grid(aspect, 6 if has_alpha else 7)
+    c_nx, c_ny = derive_grid(aspect, 4)
+
+    l_scan_full = triangular_scan_order(l_nx, l_ny)
+    l_usable = min(l_dec_cap, len(l_scan_full))
+    l_scan = l_scan_full[:l_usable]
+    l_ac_used = l_ac[:l_usable]
+
+    chroma_scan_full = triangular_scan_order(c_nx, c_ny)
+    c_usable = min(9, len(chroma_scan_full))
+    chroma_scan = chroma_scan_full[:c_usable]
+    a_ac_used = a_ac[:c_usable]
+    b_ac_used = b_ac[:c_usable]
+
+    alpha_scan: list = []
+    alpha_ac_used: list[float] = []
+    if has_alpha:
+        a_nx, a_ny = derive_grid(aspect, 3)
+        alpha_scan_full = triangular_scan_order(a_nx, a_ny)
+        a_usable = min(5, len(alpha_scan_full))
+        alpha_scan = alpha_scan_full[:a_usable]
+        alpha_ac_used = alpha_ac[:a_usable]
 
     # 6. Render output image
     rgba = bytearray(w * h * 4)
 
     for y in range(h):
         for x in range(w):
-            ok_l = dct_decode_pixel(l_dc, l_ac, l_scan, x, y, w, h)
-            ok_a = dct_decode_pixel(a_dc, a_ac, chroma_scan, x, y, w, h)
-            ok_b = dct_decode_pixel(b_dc, b_ac, chroma_scan, x, y, w, h)
+            ok_l = dct_decode_pixel(l_dc, l_ac_used, l_scan, x, y, w, h)
+            ok_a = dct_decode_pixel(a_dc, a_ac_used, chroma_scan, x, y, w, h)
+            ok_b = dct_decode_pixel(b_dc, b_ac_used, chroma_scan, x, y, w, h)
             alpha = (
-                dct_decode_pixel(alpha_dc_val, alpha_ac, alpha_scan, x, y, w, h)
+                dct_decode_pixel(alpha_dc_val, alpha_ac_used, alpha_scan, x, y, w, h)
                 if has_alpha
                 else 1.0
             )
 
-            srgb = oklab_to_srgb([ok_l, ok_a, ok_b])
+            # Clamp L from DCT ringing, soft gamut clamp (v0.2)
+            l_clamped = clamp01(ok_l)
+            l_out, a_out, b_out = soft_gamut_clamp(l_clamped, ok_a, ok_b)
+            rgb_lin = oklab_to_linear_srgb([l_out, a_out, b_out])
             idx = (y * w + x) * 4
-            rgba[idx] = int(round_half_away_from_zero(255.0 * clamp01(srgb[0])))
-            rgba[idx + 1] = int(round_half_away_from_zero(255.0 * clamp01(srgb[1])))
-            rgba[idx + 2] = int(round_half_away_from_zero(255.0 * clamp01(srgb[2])))
+            rgba[idx] = linear_to_srgb8(clamp01(rgb_lin[0]))
+            rgba[idx + 1] = linear_to_srgb8(clamp01(rgb_lin[1]))
+            rgba[idx + 2] = linear_to_srgb8(clamp01(rgb_lin[2]))
             rgba[idx + 3] = int(round_half_away_from_zero(255.0 * clamp01(alpha)))
 
     return (w, h, bytes(rgba))
@@ -143,13 +164,16 @@ def average_color(hash_bytes: bytes) -> tuple[int, int, int, int]:
     a_dc = (a_dc_q - 64.0) / 63.0 * MAX_CHROMA_A
     b_dc = (b_dc_q - 64.0) / 63.0 * MAX_CHROMA_B
 
-    srgb = oklab_to_srgb([l_dc, a_dc, b_dc])
+    # Apply soft gamut clamp to DC values (v0.2)
+    l_clamped = clamp01(l_dc)
+    l_out, a_out, b_out = soft_gamut_clamp(l_clamped, a_dc, b_dc)
+    rgb_lin = oklab_to_linear_srgb([l_out, a_out, b_out])
 
     alpha = read_bits(hash_bytes, 48, 5) / 31.0 if has_alpha else 1.0
 
     return (
-        int(round_half_away_from_zero(255.0 * clamp01(srgb[0]))),
-        int(round_half_away_from_zero(255.0 * clamp01(srgb[1]))),
-        int(round_half_away_from_zero(255.0 * clamp01(srgb[2]))),
+        linear_to_srgb8(clamp01(rgb_lin[0])),
+        linear_to_srgb8(clamp01(rgb_lin[1])),
+        linear_to_srgb8(clamp01(rgb_lin[2])),
         int(round_half_away_from_zero(255.0 * clamp01(alpha))),
     )

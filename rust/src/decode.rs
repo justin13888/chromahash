@@ -24,9 +24,17 @@ fn linear_to_srgb8(x: f64, lut: &[u8; 4096]) -> u8 {
     lut[idx]
 }
 
-/// Decode a ChromaHash into RGBA pixel data. Per spec §11 (v0.2).
-/// Returns (width, height, rgba_pixels).
-pub fn decode(hash: &[u8; 32]) -> (u32, u32, Vec<u8>) {
+/// Extract the aspect byte from a ChromaHash (bits 38–45 of the header).
+fn read_aspect(hash: &[u8; 32]) -> u8 {
+    let header: u64 = hash[..6]
+        .iter()
+        .enumerate()
+        .fold(0u64, |acc, (i, &b)| acc | ((b as u64) << (i * 8)));
+    ((header >> 38) & 0xFF) as u8
+}
+
+/// Render a ChromaHash at the given pixel dimensions. Per spec §11 (v0.2).
+fn render_at_size(hash: &[u8; 32], w: usize, h: usize) -> Vec<u8> {
     // 1. Unpack header (48 bits)
     let header: u64 = hash[..6]
         .iter()
@@ -67,10 +75,7 @@ pub fn decode(hash: &[u8; 32]) -> (u32, u32, Vec<u8>) {
     let l_usable = l_cap.min(l_scan.len());
     let c_usable = c_cap.min(chroma_scan.len());
 
-    // 5. Compute output size
-    let (w, h) = decode_output_size(aspect);
-
-    // 6. Dequantize AC coefficients from bitstream (always read exactly cap values)
+    // 5. Dequantize AC coefficients from bitstream (always read exactly cap values)
     let mut bitpos = 48usize;
 
     let (alpha_dc_val, alpha_scale_val) = if has_alpha {
@@ -136,12 +141,10 @@ pub fn decode(hash: &[u8; 32]) -> (u32, u32, Vec<u8>) {
         (vec![], vec![], 0)
     };
 
-    // 7. Build gamma LUT (v0.2)
+    // 6. Build gamma LUT (v0.2)
     let gamma_lut = build_gamma_lut();
 
-    // 8. Render output image
-    let w = w as usize;
-    let h = h as usize;
+    // 7. Render output image
     let mut rgba_out = vec![0u8; w * h * 4];
 
     for y in 0..h {
@@ -193,7 +196,28 @@ pub fn decode(hash: &[u8; 32]) -> (u32, u32, Vec<u8>) {
         }
     }
 
-    (w as u32, h as u32, rgba_out)
+    rgba_out
+}
+
+/// Decode a ChromaHash into RGBA pixel data. Per spec §11 (v0.2).
+/// Returns (width, height, rgba_pixels).
+pub fn decode(hash: &[u8; 32]) -> (u32, u32, Vec<u8>) {
+    let aspect = read_aspect(hash);
+    let (w, h) = decode_output_size(aspect);
+    let rgba = render_at_size(hash, w as usize, h as usize);
+    (w, h, rgba)
+}
+
+/// Decode a ChromaHash into RGBA pixel data, capped at the given max dimensions.
+/// The shorter decoded dimension is also capped proportionally.
+/// Returns (width, height, rgba_pixels).
+pub fn decode_capped(hash: &[u8; 32], max_w: u32, max_h: u32) -> (u32, u32, Vec<u8>) {
+    let aspect = read_aspect(hash);
+    let (nat_w, nat_h) = decode_output_size(aspect);
+    let w = nat_w.min(max_w);
+    let h = nat_h.min(max_h);
+    let rgba = render_at_size(hash, w as usize, h as usize);
+    (w, h, rgba)
 }
 
 /// Extract the average color from a ChromaHash without full decode.

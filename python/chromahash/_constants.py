@@ -11,8 +11,8 @@ class Gamut(Enum):
 
 MU: float = 5.0
 
-MAX_CHROMA_A: float = 0.5
-MAX_CHROMA_B: float = 0.5
+MAX_CHROMA_A: float = 0.45
+MAX_CHROMA_B: float = 0.45
 MAX_L_SCALE: float = 0.5
 MAX_A_SCALE: float = 0.5
 MAX_B_SCALE: float = 0.5

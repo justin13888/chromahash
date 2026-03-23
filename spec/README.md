@@ -612,15 +612,15 @@ precision partially compensates for the reduced grid size.
 
 ### 8.1 Encoding Formula
 
-The aspect ratio is encoded as a single byte using a log₂ mapping:
+The aspect ratio is encoded as a single byte using a log₂ mapping (v0.3):
 
 ```
-Encode: byte = clamp(round((log₂(w / h) + 2) / 4 × 255), 0, 255)
-Decode: ratio = 2^(byte / 255 × 4 − 2)
+Encode: byte = clamp(round((log₂(w / h) + 4) / 8 × 255), 0, 255)
+Decode: ratio = 2^(byte / 255 × 8 − 4)
 ```
 
-This maps log₂(ratio) from the range [−2, +2] to [0, 255], covering aspect ratios from
-**1:4** (0.25) to **4:1** (4.0).
+This maps log₂(ratio) from the range [−4, +4] to [0, 255], covering aspect ratios from
+**1:16** (0.0625) to **16:1** (16.0).
 
 ### 8.2 Justification
 
@@ -632,25 +632,30 @@ aspect ratio differences.
 The theoretical maximum error for any ratio within the encodable range is:
 
 ```
-max_error ≈ 2^(4/255/2) − 1 ≈ 0.54%
+max_error ≈ 2^(8/255/2) − 1 ≈ 1.09%
 ```
+
+The expanded range [1:16, 16:1] accommodates ultra-wide banners and tall mobile images
+that the previous [1:4, 4:1] range would incorrectly clamp.
 
 ### 8.3 Error Analysis for Common Photographic Ratios
 
 | Ratio | Actual | log₂ | Byte | Decoded | Error |
 |-------|--------|------|------|---------|-------|
-| 1:1 | 1.000 | 0.000 | 128 | 1.005 | 0.54% |
-| 3:2 | 1.500 | 0.585 | 165 | 1.503 | 0.23% |
-| 4:3 | 1.333 | 0.415 | 154 | 1.334 | 0.04% |
-| 5:4 | 1.250 | 0.322 | 148 | 1.250 | 0.02% |
-| 16:9 | 1.778 | 0.830 | 180 | 1.770 | 0.46% |
-| 3:1 | 3.000 | 1.585 | 229 | 3.014 | 0.47% |
-| 4:1 | 4.000 | 2.000 | 255 | 4.000 | 0.00% |
+| 1:1 | 1.000 | 0.000 | 128 | ~1.011 | ~1.09% |
+| 3:2 | 1.500 | 0.585 | 146 | ~1.495 | ~0.33% |
+| 4:3 | 1.333 | 0.415 | 141 | ~1.342 | ~0.64% |
+| 16:9 | 1.778 | 0.830 | 154 | ~1.773 | ~0.30% |
+| 4:1 | 4.000 | 2.000 | 191 | ~3.972 | ~0.70% |
+| 16:1 | 16.000 | 4.000 | 255 | 16.000 | 0.00% |
+| 1:16 | 0.0625 | −4.000 | 0 | 0.0625 | 0.00% |
 
 All portrait ratios are symmetric — 2:3 has the same error as 3:2.
 
 **Practical impact:** For a 400px-wide placeholder, the worst-case layout jank is
-~2 pixels (0.54% of height), compared to ~27 pixels with 3-bit encoding.
+~4 pixels (1.09% of height), compared to ~27 pixels with 3-bit encoding.
+
+Notable byte values: 1:1 → 128 (unchanged), 4:1 → 191, 16:1 → 255, 1:4 → 64, 1:16 → 0.
 
 ### 8.4 Decode Output Size
 

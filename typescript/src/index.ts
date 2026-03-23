@@ -15,9 +15,11 @@ import {
   dctDecodePixel,
   dctEncode,
   decodeOutputSize,
+  deriveGrid,
   encodeAspect,
   f64,
   gammaRgbToOklab,
+  linearToSrgb8,
   MAX_A_ALPHA_SCALE,
   MAX_A_SCALE,
   MAX_B_SCALE,
@@ -26,9 +28,10 @@ import {
   MAX_L_SCALE,
   muLawDequantize,
   muLawQuantize,
-  oklabToSrgb,
+  oklabToLinearSrgb,
   readBits,
   roundHalfAwayFromZero,
+  softGamutClamp,
   triangularScanOrder,
   u8,
   writeBits,
@@ -44,8 +47,8 @@ function encodeImpl(
   rgba: Uint8Array,
   gamut: Gamut,
 ): Uint8Array {
-  if (w < 1 || w > 100) throw new Error("width must be 1-100");
-  if (h < 1 || h > 100) throw new Error("height must be 1-100");
+  if (w < 1) throw new Error("width must be >= 1");
+  if (h < 1) throw new Error("height must be >= 1");
   if (rgba.length !== w * h * 4) throw new Error("rgba length mismatch");
 
   const pixelCount = w * h;
@@ -99,17 +102,34 @@ function encodeImpl(
     bChan[i] = avgB * (1.0 - alpha) + alpha * f64(oklabB, i);
   }
 
-  // 5. DCT encode each channel
-  const [lDc, lAc, lScale] = hasAlpha
-    ? dctEncode(lChan, w, h, 6, 6)
-    : dctEncode(lChan, w, h, 7, 7);
-  const [aDc, aAc, aScale] = dctEncode(aChan, w, h, 4, 4);
-  const [bDc, bAc, bScale] = dctEncode(bChan, w, h, 4, 4);
-  const [alphaDc, alphaAc, alphaScale] = hasAlpha
-    ? dctEncode(alphaPixels, w, h, 3, 3)
+  // 5. Derive adaptive grid dimensions (v0.2)
+  const aspect = encodeAspect(w, h);
+  const [lNx, lNy] = deriveGrid(aspect, hasAlpha ? 6 : 7);
+  const [cNx, cNy] = deriveGrid(aspect, 4);
+  const [alphaNx, alphaNy] = hasAlpha ? deriveGrid(aspect, 3) : [3, 3];
+
+  // 6. DCT encode each channel
+  const [lDc, lAcRaw, lScale] = dctEncode(lChan, w, h, lNx, lNy);
+  const [aDc, aAcRaw, aScale] = dctEncode(aChan, w, h, cNx, cNy);
+  const [bDc, bAcRaw, bScale] = dctEncode(bChan, w, h, cNx, cNy);
+  const [alphaDc, alphaAcRaw, alphaScale] = hasAlpha
+    ? dctEncode(alphaPixels, w, h, alphaNx, alphaNy)
     : [0, [] as number[], 0];
 
-  // 6. Quantize header values
+  // Cap to bit budget and zero-pad (per spec §10)
+  const lEncCap = hasAlpha ? 20 : 27;
+  const lAc = lAcRaw.slice(0, lEncCap);
+  while (lAc.length < lEncCap) lAc.push(0.0);
+  const aAc = aAcRaw.slice(0, 9);
+  while (aAc.length < 9) aAc.push(0.0);
+  const bAc = bAcRaw.slice(0, 9);
+  while (bAc.length < 9) bAc.push(0.0);
+  const alphaAc = hasAlpha ? alphaAcRaw.slice(0, 5) : ([] as number[]);
+  if (hasAlpha) {
+    while (alphaAc.length < 5) alphaAc.push(0.0);
+  }
+
+  // 7. Quantize header values
   const lDcQ = roundHalfAwayFromZero(127.0 * clamp01(lDc));
   const aDcQ = roundHalfAwayFromZero(
     64.0 + 63.0 * clampNeg1_1(aDc / MAX_CHROMA_A),
@@ -120,9 +140,6 @@ function encodeImpl(
   const lSclQ = roundHalfAwayFromZero(63.0 * clamp01(lScale / MAX_L_SCALE));
   const aSclQ = roundHalfAwayFromZero(63.0 * clamp01(aScale / MAX_A_SCALE));
   const bSclQ = roundHalfAwayFromZero(31.0 * clamp01(bScale / MAX_B_SCALE));
-
-  // 7. Compute aspect byte
-  const aspect = encodeAspect(w, h);
 
   // 8. Pack header (48 bits = 6 bytes)
   const hash = new Uint8Array(32);
@@ -135,7 +152,7 @@ function encodeImpl(
   writeBits(hash, 33, 5, bSclQ);
   writeBits(hash, 38, 8, aspect);
   writeBits(hash, 46, 1, hasAlpha ? 1 : 0);
-  // bit 47 reserved = 0
+  writeBits(hash, 47, 1, 1); // version bit = 1 (v0.2+)
 
   // 9. Pack AC coefficients with mu-law companding
   let bitpos = 48;
@@ -249,8 +266,6 @@ function decodeImpl(hash: Uint8Array): {
   }
 
   let lAc: number[];
-  let lx: number;
-  let ly: number;
   if (hasAlpha) {
     lAc = [];
     for (let i = 0; i < 7; i++) {
@@ -263,8 +278,6 @@ function decodeImpl(hash: Uint8Array): {
       bitpos += 5;
       lAc.push(muLawDequantize(q, 5) * lScale);
     }
-    lx = 6;
-    ly = 6;
   } else {
     lAc = [];
     for (let i = 0; i < 27; i++) {
@@ -272,8 +285,6 @@ function decodeImpl(hash: Uint8Array): {
       bitpos += 5;
       lAc.push(muLawDequantize(q, 5) * lScale);
     }
-    lx = 7;
-    ly = 7;
   }
 
   const aAc: number[] = [];
@@ -292,7 +303,6 @@ function decodeImpl(hash: Uint8Array): {
 
   let alphaAc: number[] = [];
   if (hasAlpha) {
-    alphaAc = [];
     for (let i = 0; i < 5; i++) {
       const q = readBits(hash, bitpos, 4);
       bitpos += 4;
@@ -300,28 +310,51 @@ function decodeImpl(hash: Uint8Array): {
     }
   }
 
-  // Precompute scan orders
-  const lScan = triangularScanOrder(lx, ly);
-  const chromaScan = triangularScanOrder(4, 4);
-  const alphaScan = hasAlpha ? triangularScanOrder(3, 3) : [];
+  // Derive adaptive grid and compute usable scan orders (v0.2)
+  const lDecCap = hasAlpha ? 20 : 27;
+  const [lNx, lNy] = deriveGrid(aspect, hasAlpha ? 6 : 7);
+  const [cNx, cNy] = deriveGrid(aspect, 4);
+  const lScanFull = triangularScanOrder(lNx, lNy);
+  const lUsable = Math.min(lDecCap, lScanFull.length);
+  const lScan = lScanFull.slice(0, lUsable);
+  const lAcCapped = lAc.slice(0, lUsable);
+
+  const chromaScanFull = triangularScanOrder(cNx, cNy);
+  const cUsable = Math.min(9, chromaScanFull.length);
+  const chromaScan = chromaScanFull.slice(0, cUsable);
+  const aAcCapped = aAc.slice(0, cUsable);
+  const bAcCapped = bAc.slice(0, cUsable);
+
+  let alphaScan: Array<[number, number]> = [];
+  let alphaAcCapped: number[] = [];
+  if (hasAlpha) {
+    const [aNx, aNy] = deriveGrid(aspect, 3);
+    const alphaScanFull = triangularScanOrder(aNx, aNy);
+    const aUsable = Math.min(5, alphaScanFull.length);
+    alphaScan = alphaScanFull.slice(0, aUsable);
+    alphaAcCapped = alphaAc.slice(0, aUsable);
+  }
 
   // 6. Render output image
   const rgbaOut = new Uint8Array(w * h * 4);
 
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
-      const l = dctDecodePixel(lDc, lAc, lScan, x, y, w, h);
-      const a = dctDecodePixel(aDc, aAc, chromaScan, x, y, w, h);
-      const b = dctDecodePixel(bDc, bAc, chromaScan, x, y, w, h);
+      const l = dctDecodePixel(lDc, lAcCapped, lScan, x, y, w, h);
+      const a = dctDecodePixel(aDc, aAcCapped, chromaScan, x, y, w, h);
+      const b = dctDecodePixel(bDc, bAcCapped, chromaScan, x, y, w, h);
       const alpha = hasAlpha
-        ? dctDecodePixel(alphaDcVal, alphaAc, alphaScan, x, y, w, h)
+        ? dctDecodePixel(alphaDcVal, alphaAcCapped, alphaScan, x, y, w, h)
         : 1.0;
 
-      const srgb = oklabToSrgb([l, a, b]);
+      // Clamp L from DCT ringing, soft gamut clamp (v0.2)
+      const lClamped = clamp01(l);
+      const [lOut, aOut, bOut] = softGamutClamp(lClamped, a, b);
+      const rgbLin = oklabToLinearSrgb([lOut, aOut, bOut]);
       const idx = (y * w + x) * 4;
-      rgbaOut[idx] = roundHalfAwayFromZero(255.0 * clamp01(srgb[0]));
-      rgbaOut[idx + 1] = roundHalfAwayFromZero(255.0 * clamp01(srgb[1]));
-      rgbaOut[idx + 2] = roundHalfAwayFromZero(255.0 * clamp01(srgb[2]));
+      rgbaOut[idx] = linearToSrgb8(clamp01(rgbLin[0]));
+      rgbaOut[idx + 1] = linearToSrgb8(clamp01(rgbLin[1]));
+      rgbaOut[idx + 2] = linearToSrgb8(clamp01(rgbLin[2]));
       rgbaOut[idx + 3] = roundHalfAwayFromZero(255.0 * clamp01(alpha));
     }
   }
@@ -345,14 +378,17 @@ function averageColorImpl(hash: Uint8Array): {
   const aDc = ((aDcQ - 64.0) / 63.0) * MAX_CHROMA_A;
   const bDc = ((bDcQ - 64.0) / 63.0) * MAX_CHROMA_B;
 
-  const srgb = oklabToSrgb([lDc, aDc, bDc]);
+  // Apply soft gamut clamp to DC values (v0.2)
+  const lClamped = clamp01(lDc);
+  const [lOut, aOut, bOut] = softGamutClamp(lClamped, aDc, bDc);
+  const rgbLin = oklabToLinearSrgb([lOut, aOut, bOut]);
 
   const alpha = hasAlpha ? readBits(hash, 48, 5) / 31.0 : 1.0;
 
   return {
-    r: roundHalfAwayFromZero(255.0 * clamp01(srgb[0])),
-    g: roundHalfAwayFromZero(255.0 * clamp01(srgb[1])),
-    b: roundHalfAwayFromZero(255.0 * clamp01(srgb[2])),
+    r: linearToSrgb8(clamp01(rgbLin[0])),
+    g: linearToSrgb8(clamp01(rgbLin[1])),
+    b: linearToSrgb8(clamp01(rgbLin[2])),
     a: roundHalfAwayFromZero(255.0 * clamp01(alpha)),
   };
 }

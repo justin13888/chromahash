@@ -13,7 +13,7 @@ import {
   fileBufferToDisplayDataUri,
 } from "./image-loader.ts";
 import { buildHarnesses, runAllHarnesses } from "./harness-runner.ts";
-import { generateReport, categorizeImage } from "./report.ts";
+import { generateReport, categorizeImage, computeFormatStats } from "./report.ts";
 import { generateFixtures } from "./generate-fixtures.ts";
 import { ensureNaturalImages } from "./natural-images.ts";
 import { computeCompositeScores } from "./metrics.ts";
@@ -192,59 +192,31 @@ async function main(): Promise<void> {
   );
 
   // Print expanded metric summary
-  console.log("\n=== Format Summary ===");
-  console.log(
-    `  ${"Format".padEnd(14)} ${"Size(B)".padStart(8)} ${"DSSIM".padStart(8)} ${"dE(wtd)".padStart(9)} ${"Composite".padStart(10)} ${"PSNR(dB)".padStart(9)}`,
-  );
-  const allFormats = new Set(
+  const formatNames = [...new Set(
     entries.flatMap((e) => e.formatResults.map((r) => r.formatName)),
-  );
-  for (const fmt of allFormats) {
-    const results = entries.flatMap((e) =>
-      e.formatResults.filter((r) => r.formatName === fmt),
-    );
-    const avgSize =
-      results.reduce((s, r) => s + r.encodedSizeBytes, 0) /
-      (results.length || 1);
+  )];
 
-    const dssimResults = results.filter((r) => r.metrics.dssim !== null);
-    const avgDssim =
-      dssimResults.length > 0
-        ? dssimResults.reduce((s, r) => s + (r.metrics.dssim ?? 0), 0) /
-          dssimResults.length
-        : null;
-
-    const deResults = results.filter((r) => r.metrics.deltaEWeighted !== null);
-    const avgDe =
-      deResults.length > 0
-        ? deResults.reduce(
-            (s, r) => s + (r.metrics.deltaEWeighted ?? 0),
-            0,
-          ) / deResults.length
-        : null;
-
-    const compResults = results.filter((r) => r.metrics.compositeScore !== null);
-    const avgComp =
-      compResults.length > 0
-        ? compResults.reduce(
-            (s, r) => s + (r.metrics.compositeScore ?? 0),
-            0,
-          ) / compResults.length
-        : null;
-
-    const psnrResults = results.filter(
-      (r) => r.metrics.psnrDb !== null && Number.isFinite(r.metrics.psnrDb),
-    );
-    const avgPsnr =
-      psnrResults.length > 0
-        ? psnrResults.reduce((s, r) => s + (r.metrics.psnrDb ?? 0), 0) /
-          psnrResults.length
-        : null;
-
+  const printSummary = (label: string, stats: ReturnType<typeof computeFormatStats>) => {
+    console.log(`\n=== Format Summary (${label}) ===`);
     console.log(
-      `  ${fmt.padEnd(14)} ${avgSize.toFixed(0).padStart(8)} ${(avgDssim !== null ? avgDssim.toFixed(4) : "N/A").padStart(8)} ${(avgDe !== null ? avgDe.toFixed(4) : "N/A").padStart(9)} ${(avgComp !== null ? avgComp.toFixed(3) : "N/A").padStart(10)} ${(avgPsnr !== null ? avgPsnr.toFixed(1) : "N/A").padStart(9)}`,
+      `  ${"Format".padEnd(14)} ${"Size(B)".padStart(8)} ${"DSSIM".padStart(8)} ${"dE(wtd)".padStart(9)} ${"Composite".padStart(10)} ${"PSNR(dB)".padStart(9)}`,
     );
-  }
+    for (const s of stats) {
+      console.log(
+        `  ${s.name.padEnd(14)} ${s.avgSize.toFixed(0).padStart(8)} ${(s.avgDssim !== null ? s.avgDssim.toFixed(4) : "N/A").padStart(8)} ${(s.avgDe !== null ? s.avgDe.toFixed(4) : "N/A").padStart(9)} ${(s.avgComp !== null ? s.avgComp.toFixed(3) : "N/A").padStart(10)} ${(s.avgPsnr !== null ? s.avgPsnr.toFixed(1) : "N/A").padStart(9)}`,
+      );
+    }
+  };
+
+  const naturalStats = computeFormatStats(
+    entries,
+    formatNames,
+    (e) => (["Natural", "Realistic"] as ImageCategory[]).includes(e.category),
+  );
+  const allStats = computeFormatStats(entries, formatNames);
+
+  printSummary("Natural Images Only", naturalStats);
+  printSummary("All Images", allStats);
 
   if (!skipHarnesses) {
     console.log("\n=== Cross-Language Verification ===");

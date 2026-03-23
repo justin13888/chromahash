@@ -8,10 +8,10 @@ internal static class Encoder
     /// <summary>Encode an image into a 32-byte ChromaHash. Per spec §10.</summary>
     public static byte[] Encode(uint w, uint h, byte[] rgba, Gamut gamut)
     {
-        if (w < 1 || w > 100)
-            throw new ArgumentOutOfRangeException(nameof(w), "width must be 1–100");
-        if (h < 1 || h > 100)
-            throw new ArgumentOutOfRangeException(nameof(h), "height must be 1–100");
+        if (w < 1)
+            throw new ArgumentOutOfRangeException(nameof(w), "width must be >= 1");
+        if (h < 1)
+            throw new ArgumentOutOfRangeException(nameof(h), "height must be >= 1");
         if (rgba.Length != (int)w * (int)h * 4)
             throw new ArgumentException("rgba length mismatch", nameof(rgba));
 
@@ -67,21 +67,34 @@ internal static class Encoder
             bChan[i] = avgB * (1.0 - alpha) + alpha * oklabPixels[i][2];
         }
 
-        // 5. DCT encode each channel
-        (double lDc, List<double> lAc, double lScale) = hasAlpha
-            ? Dct.DctEncode(lChan, iw, ih, 6, 6)
-            : Dct.DctEncode(lChan, iw, ih, 7, 7);
-        (double aDc, List<double> aAc, double aScale) = Dct.DctEncode(aChan, iw, ih, 4, 4);
-        (double bDc, List<double> bAc, double bScale) = Dct.DctEncode(bChan, iw, ih, 4, 4);
+        // 5. Derive adaptive grid dimensions (v0.2)
+        byte aspectByte = Aspect.EncodeAspect(w, h);
+        (int lNx, int lNy) = Aspect.DeriveGrid(aspectByte, hasAlpha ? 6 : 7);
+        (int cNx, int cNy) = Aspect.DeriveGrid(aspectByte, 4);
+        (int aNx, int aNy) = hasAlpha ? Aspect.DeriveGrid(aspectByte, 3) : (3, 3);
+
+        // 6. DCT encode each channel
+        (double lDc, List<double> lAcRaw, double lScale) = Dct.DctEncode(lChan, iw, ih, lNx, lNy);
+        (double aDc, List<double> aAcRaw, double aScale) = Dct.DctEncode(aChan, iw, ih, cNx, cNy);
+        (double bDc, List<double> bAcRaw, double bScale) = Dct.DctEncode(bChan, iw, ih, cNx, cNy);
 
         double alphaDc = 0.0,
             alphaScale = 0.0;
-        List<double> alphaAc = [];
+        List<double> alphaAcRaw = [];
 
         if (hasAlpha)
-            (alphaDc, alphaAc, alphaScale) = Dct.DctEncode(alphaPixels, iw, ih, 3, 3);
+            (alphaDc, alphaAcRaw, alphaScale) = Dct.DctEncode(alphaPixels, iw, ih, aNx, aNy);
 
-        // 6. Quantize header values
+        // Cap to bit budget and zero-pad (per spec §10)
+        int lCap = hasAlpha ? 20 : 27;
+        List<double> lAc = Enumerable.Range(0, lCap).Select(i => i < lAcRaw.Count ? lAcRaw[i] : 0.0).ToList();
+        List<double> aAc = Enumerable.Range(0, 9).Select(i => i < aAcRaw.Count ? aAcRaw[i] : 0.0).ToList();
+        List<double> bAc = Enumerable.Range(0, 9).Select(i => i < bAcRaw.Count ? bAcRaw[i] : 0.0).ToList();
+        List<double> alphaAc = hasAlpha
+            ? Enumerable.Range(0, 5).Select(i => i < alphaAcRaw.Count ? alphaAcRaw[i] : 0.0).ToList()
+            : [];
+
+        // 8. Quantize header values
         ulong lDcQ = (ulong)RoundHalfAwayFromZero(127.0 * Clamp01(lDc));
         ulong aDcQ = (ulong)RoundHalfAwayFromZero(64.0 + 63.0 * ClampNeg1To1(aDc / MaxChromaA));
         ulong bDcQ = (ulong)RoundHalfAwayFromZero(64.0 + 63.0 * ClampNeg1To1(bDc / MaxChromaB));
@@ -89,10 +102,7 @@ internal static class Encoder
         ulong aSclQ = (ulong)RoundHalfAwayFromZero(63.0 * Clamp01(aScale / MaxAScale));
         ulong bSclQ = (ulong)RoundHalfAwayFromZero(31.0 * Clamp01(bScale / MaxBScale));
 
-        // 7. Compute aspect byte
-        ulong aspectByte = Aspect.EncodeAspect(w, h);
-
-        // 8. Pack header (48 bits = 6 bytes)
+        // 9. Pack header (48 bits = 6 bytes)
         ulong header =
             lDcQ
             | (aDcQ << 7)
@@ -100,9 +110,9 @@ internal static class Encoder
             | (lSclQ << 21)
             | (aSclQ << 27)
             | (bSclQ << 33)
-            | (aspectByte << 38)
-            | ((hasAlpha ? 1ul : 0ul) << 46);
-        // bit 47 reserved = 0
+            | ((ulong)aspectByte << 38)
+            | ((hasAlpha ? 1ul : 0ul) << 46)
+            | (1ul << 47); // version bit = 1 (v0.2+)
 
         byte[] hash = new byte[32];
         for (int i = 0; i < 6; i++)

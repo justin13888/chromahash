@@ -81,7 +81,7 @@ func TestRoundHalfAwayFromZero(t *testing.T) {
 	}
 }
 
-func TestCbrtSigned(t *testing.T) {
+func TestCbrtHalley(t *testing.T) {
 	cases := [][2]float64{
 		{8.0, 2.0},
 		{27.0, 3.0},
@@ -90,9 +90,9 @@ func TestCbrtSigned(t *testing.T) {
 		{0.0, 0.0},
 	}
 	for _, c := range cases {
-		got := cbrtSigned(c[0])
+		got := cbrtHalley(c[0])
 		if math.Abs(got-c[1]) > 1e-12 {
-			t.Errorf("cbrtSigned(%v) = %v, want %v", c[0], got, c[1])
+			t.Errorf("cbrtHalley(%v) = %v, want %v", c[0], got, c[1])
 		}
 	}
 }

@@ -110,10 +110,32 @@ func portablePow(_ base: Double, _ exponent: Double) -> Double {
 
 /// Signed cube root per spec: cbrt(x) = sign(x) * |x|^(1/3).
 /// Uses portablePow for cross-platform determinism.
-func cbrtSigned(_ x: Double) -> Double {
+/// Cube root via Halley's method with biased-exponent seed.
+/// Matches Rust cbrt_halley for cross-language bit-exact determinism.
+func cbrtHalley(_ x: Double) -> Double {
   if x == 0.0 { return 0.0 }
-  if x > 0.0 { return portablePow(x, 1.0 / 3.0) }
-  return -portablePow(-x, 1.0 / 3.0)
+  let sign = x < 0.0
+  let ax = sign ? -x : x
+
+  // Seed via signed int64 biased-exponent division
+  let signedBits = Int64(bitPattern: ax.bitPattern)
+  let bias: Int64 = 1023 << 52
+  let seedBits = (signedBits - bias) / 3 + bias
+  var y = Double(bitPattern: UInt64(bitPattern: seedBits))
+
+  // 3 Halley iterations
+  for _ in 0..<3 {
+    let t1 = y * y
+    let y3 = t1 * y
+    let t2 = 2.0 * ax
+    let num = y3 + t2
+    let t3 = 2.0 * y3
+    let den = t3 + ax
+    let t4 = y * num
+    y = t4 / den
+  }
+
+  return sign ? -y : y
 }
 
 /// Portable cosine using only basic IEEE 754 arithmetic.

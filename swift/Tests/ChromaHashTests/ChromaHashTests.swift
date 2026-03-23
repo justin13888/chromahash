@@ -25,18 +25,18 @@ import Testing
 }
 
 @Test func cbrtPositive() {
-  #expect(abs(cbrtSigned(8.0) - 2.0) < 1e-12)
-  #expect(abs(cbrtSigned(27.0) - 3.0) < 1e-12)
-  #expect(abs(cbrtSigned(1.0) - 1.0) < 1e-12)
+  #expect(abs(cbrtHalley(8.0) - 2.0) < 1e-12)
+  #expect(abs(cbrtHalley(27.0) - 3.0) < 1e-12)
+  #expect(abs(cbrtHalley(1.0) - 1.0) < 1e-12)
 }
 
 @Test func cbrtNegative() {
-  #expect(abs(cbrtSigned(-8.0) - (-2.0)) < 1e-12)
-  #expect(abs(cbrtSigned(-27.0) - (-3.0)) < 1e-12)
+  #expect(abs(cbrtHalley(-8.0) - (-2.0)) < 1e-12)
+  #expect(abs(cbrtHalley(-27.0) - (-3.0)) < 1e-12)
 }
 
 @Test func cbrtZero() {
-  #expect(cbrtSigned(0.0) == 0.0)
+  #expect(cbrtHalley(0.0) == 0.0)
 }
 
 // MARK: - Aspect Tests
@@ -46,32 +46,47 @@ import Testing
 }
 
 @Test func aspectExtreme4to1() {
-  #expect(encodeAspect(w: 4, h: 1) == 255)
+  // 4:1 → byte 191 in v0.3 (255 is reserved for 16:1)
+  #expect(encodeAspect(w: 4, h: 1) == 191)
 }
 
 @Test func aspectExtreme1to4() {
-  #expect(encodeAspect(w: 1, h: 4) == 0)
+  // 1:4 → byte 64 in v0.3 (0 is reserved for 1:16)
+  #expect(encodeAspect(w: 1, h: 4) == 64)
+}
+
+@Test func aspectExtreme16to1() {
+  #expect(encodeAspect(w: 16, h: 1) == 255)
+}
+
+@Test func aspectExtreme1to16() {
+  #expect(encodeAspect(w: 1, h: 16) == 0)
 }
 
 @Test func aspectGoldenVectors() {
-  // From unit-aspect.json
-  let cases: [(w: Int, h: Int, byte: UInt8, decodedRatio: Double, outW: Int, outH: Int)] = [
-    (1, 1, 128, 1.0054512527764397, 32, 32),
-    (3, 2, 165, 1.503406653856055, 32, 21),
-    (4, 3, 154, 1.333933063801182, 32, 24),
-    (16, 9, 180, 1.7697301721873238, 32, 18),
-    (4, 1, 255, 4.0, 32, 8),
-    (1, 4, 0, 0.25, 8, 32),
-    (2, 1, 191, 1.9945709335778188, 32, 16),
-    (1, 2, 64, 0.5013609609793227, 16, 32),
-    (100, 25, 255, 4.0, 32, 8),
+  // Byte values and output sizes from the v0.3 spec (formula: (log2(ratio)+4)/8*255).
+  // Decoded ratios are verified to be within the spec's ~1.09% max error.
+  let cases: [(w: Int, h: Int, byte: UInt8, outW: Int, outH: Int)] = [
+    (1, 1, 128, 32, 32),
+    (3, 2, 146, 32, 21),
+    (4, 3, 141, 32, 24),
+    (16, 9, 154, 32, 18),
+    (4, 1, 191, 32, 8),
+    (1, 4, 64, 8, 32),
+    (16, 1, 255, 32, 2),
+    (1, 16, 0, 2, 32),
+    (2, 1, 159, 32, 16),
+    (1, 2, 96, 16, 32),
+    (100, 25, 191, 32, 8),
   ]
   for c in cases {
     let byte = encodeAspect(w: c.w, h: c.h)
     #expect(byte == c.byte, "aspect byte for \(c.w):\(c.h)")
 
     let decoded = decodeAspect(byte: byte)
-    #expect(abs(decoded - c.decodedRatio) < 1e-10, "decoded ratio for \(c.w):\(c.h)")
+    let actualRatio = Double(c.w) / Double(c.h)
+    let err = abs(decoded - actualRatio) / actualRatio * 100.0
+    #expect(err < 1.1, "decoded ratio error \(err)% ≥ 1.1% for \(c.w):\(c.h)")
 
     let (outW, outH) = decodeOutputSize(byte: byte)
     #expect(outW == c.outW, "output width for \(c.w):\(c.h)")
@@ -249,7 +264,7 @@ func solidImage(w: Int, h: Int, r: UInt8, g: UInt8, b: UInt8, a: UInt8) -> [UInt
   let rgba = solidImage(w: 4, h: 4, r: 128, g: 128, b: 128, a: 255)
   let hash = ChromaHash.encode(width: 4, height: 4, rgba: rgba, gamut: .sRGB)
   let expected: [UInt8] = [
-    76, 32, 16, 0, 0, 32, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
+    76, 32, 16, 0, 0, 160, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
     16, 66, 8, 33, 132, 16, 66, 68, 68, 68, 68, 68, 68, 68, 68, 68,
   ]
   #expect(hash.hash == expected, "solid gray hash mismatch")
@@ -259,7 +274,7 @@ func solidImage(w: Int, h: Int, r: UInt8, g: UInt8, b: UInt8, a: UInt8) -> [UInt
   let rgba = solidImage(w: 4, h: 4, r: 255, g: 0, b: 0, a: 255)
   let hash = ChromaHash.encode(width: 4, height: 4, rgba: rgba, gamut: .sRGB)
   let expected: [UInt8] = [
-    80, 46, 20, 0, 0, 32, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
+    208, 175, 20, 0, 0, 160, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
     16, 66, 8, 33, 132, 16, 66, 68, 68, 68, 68, 68, 68, 68, 68, 68,
   ]
   #expect(hash.hash == expected, "solid red hash mismatch")
@@ -269,7 +284,7 @@ func solidImage(w: Int, h: Int, r: UInt8, g: UInt8, b: UInt8, a: UInt8) -> [UInt
   let rgba = solidImage(w: 4, h: 4, r: 0, g: 255, b: 0, a: 255)
   let hash = ChromaHash.encode(width: 4, height: 4, rgba: rgba, gamut: .sRGB)
   let expected: [UInt8] = [
-    238, 209, 21, 0, 0, 32, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
+    238, 79, 22, 0, 0, 160, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
     16, 66, 8, 33, 132, 16, 66, 68, 68, 68, 68, 68, 68, 68, 68, 68,
   ]
   #expect(hash.hash == expected, "solid green hash mismatch")
@@ -279,7 +294,7 @@ func solidImage(w: Int, h: Int, r: UInt8, g: UInt8, b: UInt8, a: UInt8) -> [UInt
   let rgba = solidImage(w: 4, h: 4, r: 0, g: 0, b: 255, a: 255)
   let hash = ChromaHash.encode(width: 4, height: 4, rgba: rgba, gamut: .sRGB)
   let expected: [UInt8] = [
-    57, 94, 6, 0, 0, 32, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
+    185, 29, 5, 0, 0, 160, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
     16, 66, 8, 33, 132, 16, 66, 68, 68, 68, 68, 68, 68, 68, 68, 68,
   ]
   #expect(hash.hash == expected, "solid blue hash mismatch")
@@ -289,7 +304,7 @@ func solidImage(w: Int, h: Int, r: UInt8, g: UInt8, b: UInt8, a: UInt8) -> [UInt
   let rgba = solidImage(w: 4, h: 4, r: 255, g: 255, b: 255, a: 255)
   let hash = ChromaHash.encode(width: 4, height: 4, rgba: rgba, gamut: .sRGB)
   let expected: [UInt8] = [
-    127, 32, 16, 0, 0, 32, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
+    127, 32, 16, 0, 0, 160, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
     16, 66, 8, 33, 132, 16, 66, 68, 68, 68, 68, 68, 68, 68, 68, 68,
   ]
   #expect(hash.hash == expected, "solid white hash mismatch")
@@ -299,7 +314,7 @@ func solidImage(w: Int, h: Int, r: UInt8, g: UInt8, b: UInt8, a: UInt8) -> [UInt
   let rgba = solidImage(w: 4, h: 4, r: 0, g: 0, b: 0, a: 255)
   let hash = ChromaHash.encode(width: 4, height: 4, rgba: rgba, gamut: .sRGB)
   let expected: [UInt8] = [
-    0, 32, 16, 0, 0, 32, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
+    0, 32, 16, 0, 0, 160, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
     16, 66, 8, 33, 132, 16, 66, 68, 68, 68, 68, 68, 68, 68, 68, 68,
   ]
   #expect(hash.hash == expected, "solid black hash mismatch")
@@ -309,7 +324,7 @@ func solidImage(w: Int, h: Int, r: UInt8, g: UInt8, b: UInt8, a: UInt8) -> [UInt
   let rgba: [UInt8] = [200, 100, 50, 255]
   let hash = ChromaHash.encode(width: 1, height: 1, rgba: rgba, gamut: .sRGB)
   let expected: [UInt8] = [
-    206, 102, 243, 111, 12, 32, 16, 192, 15, 1, 132, 15, 66, 8, 222, 127,
+    78, 167, 243, 111, 12, 160, 16, 192, 15, 1, 132, 15, 66, 8, 222, 127,
     0, 194, 7, 63, 4, 16, 2, 4, 68, 60, 56, 68, 64, 196, 131, 67,
   ]
   #expect(hash.hash == expected, "solid 1x1 hash mismatch")
@@ -319,7 +334,7 @@ func solidImage(w: Int, h: Int, r: UInt8, g: UInt8, b: UInt8, a: UInt8) -> [UInt
   let rgba = solidImage(w: 4, h: 4, r: 200, g: 100, b: 50, a: 255)
   let hash = ChromaHash.encode(width: 4, height: 4, rgba: rgba, gamut: .displayP3)
   let expected: [UInt8] = [
-    79, 232, 19, 0, 0, 32, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
+    207, 40, 20, 0, 0, 160, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
     16, 66, 8, 33, 132, 16, 66, 68, 68, 68, 68, 68, 68, 68, 68, 68,
   ]
   #expect(hash.hash == expected, "solid P3 hash mismatch")
@@ -394,7 +409,7 @@ func solidImage(w: Int, h: Int, r: UInt8, g: UInt8, b: UInt8, a: UInt8) -> [UInt
   ]
   let hash = ChromaHash.encode(width: 16, height: 16, rgba: rgba, gamut: .sRGB)
   let expected: [UInt8] = [
-    198, 164, 110, 88, 12, 32, 228, 183, 250, 100, 0, 200, 185, 199, 237, 123,
+    70, 101, 110, 88, 12, 160, 228, 183, 250, 100, 0, 200, 185, 199, 237, 123,
     15, 58, 248, 168, 132, 239, 73, 184, 227, 60, 187, 179, 60, 168, 187, 59,
   ]
   #expect(hash.hash == expected, "gradient 16x16 hash mismatch")
@@ -413,7 +428,7 @@ func solidImage(w: Int, h: Int, r: UInt8, g: UInt8, b: UInt8, a: UInt8) -> [UInt
   ]
   let hash = ChromaHash.encode(width: 8, height: 4, rgba: rgba, gamut: .sRGB)
   let expected: [UInt8] = [
-    72, 164, 142, 96, 206, 47, 199, 187, 250, 100, 0, 200, 185, 215, 239, 123,
+    200, 100, 142, 96, 206, 167, 199, 187, 250, 100, 0, 200, 185, 215, 239, 123,
     48, 66, 248, 224, 131, 238, 9, 64, 100, 189, 186, 179, 60, 168, 51, 68,
   ]
   #expect(hash.hash == expected, "gradient 8x4 hash mismatch")
@@ -432,7 +447,7 @@ func solidImage(w: Int, h: Int, r: UInt8, g: UInt8, b: UInt8, a: UInt8) -> [UInt
   ]
   let hash = ChromaHash.encode(width: 4, height: 8, rgba: rgba, gamut: .sRGB)
   let expected: [UInt8] = [
-    201, 228, 142, 104, 12, 16, 229, 59, 24, 65, 0, 8, 190, 183, 237, 115,
+    73, 165, 142, 104, 12, 152, 229, 59, 24, 65, 0, 8, 190, 183, 237, 115,
     16, 62, 8, 169, 132, 239, 69, 64, 228, 60, 187, 43, 61, 168, 179, 59,
   ]
   #expect(hash.hash == expected, "gradient 4x8 hash mismatch")
@@ -459,7 +474,7 @@ func solidImage(w: Int, h: Int, r: UInt8, g: UInt8, b: UInt8, a: UInt8) -> [UInt
   ]
   let hash = ChromaHash.encode(width: 8, height: 8, rgba: rgba, gamut: .sRGB)
   let expected: [UInt8] = [
-    80, 46, 20, 0, 0, 96, 16, 64, 16, 4, 65, 16, 132, 16, 66, 8,
+    208, 175, 20, 0, 0, 224, 16, 64, 16, 4, 65, 16, 132, 16, 66, 8,
     33, 132, 16, 66, 136, 136, 136, 136, 136, 136, 136, 136, 136, 136, 135, 127,
   ]
   #expect(hash.hash == expected, "checkerboard alpha hash mismatch")
@@ -481,12 +496,12 @@ func solidImage(w: Int, h: Int, r: UInt8, g: UInt8, b: UInt8, a: UInt8) -> [UInt
 
 @Test func averageColorSolidRed() {
   let hash = ChromaHash.fromBytes([
-    80, 46, 20, 0, 0, 32, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
+    208, 175, 20, 0, 0, 160, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
     16, 66, 8, 33, 132, 16, 66, 68, 68, 68, 68, 68, 68, 68, 68, 68,
   ])
   let avg = hash.averageColor()
-  #expect(avg.r == 255)
-  #expect(avg.g == 11)
+  #expect(avg.r == 253)
+  #expect(avg.g == 23)
   #expect(avg.b == 0)
   #expect(avg.a == 255)
 }
@@ -517,12 +532,12 @@ func solidImage(w: Int, h: Int, r: UInt8, g: UInt8, b: UInt8, a: UInt8) -> [UInt
 
 @Test func averageColorCheckerboardAlpha() {
   let hash = ChromaHash.fromBytes([
-    80, 46, 20, 0, 0, 96, 16, 64, 16, 4, 65, 16, 132, 16, 66, 8,
+    208, 175, 20, 0, 0, 224, 16, 64, 16, 4, 65, 16, 132, 16, 66, 8,
     33, 132, 16, 66, 136, 136, 136, 136, 136, 136, 136, 136, 136, 136, 135, 127,
   ])
   let avg = hash.averageColor()
-  #expect(avg.r == 255)
-  #expect(avg.g == 11)
+  #expect(avg.r == 253)
+  #expect(avg.g == 23)
   #expect(avg.b == 0)
   #expect(avg.a == 132)
 }
@@ -549,16 +564,16 @@ func solidImage(w: Int, h: Int, r: UInt8, g: UInt8, b: UInt8, a: UInt8) -> [UInt
 
 @Test func decodeSolidRedProducesUniformPixels() {
   let hash = ChromaHash.fromBytes([
-    80, 46, 20, 0, 0, 32, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
+    208, 175, 20, 0, 0, 160, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
     16, 66, 8, 33, 132, 16, 66, 68, 68, 68, 68, 68, 68, 68, 68, 68,
   ])
   let (w, h, rgba) = hash.decode()
   #expect(w == 32)
   #expect(h == 32)
-  // All pixels should be [255, 11, 0, 255]
+  // All pixels should be [253, 23, 0, 255]
   for i in 0..<(w * h) {
-    #expect(abs(Int(rgba[i * 4]) - 255) <= 1, "pixel \(i) R")
-    #expect(abs(Int(rgba[i * 4 + 1]) - 11) <= 1, "pixel \(i) G")
+    #expect(abs(Int(rgba[i * 4]) - 253) <= 1, "pixel \(i) R")
+    #expect(abs(Int(rgba[i * 4 + 1]) - 23) <= 1, "pixel \(i) G")
     #expect(abs(Int(rgba[i * 4 + 2]) - 0) <= 1, "pixel \(i) B")
     #expect(rgba[i * 4 + 3] == 255, "pixel \(i) A")
   }
@@ -566,17 +581,17 @@ func solidImage(w: Int, h: Int, r: UInt8, g: UInt8, b: UInt8, a: UInt8) -> [UInt
 
 @Test func decodeCheckerboardAlpha() {
   let hash = ChromaHash.fromBytes([
-    80, 46, 20, 0, 0, 96, 16, 64, 16, 4, 65, 16, 132, 16, 66, 8,
+    208, 175, 20, 0, 0, 224, 16, 64, 16, 4, 65, 16, 132, 16, 66, 8,
     33, 132, 16, 66, 136, 136, 136, 136, 136, 136, 136, 136, 136, 136, 135, 127,
   ])
   let (w, h, rgba) = hash.decode()
   #expect(w == 32)
   #expect(h == 32)
   #expect(rgba.count == 32 * 32 * 4)
-  // All pixels should be [255, 11, 0, 132]
+  // All pixels should be [253, 23, 0, 132]
   for i in 0..<(w * h) {
-    #expect(abs(Int(rgba[i * 4]) - 255) <= 1, "pixel \(i) R")
-    #expect(abs(Int(rgba[i * 4 + 1]) - 11) <= 1, "pixel \(i) G")
+    #expect(abs(Int(rgba[i * 4]) - 253) <= 1, "pixel \(i) R")
+    #expect(abs(Int(rgba[i * 4 + 1]) - 23) <= 1, "pixel \(i) G")
     #expect(abs(Int(rgba[i * 4 + 2]) - 0) <= 1, "pixel \(i) B")
     #expect(abs(Int(rgba[i * 4 + 3]) - 132) <= 1, "pixel \(i) A")
   }

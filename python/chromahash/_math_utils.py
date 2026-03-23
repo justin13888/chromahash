@@ -91,16 +91,36 @@ def portable_pow(base: float, exponent: float) -> float:
     return portable_exp(exponent * portable_ln(base))
 
 
-def cbrt_signed(x: float) -> float:
-    """Signed cube root per spec §2.4: cbrt(x) = sign(x) × |x|^(1/3).
+def cbrt_halley(x: float) -> float:
+    """Cube root via Halley's method with biased-exponent seed.
 
-    Uses portable_pow for cross-platform determinism.
+    Matches Rust cbrt_halley for cross-language bit-exact determinism.
     """
+    import struct
+
     if x == 0.0:
         return 0.0
-    if x > 0.0:
-        return portable_pow(x, 1.0 / 3.0)
-    return -portable_pow(-x, 1.0 / 3.0)
+    sign = x < 0.0
+    ax = -x if sign else x
+
+    # Seed via signed int64 biased-exponent division
+    (bits,) = struct.unpack("<q", struct.pack("<d", ax))
+    bias = 1023 << 52
+    seed = (bits - bias) // 3 + bias
+    y = struct.unpack("<d", struct.pack("<q", seed))[0]
+
+    # 3 Halley iterations
+    for _ in range(3):
+        t1 = y * y
+        y3 = t1 * y
+        t2 = 2.0 * ax
+        num = y3 + t2
+        t3 = 2.0 * y3
+        den = t3 + ax
+        t4 = y * num
+        y = t4 / den
+
+    return -y if sign else y
 
 
 def portable_cos(x: float) -> float:

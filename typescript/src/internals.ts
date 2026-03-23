@@ -21,8 +21,8 @@ export type Gamut =
 
 export const MU = 5.0;
 
-export const MAX_CHROMA_A = 0.5;
-export const MAX_CHROMA_B = 0.5;
+export const MAX_CHROMA_A = 0.45;
+export const MAX_CHROMA_B = 0.45;
 export const MAX_L_SCALE = 0.5;
 export const MAX_A_SCALE = 0.5;
 export const MAX_B_SCALE = 0.5;
@@ -180,10 +180,37 @@ export function roundHalfAwayFromZero(x: number): number {
 }
 
 /** Signed cube root: cbrt(x) = sign(x) * |x|^(1/3). */
-export function cbrtSigned(x: number): number {
-  if (x === 0) return 0;
-  if (x > 0) return portablePow(x, 1.0 / 3.0);
-  return -portablePow(-x, 1.0 / 3.0);
+/**
+ * Cube root via Halley's method with biased-exponent seed.
+ * Matches Rust cbrt_halley for cross-language bit-exact determinism.
+ */
+export function cbrtHalley(x: number): number {
+  if (x === 0.0) return 0.0;
+  const sign = x < 0.0;
+  const ax = sign ? -x : x;
+
+  // Seed via signed int64 biased-exponent division
+  const buf = new ArrayBuffer(8);
+  const view = new DataView(buf);
+  view.setFloat64(0, ax, true);
+  const axBits = view.getBigInt64(0, true);
+  const bias = BigInt(1023) << BigInt(52);
+  view.setBigInt64(0, (axBits - bias) / BigInt(3) + bias, true);
+  let y = view.getFloat64(0, true);
+
+  // 3 Halley iterations
+  for (let k = 0; k < 3; k++) {
+    const t1 = y * y;
+    const y3 = t1 * y;
+    const t2 = 2.0 * ax;
+    const num = y3 + t2;
+    const t3 = 2.0 * y3;
+    const den = t3 + ax;
+    const t4 = y * num;
+    y = t4 / den;
+  }
+
+  return sign ? -y : y;
 }
 
 /**
@@ -433,9 +460,9 @@ export function linearRgbToOklab(
   const m1 = m1Matrix(gamut);
   const lms = matvec3(m1, rgb);
   const lmsCbrt: [number, number, number] = [
-    cbrtSigned(lms[0]),
-    cbrtSigned(lms[1]),
-    cbrtSigned(lms[2]),
+    cbrtHalley(lms[0]),
+    cbrtHalley(lms[1]),
+    cbrtHalley(lms[2]),
   ];
   return matvec3(M2, lmsCbrt);
 }
@@ -451,6 +478,56 @@ export function oklabToLinearSrgb(
     lmsCbrt[2] * lmsCbrt[2] * lmsCbrt[2],
   ];
   return matvec3(M1_INV_SRGB, lms);
+}
+
+/** Check whether all RGB channels are in [0, 1]. */
+export function inGamut(rgb: readonly [number, number, number]): boolean {
+  return (
+    rgb[0] >= 0.0 &&
+    rgb[0] <= 1.0 &&
+    rgb[1] >= 0.0 &&
+    rgb[1] <= 1.0 &&
+    rgb[2] >= 0.0 &&
+    rgb[2] <= 1.0
+  );
+}
+
+/** Soft gamut clamp via OKLch bisection. Per spec §6.1.
+ * Preserves L and hue; reduces chroma until all sRGB channels fit [0, 1].
+ * Precondition: L must be in [0, 1].
+ */
+export function softGamutClamp(
+  l: number,
+  a: number,
+  b: number,
+): [number, number, number] {
+  const rgb = oklabToLinearSrgb([l, a, b]);
+  if (inGamut(rgb)) {
+    return [l, a, b];
+  }
+
+  const c = Math.sqrt(a * a + b * b);
+  if (c < 1e-10) {
+    return [l, 0.0, 0.0];
+  }
+
+  const hCos = a / c;
+  const hSin = b / c;
+
+  let lo = 0.0;
+  let hi = c;
+  // Exactly 16 iterations, no early exit — deterministic per spec §6.1
+  for (let i = 0; i < 16; i++) {
+    const mid = (lo + hi) / 2.0;
+    const rgbTest = oklabToLinearSrgb([l, mid * hCos, mid * hSin]);
+    if (inGamut(rgbTest)) {
+      lo = mid;
+    } else {
+      hi = mid;
+    }
+  }
+
+  return [l, lo * hCos, lo * hSin];
 }
 
 /** Convert gamma-encoded source RGB to OKLAB. */
@@ -474,6 +551,25 @@ export function oklabToSrgb(
     srgbGamma(clamp01(rgbLinear[1])),
     srgbGamma(clamp01(rgbLinear[2])),
   ];
+}
+
+/** 4096-entry sRGB gamma LUT: lut[i] = sRGB8(i/4095). Per spec §6.2. */
+export const GAMMA_LUT: Uint8Array = (() => {
+  const lut = new Uint8Array(4096);
+  for (let i = 0; i < 4096; i++) {
+    const x = i / 4095.0;
+    lut[i] = roundHalfAwayFromZero(srgbGamma(x) * 255.0);
+  }
+  return lut;
+})();
+
+/** Map a linear [0,1] value to sRGB u8 via the gamma LUT. Per spec §6.2. */
+export function linearToSrgb8(x: number): number {
+  const idx = Math.max(
+    0,
+    Math.min(4095, roundHalfAwayFromZero(x * 4095.0)),
+  );
+  return u8(GAMMA_LUT, idx);
 }
 
 // ---------------------------------------------------------------------------
@@ -549,17 +645,17 @@ export function readBits(
 // Aspect ratio
 // ---------------------------------------------------------------------------
 
-/** Encode aspect ratio as a single byte. */
+/** Encode aspect ratio as a single byte. Per spec §8.1 (v0.3). */
 export function encodeAspect(w: number, h: number): number {
   const ratio = w / h;
-  const raw = ((Math.log2(ratio) + 2.0) / 4.0) * 255.0;
+  const raw = ((Math.log2(ratio) + 4.0) / 8.0) * 255.0;
   const byte = roundHalfAwayFromZero(raw);
   return Math.min(255, Math.max(0, byte));
 }
 
-/** Decode aspect ratio from byte. */
+/** Decode aspect ratio from byte. Per spec §8.1 (v0.3). */
 export function decodeAspect(byte: number): number {
-  return 2 ** ((byte / 255.0) * 4.0 - 2.0);
+  return 2 ** ((byte / 255.0) * 8.0 - 4.0);
 }
 
 /** Decode output size from aspect byte. Longer side = 32px. */
@@ -571,6 +667,26 @@ export function decodeOutputSize(byte: number): [number, number] {
   }
   const w = Math.max(1, roundHalfAwayFromZero(32.0 * ratio));
   return [w, 32];
+}
+
+/** Derive adaptive DCT grid (nx, ny) from aspect byte and base_n. Per spec §3.2. */
+export function deriveGrid(aspectByte: number, baseN: number): [number, number] {
+  const ratio = portablePow(2.0, aspectByte / 255.0 * 8.0 - 4.0);
+  const base = baseN;
+  let nx: number;
+  let ny: number;
+  if (ratio >= 1.0) {
+    const scale = Math.min(ratio, 16.0);
+    const s = portablePow(scale, 0.25);
+    nx = roundHalfAwayFromZero(base * s);
+    ny = roundHalfAwayFromZero(base / s);
+  } else {
+    const scale = Math.min(1.0 / ratio, 16.0);
+    const s = portablePow(scale, 0.25);
+    nx = roundHalfAwayFromZero(base / s);
+    ny = roundHalfAwayFromZero(base * s);
+  }
+  return [Math.max(nx, 3), Math.max(ny, 3)];
 }
 
 // ---------------------------------------------------------------------------

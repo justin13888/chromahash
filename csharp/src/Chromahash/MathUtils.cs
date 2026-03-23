@@ -11,12 +11,34 @@ internal static class MathUtils
             return Math.Ceiling(x - 0.5);
     }
 
-    /// <summary>Signed cube root per spec §2.4: cbrt(x) = sign(x) × |x|^(1/3).</summary>
-    public static double CbrtSigned(double x)
+    /// <summary>Cube root via Halley's method with biased-exponent seed.
+    /// Matches Rust cbrt_halley for cross-language bit-exact determinism.</summary>
+    public static double CbrtHalley(double x)
     {
         if (x == 0.0) return 0.0;
-        if (x > 0.0) return PortablePow(x, 1.0 / 3.0);
-        return -PortablePow(-x, 1.0 / 3.0);
+        bool sign = x < 0.0;
+        double ax = sign ? -x : x;
+
+        // Seed via signed int64 biased-exponent division
+        long signedBits = BitConverter.DoubleToInt64Bits(ax);
+        const long bias = 1023L << 52;
+        long seedBits = (signedBits - bias) / 3L + bias;
+        double y = BitConverter.Int64BitsToDouble(seedBits);
+
+        // 3 Halley iterations
+        for (int k = 0; k < 3; k++)
+        {
+            double t1 = y * y;
+            double y3 = t1 * y;
+            double t2 = 2.0 * ax;
+            double num = y3 + t2;
+            double t3 = 2.0 * y3;
+            double den = t3 + ax;
+            double t4 = y * num;
+            y = t4 / den;
+        }
+
+        return sign ? -y : y;
     }
 
     /// <summary>Clamp to [0, 1].</summary>

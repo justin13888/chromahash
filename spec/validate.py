@@ -342,13 +342,13 @@ def validate_derive_grid():
         return math.floor(x + 0.5) if x >= 0 else math.ceil(x - 0.5)
 
     def derive_grid(aspect_byte, base_n):
-        ratio = 2.0 ** (aspect_byte / 255.0 * 4.0 - 2.0)
+        ratio = 2.0 ** (aspect_byte / 255.0 * 8.0 - 4.0)
         if ratio >= 1.0:
-            scale = min(ratio, 4.0)
+            scale = min(ratio, 16.0)
             nx = round_half_away_from_zero(base_n * scale ** 0.25)
             ny = round_half_away_from_zero(base_n / scale ** 0.25)
         else:
-            scale = min(1.0 / ratio, 4.0)
+            scale = min(1.0 / ratio, 16.0)
             nx = round_half_away_from_zero(base_n / scale ** 0.25)
             ny = round_half_away_from_zero(base_n * scale ** 0.25)
         return (max(int(nx), 3), max(int(ny), 3))

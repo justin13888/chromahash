@@ -3,17 +3,17 @@ use crate::math_utils::{portable_pow, round_half_away_from_zero};
 /// Derive adaptive DCT grid (nx, ny) from aspect byte and base_n. Per spec §3.2.
 /// All round() calls use round_half_away_from_zero. Uses portable_pow for determinism.
 pub fn derive_grid(aspect_byte: u8, base_n: u32) -> (usize, usize) {
-    let ratio = portable_pow(2.0, aspect_byte as f64 / 255.0 * 4.0 - 2.0);
+    let ratio = portable_pow(2.0, aspect_byte as f64 / 255.0 * 8.0 - 4.0);
     let base = base_n as f64;
 
     let (nx, ny) = if ratio >= 1.0 {
-        let scale = ratio.min(4.0);
+        let scale = ratio.min(16.0);
         let s = portable_pow(scale, 0.25);
         let nx = round_half_away_from_zero(base * s) as i64;
         let ny = round_half_away_from_zero(base / s) as i64;
         (nx, ny)
     } else {
-        let scale = (1.0 / ratio).min(4.0);
+        let scale = (1.0 / ratio).min(16.0);
         let s = portable_pow(scale, 0.25);
         let nx = round_half_away_from_zero(base / s) as i64;
         let ny = round_half_away_from_zero(base * s) as i64;
@@ -23,17 +23,17 @@ pub fn derive_grid(aspect_byte: u8, base_n: u32) -> (usize, usize) {
     (nx.max(3) as usize, ny.max(3) as usize)
 }
 
-/// Encode aspect ratio as a single byte. Per spec §8.1.
+/// Encode aspect ratio as a single byte. Per spec §8.1 (v0.3).
 pub fn encode_aspect(w: u32, h: u32) -> u8 {
     let ratio = w as f64 / h as f64;
-    let raw = (ratio.log2() + 2.0) / 4.0 * 255.0;
+    let raw = (ratio.log2() + 4.0) / 8.0 * 255.0;
     let byte = round_half_away_from_zero(raw) as i64;
     byte.clamp(0, 255) as u8
 }
 
-/// Decode aspect ratio from byte. Per spec §8.1.
+/// Decode aspect ratio from byte. Per spec §8.1 (v0.3).
 pub fn decode_aspect(byte: u8) -> f64 {
-    2.0_f64.powf(byte as f64 / 255.0 * 4.0 - 2.0)
+    2.0_f64.powf(byte as f64 / 255.0 * 8.0 - 4.0)
 }
 
 /// Decode output size from aspect byte. Longer side = 32px. Per spec §8.4.
@@ -61,13 +61,15 @@ mod tests {
             (16.0, 9.0, "16:9"),
             (4.0, 1.0, "4:1"),
             (1.0, 4.0, "1:4"),
+            (16.0, 1.0, "16:1"),
+            (1.0, 16.0, "1:16"),
         ];
         for &(w, h, label) in cases {
             let byte = encode_aspect(w as u32, h as u32);
             let decoded = decode_aspect(byte);
             let actual = w / h;
             let err = (decoded - actual).abs() / actual * 100.0;
-            assert!(err < 0.55, "Aspect {label}: error={err:.3}% ≥ 0.55%");
+            assert!(err < 1.1, "Aspect {label}: error={err:.3}% ≥ 1.1%");
         }
     }
 
@@ -79,13 +81,27 @@ mod tests {
 
     #[test]
     fn extreme_4_1() {
+        // 4:1 no longer maps to 255 — that's reserved for 16:1 in v0.3
         let byte = encode_aspect(4, 1);
-        assert_eq!(byte, 255);
+        assert_eq!(byte, 191);
     }
 
     #[test]
     fn extreme_1_4() {
+        // 1:4 no longer maps to 0 — that's reserved for 1:16 in v0.3
         let byte = encode_aspect(1, 4);
+        assert_eq!(byte, 64);
+    }
+
+    #[test]
+    fn extreme_16_1() {
+        let byte = encode_aspect(16, 1);
+        assert_eq!(byte, 255);
+    }
+
+    #[test]
+    fn extreme_1_16() {
+        let byte = encode_aspect(1, 16);
         assert_eq!(byte, 0);
     }
 
@@ -104,16 +120,16 @@ mod tests {
 
     #[test]
     fn derive_grid_portrait_extreme() {
-        // byte=0 → ratio=0.25 (1:4) → (5,10) for base_n=7
+        // byte=0 → ratio=1/16 (1:16) → scale=16, s=2 → (4,14) for base_n=7
         let (nx, ny) = derive_grid(0, 7);
-        assert_eq!((nx, ny), (5, 10), "byte=0 base_n=7 should give (5,10)");
+        assert_eq!((nx, ny), (4, 14), "byte=0 base_n=7 should give (4,14)");
     }
 
     #[test]
     fn derive_grid_landscape_extreme() {
-        // byte=255 → ratio=4.0 (4:1) → (10,5) for base_n=7
+        // byte=255 → ratio=16 (16:1) → scale=16, s=2 → (14,4) for base_n=7
         let (nx, ny) = derive_grid(255, 7);
-        assert_eq!((nx, ny), (10, 5), "byte=255 base_n=7 should give (10,5)");
+        assert_eq!((nx, ny), (14, 4), "byte=255 base_n=7 should give (14,4)");
     }
 
     #[test]
@@ -121,22 +137,22 @@ mod tests {
         // byte=128 ≈ 1:1 → (4,4) for base_n=4
         let (nx, ny) = derive_grid(128, 4);
         assert_eq!((nx, ny), (4, 4), "square should give (4,4) for base_n=4");
-        // byte=0 → (3,6) for base_n=4
+        // byte=0 → ratio=1/16, scale=16, s=2 → nx=round(4/2)=2→3, ny=round(4*2)=8 → (3,8)
         let (nx, ny) = derive_grid(0, 4);
-        assert_eq!((nx, ny), (3, 6), "byte=0 base_n=4 should give (3,6)");
-        // byte=255 → (6,3) for base_n=4
+        assert_eq!((nx, ny), (3, 8), "byte=0 base_n=4 should give (3,8)");
+        // byte=255 → ratio=16, scale=16, s=2 → nx=round(4*2)=8, ny=round(4/2)=2→3 → (8,3)
         let (nx, ny) = derive_grid(255, 4);
-        assert_eq!((nx, ny), (6, 3), "byte=255 base_n=4 should give (6,3)");
+        assert_eq!((nx, ny), (8, 3), "byte=255 base_n=4 should give (8,3)");
     }
 
     #[test]
     fn derive_grid_alpha_base6() {
-        // byte=0 → (4,8) for base_n=6
+        // byte=0 → ratio=1/16, scale=16, s=2 → nx=round(6/2)=3, ny=round(6*2)=12 → (3,12)
         let (nx, ny) = derive_grid(0, 6);
-        assert_eq!((nx, ny), (4, 8), "byte=0 base_n=6 should give (4,8)");
-        // byte=255 → (8,4) for base_n=6
+        assert_eq!((nx, ny), (3, 12), "byte=0 base_n=6 should give (3,12)");
+        // byte=255 → ratio=16, scale=16, s=2 → nx=round(6*2)=12, ny=round(6/2)=3 → (12,3)
         let (nx, ny) = derive_grid(255, 6);
-        assert_eq!((nx, ny), (8, 4), "byte=255 base_n=6 should give (8,4)");
+        assert_eq!((nx, ny), (12, 3), "byte=255 base_n=6 should give (12,3)");
     }
 
     #[test]
