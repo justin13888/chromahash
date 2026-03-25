@@ -8,8 +8,8 @@ public struct ChromaHash: Sendable, Equatable {
   /// Encode an image into a ChromaHash.
   ///
   /// - Parameters:
-  ///   - width: image width (1-100)
-  ///   - height: image height (1-100)
+  ///   - width: image width (must be >= 1)
+  ///   - height: image height (must be >= 1)
   ///   - rgba: pixel data in RGBA format (4 bytes per pixel)
   ///   - gamut: source color space
   public static func encode(width: Int, height: Int, rgba: [UInt8], gamut: Gamut) -> ChromaHash {
@@ -39,8 +39,8 @@ public struct ChromaHash: Sendable, Equatable {
 
 /// Encode an image into a 32-byte ChromaHash. Per spec.
 func encodeHash(w: Int, h: Int, rgba: [UInt8], gamut: Gamut) -> [UInt8] {
-  precondition(w >= 1 && w <= 100, "width must be 1-100")
-  precondition(h >= 1 && h <= 100, "height must be 1-100")
+  precondition(w >= 1, "width must be >= 1")
+  precondition(h >= 1, "height must be >= 1")
   precondition(rgba.count == w * h * 4, "rgba length mismatch")
 
   let pixelCount = w * h
@@ -90,23 +90,33 @@ func encodeHash(w: Int, h: Int, rgba: [UInt8], gamut: Gamut) -> [UInt8] {
     bChan[i] = avgB * (1.0 - alpha) + alpha * oklabPixels[i][2]
   }
 
-  // 5. DCT encode each channel
-  let lResult: (dc: Double, ac: [Double], scale: Double)
-  if hasAlpha {
-    lResult = dctEncode(channel: lChan, w: w, h: h, nx: 6, ny: 6)
-  } else {
-    lResult = dctEncode(channel: lChan, w: w, h: h, nx: 7, ny: 7)
-  }
-  let aResult = dctEncode(channel: aChan, w: w, h: h, nx: 4, ny: 4)
-  let bResult = dctEncode(channel: bChan, w: w, h: h, nx: 4, ny: 4)
+  // 5. Derive adaptive grid dimensions (v0.2)
+  let aspectByte = Int(encodeAspect(w: w, h: h))
+  let (lNx, lNy) = deriveGrid(aspectByte, hasAlpha ? 6 : 7)
+  let (cNx, cNy) = deriveGrid(aspectByte, 4)
+
+  // 6. DCT encode each channel
+  let lResult = dctEncode(channel: lChan, w: w, h: h, nx: lNx, ny: lNy)
+  let aResult = dctEncode(channel: aChan, w: w, h: h, nx: cNx, ny: cNy)
+  let bResult = dctEncode(channel: bChan, w: w, h: h, nx: cNx, ny: cNy)
   let alphaResult: (dc: Double, ac: [Double], scale: Double)
   if hasAlpha {
-    alphaResult = dctEncode(channel: alphaPixels, w: w, h: h, nx: 3, ny: 3)
+    let (alphaNx, alphaNy) = deriveGrid(aspectByte, 3)
+    alphaResult = dctEncode(channel: alphaPixels, w: w, h: h, nx: alphaNx, ny: alphaNy)
   } else {
     alphaResult = (dc: 0.0, ac: [], scale: 0.0)
   }
 
-  // 6. Quantize header values
+  // Cap to bit budget and zero-pad (per spec §10)
+  let lCap = hasAlpha ? 20 : 27
+  let lAC = (0..<lCap).map { j in j < lResult.ac.count ? lResult.ac[j] : 0.0 }
+  let aAC = (0..<9).map { j in j < aResult.ac.count ? aResult.ac[j] : 0.0 }
+  let bAC = (0..<9).map { j in j < bResult.ac.count ? bResult.ac[j] : 0.0 }
+  let alphaAC: [Double] = hasAlpha
+    ? (0..<5).map { j in j < alphaResult.ac.count ? alphaResult.ac[j] : 0.0 }
+    : []
+
+  // 7. Quantize header values
   let lDcQ = UInt64(roundHalfAwayFromZero(127.0 * clamp01(lResult.dc)))
   let aDcQ = UInt64(
     roundHalfAwayFromZero(
@@ -118,10 +128,8 @@ func encodeHash(w: Int, h: Int, rgba: [UInt8], gamut: Gamut) -> [UInt8] {
   let aSclQ = UInt64(roundHalfAwayFromZero(63.0 * clamp01(aResult.scale / maxAScale)))
   let bSclQ = UInt64(roundHalfAwayFromZero(31.0 * clamp01(bResult.scale / maxBScale)))
 
-  // 7. Compute aspect byte
-  let aspect = UInt64(encodeAspect(w: w, h: h))
-
   // 8. Pack header (48 bits = 6 bytes)
+  let aspect = UInt64(aspectByte)
   let header: UInt64 =
     lDcQ
     | (aDcQ << 7)
@@ -161,42 +169,42 @@ func encodeHash(w: Int, h: Int, rgba: [UInt8], gamut: Gamut) -> [UInt8] {
 
     // L AC: first 7 at 6 bits, remaining 13 at 5 bits
     for j in 0..<7 {
-      let q = quantizeAC(lResult.ac[j], lResult.scale, 6)
+      let q = quantizeAC(lAC[j], lResult.scale, 6)
       writeBits(&hashBytes, bitpos: bitpos, count: 6, value: q)
       bitpos += 6
     }
     for j in 7..<20 {
-      let q = quantizeAC(lResult.ac[j], lResult.scale, 5)
+      let q = quantizeAC(lAC[j], lResult.scale, 5)
       writeBits(&hashBytes, bitpos: bitpos, count: 5, value: q)
       bitpos += 5
     }
   } else {
     // L AC: all 27 at 5 bits
     for j in 0..<27 {
-      let q = quantizeAC(lResult.ac[j], lResult.scale, 5)
+      let q = quantizeAC(lAC[j], lResult.scale, 5)
       writeBits(&hashBytes, bitpos: bitpos, count: 5, value: q)
       bitpos += 5
     }
   }
 
   // a AC: 9 at 4 bits
-  for j in 0..<aResult.ac.count {
-    let q = quantizeAC(aResult.ac[j], aResult.scale, 4)
+  for j in 0..<9 {
+    let q = quantizeAC(aAC[j], aResult.scale, 4)
     writeBits(&hashBytes, bitpos: bitpos, count: 4, value: q)
     bitpos += 4
   }
 
   // b AC: 9 at 4 bits
-  for j in 0..<bResult.ac.count {
-    let q = quantizeAC(bResult.ac[j], bResult.scale, 4)
+  for j in 0..<9 {
+    let q = quantizeAC(bAC[j], bResult.scale, 4)
     writeBits(&hashBytes, bitpos: bitpos, count: 4, value: q)
     bitpos += 4
   }
 
   if hasAlpha {
     // Alpha AC: 5 at 4 bits
-    for j in 0..<alphaResult.ac.count {
-      let q = quantizeAC(alphaResult.ac[j], alphaResult.scale, 4)
+    for j in 0..<5 {
+      let q = quantizeAC(alphaAC[j], alphaResult.scale, 4)
       writeBits(&hashBytes, bitpos: bitpos, count: 4, value: q)
       bitpos += 4
     }
@@ -251,9 +259,11 @@ func decodeHash(hash: [UInt8]) -> (width: Int, height: Int, rgba: [UInt8]) {
     alphaScaleVal = 0.0
   }
 
+  // Derive adaptive grid dimensions from aspect byte
+  let (lNx, lNy) = deriveGrid(Int(aspect), hasAlpha ? 6 : 7)
+  let (cNx, cNy) = deriveGrid(Int(aspect), 4)
+
   let lAC: [Double]
-  let lx: Int
-  let ly: Int
   if hasAlpha {
     var lac = [Double]()
     lac.reserveCapacity(20)
@@ -268,8 +278,6 @@ func decodeHash(hash: [UInt8]) -> (width: Int, height: Int, rgba: [UInt8]) {
       lac.append(muLawDequantize(q, bits: 5) * lScale)
     }
     lAC = lac
-    lx = 6
-    ly = 6
   } else {
     var lac = [Double]()
     lac.reserveCapacity(27)
@@ -279,8 +287,6 @@ func decodeHash(hash: [UInt8]) -> (width: Int, height: Int, rgba: [UInt8]) {
       lac.append(muLawDequantize(q, bits: 5) * lScale)
     }
     lAC = lac
-    lx = 7
-    ly = 7
   }
 
   var aAC = [Double]()
@@ -313,10 +319,25 @@ func decodeHash(hash: [UInt8]) -> (width: Int, height: Int, rgba: [UInt8]) {
     alphaAC = []
   }
 
-  // Precompute scan orders
-  let lScan = triangularScanOrder(nx: lx, ny: ly)
-  let chromaScan = triangularScanOrder(nx: 4, ny: 4)
-  let alphaScan = hasAlpha ? triangularScanOrder(nx: 3, ny: 3) : []
+  // Precompute adaptive scan orders with usable capping
+  let lScanFull = triangularScanOrder(nx: lNx, ny: lNy)
+  let lDecCap = hasAlpha ? 20 : 27
+  let lUsable = min(lDecCap, lScanFull.count)
+  let lScan = Array(lScanFull.prefix(lUsable))
+
+  let chromaScanFull = triangularScanOrder(nx: cNx, ny: cNy)
+  let cUsable = min(9, chromaScanFull.count)
+  let chromaScan = Array(chromaScanFull.prefix(cUsable))
+
+  let alphaScan: [(Int, Int)]
+  if hasAlpha {
+    let (aNx, aNy) = deriveGrid(Int(aspect), 3)
+    let alphaScanFull = triangularScanOrder(nx: aNx, ny: aNy)
+    let aUsable = min(5, alphaScanFull.count)
+    alphaScan = Array(alphaScanFull.prefix(aUsable))
+  } else {
+    alphaScan = []
+  }
 
   // 6. Render output image
   var rgbaOut = [UInt8](repeating: 0, count: w * h * 4)

@@ -12,8 +12,8 @@ class ChromaHash private constructor(
         /**
          * Encode an image into a ChromaHash.
          *
-         * @param w image width (1-100)
-         * @param h image height (1-100)
+         * @param w image width (must be >= 1)
+         * @param h image height (must be >= 1)
          * @param rgba pixel data in RGBA format (4 bytes per pixel)
          * @param gamut source color space
          */
@@ -249,9 +249,11 @@ class ChromaHash private constructor(
             alphaScaleVal = 0.0
         }
 
+        // Derive adaptive grid dimensions from aspect byte
+        val (lNx, lNy) = deriveGrid(aspect, if (hasAlpha) 6 else 7)
+        val (cNx, cNy) = deriveGrid(aspect, 4)
+
         val lAc: DoubleArray
-        val lx: Int
-        val ly: Int
         if (hasAlpha) {
             val lac = DoubleArray(20)
             for (j in 0 until 7) {
@@ -265,8 +267,6 @@ class ChromaHash private constructor(
                 lac[j] = muLawDequantize(q, 5) * lScale
             }
             lAc = lac
-            lx = 6
-            ly = 6
         } else {
             val lac = DoubleArray(27)
             for (j in 0 until 27) {
@@ -275,8 +275,6 @@ class ChromaHash private constructor(
                 lac[j] = muLawDequantize(q, 5) * lScale
             }
             lAc = lac
-            lx = 7
-            ly = 7
         }
 
         val aAc = DoubleArray(9)
@@ -306,12 +304,22 @@ class ChromaHash private constructor(
             alphaAc = DoubleArray(0)
         }
 
-        // Precompute scan orders
-        val lScan = triangularScanOrder(lx, ly)
-        val chromaScan = triangularScanOrder(4, 4)
+        // Precompute adaptive scan orders with usable capping
+        val lScanFull = triangularScanOrder(lNx, lNy)
+        val lDecCap = if (hasAlpha) 20 else 27
+        val lUsable = minOf(lDecCap, lScanFull.size)
+        val lScan = lScanFull.subList(0, lUsable)
+
+        val chromaScanFull = triangularScanOrder(cNx, cNy)
+        val cUsable = minOf(9, chromaScanFull.size)
+        val chromaScan = chromaScanFull.subList(0, cUsable)
+
         val alphaScan =
             if (hasAlpha) {
-                triangularScanOrder(3, 3)
+                val (aNx, aNy) = deriveGrid(aspect, 3)
+                val alphaScanFull = triangularScanOrder(aNx, aNy)
+                val aUsable = minOf(5, alphaScanFull.size)
+                alphaScanFull.subList(0, aUsable)
             } else {
                 emptyList()
             }
