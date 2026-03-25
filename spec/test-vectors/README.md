@@ -4,22 +4,23 @@ Golden test vectors generated from the Rust reference implementation.
 
 ## Files
 
-### Unit tests (v0.2-ready, purely mathematical)
+### Unit tests (v0.3)
 
 - `unit-color.json` — OKLAB color space transforms (RGB ↔ OKLAB)
 - `unit-mulaw.json` — µ-law companding round-trips
 - `unit-dct.json` — DCT scan order for square and non-square grids
 - `unit-aspect.json` — Aspect ratio encoding/decoding and `deriveGrid` mappings
 - `unit-bitpack.json` — Bit packing `readBits`/`writeBits` operations
+- `unit-cbrt.json` — Halley cube root accuracy
+- `unit-softgamutclamp.json` — Oklch soft gamut clamp
 
-### Integration tests (v0.1, pending v0.2 regeneration)
+### Integration tests (pending v0.3 regeneration)
 
 - `integration-encode.json` — Full encode: input RGBA → 32-byte hash
 - `integration-decode.json` — Full decode: 32-byte hash → output RGBA
 
-> **Note:** Integration vectors use v0.1 semantics (fixed grids, MAX_CHROMA=0.5,
-> hard gamut clamping). They must be regenerated from the Rust reference
-> implementation after v0.2 is implemented.
+> **Note:** Integration vectors must be regenerated from the Rust reference
+> implementation after v0.3 is fully implemented across all languages.
 
 ## Schema
 

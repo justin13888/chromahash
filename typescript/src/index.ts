@@ -301,7 +301,7 @@ function decodeImpl(hash: Uint8Array): {
     bAc.push(muLawDequantize(q, 4) * bScale);
   }
 
-  let alphaAc: number[] = [];
+  const alphaAc: number[] = [];
   if (hasAlpha) {
     for (let i = 0; i < 5; i++) {
       const q = readBits(hash, bitpos, 4);

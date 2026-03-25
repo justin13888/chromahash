@@ -31,7 +31,10 @@ internal fun decodeOutputSize(byte: Int): Pair<Int, Int> {
 }
 
 /** Derive adaptive DCT grid (nx, ny) from aspect byte and baseN. Per spec §3.2. */
-internal fun deriveGrid(aspectByte: Int, baseN: Int): Pair<Int, Int> {
+internal fun deriveGrid(
+    aspectByte: Int,
+    baseN: Int,
+): Pair<Int, Int> {
     val ratio = portablePow(2.0, aspectByte.toDouble() / 255.0 * 8.0 - 4.0)
     val base = baseN.toDouble()
     val (nx, ny) =

@@ -1,8 +1,8 @@
 # ChromaHash Format Specification
 
-**Version:** 0.1.0-draft
+**Version:** 0.3.0-draft
 **Status:** Draft
-**Date:** 2026-03-11
+**Date:** 2026-03-23
 
 > ChromaHash is a fixed-size, 32-byte Low Quality Image Placeholder (LQIP) format
 > designed for professional photo management at scale. It encodes a perceptually
@@ -26,35 +26,34 @@
 11. [Decoding Algorithm](#11-decoding-algorithm)
 12. [Constants & Matrices](#12-constants--matrices)
 13. [Trade-offs & Limitations](#13-trade-offs--limitations)
-14. [Appendix A: ThumbHash Comparison & Acknowledgment](#appendix-a-thumbhash-comparison--acknowledgment)
+14. [Appendix A: ThumbHash Comparison](#appendix-a-thumbhash-comparison--acknowledgment)
 
 ---
 
 ## 1. Design Goals
 
-ChromaHash targets professional photo management workloads (Google Photos-scale services
-for creative professionals) where perceptual quality, layout precision, and wide-gamut
-support matter more than minimizing byte count.
+ChromaHash targets professional photo management workloads where perceptual quality,
+layout precision, and wide-gamut support matter more than minimizing byte count.
 
 | Goal | Rationale |
 |------|-----------|
-| Fixed 32 bytes (256 bits) | Memory-aligned, cache-friendly, predictable storage. No variable-length parsing. Enables direct use as a database column, array element, or cache key with zero overhead. |
-| OKLAB color space | Perceptually uniform — quantization levels are maximally efficient. Equal numerical steps correspond to equal perceived differences, unlike gamma-domain color spaces. |
-| 8-bit log₂ aspect ratio | <0.55% error for all common photographic ratios. Eliminates the layout jank caused by coarse aspect ratio encoding (5–7% error in prior formats). |
-| Higher chroma resolution | 4×4 triangular grid (9 AC coefficients) per chroma channel. Professional photography features complex color transitions (sunsets, fabric, foliage) that demand more than minimal chroma detail. |
-| 5-bit luminance AC | 32 levels for the most perceptually important channel. Human vision is dominated by luminance — allocating extra precision here yields the largest quality gain per bit. |
-| µ-law companding (µ=5) | Non-linear quantization matching the Laplacian distribution of natural image DCT coefficients. Finer resolution near zero where most coefficients cluster; coarser resolution in the rarely-used tails. |
-| Multi-gamut encode | Source can be sRGB, Display P3, Adobe RGB, BT.2020, or ProPhoto RGB. Modern cameras and smartphones produce images in diverse color spaces — the encoder must handle all of them without gamut clipping at encode time. |
-| Single decode target | Always sRGB output. One set of matrices, zero ambiguity, universal display compatibility. |
-| Self-contained | No sidecar metadata — everything needed for decoding is in the 32 bytes. |
-| Alpha support | Transparent images supported with graceful quality degradation, maintaining the fixed 32-byte size. |
+| Fixed 32 bytes | Memory-aligned, cache-friendly, predictable storage. Zero-overhead database column or cache key. |
+| OKLAB color space | Perceptually uniform — quantization levels are maximally efficient. |
+| 8-bit log₂ aspect ratio | ~1.09% max error for all photographic ratios. Covers 1:16 to 16:1. |
+| Adaptive grid geometry | DCT grid dimensions adapt to aspect ratio, eliminating coefficient waste on non-square images. |
+| Higher chroma resolution | 4×4 triangular grid (9 AC) per chroma channel for complex color transitions. |
+| 5-bit luminance AC | 32 levels for the most perceptually important channel. |
+| µ-law companding (µ=5) | Non-linear quantization matching natural image DCT coefficient distributions. |
+| Multi-gamut encode | Accepts sRGB, Display P3, Adobe RGB, BT.2020, or ProPhoto RGB sources. |
+| Single decode target | Always sRGB output. One set of matrices, zero ambiguity. |
+| Alpha support | Transparent images supported within the fixed 32-byte size. |
 
 ### Design Priorities (ordered)
 
-1. **Perceptual accuracy** — the placeholder should look as close to the original as possible within 32 bytes.
-2. **Layout precision** — the decoded aspect ratio must closely match the original to prevent reflow when the real image loads.
-3. **Wide-gamut correctness** — colors from P3/Adobe RGB/BT.2020 sources should be preserved as accurately as possible.
-4. **Decode simplicity and speed** — the decoder should be trivially implementable and fast (<1ms even in JavaScript).
+1. **Perceptual accuracy** — placeholder should look as close to the original as possible.
+2. **Layout precision** — decoded aspect ratio must closely match the original.
+3. **Wide-gamut correctness** — colors from P3/Adobe RGB/BT.2020 sources preserved accurately.
+4. **Decode simplicity and speed** — trivially implementable, fast (<1ms in JavaScript).
 5. **Fixed size** — predictable storage and zero parsing complexity.
 
 ---
@@ -68,62 +67,67 @@ support matter more than minimizing byte count.
 
 ### 2.2 Rounding
 
-All `round()` operations in this specification use **round half away from zero**:
+All `round()` operations use **round half away from zero**:
 
 ```
 round(x) = floor(x + 0.5)    for x ≥ 0
 round(x) = ceil(x − 0.5)     for x < 0
 ```
 
-Implementations MUST use this rounding mode. Banker's rounding (round half to even) is
-statistically unbiased but is the default in only some target languages (e.g. Python 3),
-requiring an explicit override in all others — offering no practical advantage over RHAFZ
-while adding implementation complexity. Truncation introduces systematic negative bias and
-is unsuitable for perceptual quantization. Cross-implementation bit-exactness is the
-primary constraint; at the bit depths used here (5–7 bits) the bias from RHAFZ is
-imperceptible.
+Implementations MUST use this rounding mode. Cross-implementation bit-exactness is the
+primary constraint.
 
 ### 2.3 Numerical Precision
 
-Intermediate computations SHALL use at minimum IEEE 754 binary64 (float64) precision for
-the encoding pipeline. The decoder MAY use float32 since the output is 8-bit RGBA, but
-SHOULD use float64 for the M1/M2 matrix multiplications to match reference test vectors.
+Intermediate computations SHALL use at minimum IEEE 754 binary64 (float64) for encoding.
+The decoder MAY use float32 since output is 8-bit RGBA, but SHOULD use float64 for matrix
+multiplications to match reference test vectors.
+
+The encoding pipeline requires int64/uint64 bit reinterpretation for the optimized cube
+root computation (see §12.6).
 
 ### 2.4 Cube Root of Negative Values
 
-The OKLAB transform uses cube roots. Out-of-gamut colors can produce negative LMS values
-after the M1 matrix multiplication. Implementations MUST handle negative inputs:
+The OKLAB transform uses cube roots. Out-of-gamut colors can produce negative LMS values.
+Implementations MUST handle negative inputs:
 
 ```
 cbrt(x) = sign(x) × |x|^(1/3)
 ```
 
 Implementations MUST NOT use `pow(x, 1.0/3.0)`, which is undefined for negative `x` in
-many languages.
+many languages. See §12.6 for the recommended IEEE 754 bit-seed implementation.
 
-### 2.5 Reserved and Padding Bits
+### 2.5 Version Bit (Bit 47)
 
-- **Bit 47 (reserved):** Encoders MUST set this to 0. Decoders MUST ignore this bit. This
-  allows future revisions to repurpose it without breaking existing decoders.
-- **Padding bit (no-alpha mode, bit 255):** Encoders MUST set this to 0. Decoders MUST
-  ignore this bit.
+Bit 47 in the header serves as a version discriminator:
 
-### 2.6 Authoritative Constants
+| Version | Bit 47 | Notes |
+|---------|--------|-------|
+| v0.1    | 0      | Original spec — fixed grids, MAX_CHROMA=0.5, hard gamut clamp |
+| v0.2+   | 1      | Adaptive grids, MAX_CHROMA=0.45, soft gamut clamp, full-res encoding |
+
+Encoders MUST set bit 47 to 1. Decoders SHOULD check bit 47 to select the decode path.
+
+### 2.6 Padding Bits
+
+In no-alpha mode, bit 255 is padding. Encoders MUST set it to 0; decoders MUST ignore it.
+
+### 2.7 Authoritative Constants
 
 All constants, matrices, and scalar parameters are defined in `spec/constants.py`. That
-file is the single source of truth. The matrices reproduced in §12 of this document are
-for reference only — if there is a discrepancy, `constants.py` governs. Run
-`spec/validate.py` to verify the constants against first-principles derivations.
+file is the single source of truth. Run `spec/validate.py` to verify.
 
 ---
 
 ## 3. Binary Format
 
-A ChromaHash is exactly **32 bytes (256 bits)**. It consists of a 6-byte header followed by a 26-byte AC coefficient block.
+A ChromaHash is exactly **32 bytes (256 bits)**: a 6-byte header followed by a 26-byte
+AC coefficient block.
 
-### 3.1 Header (6 bytes = 48 bits)
+### 3.1 Header (48 bits)
 
-All multi-bit fields are packed little-endian. The 48-bit header is read as:
+All multi-bit fields are packed little-endian:
 
 ```
 header48 = hash[0] | (hash[1] << 8) | (hash[2] << 16) | (hash[3] << 24) | (hash[4] << 32) | (hash[5] << 40)
@@ -131,56 +135,26 @@ header48 = hash[0] | (hash[1] << 8) | (hash[2] << 16) | (hash[3] << 24) | (hash[
 
 | Bits | Field | Width | Range | Description |
 |------|-------|-------|-------|-------------|
-| 0–6 | `L_dc` | 7 | 0–127 | OKLAB L (lightness), `round(127 × L_dc)` |
-| 7–13 | `a_dc` | 7 | 0–127 | OKLAB a (green–red), centered: `round(64 + 63 × a_dc/MAX_CHROMA_A)` |
-| 14–20 | `b_dc` | 7 | 0–127 | OKLAB b (blue–yellow), centered: `round(64 + 63 × b_dc/MAX_CHROMA_B)` |
+| 0–6 | `L_dc` | 7 | 0–127 | OKLAB L (lightness) |
+| 7–13 | `a_dc` | 7 | 0–127 | OKLAB a (green–red), centered |
+| 14–20 | `b_dc` | 7 | 0–127 | OKLAB b (blue–yellow), centered |
 | 21–26 | `L_scale` | 6 | 0–63 | Luminance AC max amplitude |
 | 27–32 | `a_scale` | 6 | 0–63 | Chroma-a AC max amplitude |
 | 33–37 | `b_scale` | 5 | 0–31 | Chroma-b AC max amplitude |
 | 38–45 | `aspect` | 8 | 0–255 | Log₂ aspect ratio (see §8) |
 | 46 | `hasAlpha` | 1 | 0/1 | Alpha channel present |
-| 47 | `reserved` | 1 | 0 | Must be 0; reserved for future use |
-
-**Bit allocation justification:**
-
-- **`L_dc` (7 bits, 128 levels):** Luminance precision is the single most important factor
-  for placeholder quality. Human vision is far more sensitive to lightness differences than
-  chrominance differences. 128 levels (double the 64 levels typical in prior formats) ensure
-  that the dominant visual impression — overall brightness — is accurately captured.
-
-- **`a_dc` (7 bits, 128 levels):** The green–red axis is critical for skin tone accuracy.
-  Skin colors occupy a narrow range on this axis, and professional photography is dominated
-  by portraits. Matching `L_dc` precision here ensures subtle warmth differences between
-  skin tones are preserved.
-
-- **`b_dc` (7 bits, 128 levels):** The blue–yellow axis completes the trichromatic
-  representation. Equal precision across all three DC components simplifies the codec and
-  avoids introducing a systematic bias toward any perceptual axis.
-
-- **`a_scale` (6 bits):** Matches `L_scale` precision because green–red AC variation
-  matters most for skin tones — the dominant subject matter in professional photography.
-
-- **`b_scale` (5 bits):** The blue–yellow axis carries less perceptually critical AC detail
-  in most photographic content. Saving 1 bit here frees it for other fields without
-  meaningful quality loss.
-
-- **`aspect` (8 bits, 256 levels):** A full byte enables <0.55% error for all common
-  photographic ratios. This is a major upgrade from the 3-bit encoding found in prior
-  formats, which caused 5–7% errors and visible layout jank.
+| 47 | `version` | 1 | 1 | Version bit (0=v0.1, 1=v0.2+) |
 
 ### 3.2 AC Block (26 bytes = 208 bits)
-
-The AC block immediately follows the header at byte offset 6. Its internal layout depends
-on the `hasAlpha` flag.
 
 #### No-alpha mode (`hasAlpha = 0`)
 
 ```
 Field           Coefficients   Bits/coeff   Total bits
 ────────────────────────────────────────────────────────
-L AC            27 (7×7 tri)   5            135
-a AC (chroma)   9 (4×4 tri)    4             36
-b AC (chroma)   9 (4×4 tri)    4             36
+L AC            27             5            135
+a AC (chroma)   9              4             36
+b AC (chroma)   9              4             36
 Padding         —              —              1
                                             ─────
                                             208
@@ -193,44 +167,33 @@ Field           Coefficients   Bits/coeff   Total bits
 ────────────────────────────────────────────────────────
 alpha_dc        1              5              5
 alpha_scale     1              4              4
-L AC            20 (6×6 tri)   mixed*       107
-a AC (chroma)   9 (4×4 tri)    4             36
-b AC (chroma)   9 (4×4 tri)    4             36
-A AC (alpha)    5 (3×3 tri)    4             20
+L AC            20             mixed*       107
+a AC (chroma)   9              4             36
+b AC (chroma)   9              4             36
+A AC (alpha)    5              4             20
                                             ─────
                                             208
 
-* L AC mixed: first 7 coefficients at 6 bits (42 bits),
-              remaining 13 at 5 bits (65 bits) = 107 total.
-  Lowest-frequency L coefficients get extra precision.
+* L AC mixed: first 7 at 6 bits (42), remaining 13 at 5 bits (65) = 107.
 ```
 
-**Verification:** Both modes produce exactly 48 + 208 = **256 bits = 32 bytes**. ✓
+Both modes: 48 + 208 = **256 bits = 32 bytes**. ✓
 
-**Alpha mode design justification:** When alpha is present, the luminance grid shrinks from
-7×7 to 6×6 (27 → 20 AC coefficients) and the freed bits accommodate the alpha channel's
-DC value, scale factor, and 5 AC coefficients (3×3 grid). The first 7 luminance
-coefficients (lowest frequencies, highest perceptual impact) are promoted to 6 bits to
-partially compensate for the reduced grid. This ensures alpha support fits within the fixed
-32-byte budget while minimizing quality degradation.
-
-### 3.3 Complete Layout Diagram
+### 3.3 Layout Diagram
 
 ```
 No-alpha:
 ┌──────────────────────────────────────────────┬───────────────────────────────────────────────────┐
 │              Header (6 bytes, 48 bits)        │           AC Block (26 bytes, 208 bits)           │
-│ L_dc|a_dc|b_dc|L_scl|a_scl|b_scl|aspect|α|r │ L_ac×27(5b) | a_ac×9(4b) | b_ac×9(4b) | pad(1b)│
+│ L_dc|a_dc|b_dc|L_scl|a_scl|b_scl|aspect|α|v │ L_ac×27(5b) | a_ac×9(4b) | b_ac×9(4b) | pad(1b)│
 └──────────────────────────────────────────────┴───────────────────────────────────────────────────┘
- byte 0                                     5   6                                              31
 
 Alpha:
 ┌──────────────────────────────────────────────┬───────────────────────────────────────────────────┐
 │              Header (6 bytes, 48 bits)        │           AC Block (26 bytes, 208 bits)           │
-│ L_dc|a_dc|b_dc|L_scl|a_scl|b_scl|aspect|α|r │ A_dc(5b)|A_scl(4b)|L_ac×7(6b)+13(5b)|           │
+│ L_dc|a_dc|b_dc|L_scl|a_scl|b_scl|aspect|α|v │ A_dc(5b)|A_scl(4b)|L_ac×7(6b)+13(5b)|           │
 │                                              │ a_ac×9(4b)|b_ac×9(4b)|A_ac×5(4b)                 │
 └──────────────────────────────────────────────┴───────────────────────────────────────────────────┘
- byte 0                                     5   6                                              31
 ```
 
 ---
@@ -239,41 +202,20 @@ Alpha:
 
 ### 4.1 Choice Justification
 
-ChromaHash uses OKLAB as its internal color space. This was selected after evaluating six
-candidate color spaces against the design priorities of a professional photo management
-service:
+| Candidate | Verdict |
+|-----------|---------|
+| **LPQA** (ThumbHash) | Not perceptually uniform. Gamma-encoded sRGB averaging. |
+| **CIELAB** (CIE 1976) | Hue linearity problems — blue shifts toward purple. Requires D50 adaptation. |
+| **YCbCr** (BT.601/709) | Not perceptually uniform. Designed for signal compression. |
+| **ICtCp** (BT.2100) | Overkill for SDR placeholders. Requires PQ/HLG transfer functions. |
+| **OKLCH** (cylindrical) | Hue angle discontinuity at 0°/360° breaks DCT encoding. |
+| **OKLAB** | **Selected.** Perceptually uniform, hue-linear, D65 native, simple transform, industry-adopted (CSS Color Level 4). |
 
-| Candidate | Verdict | Key issue |
-|-----------|---------|-----------|
-| **LPQA** (ThumbHash) | Rejected | Not perceptually uniform. Equal L steps ≠ equal perceived brightness. Skin tones occupy a tiny slice of P/Q and receive minimal quantization resolution. Operates in gamma-encoded sRGB — technically incorrect averaging. |
-| **CIELAB** (CIE 1976) | Rejected | Known hue linearity problems — blue hues shift toward purple during interpolation. Requires chromatic adaptation to D50 (images are D65), adding complexity. |
-| **YCbCr** (BT.601/709) | Rejected | Not perceptually uniform — designed for signal compression, not human perception. Equal Cb/Cr steps ≠ equal perceived color changes. |
-| **ICtCp** (BT.2100) | Rejected | Excellent perceptual uniformity but designed for HDR/BT.2020/PQ — overkill for SDR placeholders. Requires PQ or HLG transfer functions. |
-| **OKLCH** (cylindrical OKLAB) | Rejected | Same perceptual uniformity as OKLAB, but cylindrical coordinates (hue angle) create discontinuities at the 0°/360° boundary that break DCT encoding. |
-| **OKLAB** | **Selected** | Perceptually uniform. Excellent hue linearity. D65 white point matches all target gamuts. Simple transform (two 3×3 matrices + cube root). Gamut-agnostic via CIE XYZ. Industry-adopted (CSS Color Level 4). |
+Key properties: equal L steps = equal perceived lightness changes; no hue shift during
+interpolation (unlike CIELAB); D65 white point matches all target gamuts natively;
+gamut-agnostic via CIE XYZ; simple transform (two 3×3 matrices + cube root).
 
-### 4.2 Key Properties
-
-- **Perceptually uniform:** Equal L steps produce equal perceived lightness changes. Equal
-  a/b steps produce equal perceived chromaticity changes. This means fixed quantization
-  levels are maximally efficient — no bits are wasted on imperceptible distinctions and no
-  perceptible distinctions are collapsed.
-
-- **Hue linearity:** Interpolation between two colors in OKLAB does not produce hue shifts.
-  This is critical for DCT-based encoding, which inherently interpolates between frequency
-  components. CIELAB infamously shifts blues toward purple; OKLAB does not.
-
-- **D65 white point:** Matches sRGB, Display P3, Rec. 2020, and Adobe RGB natively. No
-  chromatic adaptation needed (unlike CIELAB, which uses D50).
-
-- **Gamut-agnostic:** OKLAB values are absolute, defined via CIE XYZ. The same OKLAB
-  triplet represents the same perceived color regardless of which RGB gamut it was encoded
-  from. Only the RGB→LMS conversion matrices change per source gamut.
-
-- **Simple transform:** Two 3×3 matrix multiplications plus a cube root (forward) or cube
-  (inverse). No iterative methods, no complex transfer functions.
-
-### 4.3 OKLAB Transform
+### 4.2 OKLAB Transform
 
 **Forward (RGB → OKLAB):**
 
@@ -293,69 +235,39 @@ service:
 4. Apply sRGB gamma:   rgb = srgb_gamma(clamp(rgb_linear, 0, 1))
 ```
 
-The matrices M1, M2, and their inverses are defined in §12 and `constants.py`.
+Matrices are defined in §12.
 
 ---
 
 ## 5. Multi-Gamut Encoding
 
-### 5.1 The Problem
-
-A professional photo management service ingests images from diverse sources:
-
-| Source | Color Space |
-|--------|-------------|
-| Sony α, Canon EOS R, Nikon Z, Fujifilm X/GFX (JPEG) | sRGB or Adobe RGB (user-selectable) |
-| Canon EOS R (HDR PQ HEIF) | BT.2100 PQ / Rec. 2020 |
-| Sony α (HEIF, HLG on) | BT.2100 / BT.2020 |
-| Hasselblad X2D, 907X (via Phocus) | sRGB, Adobe RGB, or ProPhoto RGB |
-| Apple iPhone 7+ (HEIC) | Display P3 |
-| Google Pixel 8+ (HEIC) | Display P3 |
-| Samsung Galaxy S (HEIC) | Display P3 (varies) |
-
-All these gamuts share the D65 white point (except ProPhoto RGB, which uses D50 and
-requires Bradford chromatic adaptation to D65 — incorporated into its M1 matrix).
-
-### 5.2 Encoding Pipeline
+### 5.1 Encoding Pipeline
 
 ```
 Source RGB → Linearize (source EOTF) → LMS (M1[source_gamut]) → OKLAB (M2)
 ```
 
 The resulting OKLAB values are **absolute** — the same physical color produces the same
-(L, a, b) regardless of which gamut it was encoded from. This means:
+(L, a, b) regardless of source gamut. No gamut flag is stored; no decode-time branching.
+Wide-gamut colors are preserved at their true OKLAB coordinates.
 
-- **No gamut flag is stored in the hash.** The 32 bytes contain no information about the
-  source gamut — it is not needed.
-- **No decode-time branching.** The decoder always uses the same matrices.
-- **Wide-gamut colors are preserved in OKLAB.** A saturated P3 red that falls outside sRGB
-  is encoded at its true OKLAB coordinates.
-
-### 5.3 Decoding Pipeline
+### 5.2 Decoding Pipeline
 
 ```
 OKLAB → LMS_cbrt (M2_inv) → LMS (cube) → sRGB linear (M1_inv[sRGB]) → sRGB gamma → clamp → 8-bit RGBA
 ```
 
-The decode target is always sRGB. This is justified because:
+Decode target is always sRGB. At placeholder resolution with DCT blurring, the DC of real
+photographs almost never clips when converted to sRGB.
 
-- At 32×32 resolution with DCT blurring, the average color (DC) of real photographs is
-  almost never saturated enough to clip when converted to sRGB — even for P3/Adobe RGB
-  sources. AC variations add subtle shifts that rarely push individual pixels out of gamut.
-- sRGB is universally supported. On P3 displays, the browser/OS renders sRGB content
-  correctly (it is a subset of P3).
-- One set of decode matrices = zero ambiguity, simpler implementation.
-
-### 5.4 Transfer Functions
-
-The encoder must apply the correct transfer function to linearize source RGB:
+### 5.3 Transfer Functions
 
 | Gamut | Transfer function (gamma → linear) |
 |-------|-------------------------------------|
-| sRGB / Display P3 | Piecewise: `x ≤ 0.04045 ? x/12.92 : ((x+0.055)/1.055)^2.4` |
+| sRGB / Display P3 | `x ≤ 0.04045 ? x/12.92 : ((x+0.055)/1.055)^2.4` |
 | Adobe RGB | `x^2.2` |
 | ProPhoto RGB | `x^1.8` |
-| BT.2020 PQ (ST 2084) | Inverse PQ EOTF (see below) |
+| BT.2020 PQ (ST 2084) | Inverse PQ EOTF (tone-map to SDR first) |
 
 The decoder always applies the **sRGB inverse EOTF** (linear → gamma):
 
@@ -363,25 +275,14 @@ The decoder always applies the **sRGB inverse EOTF** (linear → gamma):
 gamma(x) = x ≤ 0.0031308 ? 12.92 × x : 1.055 × x^(1/2.4) − 0.055
 ```
 
-**BT.2020 PQ inverse EOTF:**
-
-```
-Y = ((max(N^(1/78.84375) − 0.8359375, 0)) / (18.8515625 − 18.6875 × N^(1/78.84375)))^(1/0.1593017578)
-where N = x / 10000  (PQ-encoded value normalized to peak luminance)
-```
-
-For ChromaHash encoding of HDR PQ content, the encoder MUST tone-map to SDR before OKLAB
-conversion, since the placeholder is inherently an SDR representation. The specific
-tone-mapping algorithm is implementation-defined; implementations encoding HDR content
-MUST document which tone-mapping operator they use.
+For HDR PQ content, the encoder MUST tone-map to SDR before OKLAB conversion. The
+specific tone-mapping algorithm is implementation-defined.
 
 ---
 
 ## 6. DCT & Coefficient Selection
 
 ### 6.1 Transform
-
-ChromaHash uses a Type-II Discrete Cosine Transform (DCT-II) on a 2D grid.
 
 **Forward transform** for a channel with grid dimensions `nx × ny`:
 
@@ -390,7 +291,7 @@ F(cx, cy) = (1 / (w × h)) × Σ_y Σ_x  channel[x + y×w] × cos(π/w × cx × 
                                                          × cos(π/h × cy × (y + 0.5))
 ```
 
-where `w` and `h` are the source image dimensions (≤ 100 pixels on each side).
+where `w` and `h` are the source image dimensions.
 
 **Inverse transform** (decode):
 
@@ -398,60 +299,18 @@ where `w` and `h` are the source image dimensions (≤ 100 pixels on each side).
 value = DC + Σ_j  AC[j] × cos(π/w × cx_j × (x + 0.5)) × cos(π/h × cy_j × (y + 0.5)) × C(cx_j, cy_j)
 ```
 
-where the normalization factor `C` is:
-
-```
-C(cx, cy) = (cx > 0 ? 2 : 1) × (cy > 0 ? 2 : 1)
-```
-
-| AC term type | cx | cy | Factor |
-|---|---|---|---|
-| Horizontal only | >0 | 0 | 2 |
-| Vertical only | 0 | >0 | 2 |
-| Diagonal (2D) | >0 | >0 | 4 |
-
-This is the standard 2D DCT-II inverse normalization: each dimension independently
-contributes a factor of 2 for its AC components.
+Normalization factor: `C(cx, cy) = (cx > 0 ? 2 : 1) × (cy > 0 ? 2 : 1)`
 
 ### 6.2 Triangular Coefficient Selection
 
-Not all coefficients in the `nx × ny` grid are used. The condition that selects which
-`(cx, cy)` pairs to include is:
+The condition selecting which `(cx, cy)` pairs to include (excluding DC at `(0, 0)`):
 
 ```
 cx × ny < nx × (ny − cy)
 ```
 
-This defines a triangular region in frequency space, selecting coefficients below the
-diagonal. The DC term `(0, 0)` is always extracted separately and stored in the header.
-
-**Justification:** The triangular cutoff captures the most perceptually important
-low-frequency coefficients while discarding the high-frequency corners that contribute
-least to perceived quality. This is more efficient than a rectangular grid of the same
-coefficient count — for N×N, the triangle contains N×(N+1)/2 positions (including DC),
-providing broad low-frequency coverage without wasting bits on high-frequency diagonal
-terms.
-
-### 6.3 Coefficient Count Formula
-
-For an N×N grid, the number of AC coefficients (excluding DC) is:
-
-```
-AC_count = N × (N + 1) / 2 − 1
-```
-
-### 6.4 Triangular Patterns
-
-**3×3 grid — 5 AC coefficients** (chroma-a, chroma-b in alpha mode; alpha channel):
-
-```
-cy\cx  0    1    2
-  0   [DC]  ✓    ✓
-  1    ✓    ✓
-  2    ✓
-```
-
-**4×4 grid — 9 AC coefficients** (chroma-a, chroma-b):
+This selects coefficients below the diagonal in frequency space. Example for a 4×4 grid
+(9 AC coefficients):
 
 ```
 cy\cx  0    1    2    3
@@ -461,60 +320,126 @@ cy\cx  0    1    2    3
   3    ✓
 ```
 
-**6×6 grid — 20 AC coefficients** (luminance in alpha mode):
-
-```
-cy\cx  0    1    2    3    4    5
-  0   [DC]  ✓    ✓    ✓    ✓    ✓
-  1    ✓    ✓    ✓    ✓    ✓
-  2    ✓    ✓    ✓    ✓
-  3    ✓    ✓    ✓
-  4    ✓    ✓
-  5    ✓
-```
-
-**7×7 grid — 27 AC coefficients** (luminance in no-alpha mode):
-
-```
-cy\cx  0    1    2    3    4    5    6
-  0   [DC]  ✓    ✓    ✓    ✓    ✓    ✓
-  1    ✓    ✓    ✓    ✓    ✓    ✓
-  2    ✓    ✓    ✓    ✓    ✓
-  3    ✓    ✓    ✓    ✓
-  4    ✓    ✓    ✓
-  5    ✓    ✓
-  6    ✓
-```
-
-### 6.5 Grid Size Assignments
-
-ChromaHash uses **fixed** grid sizes (unlike adaptive schemes):
-
-| Channel | No-alpha | Alpha | Justification |
-|---------|----------|-------|---------------|
-| L (luminance) | 7×7 (27 AC) | 6×6 (20 AC) | Largest grid — human vision is dominated by luminance spatial detail |
-| a (green–red chroma) | 4×4 (9 AC) | 4×4 (9 AC) | Doubled from 3×3 vs prior formats — captures complex color transitions |
-| b (blue–yellow chroma) | 4×4 (9 AC) | 4×4 (9 AC) | Same as a-channel — sufficient for gradients in sunsets, sky, fabric |
-| A (alpha) | — | 3×3 (5 AC) | Alpha masks are typically simple shapes; 5 AC is adequate |
-
-**Justification for fixed grids:** ChromaHash does not adapt the luminance grid to aspect
-ratio (unlike ThumbHash, which scales `lx`/`ly` proportionally). The grid is always square.
-This simplifies implementation and avoids storing grid dimensions in the header — the grid
-size is fully determined by the `hasAlpha` flag. The fixed 7×7 grid always provides maximum
-luminance detail regardless of aspect ratio.
-
-### 6.6 Coefficient Scan Order
-
-Coefficients are scanned in **row-major order** within the triangle:
+Coefficients are scanned **row-major** within the triangle:
 
 ```
 for cy in 0 .. ny-1:
-    cx_start = (cy == 0) ? 1 : 0    # skip DC at (0,0)
-    for cx in cx_start .. while cx*ny < nx*(ny-cy):
+    cx_start = (cy == 0) ? 1 : 0
+    for cx in cx_start .. while cx×ny < nx×(ny−cy):
         emit coefficient (cx, cy)
 ```
 
-This produces a deterministic ordering that all implementations MUST follow.
+Run `spec/scan_order.py` for all scan orders.
+
+### 6.3 Adaptive Grid Geometry
+
+DCT grid dimensions (nx, ny) are **derived deterministically from the aspect byte**. No
+mode flag or extra storage — grid geometry is self-describing.
+
+```
+function deriveGrid(aspect_byte, base_n):
+    ratio = 2^(aspect_byte / 255 × 8 − 4)
+
+    if ratio >= 1.0:
+        scale = min(ratio, 16.0)
+        nx = round(base_n × scale^0.25)
+        ny = round(base_n / scale^0.25)
+    else:
+        scale = min(1.0 / ratio, 16.0)
+        nx = round(base_n / scale^0.25)
+        ny = round(base_n × scale^0.25)
+
+    nx = max(nx, 3)
+    ny = max(ny, 3)
+    return (nx, ny)
+```
+
+All `round()` calls use round half away from zero (§2.2). The result is converted to
+integer before the `max()` clamping. The `scale^0.25` exponent provides gentle adaptation.
+
+| Channel | Mode | base_n | AC cap | Bit budget |
+|---|---|---|---|---|
+| L luminance | no-alpha | 7 | 27 | 27×5 = 135 bits |
+| L luminance | alpha | 6 | 20 | 7×6 + 13×5 = 107 bits |
+| a chroma | both | 4 | 9 | 9×4 = 36 bits |
+| b chroma | both | 4 | 9 | 9×4 = 36 bits |
+| Alpha | alpha | 3 | 5 | 5×4 = 20 bits |
+
+### 6.4 Capping and Zero-Padding
+
+The **bit budget per channel is fixed** regardless of grid shape — the bitstream layout
+never changes, only the mapping from positions to frequency coordinates.
+
+**Encode (capping):** When the scan order produces more AC positions than the cap, store
+only the first `cap` in scan order. Higher-frequency coefficients are dropped.
+
+**Encode (zero-padding):** When the scan order produces fewer positions than the cap
+(only occurs for alpha-mode L with 4×8/8×4 grids producing 19 vs cap 20), pad with zeros.
+
+**Decode:** Read exactly `cap` AC values from the bitstream. Map the first
+`min(cap, len(scan))` to scan positions. Extra scan positions beyond cap have implicit
+zero coefficients. Extra bitstream values beyond `len(scan)` are discarded.
+
+### 6.5 Exhaustive Grid Tables
+
+All unique (nx, ny) pairs produced by `deriveGrid` across all 256 aspect byte values.
+Portrait grids mirror landscape (e.g. 4×14 mirrors 14×4).
+
+**L no-alpha (base_n=7, cap=27) — 21 shapes, all raw AC ≥ 27:**
+
+| Bytes | nx | ny | Raw AC | | Bytes | nx | ny | Raw AC |
+|---|---|---|---|---|---|---|---|---|
+| 0–6 | 4 | 14 | 35 | | 115–140 | 7 | 7 | 27 |
+| 7–20 | 4 | 13 | 33 | | 141 | 8 | 7 | 34 |
+| 21–36 | 4 | 12 | 29 | | 142–163 | 8 | 6 | 29 |
+| 37–46 | 4 | 11 | 28 | | 164–171 | 9 | 6 | 32 |
+| 47–52 | 5 | 11 | 34 | | 172–183 | 9 | 5 | 28 |
+| 53–71 | 5 | 10 | 29 | | 184–202 | 10 | 5 | 29 |
+| 72–83 | 5 | 9 | 28 | | 203–208 | 11 | 5 | 34 |
+| 84–91 | 6 | 9 | 32 | | 209–218 | 11 | 4 | 28 |
+| 92–113 | 6 | 8 | 29 | | 219–234 | 12 | 4 | 29 |
+| 114 | 7 | 8 | 34 | | 235–248 | 13 | 4 | 33 |
+| | | | | | 249–255 | 14 | 4 | 35 |
+
+**Chroma a/b (base_n=4, cap=9) — 11 shapes, all raw AC ≥ 9:**
+
+| Bytes | nx | ny | Raw AC | | Bytes | nx | ny | Raw AC |
+|---|---|---|---|---|---|---|---|---|
+| 0–11 | 3 | 8 | 16 | | 150–152 | 5 | 4 | 13 |
+| 12–38 | 3 | 7 | 14 | | 153–186 | 5 | 3 | 10 |
+| 39–68 | 3 | 6 | 11 | | 187–216 | 6 | 3 | 11 |
+| 69–102 | 3 | 5 | 10 | | 217–243 | 7 | 3 | 14 |
+| 103–105 | 4 | 5 | 13 | | 244–255 | 8 | 3 | 16 |
+| 106–149 | 4 | 4 | 9 | | | | | |
+
+**Alpha-mode L (base_n=6, cap=20) — 19 shapes:**
+
+| Bytes | nx | ny | Raw AC | | Bytes | nx | ny | Raw AC |
+|---|---|---|---|---|---|---|---|---|
+| 0–7 | 3 | 12 | 23 | | 143 | 7 | 6 | 26 |
+| 8–24 | 3 | 11 | 22 | | 144–168 | 7 | 5 | 22 |
+| 25–28 | 3 | 10 | 20 | | 169–180 | 8 | 5 | 25 |
+| 29–42 | 4 | 10 | 25 | | 181–191 | 8 | 4 | **19** |
+| 43–63 | 4 | 9 | 23 | | 192–212 | 9 | 4 | 23 |
+| 64–74 | 4 | 8 | **19** | | 213–226 | 10 | 4 | 25 |
+| 75–86 | 5 | 8 | 25 | | 227–230 | 10 | 3 | 20 |
+| 87–111 | 5 | 7 | 22 | | 231–247 | 11 | 3 | 22 |
+| 112 | 6 | 7 | 26 | | 248–255 | 12 | 3 | 23 |
+| 113–142 | 6 | 6 | 20 | | | | | |
+
+Entries marked **19** have raw AC < cap (20); the 20th bitstream slot is zero-padded.
+
+**Alpha channel (base_n=3, cap=5) — 7 shapes, all raw AC ≥ 5:**
+
+| Bytes | nx | ny | Raw AC |
+|---|---|---|---|
+| 0–16 | 3 | 6 | 11 |
+| 17–52 | 3 | 5 | 10 |
+| 53–99 | 3 | 4 | 8 |
+| 100–155 | 3 | 3 | 5 |
+| 156–202 | 4 | 3 | 8 |
+| 203–238 | 5 | 3 | 10 |
+| 239–255 | 6 | 3 | 11 |
 
 ---
 
@@ -522,77 +447,36 @@ This produces a deterministic ordering that all implementations MUST follow.
 
 ### 7.1 DC Quantization
 
-| Channel | Bits | Levels | Encode | Decode |
-|---------|------|--------|--------|--------|
-| L (lightness) | 7 | 128 | `round(127 × clamp(L_dc, 0, 1))` | `raw / 127.0` |
-| a (green–red) | 7 | 128 | `round(64 + 63 × clamp(a_dc/MAX_CHROMA_A, -1, 1))` | `(raw - 64) / 63.0 × MAX_CHROMA_A` |
-| b (blue–yellow) | 7 | 128 | `round(64 + 63 × clamp(b_dc/MAX_CHROMA_B, -1, 1))` | `(raw - 64) / 63.0 × MAX_CHROMA_B` |
-| Alpha DC | 5 | 32 | `round(31 × clamp(A_dc, 0, 1))` | `raw / 31.0` |
-
-L ranges [0, 1]. The a and b channels use centered encoding to represent their signed
-range symmetrically. Alpha ranges [0, 1].
+| Channel | Bits | Encode | Decode |
+|---------|------|--------|--------|
+| L | 7 | `round(127 × clamp(L_dc, 0, 1))` | `raw / 127.0` |
+| a | 7 | `round(64 + 63 × clamp(a_dc/MAX_CHROMA_A, -1, 1))` | `(raw - 64) / 63.0 × MAX_CHROMA_A` |
+| b | 7 | `round(64 + 63 × clamp(b_dc/MAX_CHROMA_B, -1, 1))` | `(raw - 64) / 63.0 × MAX_CHROMA_B` |
+| Alpha | 5 | `round(31 × clamp(A_dc, 0, 1))` | `raw / 31.0` |
 
 ### 7.2 Scale Factor Quantization
 
-Scale factors encode the maximum absolute AC value for each channel:
-
-| Channel | Bits | Levels | Encode | Decode |
-|---------|------|--------|--------|--------|
-| L scale | 6 | 64 | `round(63 × clamp(L_scale/MAX_L_SCALE, 0, 1))` | `raw / 63.0 × MAX_L_SCALE` |
-| a scale | 6 | 64 | `round(63 × clamp(a_scale/MAX_A_SCALE, 0, 1))` | `raw / 63.0 × MAX_A_SCALE` |
-| b scale | 5 | 32 | `round(31 × clamp(b_scale/MAX_B_SCALE, 0, 1))` | `raw / 31.0 × MAX_B_SCALE` |
-| Alpha scale | 4 | 16 | `round(15 × clamp(A_scale/MAX_A_ALPHA_SCALE, 0, 1))` | `raw / 15.0 × MAX_A_ALPHA_SCALE` |
+| Channel | Bits | Encode | Decode |
+|---------|------|--------|--------|
+| L scale | 6 | `round(63 × clamp(L_scale/MAX_L_SCALE, 0, 1))` | `raw / 63.0 × MAX_L_SCALE` |
+| a scale | 6 | `round(63 × clamp(a_scale/MAX_A_SCALE, 0, 1))` | `raw / 63.0 × MAX_A_SCALE` |
+| b scale | 5 | `round(31 × clamp(b_scale/MAX_B_SCALE, 0, 1))` | `raw / 31.0 × MAX_B_SCALE` |
+| Alpha scale | 4 | `round(15 × clamp(A_scale/MAX_A_ALPHA_SCALE, 0, 1))` | `raw / 15.0 × MAX_A_ALPHA_SCALE` |
 
 ### 7.3 AC Coefficient Quantization: µ-law Companding
 
-All AC coefficients are quantized using **µ-law companding** with **µ = 5**.
+All AC coefficients use **µ-law companding** with **µ = 5**. This allocates finer steps
+near zero (where most DCT coefficients cluster) and coarser steps in the tails.
 
-**Justification:** Natural image DCT coefficients follow a roughly Laplacian distribution —
-most values cluster near zero with a long tail. Linear quantization (as used by ThumbHash)
-allocates equal resolution to all magnitudes, wasting bits on rarely-used large values while
-under-resolving the dense cluster near zero. µ-law companding allocates finer steps near
-zero and coarser steps near the extremes, matching the actual signal distribution.
+**Compress:** `compressed = sign(v) × log(1 + µ × |v|) / log(1 + µ)`
 
-The parameter µ = 5 was chosen as a balance: it provides ~2.6× finer near-zero resolution
-than linear quantization without excessive compression of the tails.
+**Quantize:** `index = clamp(round((compressed + 1) / 2 × (2^bits − 1)), 0, 2^bits − 1)`
 
-**Compress (before quantization):**
+**Dequantize:** `compressed = index / (2^bits − 1) × 2 − 1`
 
-```
-compressed = sign(v) × log(1 + µ × |v|) / log(1 + µ)
-```
+**Expand:** `v = sign(compressed) × ((1 + µ)^|compressed| − 1) / µ`
 
-**Quantize:**
-
-```
-index = clamp(round((compressed + 1) / 2 × (2^bits − 1)), 0, 2^bits − 1)
-```
-
-**Dequantize:**
-
-```
-compressed = index / (2^bits − 1) × 2 − 1
-```
-
-**Expand (after dequantization):**
-
-```
-v = sign(compressed) × ((1 + µ)^|compressed| − 1) / µ
-```
-
-### 7.4 Step Size Comparison (µ=5 vs linear)
-
-| Bits | Levels | Linear step (near 0) | µ-law step (near 0) | Improvement |
-|------|--------|----------------------|----------------------|-------------|
-| 4 | 16 | 0.133 | 0.051 | 2.6× finer |
-| 5 | 32 | 0.065 | 0.024 | 2.7× finer |
-
-The finer near-zero resolution directly addresses banding artifacts in smooth gradients
-(common in studio photography — backdrops, sky, fabric). It also eliminates the need for
-ad-hoc saturation boost hacks — the µ-law encoding inherently preserves subtle color
-variations.
-
-### 7.5 AC Bit Depth by Channel
+### 7.4 AC Bit Depths
 
 | Channel | No-alpha | Alpha |
 |---------|----------|-------|
@@ -601,10 +485,8 @@ variations.
 | b AC | 4 bits (all 9) | 4 bits (all 9) |
 | Alpha AC | — | 4 bits (all 5) |
 
-**Justification for mixed L AC in alpha mode:** When the luminance grid shrinks from 7×7
-to 6×6, the first 7 AC coefficients (lowest frequencies) are promoted to 6 bits. These
-lowest-frequency components have the highest perceptual impact, so giving them extra
-precision partially compensates for the reduced grid size.
+In alpha mode, the first 7 L AC coefficients (lowest frequencies, highest perceptual
+impact) are promoted to 6 bits to partially compensate for the reduced grid.
 
 ---
 
@@ -612,54 +494,21 @@ precision partially compensates for the reduced grid size.
 
 ### 8.1 Encoding Formula
 
-The aspect ratio is encoded as a single byte using a log₂ mapping (v0.3):
-
 ```
 Encode: byte = clamp(round((log₂(w / h) + 4) / 8 × 255), 0, 255)
 Decode: ratio = 2^(byte / 255 × 8 − 4)
 ```
 
-This maps log₂(ratio) from the range [−4, +4] to [0, 255], covering aspect ratios from
-**1:16** (0.0625) to **16:1** (16.0).
+This maps log₂(ratio) from [−4, +4] to [0, 255], covering ratios from **1:16** (0.0625)
+to **16:1** (16.0). The encoding is symmetric about 1:1 — portrait and landscape ratios
+of the same proportions have the same error.
 
-### 8.2 Justification
+Maximum error: `2^(8/255/2) − 1 ≈ 1.09%`. Notable values: 1:1 → byte 128, 4:1 → 191,
+16:1 → 255, 1:4 → 64, 1:16 → 0.
 
-The log₂ encoding is symmetric about 1:1 (square) — portrait and landscape ratios of the
-same proportions have the same error. The logarithmic scale ensures that the *relative*
-error is roughly constant across the entire range, which matches human perception of
-aspect ratio differences.
+### 8.2 Decode Output Size
 
-The theoretical maximum error for any ratio within the encodable range is:
-
-```
-max_error ≈ 2^(8/255/2) − 1 ≈ 1.09%
-```
-
-The expanded range [1:16, 16:1] accommodates ultra-wide banners and tall mobile images
-that the previous [1:4, 4:1] range would incorrectly clamp.
-
-### 8.3 Error Analysis for Common Photographic Ratios
-
-| Ratio | Actual | log₂ | Byte | Decoded | Error |
-|-------|--------|------|------|---------|-------|
-| 1:1 | 1.000 | 0.000 | 128 | ~1.011 | ~1.09% |
-| 3:2 | 1.500 | 0.585 | 146 | ~1.495 | ~0.33% |
-| 4:3 | 1.333 | 0.415 | 141 | ~1.342 | ~0.64% |
-| 16:9 | 1.778 | 0.830 | 154 | ~1.773 | ~0.30% |
-| 4:1 | 4.000 | 2.000 | 191 | ~3.972 | ~0.70% |
-| 16:1 | 16.000 | 4.000 | 255 | 16.000 | 0.00% |
-| 1:16 | 0.0625 | −4.000 | 0 | 0.0625 | 0.00% |
-
-All portrait ratios are symmetric — 2:3 has the same error as 3:2.
-
-**Practical impact:** For a 400px-wide placeholder, the worst-case layout jank is
-~4 pixels (1.09% of height), compared to ~27 pixels with 3-bit encoding.
-
-Notable byte values: 1:1 → 128 (unchanged), 4:1 → 191, 16:1 → 255, 1:4 → 64, 1:16 → 0.
-
-### 8.4 Decode Output Size
-
-The decoder reconstructs a thumbnail image. By convention, the longer side is 32 pixels:
+The longer side is 32 pixels by convention:
 
 ```
 if ratio > 1:
@@ -676,14 +525,12 @@ Implementations MAY allow the caller to specify a different target size.
 
 ### 9.1 Detection
 
-An image has alpha if any pixel's alpha value is less than fully opaque (255 for 8-bit
-input). The `hasAlpha` flag in the header records this.
+An image has alpha if any pixel's alpha value < 255. The `hasAlpha` flag records this.
 
 ### 9.2 Alpha Compositing Before Encoding
 
-Before OKLAB conversion, transparent pixels are composited over the alpha-weighted average
-color. This ensures the L, a, b channels represent opaque color values while the alpha
-channel is encoded separately.
+Before encoding, transparent pixels are composited over the alpha-weighted average color
+in OKLAB space:
 
 ```
 1. Compute alpha-weighted average OKLAB (avg_L, avg_a, avg_b)
@@ -693,24 +540,14 @@ channel is encoded separately.
      b_chan[i] = avg_b × (1 − alpha) + alpha × oklab[i].b
 ```
 
+This ensures L, a, b channels represent opaque color values while alpha is encoded
+separately.
+
 ### 9.3 Alpha Channel Encoding
 
-When `hasAlpha = 1`, the alpha channel is encoded as:
-
-- **DC** (5 bits): `round(31 × A_dc)` — average opacity
-- **Scale** (4 bits): `round(15 × A_scale / MAX_A_ALPHA_SCALE)` — AC amplitude
-- **AC** (5 coefficients, 4 bits each): 3×3 triangular grid with µ-law companding
-
-### 9.4 Budget Reallocation
-
-To maintain the fixed 32-byte size, alpha mode reallocates bits from luminance:
-
-| | No-alpha | Alpha | Change |
-|---|----------|-------|--------|
-| L grid | 7×7 (27 AC) | 6×6 (20 AC) | −7 coefficients |
-| L AC bits | 5 per coeff | 6 (first 7) + 5 (last 13) | +7 bits for low-freq |
-| Alpha overhead | — | 5+4+20 = 29 bits | +29 bits |
-| Total AC bits | 208 | 208 | 0 change |
+When `hasAlpha = 1`: DC (5 bits), scale (4 bits), 5 AC coefficients (3×3 triangular grid,
+4 bits each, µ-law companded). The luminance grid shrinks from base_n=7 to base_n=6,
+with freed bits accommodating the alpha channel (29 bits total).
 
 ---
 
@@ -718,145 +555,114 @@ To maintain the fixed 32-byte size, alpha mode reallocates bits from luminance:
 
 ### 10.1 Input Requirements
 
-- Image dimensions: `w ≤ 100`, `h ≤ 100` (downscale before encoding if larger)
+- Image dimensions: any size (full-resolution encoding — no downscale required)
 - Pixel format: RGBA, 8 bits per channel
 - Source gamut: one of {sRGB, Display P3, Adobe RGB, BT.2020, ProPhoto RGB}
 
 ### 10.2 Pseudocode
 
 ```
-function chromaHashEncode(w, h, rgba, sourceGamut) -> byte[32]:
-    assert w ≤ 100 and h ≤ 100
+function encode(W, H, rgba, gamut) -> byte[32]:
+    // 1. Precompute EOTF lookup table (256 entries per 8-bit input value)
+    lut = precompute_eotf_lut(gamut)
 
-    # 1. Determine source gamut transfer function and M1 matrix
-    eotf = TRANSFER_FUNCTIONS[sourceGamut]
-    M1   = M1_MATRICES[sourceGamut]
-
-    # 2. Convert all pixels to OKLAB
-    oklab_pixels = new float[w × h × 3]
-    alpha_pixels = new float[w × h]
+    // 2. Convert all pixels to OKLAB
+    oklab = array[W*H*3]; alphas = array[W*H]
     avg_L = 0; avg_a = 0; avg_b = 0; avg_alpha = 0
 
-    for i in 0 .. w×h − 1:
-        alpha = rgba[i×4 + 3] / 255
-        r_lin = eotf(rgba[i×4 + 0] / 255)
-        g_lin = eotf(rgba[i×4 + 1] / 255)
-        b_lin = eotf(rgba[i×4 + 2] / 255)
-
-        lms = M1 × [r_lin, g_lin, b_lin]
+    for i in 0 .. W*H-1:
+        alpha = rgba[i*4+3] / 255.0
+        r_lin = lut[rgba[i*4+0]]
+        g_lin = lut[rgba[i*4+1]]
+        b_lin = lut[rgba[i*4+2]]
+        lms = M1[gamut] × [r_lin, g_lin, b_lin]
         lms_cbrt = [cbrt(lms[0]), cbrt(lms[1]), cbrt(lms[2])]
         lab = M2 × lms_cbrt
-
-        avg_L += alpha × lab[0]
-        avg_a += alpha × lab[1]
-        avg_b += alpha × lab[2]
+        avg_L += alpha*lab[0]; avg_a += alpha*lab[1]; avg_b += alpha*lab[2]
         avg_alpha += alpha
+        oklab[i*3..] = lab; alphas[i] = alpha
 
-        oklab_pixels[i×3 + 0] = lab[0]
-        oklab_pixels[i×3 + 1] = lab[1]
-        oklab_pixels[i×3 + 2] = lab[2]
-        alpha_pixels[i] = alpha
-
-    # 3. Compute alpha-weighted average color
-    #    If all pixels are fully transparent, default to black (L=0, a=0, b=0).
+    // 3. Alpha-weighted average
     if avg_alpha > 0:
-        avg_L /= avg_alpha
-        avg_a /= avg_alpha
-        avg_b /= avg_alpha
+        avg_L /= avg_alpha; avg_a /= avg_alpha; avg_b /= avg_alpha
     else:
         avg_L = 0; avg_a = 0; avg_b = 0
 
-    # 4. Composite transparent pixels over average
-    hasAlpha = avg_alpha < w × h
-    L_chan = new float[w × h]
-    a_chan = new float[w × h]
-    b_chan = new float[w × h]
+    // 4. Composite transparent pixels over average
+    hasAlpha = avg_alpha < W * H
+    L_chan = array[W*H]; a_chan = array[W*H]; b_chan = array[W*H]
+    for i in 0 .. W*H-1:
+        a = alphas[i]
+        L_chan[i] = avg_L*(1-a) + a*oklab[i*3+0]
+        a_chan[i] = avg_a*(1-a) + a*oklab[i*3+1]
+        b_chan[i] = avg_b*(1-a) + a*oklab[i*3+2]
 
-    for i in 0 .. w×h − 1:
-        alpha = alpha_pixels[i]
-        L_chan[i] = avg_L × (1 − alpha) + alpha × oklab_pixels[i×3 + 0]
-        a_chan[i] = avg_a × (1 − alpha) + alpha × oklab_pixels[i×3 + 1]
-        b_chan[i] = avg_b × (1 − alpha) + alpha × oklab_pixels[i×3 + 2]
-
-    # 5. DCT encode each channel
+    // 5. Derive adaptive grid dimensions
+    aspect_byte = clamp(round((log2(W/H) + 4) / 8 * 255), 0, 255)
     if hasAlpha:
-        (L_dc, L_ac, L_scale) = dctEncode(L_chan, w, h, 6, 6)
-        (a_dc, a_ac, a_scale) = dctEncode(a_chan, w, h, 4, 4)
-        (b_dc, b_ac, b_scale) = dctEncode(b_chan, w, h, 4, 4)
-        (A_dc, A_ac, A_scale) = dctEncode(alpha_pixels, w, h, 3, 3)
+        (L_nx, L_ny) = deriveGrid(aspect_byte, 6)
+        (A_nx, A_ny) = deriveGrid(aspect_byte, 3)
     else:
-        (L_dc, L_ac, L_scale) = dctEncode(L_chan, w, h, 7, 7)
-        (a_dc, a_ac, a_scale) = dctEncode(a_chan, w, h, 4, 4)
-        (b_dc, b_ac, b_scale) = dctEncode(b_chan, w, h, 4, 4)
+        (L_nx, L_ny) = deriveGrid(aspect_byte, 7)
+    (C_nx, C_ny) = deriveGrid(aspect_byte, 4)
 
-    # 6. Quantize header values
-    L_dc_q  = round(127 × clamp(L_dc, 0, 1))
-    a_dc_q  = round(64 + 63 × clamp(a_dc / MAX_CHROMA_A, -1, 1))
-    b_dc_q  = round(64 + 63 × clamp(b_dc / MAX_CHROMA_B, -1, 1))
-    L_scl_q = round(63 × clamp(L_scale / MAX_L_SCALE, 0, 1))
-    a_scl_q = round(63 × clamp(a_scale / MAX_A_SCALE, 0, 1))
-    b_scl_q = round(31 × clamp(b_scale / MAX_B_SCALE, 0, 1))
+    // 6. Precompute cosine tables
+    max_cx = max(L_nx, C_nx); max_cy = max(L_ny, C_ny)
+    cos_x = precompute_cos_table(W, max_cx)
+    cos_y = precompute_cos_table(H, max_cy)
 
-    # 7. Compute aspect byte
-    aspect = clamp(round((log2(w / h) + 2) / 4 × 255), 0, 255)
+    // 7. DCT encode each channel
+    (L_dc, L_ac, L_scale) = dctEncode(L_chan, W, H, L_nx, L_ny, cos_x, cos_y)
+    (a_dc, a_ac, a_scale) = dctEncode(a_chan, W, H, C_nx, C_ny, cos_x, cos_y)
+    (b_dc, b_ac, b_scale) = dctEncode(b_chan, W, H, C_nx, C_ny, cos_x, cos_y)
+    if hasAlpha:
+        (A_dc, A_ac, A_scale) = dctEncode(alphas, W, H, A_nx, A_ny, cos_x, cos_y)
 
-    # 8. Pack header (48 bits = 6 bytes, little-endian)
-    header = L_dc_q
-           | (a_dc_q << 7)
-           | (b_dc_q << 14)
-           | (L_scl_q << 21)
-           | (a_scl_q << 27)
-           | (b_scl_q << 33)
-           | (aspect << 38)
+    // 8. Cap/zero-pad AC to fixed bit budget
+    L_cap = 20 if hasAlpha else 27
+    L_ac = L_ac[0..L_cap-1]; while len(L_ac) < L_cap: L_ac.append(0)
+    a_ac = a_ac[0..8]; b_ac = b_ac[0..8]
+    if hasAlpha: A_ac = A_ac[0..4]
+
+    // 9. Quantize header
+    L_dc_q  = round(127 * clamp(L_dc, 0, 1))
+    a_dc_q  = round(64 + 63 * clamp(a_dc / MAX_CHROMA_A, -1, 1))
+    b_dc_q  = round(64 + 63 * clamp(b_dc / MAX_CHROMA_B, -1, 1))
+    L_scl_q = round(63 * clamp(L_scale / MAX_L_SCALE, 0, 1))
+    a_scl_q = round(63 * clamp(a_scale / MAX_A_SCALE, 0, 1))
+    b_scl_q = round(31 * clamp(b_scale / MAX_B_SCALE, 0, 1))
+
+    // 10. Pack header (48 bits, little-endian)
+    header = L_dc_q | (a_dc_q << 7) | (b_dc_q << 14)
+           | (L_scl_q << 21) | (a_scl_q << 27) | (b_scl_q << 33)
+           | (aspect_byte << 38)
            | ((1 if hasAlpha else 0) << 46)
-           # bit 47 reserved = 0
-
+           | (1 << 47)                            // version bit
     hash = new byte[32]
-    for i in 0..5: hash[i] = (header >> (i × 8)) & 0xFF
+    for i in 0..5: hash[i] = (header >> (i*8)) & 0xFF
 
-    # 9. Pack AC coefficients with µ-law companding
-    #    When a channel's scale is 0 (all AC coefficients are zero, e.g. solid
-    #    color), skip normalization and write the µ-law midpoint for each
-    #    coefficient (the quantized index representing approximately zero).
-    bitpos = 48
-
-    # Helper: quantize one AC coefficient, handling scale=0
-    function quantizeAC(value, scale, mu, bits):
-        if scale == 0:
-            return muLawQuantize(0, mu, bits)
+    // 11. Pack AC with µ-law companding
+    //     When scale=0 (solid color), write the µ-law midpoint for zero.
+    function qAC(value, scale, mu, bits):
+        if scale == 0: return muLawQuantize(0, mu, bits)
         return muLawQuantize(value / scale, mu, bits)
 
+    bitpos = 48
     if hasAlpha:
-        A_dc_q = round(31 × clamp(A_dc, 0, 1))
-        A_scl_q = round(15 × clamp(A_scale / MAX_A_ALPHA_SCALE, 0, 1))
-        writeBits(hash, bitpos, 5, A_dc_q);  bitpos += 5
-        writeBits(hash, bitpos, 4, A_scl_q); bitpos += 4
-
-        for i in 0..6:
-            q = quantizeAC(L_ac[i], L_scale, 5, 6)
-            writeBits(hash, bitpos, 6, q); bitpos += 6
-        for i in 7..19:
-            q = quantizeAC(L_ac[i], L_scale, 5, 5)
-            writeBits(hash, bitpos, 5, q); bitpos += 5
+        writeBits(hash, bitpos, 5, round(31*clamp(A_dc,0,1))); bitpos += 5
+        writeBits(hash, bitpos, 4, round(15*clamp(A_scale/MAX_A_ALPHA_SCALE,0,1))); bitpos += 4
+        for i in 0..6:  writeBits(hash, bitpos, 6, qAC(L_ac[i],L_scale,5,6)); bitpos += 6
+        for i in 7..19: writeBits(hash, bitpos, 5, qAC(L_ac[i],L_scale,5,5)); bitpos += 5
     else:
-        for i in 0..26:
-            q = quantizeAC(L_ac[i], L_scale, 5, 5)
-            writeBits(hash, bitpos, 5, q); bitpos += 5
+        for i in 0..26: writeBits(hash, bitpos, 5, qAC(L_ac[i],L_scale,5,5)); bitpos += 5
 
-    for i in 0..8:
-        q = quantizeAC(a_ac[i], a_scale, 5, 4)
-        writeBits(hash, bitpos, 4, q); bitpos += 4
-
-    for i in 0..8:
-        q = quantizeAC(b_ac[i], b_scale, 5, 4)
-        writeBits(hash, bitpos, 4, q); bitpos += 4
+    for i in 0..8: writeBits(hash, bitpos, 4, qAC(a_ac[i],a_scale,5,4)); bitpos += 4
+    for i in 0..8: writeBits(hash, bitpos, 4, qAC(b_ac[i],b_scale,5,4)); bitpos += 4
 
     if hasAlpha:
-        for i in 0..4:
-            q = quantizeAC(A_ac[i], A_scale, 5, 4)
-            writeBits(hash, bitpos, 4, q); bitpos += 4
+        for i in 0..4: writeBits(hash, bitpos, 4, qAC(A_ac[i],A_scale,5,4)); bitpos += 4
 
-    assert bitpos ≤ 256
+    assert bitpos == 256
     return hash
 ```
 
@@ -867,10 +673,10 @@ function chromaHashEncode(w, h, rgba, sourceGamut) -> byte[32]:
 ### 11.1 Pseudocode
 
 ```
-function chromaHashDecode(hash) -> (w, h, rgba):
-    # 1. Unpack header (48 bits)
+function decode(hash) -> (w, h, rgba):
+    // 1. Unpack header
     header = 0
-    for i in 0..5: header |= hash[i] << (i × 8)
+    for i in 0..5: header |= hash[i] << (i*8)
 
     L_dc_q  = header & 0x7F
     a_dc_q  = (header >> 7) & 0x7F
@@ -881,337 +687,323 @@ function chromaHashDecode(hash) -> (w, h, rgba):
     aspect  = (header >> 38) & 0xFF
     hasAlpha = (header >> 46) & 1
 
-    # 2. Decode DC values and scale factors
+    // 2. Decode DC and scale factors
     L_dc    = L_dc_q / 127.0
-    a_dc    = (a_dc_q - 64) / 63.0 × MAX_CHROMA_A
-    b_dc    = (b_dc_q - 64) / 63.0 × MAX_CHROMA_B
-    L_scale = L_scl_q / 63.0 × MAX_L_SCALE
-    a_scale = a_scl_q / 63.0 × MAX_A_SCALE
-    b_scale = b_scl_q / 31.0 × MAX_B_SCALE
+    a_dc    = (a_dc_q - 64) / 63.0 * MAX_CHROMA_A
+    b_dc    = (b_dc_q - 64) / 63.0 * MAX_CHROMA_B
+    L_scale = L_scl_q / 63.0 * MAX_L_SCALE
+    a_scale = a_scl_q / 63.0 * MAX_A_SCALE
+    b_scale = b_scl_q / 31.0 * MAX_B_SCALE
 
-    # 3. Decode aspect ratio
-    ratio = 2^(aspect / 255.0 × 4 − 2)
-
-    # 4. Compute output size (32px on longer side)
-    if ratio > 1:
-        w = 32; h = round(32 / ratio)
+    // 3. Derive adaptive grids and scan orders
+    if hasAlpha:
+        (L_nx, L_ny) = deriveGrid(aspect, 6)
+        (A_nx, A_ny) = deriveGrid(aspect, 3)
     else:
-        w = round(32 × ratio); h = 32
+        (L_nx, L_ny) = deriveGrid(aspect, 7)
+    (C_nx, C_ny) = deriveGrid(aspect, 4)
 
-    # 5. Dequantize AC coefficients
+    L_scan = triangular_scan_order(L_nx, L_ny)
+    C_scan = triangular_scan_order(C_nx, C_ny)
+    L_cap = 20 if hasAlpha else 27; C_cap = 9
+
+    // 4. Decode aspect ratio and output size
+    ratio = 2^(aspect / 255.0 * 8 - 4)
+    if ratio > 1: w = 32; h = round(32 / ratio)
+    else: w = round(32 * ratio); h = 32
+
+    // 5. Dequantize AC from bitstream (read exactly cap values per channel)
     bitpos = 48
-
     if hasAlpha:
-        A_dc    = readBits(hash, bitpos, 5) / 31.0;                        bitpos += 5
-        A_scale = readBits(hash, bitpos, 4) / 15.0 × MAX_A_ALPHA_SCALE;    bitpos += 4
+        A_dc    = readBits(hash, bitpos, 5) / 31.0; bitpos += 5
+        A_scale = readBits(hash, bitpos, 4) / 15.0 * MAX_A_ALPHA_SCALE; bitpos += 4
+        A_scan  = triangular_scan_order(A_nx, A_ny); A_cap = 5
 
         L_ac = []
-        for i in 0..6:
-            L_ac.append(muLawDequantize(readBits(hash, bitpos, 6), 5, 6) × L_scale)
-            bitpos += 6
-        for i in 7..19:
-            L_ac.append(muLawDequantize(readBits(hash, bitpos, 5), 5, 5) × L_scale)
-            bitpos += 5
-        lx = 6; ly = 6
+        for i in 0..6:  L_ac.append(muLawDequantize(readBits(hash,bitpos,6),5,6)*L_scale); bitpos += 6
+        for i in 7..19: L_ac.append(muLawDequantize(readBits(hash,bitpos,5),5,5)*L_scale); bitpos += 5
     else:
         L_ac = []
-        for i in 0..26:
-            L_ac.append(muLawDequantize(readBits(hash, bitpos, 5), 5, 5) × L_scale)
-            bitpos += 5
-        lx = 7; ly = 7
+        for i in 0..26: L_ac.append(muLawDequantize(readBits(hash,bitpos,5),5,5)*L_scale); bitpos += 5
 
-    a_ac = []
-    for i in 0..8:
-        a_ac.append(muLawDequantize(readBits(hash, bitpos, 4), 5, 4) × a_scale)
-        bitpos += 4
+    a_ac = []; for i in 0..8: a_ac.append(muLawDequantize(readBits(hash,bitpos,4),5,4)*a_scale); bitpos += 4
+    b_ac = []; for i in 0..8: b_ac.append(muLawDequantize(readBits(hash,bitpos,4),5,4)*b_scale); bitpos += 4
+    if hasAlpha:
+        A_ac = []; for i in 0..4: A_ac.append(muLawDequantize(readBits(hash,bitpos,4),5,4)*A_scale); bitpos += 4
 
-    b_ac = []
-    for i in 0..8:
-        b_ac.append(muLawDequantize(readBits(hash, bitpos, 4), 5, 4) × b_scale)
-        bitpos += 4
+    // 6. Map bitstream values to coefficient grids
+    L_coeff = grid initialized to 0.0
+    L_usable = min(L_cap, len(L_scan))
+    for j in 0..L_usable-1: L_coeff[L_scan[j]] = L_ac[j]
+
+    C_usable = min(C_cap, len(C_scan))
+    C_coeff_a = grid init 0.0; C_coeff_b = grid init 0.0
+    for j in 0..C_usable-1: C_coeff_a[C_scan[j]] = a_ac[j]; C_coeff_b[C_scan[j]] = b_ac[j]
 
     if hasAlpha:
-        A_ac = []
-        for i in 0..4:
-            A_ac.append(muLawDequantize(readBits(hash, bitpos, 4), 5, 4) × A_scale)
-            bitpos += 4
+        A_usable = min(A_cap, len(A_scan))
+        A_coeff = grid init 0.0
+        for j in 0..A_usable-1: A_coeff[A_scan[j]] = A_ac[j]
 
-    # 6. Render output image
-    rgba = new byte[w × h × 4]
+    // 7. Build sRGB gamma LUT and render output
+    gamma_lut = buildGammaLut()
+    rgba = new byte[w * h * 4]
 
-    # Precompute cosine tables for efficiency
-    # cos_x[cx][x] = cos(π / w × cx × (x + 0.5))
-    # cos_y[cy][y] = cos(π / h × cy × (y + 0.5))
+    for y in 0..h-1:
+        for x in 0..w-1:
+            // Inverse DCT for L channel (adaptive grid)
+            L = L_dc
+            for (cx, cy) in L_scan[0..L_usable-1]:
+                L += L_coeff[cx,cy] * cos(π/w*cx*(x+0.5)) * cos(π/h*cy*(y+0.5))
+                                    * ((cx>0?2:1) * (cy>0?2:1))
 
-    for y in 0 .. h−1:
-        for x in 0 .. w−1:
-            # 6a. Evaluate inverse DCT for L, a, b channels
-            #     Normalization: C(cx,cy) = (cx>0 ? 2 : 1) × (cy>0 ? 2 : 1)
-            L = L_dc; a = a_dc; b = b_dc
+            // Inverse DCT for a, b channels (adaptive grid)
+            a = a_dc; b = b_dc
+            for (cx, cy) in C_scan[0..C_usable-1]:
+                fx = cos(π/w*cx*(x+0.5)) * cos(π/h*cy*(y+0.5)) * ((cx>0?2:1) * (cy>0?2:1))
+                a += C_coeff_a[cx,cy] * fx
+                b += C_coeff_b[cx,cy] * fx
+
+            // Inverse DCT for alpha channel
             alpha = hasAlpha ? A_dc : 1.0
-
-            j = 0
-            for cy in 0 .. ly−1:
-                cx_start = (cy > 0) ? 0 : 1
-                cy_factor = (cy > 0) ? 2 : 1
-                fy = cos(π / h × cy × (y + 0.5)) × cy_factor
-                for cx in cx_start .. while cx×ly < lx×(ly−cy):
-                    cx_factor = (cx > 0) ? 2 : 1
-                    L += L_ac[j] × cos(π / w × cx × (x + 0.5)) × cx_factor × fy
-                    j += 1
-
-            j = 0
-            for cy in 0 .. 3:
-                cx_start = (cy > 0) ? 0 : 1
-                cy_factor = (cy > 0) ? 2 : 1
-                fy = cos(π / h × cy × (y + 0.5)) × cy_factor
-                for cx in cx_start .. while cx < 4−cy:
-                    cx_factor = (cx > 0) ? 2 : 1
-                    fx = cos(π / w × cx × (x + 0.5)) × cx_factor
-                    a += a_ac[j] × fx × fy
-                    b += b_ac[j] × fx × fy
-                    j += 1
-
             if hasAlpha:
-                j = 0
-                for cy in 0 .. 2:
-                    cx_start = (cy > 0) ? 0 : 1
-                    cy_factor = (cy > 0) ? 2 : 1
-                    fy = cos(π / h × cy × (y + 0.5)) × cy_factor
-                    for cx in cx_start .. while cx < 3−cy:
-                        cx_factor = (cx > 0) ? 2 : 1
-                        alpha += A_ac[j] × cos(π / w × cx × (x + 0.5)) × cx_factor × fy
-                        j += 1
+                for (cx, cy) in A_scan[0..A_usable-1]:
+                    alpha += A_coeff[cx,cy] * cos(π/w*cx*(x+0.5)) * cos(π/h*cy*(y+0.5))
+                                            * ((cx>0?2:1) * (cy>0?2:1))
 
-            # 6b. Convert OKLAB → sRGB
-            lms_cbrt = M2_inv × [L, a, b]
-            lms = [lms_cbrt[0]³, lms_cbrt[1]³, lms_cbrt[2]³]
-            rgb_linear = M1_inv_sRGB × lms
+            // Soft gamut clamp (preserves hue, reduces chroma)
+            L = clamp(L, 0.0, 1.0)
+            (L, a, b) = softGamutClamp(L, a, b)
 
-            r = srgbGamma(clamp(rgb_linear[0], 0, 1))
-            g = srgbGamma(clamp(rgb_linear[1], 0, 1))
-            b_out = srgbGamma(clamp(rgb_linear[2], 0, 1))
-            a_out = clamp(alpha, 0, 1)
-
-            # 6c. Output as 8-bit RGBA
-            idx = (y × w + x) × 4
-            rgba[idx + 0] = round(255 × r)
-            rgba[idx + 1] = round(255 × g)
-            rgba[idx + 2] = round(255 × b_out)
-            rgba[idx + 3] = round(255 × a_out)
+            // OKLAB → sRGB via gamma LUT
+            rgb_lin = oklabToLinearRgb(L, a, b)
+            idx = (y*w + x) * 4
+            rgba[idx+0] = linearToSrgb8(clamp(rgb_lin[0], 0, 1), gamma_lut)
+            rgba[idx+1] = linearToSrgb8(clamp(rgb_lin[1], 0, 1), gamma_lut)
+            rgba[idx+2] = linearToSrgb8(clamp(rgb_lin[2], 0, 1), gamma_lut)
+            rgba[idx+3] = round(255 * clamp(alpha, 0, 1))
 
     return (w, h, rgba)
 ```
 
-### 11.2 Average Color Extraction (Header-Only Decode)
+### 11.2 Average Color Extraction
 
-The DC coefficients in the header can be directly converted to an average RGBA color
-without evaluating the DCT:
+The DC coefficients can be converted to an average RGBA color without full decode:
 
 ```
-function chromaHashAverageColor(hash) -> (r, g, b, a):
-    # Unpack header (same as decode steps 1–2)
-    ...extract L_dc, a_dc, b_dc, hasAlpha...
-
-    # Convert OKLAB DC → sRGB
+function averageColor(hash) -> (r, g, b, a):
+    ...extract L_dc, a_dc, b_dc, hasAlpha from header...
     lms_cbrt = M2_inv × [L_dc, a_dc, b_dc]
     lms = [lms_cbrt[0]³, lms_cbrt[1]³, lms_cbrt[2]³]
-    rgb_linear = M1_inv_sRGB × lms
-
-    r = srgbGamma(clamp(rgb_linear[0], 0, 1))
-    g = srgbGamma(clamp(rgb_linear[1], 0, 1))
-    b = srgbGamma(clamp(rgb_linear[2], 0, 1))
+    rgb_lin = M1_inv_sRGB × lms
+    r = srgbGamma(clamp(rgb_lin[0], 0, 1))
+    g = srgbGamma(clamp(rgb_lin[1], 0, 1))
+    b = srgbGamma(clamp(rgb_lin[2], 0, 1))
     a = hasAlpha ? (decode alpha_dc from AC block) : 1.0
-
-    return (round(255 × r), round(255 × g), round(255 × b), round(255 × a))
+    return (round(255×r), round(255×g), round(255×b), round(255×a))
 ```
-
-This is useful for dominant-color extraction, color-based sorting, and search.
 
 ---
 
 ## 12. Constants & Matrices
 
-All constants are authoritatively defined in `spec/constants.py`. The values below are
-reproduced for reference. Run `spec/validate.py` to verify correctness.
+All constants are authoritatively defined in `spec/constants.py`.
 
-### 12.1 Scale Factor Maximums
-
-These constants define the maximum representable scale factors. They MUST be identical
-across all implementations. Values exceeding these bounds are clamped.
+### 12.1 Scalar Constants
 
 ```
-MAX_CHROMA_A       = 0.5    # Maximum absolute OKLAB 'a' DC value
-MAX_CHROMA_B       = 0.5    # Maximum absolute OKLAB 'b' DC value
-MAX_L_SCALE        = 0.5    # Maximum luminance AC amplitude
-MAX_A_SCALE        = 0.5    # Maximum chroma-a AC amplitude
-MAX_B_SCALE        = 0.5    # Maximum chroma-b AC amplitude
-MAX_A_ALPHA_SCALE  = 0.5    # Maximum alpha AC amplitude
+MAX_CHROMA_A       = 0.45    # Max absolute OKLAB 'a' DC value (covers BT.2020 |a|=0.416)
+MAX_CHROMA_B       = 0.45    # Max absolute OKLAB 'b' DC value (covers ProPhoto |b|=0.427)
+MAX_L_SCALE        = 0.5     # Max luminance AC amplitude
+MAX_A_SCALE        = 0.5     # Max chroma-a AC amplitude
+MAX_B_SCALE        = 0.5     # Max chroma-b AC amplitude
+MAX_A_ALPHA_SCALE  = 0.5     # Max alpha AC amplitude
+µ                  = 5       # µ-law companding parameter
 ```
 
-**Note:** These are preliminary values validated against theoretical OKLAB bounds for all
-supported gamuts (see `validate.py` §5). MAX_CHROMA_A covers all practical images
-including BT.2020 (max |a| ≈ 0.42); the ProPhoto RGB blue primary (|a| ≈ 1.35) clips,
-but no realistic photograph has this as an average color. These values may be tightened
-in a future revision after empirical tuning against a reference image corpus.
-
-### 12.2 µ-law Parameter
-
-```
-µ = 5
-```
-
-### 12.3 M2 — Universal OKLAB Matrix (Ottosson)
-
-Converts LMS cube-root values to OKLAB (L, a, b):
-
-```
-         ┌                                           ┐
-         │  0.2104542553   0.7936177850  -0.0040720468 │
-  M2  =  │  1.9779984951  -2.4285922050   0.4505937099 │
-         │  0.0259040371   0.7827717662  -0.8086757660 │
-         └                                           ┘
-```
-
-### 12.4 M2_inv — Inverse OKLAB Matrix
-
-Converts OKLAB (L, a, b) to LMS cube-root values:
-
-```
-           ┌                                           ┐
-           │  1.0000000000   0.3963377774   0.2158037573 │
-  M2_inv = │  1.0000000000  -0.1055613458  -0.0638541728 │
-           │  1.0000000000  -0.0894841775  -1.2914855480 │
-           └                                           ┘
-```
-
-### 12.5 M1 — Source Gamut Matrices (Linear RGB → LMS)
-
-All M1 matrices are derived as `M_LMS × M_XYZ[gamut]`, where `M_LMS` is the implicit
-XYZ→LMS matrix from Ottosson's OKLAB. M1[sRGB] uses Ottosson's published values; other
-matrices are derived consistently from the same foundation. See `validate.py` for the
-full derivation chain.
-
-**Property:** For all D65 gamuts, `M1 × [1, 1, 1]^T ≈ [1, 1, 1]^T` — D65 white in any
-gamut maps to LMS white, which yields OKLAB `L=1, a=0, b=0`.
-
-**M1[sRGB]:** (Ottosson published)
+### 12.2 M2 — LMS (cube-root) → OKLAB
 
 ```
   ┌                                           ┐
-  │  0.4122214708   0.5363325363   0.0514459929 │
-  │  0.2119034982   0.6806995451   0.1073969566 │
-  │  0.0883024619   0.2817188376   0.6299787005 │
+  │  0.2104542553   0.7936177850  -0.0040720468 │
+  │  1.9779984951  -2.4285922050   0.4505937099 │
+  │  0.0259040371   0.7827717662  -0.8086757660 │
   └                                           ┘
+```
+
+### 12.3 M2_inv — OKLAB → LMS (cube-root)
+
+```
+  ┌                                           ┐
+  │  1.0000000000   0.3963377774   0.2158037573 │
+  │  1.0000000000  -0.1055613458  -0.0638541728 │
+  │  1.0000000000  -0.0894841775  -1.2914855480 │
+  └                                           ┘
+```
+
+### 12.4 M1 — Source Gamut Matrices (Linear RGB → LMS)
+
+Derived as `M_LMS × M_XYZ[gamut]`. Property: `M1 × [1,1,1]^T ≈ [1,1,1]^T`.
+
+**M1[sRGB]:** (Ottosson published)
+```
+  0.4122214708   0.5363325363   0.0514459929
+  0.2119034982   0.6806995451   0.1073969566
+  0.0883024619   0.2817188376   0.6299787005
 ```
 
 **M1[Display P3]:**
-
 ```
-  ┌                                           ┐
-  │  0.4813798544   0.4621183697   0.0565017758 │
-  │  0.2288319449   0.6532168128   0.1179512422 │
-  │  0.0839457557   0.2241652689   0.6918889754 │
-  └                                           ┘
+  0.4813798544   0.4621183697   0.0565017758
+  0.2288319449   0.6532168128   0.1179512422
+  0.0839457557   0.2241652689   0.6918889754
 ```
 
 **M1[Adobe RGB]:**
-
 ```
-  ┌                                           ┐
-  │  0.5764322615   0.3699132211   0.0536545174 │
-  │  0.2963164739   0.5916761266   0.1120073994 │
-  │  0.1234782548   0.2194986958   0.6570230494 │
-  └                                           ┘
+  0.5764322615   0.3699132211   0.0536545174
+  0.2963164739   0.5916761266   0.1120073994
+  0.1234782548   0.2194986958   0.6570230494
 ```
 
 **M1[BT.2020]:**
-
 ```
-  ┌                                           ┐
-  │  0.6167557872   0.3601983994   0.0230458134 │
-  │  0.2651330640   0.6358393641   0.0990275718 │
-  │  0.1001026342   0.2039065194   0.6959908464 │
-  └                                           ┘
+  0.6167557872   0.3601983994   0.0230458134
+  0.2651330640   0.6358393641   0.0990275718
+  0.1001026342   0.2039065194   0.6959908464
 ```
 
-**M1[ProPhoto RGB]:** (includes Bradford chromatic adaptation from D50 to D65)
-
+**M1[ProPhoto RGB]:** (includes Bradford D50→D65 adaptation)
 ```
-  ┌                                           ┐
-  │  0.7154484635   0.3527915480  -0.0682400115 │
-  │  0.2744116551   0.6677976408   0.0577907040 │
-  │  0.1097844385   0.1861982875   0.7040172740 │
-  └                                           ┘
+  0.7154484635   0.3527915480  -0.0682400115
+  0.2744116551   0.6677976408   0.0577907040
+  0.1097844385   0.1861982875   0.7040172740
 ```
 
-### 12.6 M1_inv[sRGB] — Decoder Matrix (LMS → sRGB linear)
+### 12.5 M1_inv[sRGB] — Decoder Matrix (LMS → sRGB linear)
 
-This is the **only** M1 inverse matrix the decoder needs:
-
-```
-  ┌                                            ┐
-  │  4.0767416621  -3.3077115913   0.2309699292 │
-  │ -1.2684380046   2.6097574011  -0.3413193965 │
-  │ -0.0041960863  -0.7034186147   1.7076147010 │
-  └                                            ┘
-```
-
-### 12.7 Helper Functions
-
-**Cube root (handles negative values, see §2.4):**
+This is the **only** M1 inverse the decoder needs:
 
 ```
-cbrt(x) = sign(x) × abs(x)^(1/3)
+  4.0767416621  -3.3077115913   0.2309699292
+ -1.2684380046   2.6097574011  -0.3413193965
+ -0.0041960863  -0.7034186147   1.7076147010
 ```
 
-**sRGB gamma (linear → gamma):**
+### 12.6 Helper Functions
+
+**Cube root — IEEE 754 bit-seed + 3 Halley iterations** (recommended for performance):
+
+```
+cbrt(x):
+    if x == 0: return 0
+    sign = (x < 0); if sign: x = -x
+    bits = double_to_uint64(x)
+    signed_bits = reinterpret_as_int64(bits)
+    seed_signed = (signed_bits - (1023 << 52)) / 3 + (1023 << 52)  // signed int64 division
+    y = uint64_to_double(reinterpret_as_uint64(seed_signed))
+    repeat 3 times:                        // Halley iteration (cubic convergence)
+        t1 = y * y;   y3 = t1 * y         // explicit temporaries prevent FMA
+        t2 = 2.0 * x; num = y3 + t2
+        t3 = 2.0 * y3; den = t3 + x
+        t4 = y * num;  y = t4 / den
+    return sign ? -y : y
+```
+
+Max error ≤ 2 ULP. The seed division MUST use **signed int64** arithmetic — unsigned
+wraps for inputs < 1.0.
+
+**Soft gamut clamp** (Oklch bisection, 16 iterations):
+
+```
+softGamutClamp(L, a, b):
+    rgb = oklabToLinearRgb(L, a, b)
+    if inGamut(rgb): return (L, a, b)
+    C = sqrt(a*a + b*b)
+    if C < 1e-10: return (L, 0.0, 0.0)
+    h_cos = a / C; h_sin = b / C
+    lo = 0.0; hi = C
+    for i in 0..15:                          // fixed 16 iterations, no early exit
+        mid = (lo + hi) / 2.0
+        rgb = oklabToLinearRgb(L, mid * h_cos, mid * h_sin)
+        if inGamut(rgb): lo = mid
+        else: hi = mid
+    return (L, lo * h_cos, lo * h_sin)
+```
+
+Precondition: L must be in [0, 1] (caller clamps before calling). Preserves lightness
+and hue; only reduces chroma. Precision: C / 2^16 < 1.5e-5.
+
+```
+oklabToLinearRgb(L, a, b):
+    lms_cbrt = M2_inv × [L, a, b]
+    lms = [lms_cbrt[0]³, lms_cbrt[1]³, lms_cbrt[2]³]
+    return M1_inv_sRGB × lms
+
+inGamut(rgb):
+    return rgb[0] >= 0.0 and rgb[0] <= 1.0
+       and rgb[1] >= 0.0 and rgb[1] <= 1.0
+       and rgb[2] >= 0.0 and rgb[2] <= 1.0
+```
+
+**sRGB gamma LUT** (decode, 4096-entry):
+
+```
+buildGammaLut():
+    lut = array[4096] of uint8
+    for i in 0..4095:
+        x = i / 4095.0
+        srgb = x ≤ 0.0031308 ? 12.92*x : 1.055*x^(1/2.4) - 0.055
+        lut[i] = round(clamp(srgb, 0, 1) * 255)
+    return lut
+
+linearToSrgb8(x, lut):
+    return lut[clamp(round(x * 4095), 0, 4095)]
+```
+
+**EOTF LUT** (encode, 256-entry):
+
+```
+precompute_eotf_lut(gamut):
+    lut = array[256] of float64
+    for i in 0..255: lut[i] = eotf[gamut](i / 255.0)
+    return lut
+```
+
+The EOTF LUT applies to RGB channels only. Alpha is linearly normalized: `alpha = rgba[i*4+3] / 255.0`.
+
+**Cosine precomputation** (encode):
+
+```
+precompute_cos_table(dim, max_freq):
+    table = array[max_freq][dim] of float64
+    for freq in 0..max_freq-1:
+        for pos in 0..dim-1:
+            table[freq][pos] = cos(π / dim * freq * (pos + 0.5))
+    return table
+```
+
+**sRGB transfer functions:**
 
 ```
 srgbGamma(x) = x ≤ 0.0031308 ? 12.92 × x : 1.055 × x^(1/2.4) − 0.055
-```
-
-**sRGB EOTF (gamma → linear):**
-
-```
-srgbEOTF(x) = x ≤ 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055)^2.4
-```
-
-**µ-law quantize:**
-
-```
-muLawQuantize(value, mu, bits):
-    compressed = sign(value) × log(1 + mu × abs(value)) / log(1 + mu)
-    index = round((compressed + 1) / 2 × (2^bits − 1))
-    return clamp(index, 0, 2^bits − 1)
-```
-
-**µ-law dequantize:**
-
-```
-muLawDequantize(index, mu, bits):
-    compressed = index / (2^bits − 1) × 2 − 1
-    return sign(compressed) × ((1 + mu)^abs(compressed) − 1) / mu
+srgbEOTF(x)  = x ≤ 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055)^2.4
 ```
 
 **DCT encode:**
 
 ```
-dctEncode(channel, w, h, nx, ny):
+dctEncode(channel, w, h, nx, ny, cos_x, cos_y):
     dc = 0; ac = []; scale = 0
-    for cy in 0 .. ny−1:
-        for cx in 0 .. while cx×ny < nx×(ny−cy):
+    for cy in 0..ny-1:
+        for cx in 0.. while cx*ny < nx*(ny-cy):
             f = 0
-            for y in 0 .. h−1:
-                fy = cos(π / h × cy × (y + 0.5))
-                for x in 0 .. w−1:
-                    f += channel[x + y×w] × cos(π / w × cx × (x + 0.5)) × fy
-            f /= w × h
-            if cx > 0 or cy > 0:
-                ac.append(f)
-                scale = max(scale, abs(f))
-            else:
-                dc = f
+            for y in 0..h-1:
+                for x in 0..w-1:
+                    f += channel[x + y*w] * cos_x[cx][x] * cos_y[cy][y]
+            f /= w * h
+            if cx > 0 or cy > 0: ac.append(f); scale = max(scale, abs(f))
+            else: dc = f
     return (dc, ac, scale)
 ```
 
@@ -1219,21 +1011,15 @@ dctEncode(channel, w, h, nx, ny):
 
 ```
 writeBits(hash, bitpos, count, value):
-    # Write 'count' bits of 'value' starting at bit position 'bitpos'
-    # in little-endian byte order within the hash byte array.
-    for i in 0 .. count−1:
-        byte_idx = (bitpos + i) / 8
-        bit_idx  = (bitpos + i) % 8
-        if (value >> i) & 1:
-            hash[byte_idx] |= (1 << bit_idx)
+    for i in 0..count-1:
+        byte_idx = (bitpos + i) / 8; bit_idx = (bitpos + i) % 8
+        if (value >> i) & 1: hash[byte_idx] |= (1 << bit_idx)
 
 readBits(hash, bitpos, count):
     value = 0
-    for i in 0 .. count−1:
-        byte_idx = (bitpos + i) / 8
-        bit_idx  = (bitpos + i) % 8
-        if hash[byte_idx] & (1 << bit_idx):
-            value |= (1 << i)
+    for i in 0..count-1:
+        byte_idx = (bitpos + i) / 8; bit_idx = (bitpos + i) % 8
+        if hash[byte_idx] & (1 << bit_idx): value |= (1 << i)
     return value
 ```
 
@@ -1241,146 +1027,38 @@ readBits(hash, bitpos, count):
 
 ## 13. Trade-offs & Limitations
 
-ChromaHash makes deliberate trade-offs. These should be understood before adoption.
-
-### 13.1 Larger Size
-
-ChromaHash is always 32 bytes. Prior compact formats range from 5–25 bytes.
-
-- **Worst case:** 32 vs 25 = 28% larger.
-- **Typical case:** 32 vs ~17 = 88% larger.
-- **At scale:** At 1 billion photos, ChromaHash uses 32 GB vs ~17 GB. The difference
-  (15 GB) is meaningful but not prohibitive at this scale.
-
-**Justification:** The fixed size enables memory alignment, cache-friendly access, and
-zero-overhead storage. The 7–15 extra bytes buy substantially better perceptual quality,
-layout precision, and wide-gamut support.
-
-### 13.2 Higher Computational Cost
-
-OKLAB conversion costs ~90 FLOPs/pixel vs ~5 FLOPs/pixel for simple linear color
-transforms — an 18× per-pixel increase.
-
-| | Simple linear color space | ChromaHash (OKLAB) |
-|---|---|---|
-| Native (estimated) | ~20µs | ~36µs |
-| JavaScript (estimated) | ~100µs | ~182µs |
-
-Both are well under 1ms. The DCT evaluation (~265K FLOPs for 32×32) dominates the total
-cost regardless of color space choice. The perceptual quality gain outweighs the cost.
-
-**Optimization:** The sRGB gamma curve (most expensive single step at ~18 FLOPs/pixel) can
-be replaced with a 256-entry LUT for decode, reducing per-pixel cost to ~54 FLOPs.
-
-### 13.3 Wasted Bits for Simple Images
-
-A solid-color image needs only ~6 bytes of information. ChromaHash always uses 32,
-wasting 26 bytes on zero-valued AC coefficients. For a photo management service, this is
-irrelevant — photographs are never solid colors.
-
-### 13.4 Aspect Ratio Range Limitation
-
-The log₂ encoding covers ratios from 1:4 to 4:1. Ratios beyond this range clamp to the
-extremes. In practice, ratios beyond 4:1 are rare in photography (panoramas are typically
-3:1 or less).
-
-### 13.5 Wide Gamut Saturation Clamping at Decode
-
-During decode to sRGB, pixels with out-of-sRGB-gamut OKLAB coordinates are clamped. At
-32×32 resolution with DCT blurring, this is almost always imperceptible — the DC of real
-photographs nearly always falls within sRGB, and AC variations are small.
-
-### 13.6 Encoder Complexity
-
-The encoder carries M1 matrices for each supported source gamut (5 matrices). These are
-precomputed constants — no runtime computation — but the encoder binary is slightly larger.
-The decoder is unaffected: it needs only M1_inv[sRGB] and M2_inv.
-
-### 13.7 No Progressive Decoding
-
-The fixed 32 bytes must be fully received before decoding. At 32 bytes, this is never a
-practical bottleneck.
-
-### 13.8 µ-law Companding Overhead
-
-The µ-law encode/decode adds `pow()` calls per AC coefficient (up to 45 in the no-alpha
-case). This can be mitigated with small lookup tables (32 entries for 5-bit, 16 for 4-bit)
-since the input domain is discrete.
+| Trade-off | Details |
+|-----------|---------|
+| **Larger size** | Always 32 bytes vs 5–25 for variable-length formats. At 1B photos: 32 GB vs ~17 GB. Fixed size enables memory alignment and cache-friendly access. |
+| **Encode cost** | Full-resolution encoding: ~400ms for 12MP in Rust (single-threaded) with all portable optimizations. |
+| **Decode cost** | ~36µs native / ~182µs JS. OKLAB is 18× costlier per pixel than linear color, but both are <1ms. |
+| **Solid images** | 26 bytes of zero AC coefficients wasted. Irrelevant for photographs. |
+| **Extreme ratios** | Ratios beyond 16:1 clamp to 16:1. Rare in photography. |
+| **Gamut clamp** | Out-of-sRGB OKLAB values are soft-clamped via Oklch bisection (hue-preserving). Almost always imperceptible at placeholder resolution. |
+| **No progressive decode** | All 32 bytes must be received first. Never a practical bottleneck. |
 
 ---
 
 ## Appendix A: ThumbHash Comparison & Acknowledgment
 
-### Acknowledgment
-
 ChromaHash is directly inspired by [ThumbHash](https://evanw.github.io/thumbhash/) by
-Evan Wallace. ThumbHash pioneered the approach of using DCT-based frequency decomposition
-with triangular coefficient selection to create compact, self-describing image placeholders.
-ChromaHash builds on ThumbHash's core ideas while targeting the specific requirements of
-professional photo management.
-
-The key innovations ChromaHash inherits from ThumbHash include:
-
-- **DCT with triangular coefficient selection** — the `cx × ny < nx × (ny − cy)` condition
-  that efficiently selects low-frequency coefficients
-- **Self-describing format** — all information needed for decoding is in the hash itself
-- **Alpha compositing over average color** — transparent pixels are composited before
-  encoding to separate opacity from color
-- **Average color extraction from header** — DC values in the header enable color queries
-  without full decode
-
-### Detailed Comparison
+Evan Wallace. Key inherited ideas: DCT with triangular coefficient selection, alpha
+compositing over average color, and average color extraction from header.
 
 | Feature | ThumbHash | ChromaHash |
 |---------|-----------|------------|
 | **Size** | 5–25 bytes (variable) | 32 bytes (fixed) |
-| **Color space** | LPQA (linear sRGB mix) | OKLAB (perceptually uniform) |
-| **Perceptual uniformity** | No — gamma-domain, non-uniform axes | Yes — equal steps = equal perceived differences |
-| **L DC precision** | 6 bits (64 levels) | 7 bits (128 levels) |
-| **Chroma DC precision** | 6 bits each | 7 bits each |
-| **L AC grid (no alpha)** | 3×3 to 7×7 (adaptive to aspect ratio) | 7×7 fixed |
-| **L AC grid (alpha)** | 3×3 to 5×5 (adaptive) | 6×6 fixed |
-| **Chroma AC grid** | 3×3 (5 coefficients) | 4×4 (9 coefficients) |
-| **L AC quantization** | 4 bits, linear | 5 bits, µ-law (µ=5) |
-| **Chroma AC quantization** | 4 bits, linear + 1.25× saturation boost | 4 bits, µ-law (µ=5) |
-| **Inverse DCT normalization** | ×2 for all AC terms | Correct 2D: ×2 (axis-aligned) / ×4 (diagonal) |
-| **Aspect ratio encoding** | 3-bit grid dimension (~13 values) | 8-bit log₂ (256 levels) |
-| **Aspect ratio error (3:2)** | 6.67% (27px jank at 400px) | 0.23% (1px jank at 400px) |
-| **Aspect ratio error (worst)** | 7.14% | 0.54% |
-| **Alpha support** | Yes (variable size) | Yes (fixed 32 bytes) |
-| **Source gamut support** | sRGB only | sRGB, Display P3, Adobe RGB, BT.2020, ProPhoto RGB |
-| **Decode target** | sRGB (implicit) | sRGB (explicit, mandatory) |
+| **Color space** | LPQA (gamma sRGB) | OKLAB (perceptually uniform) |
+| **L DC / Chroma DC** | 6 / 6 bits | 7 / 7 bits |
+| **L AC grid** | 3×3 to 7×7 (adaptive) | Adaptive via `deriveGrid` (up to 14×4) |
+| **Chroma AC grid** | 3×3 (5 coeff) | 4×4 (9 coeff) |
+| **L AC quantization** | 4-bit linear | 5-bit µ-law |
+| **Aspect ratio** | 3-bit (~7% error) | 8-bit log₂ (~1.1% error) |
+| **Aspect range** | up to ~7:1 | up to 16:1 |
+| **Source gamuts** | sRGB only | sRGB, P3, Adobe RGB, BT.2020, ProPhoto |
+| **Gamut clamping** | Hard per-channel | Soft Oklch bisection (hue-preserving) |
+| **Input dimensions** | Any (library resizes) | Any (full-resolution DCT) |
 | **Memory alignment** | No (variable length) | 32-byte aligned |
-| **Decode speed (est.)** | ~20µs native / ~100µs JS | ~36µs native / ~182µs JS |
-| **Average color extraction** | Yes (header-only) | Yes (header-only) |
-
-### Where ThumbHash Remains Superior
-
-- **Size:** ThumbHash is 28–88% smaller for typical photographs. When byte count is the
-  primary constraint (e.g., embedding in URL query parameters, HTTP headers, or QR codes),
-  ThumbHash's variable-length design is more efficient.
-
-- **Decode speed:** ThumbHash's LPQA transform is ~18× cheaper per pixel than OKLAB. While
-  both formats decode well under 1ms, ThumbHash is faster in absolute terms.
-
-- **Simplicity:** ThumbHash requires no color space conversion matrices, no transfer
-  function evaluation, and no µ-law companding. A ThumbHash decoder is roughly half the
-  code of a ChromaHash decoder.
-
-- **Extreme aspect ratios:** ThumbHash supports ratios up to 7:1; ChromaHash clamps at 4:1.
-
-### Where ChromaHash Improves
-
-- **Perceptual quality:** OKLAB + µ-law companding produces visibly better placeholders,
-  especially for skin tones, dark scenes, and smooth gradients.
-
-- **Layout precision:** <0.55% aspect ratio error eliminates visible reflow jank.
-
-- **Wide-gamut correctness:** P3/Adobe RGB/BT.2020 source colors are preserved through
-  OKLAB's gamut-independent representation.
-
-- **Predictable storage:** Fixed 32 bytes enables array-based storage, SIMD operations,
-  and cache-line-aligned access patterns.
 
 ---
 

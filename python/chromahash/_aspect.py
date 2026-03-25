@@ -31,6 +31,7 @@ def decode_output_size(byte: int) -> tuple[int, int]:
 def derive_grid(aspect_byte: int, base_n: int) -> tuple[int, int]:
     """Derive adaptive DCT grid (nx, ny) from aspect byte and base_n. Per spec §3.2."""
     from ._math_utils import portable_pow, round_half_away_from_zero
+
     ratio = portable_pow(2.0, aspect_byte / 255.0 * 8.0 - 4.0)
     base = float(base_n)
     if ratio >= 1.0:

@@ -131,7 +131,7 @@ func encodeHash(w: Int, h: Int, rgba: [UInt8], gamut: Gamut) -> [UInt8] {
     | (bSclQ << 33)
     | (aspect << 38)
     | (hasAlpha ? (1 << 46) : 0)
-    | (1 << 47) // version bit = 1 (v0.2+)
+    | (1 << 47)  // version bit = 1 (v0.2+)
 
   var hashBytes = [UInt8](repeating: 0, count: 32)
   for i in 0..<6 {

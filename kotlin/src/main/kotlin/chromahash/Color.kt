@@ -90,9 +90,10 @@ internal fun softGamutClamp(
 }
 
 /** 4096-entry sRGB gamma LUT: lut[i] = sRGB8(i/4095). Per spec §6.2. */
-internal val GAMMA_LUT: IntArray = IntArray(4096) { i ->
-    roundHalfAwayFromZero(srgbGamma(i.toDouble() / 4095.0) * 255.0).toInt()
-}
+internal val GAMMA_LUT: IntArray =
+    IntArray(4096) { i ->
+        roundHalfAwayFromZero(srgbGamma(i.toDouble() / 4095.0) * 255.0).toInt()
+    }
 
 /** Map a linear [0,1] value to sRGB u8 via the gamma LUT. Per spec §6.2. */
 internal fun linearToSrgb8(x: Double): Int {

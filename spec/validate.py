@@ -312,10 +312,10 @@ def validate_aspect_ratio():
 
     def encode_aspect(w, h):
         import math as m
-        return max(0, min(255, round((m.log2(w / h) + 2) / 4 * 255)))
+        return max(0, min(255, round((m.log2(w / h) + 4) / 8 * 255)))
 
     def decode_aspect(byte_val):
-        return 2 ** (byte_val / 255 * 4 - 2)
+        return 2 ** (byte_val / 255 * 8 - 4)
 
     test_cases = [
         ("1:1", 1.0, 1.0),
@@ -324,6 +324,8 @@ def validate_aspect_ratio():
         ("16:9", 16.0, 9.0),
         ("4:1", 4.0, 1.0),
         ("1:4", 1.0, 4.0),
+        ("16:1", 16.0, 1.0),
+        ("1:16", 1.0, 16.0),
     ]
 
     for label, w, h in test_cases:
@@ -331,7 +333,7 @@ def validate_aspect_ratio():
         decoded = decode_aspect(byte_val)
         actual = w / h
         err = abs(decoded - actual) / actual * 100
-        check(err < 0.55, f"Aspect {label}: error={err:.3f}% < 0.55%")
+        check(err < 1.1, f"Aspect {label}: error={err:.3f}% < 1.1%")
 
 
 def validate_derive_grid():
@@ -395,18 +397,18 @@ def validate_derive_grid():
     # Spot-check known grid values from REVISION.md tables
     spot_checks = [
         # (aspect_byte, base_n, expected_nx, expected_ny)
-        (0, 7, 5, 10),     # L extreme portrait
+        (0, 7, 4, 14),     # L extreme portrait
         (128, 7, 7, 7),    # L square (approx 1:1)
-        (255, 7, 10, 5),   # L extreme landscape
-        (0, 4, 3, 6),      # chroma extreme portrait
+        (255, 7, 14, 4),   # L extreme landscape
+        (0, 4, 3, 8),      # chroma extreme portrait
         (128, 4, 4, 4),    # chroma square
-        (255, 4, 6, 3),    # chroma extreme landscape
-        (0, 6, 4, 8),      # alpha-L extreme portrait
+        (255, 4, 8, 3),    # chroma extreme landscape
+        (0, 6, 3, 12),     # alpha-L extreme portrait
         (128, 6, 6, 6),    # alpha-L square
-        (255, 6, 8, 4),    # alpha-L extreme landscape
-        (0, 3, 3, 4),      # alpha extreme portrait
+        (255, 6, 12, 3),   # alpha-L extreme landscape
+        (0, 3, 3, 6),      # alpha extreme portrait
         (128, 3, 3, 3),    # alpha square
-        (255, 3, 4, 3),    # alpha extreme landscape
+        (255, 3, 6, 3),    # alpha extreme landscape
     ]
     for ab, bn, exp_nx, exp_ny in spot_checks:
         nx, ny = derive_grid(ab, bn)

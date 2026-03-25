@@ -565,10 +565,7 @@ export const GAMMA_LUT: Uint8Array = (() => {
 
 /** Map a linear [0,1] value to sRGB u8 via the gamma LUT. Per spec §6.2. */
 export function linearToSrgb8(x: number): number {
-  const idx = Math.max(
-    0,
-    Math.min(4095, roundHalfAwayFromZero(x * 4095.0)),
-  );
+  const idx = Math.max(0, Math.min(4095, roundHalfAwayFromZero(x * 4095.0)));
   return u8(GAMMA_LUT, idx);
 }
 
@@ -670,8 +667,11 @@ export function decodeOutputSize(byte: number): [number, number] {
 }
 
 /** Derive adaptive DCT grid (nx, ny) from aspect byte and base_n. Per spec §3.2. */
-export function deriveGrid(aspectByte: number, baseN: number): [number, number] {
-  const ratio = portablePow(2.0, aspectByte / 255.0 * 8.0 - 4.0);
+export function deriveGrid(
+  aspectByte: number,
+  baseN: number,
+): [number, number] {
+  const ratio = portablePow(2.0, (aspectByte / 255.0) * 8.0 - 4.0);
   const base = baseN;
   let nx: number;
   let ny: number;

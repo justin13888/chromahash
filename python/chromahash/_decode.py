@@ -2,7 +2,7 @@
 
 from ._aspect import decode_output_size, derive_grid
 from ._bitpack import read_bits
-from ._color import linear_to_srgb8, oklab_to_linear_srgb, oklab_to_srgb, soft_gamut_clamp
+from ._color import linear_to_srgb8, oklab_to_linear_srgb, soft_gamut_clamp
 from ._constants import (
     MAX_A_ALPHA_SCALE,
     MAX_A_SCALE,
