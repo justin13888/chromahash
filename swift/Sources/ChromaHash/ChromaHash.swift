@@ -112,7 +112,8 @@ func encodeHash(w: Int, h: Int, rgba: [UInt8], gamut: Gamut) -> [UInt8] {
   let lAC = (0..<lCap).map { j in j < lResult.ac.count ? lResult.ac[j] : 0.0 }
   let aAC = (0..<9).map { j in j < aResult.ac.count ? aResult.ac[j] : 0.0 }
   let bAC = (0..<9).map { j in j < bResult.ac.count ? bResult.ac[j] : 0.0 }
-  let alphaAC: [Double] = hasAlpha
+  let alphaAC: [Double] =
+    hasAlpha
     ? (0..<5).map { j in j < alphaResult.ac.count ? alphaResult.ac[j] : 0.0 }
     : []
 

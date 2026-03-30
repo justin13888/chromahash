@@ -662,7 +662,10 @@ function encode(W, H, rgba, gamut) -> byte[32]:
     if hasAlpha:
         for i in 0..4: writeBits(hash, bitpos, 4, qAC(A_ac[i],A_scale,5,4)); bitpos += 4
 
-    assert bitpos == 256
+    if not hasAlpha:
+        assert bitpos == 255    // bit 255 is padding (§2.6), implicit zero
+    else:
+        assert bitpos == 256
     return hash
 ```
 
@@ -686,6 +689,8 @@ function decode(hash) -> (w, h, rgba):
     b_scl_q = (header >> 33) & 0x1F
     aspect  = (header >> 38) & 0xFF
     hasAlpha = (header >> 46) & 1
+    version  = (header >> 47) & 1
+    // Decoders SHOULD check version to select decode parameters (§2.5)
 
     // 2. Decode DC and scale factors
     L_dc    = L_dc_q / 127.0
@@ -820,6 +825,9 @@ MAX_B_SCALE        = 0.5     # Max chroma-b AC amplitude
 MAX_A_ALPHA_SCALE  = 0.5     # Max alpha AC amplitude
 µ                  = 5       # µ-law companding parameter
 ```
+
+> **Note:** Scale constants are preliminary and may be tightened after empirical
+> tuning against a reference image corpus. See `constants.py` for details.
 
 ### 12.2 M2 — LMS (cube-root) → OKLAB
 

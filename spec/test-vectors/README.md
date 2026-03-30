@@ -14,13 +14,10 @@ Golden test vectors generated from the Rust reference implementation.
 - `unit-cbrt.json` — Halley cube root accuracy
 - `unit-softgamutclamp.json` — Oklch soft gamut clamp
 
-### Integration tests (pending v0.3 regeneration)
+### Integration tests (v0.3)
 
 - `integration-encode.json` — Full encode: input RGBA → 32-byte hash
 - `integration-decode.json` — Full decode: 32-byte hash → output RGBA
-
-> **Note:** Integration vectors must be regenerated from the Rust reference
-> implementation after v0.3 is fully implemented across all languages.
 
 ## Schema
 
