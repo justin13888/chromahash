@@ -41,7 +41,7 @@ layout precision, and wide-gamut support matter more than minimizing byte count.
 | OKLAB color space | Perceptually uniform — quantization levels are maximally efficient. |
 | 8-bit log₂ aspect ratio | ~1.09% max error for all photographic ratios. Covers 1:16 to 16:1. |
 | Adaptive grid geometry | DCT grid dimensions adapt to aspect ratio, eliminating coefficient waste on non-square images. |
-| Higher chroma resolution | 4×4 triangular grid (9 AC) per chroma channel for complex color transitions. |
+| Higher chroma resolution | Base 4×4 triangular grid (9 AC) per chroma channel with adaptive reshaping for complex color transitions. |
 | 5-bit luminance AC | 32 levels for the most perceptually important channel. |
 | µ-law companding (µ=5) | Non-linear quantization matching natural image DCT coefficient distributions. |
 | Multi-gamut encode | Accepts sRGB, Display P3, Adobe RGB, BT.2020, or ProPhoto RGB sources. |
@@ -107,7 +107,8 @@ Bit 47 in the header serves as a version discriminator:
 | v0.1    | 0      | Original spec — fixed grids, MAX_CHROMA=0.5, hard gamut clamp |
 | v0.2+   | 1      | Adaptive grids, MAX_CHROMA=0.45, soft gamut clamp, full-res encoding |
 
-Encoders MUST set bit 47 to 1. Decoders SHOULD check bit 47 to select the decode path.
+Encoders MUST set bit 47 to 1. Decoders MAY check bit 47. Since v0.1 was never publicly
+released, all valid hashes have bit 47 = 1.
 
 ### 2.6 Padding Bits
 
@@ -268,6 +269,14 @@ photographs almost never clips when converted to sRGB.
 | Adobe RGB | `x^2.2` |
 | ProPhoto RGB | `x^1.8` |
 | BT.2020 PQ (ST 2084) | Inverse PQ EOTF (tone-map to SDR first) |
+
+> **Note:** BT.2020 in this spec means BT.2020 with PQ transfer (ST 2084). SDR BT.2020
+> content (e.g. BT.709-like OETF with BT.2020 primaries) SHOULD be encoded using the
+> sRGB transfer function with the BT.2020 M1 matrix.
+
+> **Note:** The ProPhoto RGB entry uses the simplified `x^1.8` power function. The full
+> ROMM RGB standard specifies a piecewise function with a linear toe below ~0.001808; for
+> typical photographic values this difference is negligible.
 
 The decoder always applies the **sRGB inverse EOTF** (linear → gamma):
 
@@ -454,6 +463,12 @@ Entries marked **19** have raw AC < cap (20); the 20th bitstream slot is zero-pa
 | b | 7 | `round(64 + 63 × clamp(b_dc/MAX_CHROMA_B, -1, 1))` | `(raw - 64) / 63.0 × MAX_CHROMA_B` |
 | Alpha | 5 | `round(31 × clamp(A_dc, 0, 1))` | `raw / 31.0` |
 
+> **Note:** The a/b DC encode formula `round(64 + 63×x)` produces indices in [1, 127],
+> never 0. Decoding raw=0 gives `(0 − 64) / 63 × MAX_CHROMA = −1.016 × MAX_CHROMA`, which
+> is outside the valid ±MAX_CHROMA range. Conforming encoders MUST NOT produce raw=0 for
+> a/b DC. Decoders encountering raw=0 will reconstruct a slightly out-of-range chroma
+> value; this is handled by the downstream soft gamut clamp.
+
 ### 7.2 Scale Factor Quantization
 
 | Channel | Bits | Encode | Decode |
@@ -475,6 +490,12 @@ near zero (where most DCT coefficients cluster) and coarser steps in the tails.
 **Dequantize:** `compressed = index / (2^bits − 1) × 2 − 1`
 
 **Expand:** `v = sign(compressed) × ((1 + µ)^|compressed| − 1) / µ`
+
+> **Note:** The zero-point has a small positive quantization bias. A zero AC input
+> encodes to the index above the midpoint (5-bit: 16/31, 4-bit: 8/15, 6-bit: 32/63),
+> which dequantizes to a small positive value before expansion: ≈ +0.012 (5-bit),
+> ≈ +0.025 (4-bit), ≈ +0.006 (6-bit) in normalized units. After scale multiplication,
+> the absolute bias is proportionally small and has no practical effect on decoded images.
 
 ### 7.4 AC Bit Depths
 
@@ -608,6 +629,8 @@ function encode(W, H, rgba, gamut) -> byte[32]:
 
     // 6. Precompute cosine tables
     max_cx = max(L_nx, C_nx); max_cy = max(L_ny, C_ny)
+    // Alpha grid dims (base_n=3) are always <= L grid dims (base_n=6 in alpha mode),
+    // so L dims subsume alpha; no separate alpha cosine table needed.
     cos_x = precompute_cos_table(W, max_cx)
     cos_y = precompute_cos_table(H, max_cy)
 
@@ -619,10 +642,11 @@ function encode(W, H, rgba, gamut) -> byte[32]:
         (A_dc, A_ac, A_scale) = dctEncode(alphas, W, H, A_nx, A_ny, cos_x, cos_y)
 
     // 8. Cap/zero-pad AC to fixed bit budget
+    // Use min() guards: only alpha-mode L grids 4×8/8×4 produce fewer raw AC than cap.
     L_cap = 20 if hasAlpha else 27
-    L_ac = L_ac[0..L_cap-1]; while len(L_ac) < L_cap: L_ac.append(0)
-    a_ac = a_ac[0..8]; b_ac = b_ac[0..8]
-    if hasAlpha: A_ac = A_ac[0..4]
+    L_ac = L_ac[0 .. min(L_cap, len(L_ac)) - 1]; while len(L_ac) < L_cap: L_ac.append(0)
+    a_ac = a_ac[0 .. min(9, len(a_ac)) - 1]; b_ac = b_ac[0 .. min(9, len(b_ac)) - 1]
+    if hasAlpha: A_ac = A_ac[0 .. min(5, len(A_ac)) - 1]
 
     // 9. Quantize header
     L_dc_q  = round(127 * clamp(L_dc, 0, 1))
@@ -690,7 +714,7 @@ function decode(hash) -> (w, h, rgba):
     aspect  = (header >> 38) & 0xFF
     hasAlpha = (header >> 46) & 1
     version  = (header >> 47) & 1
-    // Decoders SHOULD check version to select decode parameters (§2.5)
+    // Decoders MAY check version; since v0.1 was never released, valid hashes have version=1 (§2.5)
 
     // 2. Decode DC and scale factors
     L_dc    = L_dc_q / 127.0
@@ -1002,6 +1026,11 @@ srgbEOTF(x)  = x ≤ 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055)^2.4
 
 **DCT encode:**
 
+If the maximum AC magnitude after the main loop is below 1e-10, implementations MUST zero
+all AC values and set scale to 0. This prevents amplification of floating-point noise for
+near-constant channels (e.g., solid colors): dividing by a near-zero scale amplifies
+platform-specific ULP differences into divergent quantized codes across implementations.
+
 ```
 dctEncode(channel, w, h, nx, ny, cos_x, cos_y):
     dc = 0; ac = []; scale = 0
@@ -1014,6 +1043,9 @@ dctEncode(channel, w, h, nx, ny, cos_x, cos_y):
             f /= w * h
             if cx > 0 or cy > 0: ac.append(f); scale = max(scale, abs(f))
             else: dc = f
+    if scale < 1e-10:
+        for i in 0..len(ac)-1: ac[i] = 0
+        scale = 0
     return (dc, ac, scale)
 ```
 
