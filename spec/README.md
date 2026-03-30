@@ -545,9 +545,9 @@ separately.
 
 ### 9.3 Alpha Channel Encoding
 
-When `hasAlpha = 1`: DC (5 bits), scale (4 bits), 5 AC coefficients (3×3 triangular grid,
-4 bits each, µ-law companded). The luminance grid shrinks from base_n=7 to base_n=6,
-with freed bits accommodating the alpha channel (29 bits total).
+When `hasAlpha = 1`: DC (5 bits), scale (4 bits), 5 AC coefficients (adaptive grid with
+base_n=3, capped at 5, 4 bits each, µ-law companded). The luminance grid shrinks from
+base_n=7 to base_n=6, with freed bits accommodating the alpha channel (29 bits total).
 
 ---
 

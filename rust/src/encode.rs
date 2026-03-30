@@ -213,8 +213,12 @@ pub fn encode(w: u32, h: u32, rgba: &[u8], gamut: Gamut) -> [u8; 32] {
         }
     }
 
-    // Padding bit (no-alpha mode): already 0 since hash is initialized to 0
-    debug_assert!(bitpos <= 256);
+    // Verify exact bit budget: no-alpha ends at 255 (bit 255 = padding), alpha at 256
+    if has_alpha {
+        debug_assert_eq!(bitpos, 256);
+    } else {
+        debug_assert_eq!(bitpos, 255);
+    }
 
     hash
 }

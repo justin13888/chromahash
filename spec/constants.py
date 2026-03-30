@@ -14,11 +14,11 @@ from M1[sRGB] and the sRGB XYZ matrix. Run validate.py to verify.
 # Scalar Parameters
 # =========================================================================
 
-# µ-law companding parameter (§6.3)
+# µ-law companding parameter (§7.3)
 MU = 5
 
 # =========================================================================
-# Scale Factor Maximums (§6.1, §6.2)
+# Scale Factor Maximums (§7.2, §12.1)
 # =========================================================================
 # These define quantization range bounds. Values exceeding these are clamped.
 # Preliminary values — may be tightened in a future revision after empirical
