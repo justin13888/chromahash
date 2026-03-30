@@ -3,7 +3,7 @@ use std::f64::consts::PI;
 use crate::math_utils::portable_cos;
 
 /// Compute the triangular scan order for an nx×ny grid, excluding DC.
-/// Per spec §6.6: row-major, condition cx*ny < nx*(ny-cy), skip (0,0).
+/// Per spec §6.2: row-major, condition cx*ny < nx*(ny-cy), skip (0,0).
 pub fn triangular_scan_order(nx: usize, ny: usize) -> Vec<(usize, usize)> {
     let mut order = Vec::new();
     for cy in 0..ny {
@@ -17,7 +17,7 @@ pub fn triangular_scan_order(nx: usize, ny: usize) -> Vec<(usize, usize)> {
     order
 }
 
-/// Forward DCT encode for a channel. Per spec §12.7 dctEncode.
+/// Forward DCT encode for a channel. Per spec §12.6 dctEncode.
 /// Returns (dc, ac_coefficients, scale).
 /// Superseded by dct_encode_separable for production use; retained for test verification.
 #[allow(dead_code)]
@@ -69,7 +69,7 @@ pub fn dct_encode(
 }
 
 /// Precompute cosine table for DCT: table[freq][pos] = cos(π/dim · freq · (pos+0.5)).
-/// Per spec §5.4. Uses portable_cos for cross-platform determinism.
+/// Per spec §12.6. Uses portable_cos for cross-platform determinism.
 pub fn precompute_cos_table(dim: usize, max_freq: usize) -> Vec<Vec<f64>> {
     let mut table = Vec::with_capacity(max_freq);
     for freq in 0..max_freq {
@@ -84,7 +84,7 @@ pub fn precompute_cos_table(dim: usize, max_freq: usize) -> Vec<Vec<f64>> {
     table
 }
 
-/// Forward DCT encode using precomputed cosine tables. Per spec §5.4 (v0.2).
+/// Forward DCT encode using precomputed cosine tables. Per spec §12.6.
 /// Semantically identical to dct_encode but avoids redundant cosine evaluations.
 pub fn dct_encode_separable(
     channel: &[f64],

@@ -1,6 +1,6 @@
-use crate::math_utils::{portable_pow, round_half_away_from_zero};
+use crate::math_utils::{portable_ln, portable_pow, round_half_away_from_zero};
 
-/// Derive adaptive DCT grid (nx, ny) from aspect byte and base_n. Per spec §3.2.
+/// Derive adaptive DCT grid (nx, ny) from aspect byte and base_n. Per spec §6.3.
 /// All round() calls use round_half_away_from_zero. Uses portable_pow for determinism.
 pub fn derive_grid(aspect_byte: u8, base_n: u32) -> (usize, usize) {
     let ratio = portable_pow(2.0, aspect_byte as f64 / 255.0 * 8.0 - 4.0);
@@ -26,17 +26,17 @@ pub fn derive_grid(aspect_byte: u8, base_n: u32) -> (usize, usize) {
 /// Encode aspect ratio as a single byte. Per spec §8.1 (v0.3).
 pub fn encode_aspect(w: u32, h: u32) -> u8 {
     let ratio = w as f64 / h as f64;
-    let raw = (ratio.log2() + 4.0) / 8.0 * 255.0;
+    let raw = (portable_ln(ratio) / portable_ln(2.0) + 4.0) / 8.0 * 255.0;
     let byte = round_half_away_from_zero(raw) as i64;
     byte.clamp(0, 255) as u8
 }
 
 /// Decode aspect ratio from byte. Per spec §8.1 (v0.3).
 pub fn decode_aspect(byte: u8) -> f64 {
-    2.0_f64.powf(byte as f64 / 255.0 * 8.0 - 4.0)
+    portable_pow(2.0, byte as f64 / 255.0 * 8.0 - 4.0)
 }
 
-/// Decode output size from aspect byte. Longer side = 32px. Per spec §8.4.
+/// Decode output size from aspect byte. Longer side = 32px. Per spec §8.2.
 pub fn decode_output_size(byte: u8) -> (u32, u32) {
     let ratio = decode_aspect(byte);
     if ratio > 1.0 {

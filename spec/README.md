@@ -798,6 +798,8 @@ The DC coefficients can be converted to an average RGBA color without full decod
 ```
 function averageColor(hash) -> (r, g, b, a):
     ...extract L_dc, a_dc, b_dc, hasAlpha from header...
+    L_dc = clamp(L_dc, 0, 1)
+    (L_dc, a_dc, b_dc) = softGamutClamp(L_dc, a_dc, b_dc)
     lms_cbrt = M2_inv × [L_dc, a_dc, b_dc]
     lms = [lms_cbrt[0]³, lms_cbrt[1]³, lms_cbrt[2]³]
     rgb_lin = M1_inv_sRGB × lms

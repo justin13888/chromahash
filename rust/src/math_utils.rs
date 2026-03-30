@@ -109,7 +109,7 @@ pub fn portable_pow(base: f64, exponent: f64) -> f64 {
     portable_exp(exponent * portable_ln(base))
 }
 
-/// IEEE 754 bit-seed cube root with 3 Halley iterations. Per spec §5.3.
+/// IEEE 754 bit-seed cube root with 3 Halley iterations. Per spec §12.6.
 /// ~26 FLOPs, max error ≤ 2 ULP across full domain. Deterministic on all platforms.
 /// Signed: cbrt_halley(-x) = -cbrt_halley(x).
 pub fn cbrt_halley(x: f64) -> f64 {

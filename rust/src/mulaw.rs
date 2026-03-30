@@ -1,19 +1,19 @@
 use crate::constants::MU;
-use crate::math_utils::round_half_away_from_zero;
+use crate::math_utils::{portable_ln, portable_pow, round_half_away_from_zero};
 
 /// µ-law compress: value in [-1, 1] → compressed in [-1, 1].
 pub fn mu_compress(value: f64) -> f64 {
     let v = value.clamp(-1.0, 1.0);
-    v.signum() * (1.0 + MU * v.abs()).ln() / (1.0 + MU).ln()
+    v.signum() * portable_ln(1.0 + MU * v.abs()) / portable_ln(1.0 + MU)
 }
 
 /// µ-law expand: compressed in [-1, 1] → value in [-1, 1].
 pub fn mu_expand(compressed: f64) -> f64 {
-    compressed.signum() * ((1.0 + MU).powf(compressed.abs()) - 1.0) / MU
+    compressed.signum() * (portable_pow(1.0 + MU, compressed.abs()) - 1.0) / MU
 }
 
 /// Quantize a value in [-1, 1] using µ-law to an integer index.
-/// Per spec §12.7 muLawQuantize.
+/// Per spec §7.3 muLawQuantize.
 pub fn mu_law_quantize(value: f64, bits: u32) -> u32 {
     let compressed = mu_compress(value);
     let max_val = (1u32 << bits) - 1;
@@ -22,7 +22,7 @@ pub fn mu_law_quantize(value: f64, bits: u32) -> u32 {
 }
 
 /// Dequantize an integer index back to a value in [-1, 1] using µ-law.
-/// Per spec §12.7 muLawDequantize.
+/// Per spec §7.3 muLawDequantize.
 pub fn mu_law_dequantize(index: u32, bits: u32) -> f64 {
     let max_val = (1u32 << bits) - 1;
     let compressed = index as f64 / max_val as f64 * 2.0 - 1.0;

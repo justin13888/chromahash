@@ -7,7 +7,7 @@ use crate::math_utils::{clamp01, round_half_away_from_zero};
 use crate::mulaw::mu_law_dequantize;
 use crate::transfer::srgb_gamma;
 
-/// Build 4096-entry sRGB gamma LUT: lut[i] = sRGB8(i/4095). Per spec §6.2.
+/// Build 4096-entry sRGB gamma LUT: lut[i] = sRGB8(i/4095). Per spec §12.6.
 fn build_gamma_lut() -> [u8; 4096] {
     let mut lut = [0u8; 4096];
     for (i, entry) in lut.iter_mut().enumerate() {
@@ -18,7 +18,7 @@ fn build_gamma_lut() -> [u8; 4096] {
     lut
 }
 
-/// Map linear [0,1] to sRGB u8 via LUT. Per spec §6.2.
+/// Map linear [0,1] to sRGB u8 via LUT. Per spec §12.6.
 fn linear_to_srgb8(x: f64, lut: &[u8; 4096]) -> u8 {
     let idx = (round_half_away_from_zero(x * 4095.0) as i64).clamp(0, 4095) as usize;
     lut[idx]

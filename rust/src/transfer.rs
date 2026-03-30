@@ -1,6 +1,6 @@
 use crate::math_utils::portable_pow;
 
-/// sRGB EOTF (gamma → linear), per spec §5.4.
+/// sRGB EOTF (gamma → linear), per spec §5.3.
 pub fn srgb_eotf(x: f64) -> f64 {
     if x <= 0.04045 {
         x / 12.92
@@ -9,7 +9,7 @@ pub fn srgb_eotf(x: f64) -> f64 {
     }
 }
 
-/// sRGB gamma (linear → gamma), per spec §12.7.
+/// sRGB gamma (linear → gamma), per spec §12.6.
 pub fn srgb_gamma(x: f64) -> f64 {
     if x <= 0.0031308 {
         12.92 * x

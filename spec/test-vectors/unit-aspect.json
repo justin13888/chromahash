@@ -4,7 +4,7 @@
     "input": { "width": 1, "height": 1 },
     "expected": {
       "byte": 128,
-      "decoded_ratio": 1.0109322217097116,
+      "decoded_ratio": 1.0109322217097114,
       "output_width": 32,
       "output_height": 32,
       "derive_grid": {
@@ -68,7 +68,7 @@
     "input": { "width": 4, "height": 1 },
     "expected": {
       "byte": 191,
-      "decoded_ratio": 3.978313209073492,
+      "decoded_ratio": 3.9783132090734914,
       "output_width": 32,
       "output_height": 8,
       "derive_grid": {
@@ -132,7 +132,7 @@
     "input": { "width": 100, "height": 25 },
     "expected": {
       "byte": 191,
-      "decoded_ratio": 3.978313209073492,
+      "decoded_ratio": 3.9783132090734914,
       "output_width": 32,
       "output_height": 8,
       "derive_grid": {

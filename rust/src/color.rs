@@ -35,7 +35,7 @@ pub fn in_gamut(rgb: [f64; 3]) -> bool {
         && rgb[2] <= 1.0
 }
 
-/// Soft gamut clamp via Oklch bisection. Per spec §6.1.
+/// Soft gamut clamp via Oklch bisection. Per spec §12.6.
 /// Preserves L and hue; reduces chroma until all sRGB channels fit [0, 1].
 /// Precondition: L must be in [0, 1].
 pub fn soft_gamut_clamp(l: f64, a: f64, b: f64) -> [f64; 3] {

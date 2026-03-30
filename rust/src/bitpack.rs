@@ -1,5 +1,5 @@
 /// Write `count` bits of `value` starting at `bitpos` in little-endian byte order.
-/// Per spec §12.7 writeBits.
+/// Per spec §12.6 writeBits.
 pub fn write_bits(hash: &mut [u8], bitpos: usize, count: u32, value: u32) {
     for i in 0..count as usize {
         let byte_idx = (bitpos + i) / 8;
@@ -11,7 +11,7 @@ pub fn write_bits(hash: &mut [u8], bitpos: usize, count: u32, value: u32) {
 }
 
 /// Read `count` bits starting at `bitpos` in little-endian byte order.
-/// Per spec §12.7 readBits.
+/// Per spec §12.6 readBits.
 pub fn read_bits(hash: &[u8], bitpos: usize, count: u32) -> u32 {
     let mut value = 0u32;
     for i in 0..count as usize {
