@@ -16,7 +16,11 @@ def linear_rgb_to_oklab(rgb: list[float], gamut: Gamut) -> list[float]:
 def oklab_to_linear_srgb(lab: list[float]) -> list[float]:
     """Convert OKLAB to linear sRGB."""
     lms_cbrt = matvec3(M2_INV, lab)
-    lms = [lms_cbrt[0] ** 3, lms_cbrt[1] ** 3, lms_cbrt[2] ** 3]
+    lms = [
+        lms_cbrt[0] * lms_cbrt[0] * lms_cbrt[0],
+        lms_cbrt[1] * lms_cbrt[1] * lms_cbrt[1],
+        lms_cbrt[2] * lms_cbrt[2] * lms_cbrt[2],
+    ]
     return matvec3(M1_INV_SRGB, lms)
 
 

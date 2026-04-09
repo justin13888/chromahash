@@ -3,18 +3,18 @@
 import math
 
 from ._constants import MU
-from ._math_utils import round_half_away_from_zero
+from ._math_utils import portable_ln, portable_pow, round_half_away_from_zero
 
 
 def mu_compress(value: float) -> float:
     """µ-law compress: value in [-1, 1] → compressed in [-1, 1]."""
     v = max(-1.0, min(1.0, value))
-    return math.copysign(math.log(1.0 + MU * abs(v)) / math.log(1.0 + MU), v)
+    return math.copysign(portable_ln(1.0 + MU * abs(v)) / portable_ln(1.0 + MU), v)
 
 
 def mu_expand(compressed: float) -> float:
     """µ-law expand: compressed in [-1, 1] → value in [-1, 1]."""
-    return math.copysign(((1.0 + MU) ** abs(compressed) - 1.0) / MU, compressed)
+    return math.copysign((portable_pow(1.0 + MU, abs(compressed)) - 1.0) / MU, compressed)
 
 
 def mu_law_quantize(value: float, bits: int) -> int:

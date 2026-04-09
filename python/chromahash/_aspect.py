@@ -1,21 +1,19 @@
 """Aspect ratio encoding and decoding. Per spec §8."""
 
-import math
-
-from ._math_utils import round_half_away_from_zero
+from ._math_utils import portable_ln, portable_pow, round_half_away_from_zero
 
 
 def encode_aspect(w: int, h: int) -> int:
     """Encode aspect ratio as a single byte. Per spec §8.1 (v0.3)."""
     ratio = w / h
-    raw = (math.log2(ratio) + 4.0) / 8.0 * 255.0
+    raw = (portable_ln(ratio) / portable_ln(2.0) + 4.0) / 8.0 * 255.0
     byte = int(round_half_away_from_zero(raw))
     return max(0, min(255, byte))
 
 
 def decode_aspect(byte: int) -> float:
     """Decode aspect ratio from byte. Per spec §8.1 (v0.3)."""
-    return 2.0 ** (byte / 255.0 * 8.0 - 4.0)
+    return portable_pow(2.0, byte / 255.0 * 8.0 - 4.0)
 
 
 def decode_output_size(byte: int) -> tuple[int, int]:
@@ -30,8 +28,6 @@ def decode_output_size(byte: int) -> tuple[int, int]:
 
 def derive_grid(aspect_byte: int, base_n: int) -> tuple[int, int]:
     """Derive adaptive DCT grid (nx, ny) from aspect byte and base_n. Per spec §3.2."""
-    from ._math_utils import portable_pow, round_half_away_from_zero
-
     ratio = portable_pow(2.0, aspect_byte / 255.0 * 8.0 - 4.0)
     base = float(base_n)
     if ratio >= 1.0:
