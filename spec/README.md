@@ -197,6 +197,14 @@ Alpha:
 └──────────────────────────────────────────────┴───────────────────────────────────────────────────┘
 ```
 
+### 3.4 String Representation
+
+ChromaHash is a binary format. This specification does not define a canonical UTF-8 string
+encoding; the reference implementation does not provide one. Applications are responsible
+for choosing an encoding appropriate to their context (e.g. base64url per RFC 4648 §5 for
+web and API use, hex for debugging). Because the binary layout is fixed at 32 bytes, any
+consistently applied encoding is unambiguous without additional framing.
+
 ---
 
 ## 4. Color Space: OKLAB
