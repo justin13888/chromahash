@@ -1,6 +1,6 @@
 # ChromaHash Format Specification
 
-**Version:** 0.3.0-draft
+**Version:** 0.3.0
 **Status:** Draft
 **Date:** 2026-03-23
 

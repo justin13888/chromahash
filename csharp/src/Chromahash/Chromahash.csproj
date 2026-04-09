@@ -8,7 +8,7 @@
     <LangVersion>latest</LangVersion>
     <RootNamespace>ChromaHash</RootNamespace>
     <AssemblyName>ChromaHash</AssemblyName>
-    <Version>0.1.0</Version>
+    <Version>0.3.0</Version>
     <Description>ChromaHash: modern LQIP (Low Quality Image Placeholder) format</Description>
   </PropertyGroup>
 
