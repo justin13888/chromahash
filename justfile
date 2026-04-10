@@ -7,24 +7,31 @@ default:
 # ─── All languages ───────────────────────────────────────────────────────────
 
 # Format all implementations
+[parallel]
 format: format-rust format-ts format-kotlin format-swift format-go format-python format-csharp
 
 # Lint all implementations
+[parallel]
 lint: lint-rust lint-ts lint-kotlin lint-swift lint-go lint-python lint-csharp
 
 # Auto-fix formatting in all implementations
+[parallel]
 format-fix: format-fix-rust format-fix-ts format-fix-kotlin format-fix-swift format-fix-go format-fix-python format-fix-csharp
 
 # Auto-fix linting in all implementations
+[parallel]
 lint-fix: lint-fix-rust lint-fix-ts lint-fix-kotlin lint-fix-swift lint-fix-go lint-fix-python lint-fix-csharp
 
 # Run all tests
+[parallel]
 test: test-rust test-ts test-kotlin test-swift test-go test-python test-csharp
 
 # Build all implementations
+[parallel]
 build: build-rust build-ts build-kotlin build-swift build-go build-python build-csharp
 
 # Check formatting (no writes) across all implementations
+[parallel]
 format-check: format-check-rust format-check-ts format-check-kotlin format-check-swift format-check-go format-check-python format-check-csharp
 
 # ─── Comparison tool ────────────────────────────────────────────────────────
