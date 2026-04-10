@@ -62,10 +62,8 @@ export function computeFormatStats(
     );
     const avgComp =
       compResults.length > 0
-        ? compResults.reduce(
-            (s, r) => s + (r.metrics.compositeScore ?? 0),
-            0,
-          ) / compResults.length
+        ? compResults.reduce((s, r) => s + (r.metrics.compositeScore ?? 0), 0) /
+          compResults.length
         : null;
 
     const psnrResults = results.filter(
@@ -77,7 +75,16 @@ export function computeFormatStats(
           psnrResults.length
         : null;
 
-    return { name, avgSize, avgEncode, avgDecode, avgDssim, avgDe, avgComp, avgPsnr };
+    return {
+      name,
+      avgSize,
+      avgEncode,
+      avgDecode,
+      avgDssim,
+      avgDe,
+      avgComp,
+      avgPsnr,
+    };
   });
 }
 
@@ -88,7 +95,7 @@ ${stats
   .map((s) => {
     const dssimCell =
       s.avgDssim !== null
-        ? `<span class="${s.avgDssim < 0.10 ? "metric-good" : s.avgDssim < 0.25 ? "metric-warn" : "metric-bad"}">${s.avgDssim.toFixed(4)}</span>`
+        ? `<span class="${s.avgDssim < 0.1 ? "metric-good" : s.avgDssim < 0.25 ? "metric-warn" : "metric-bad"}">${s.avgDssim.toFixed(4)}</span>`
         : "N/A";
     const deCell =
       s.avgDe !== null

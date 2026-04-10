@@ -28,7 +28,11 @@ function srgbToLinear(u8: number): number {
  * Convert sRGB uint8 values to OKLAB [L, a, b].
  * M1: linear RGB -> LMS; M2: LMS^(1/3) -> OKLAB.
  */
-function srgbToOklab(r: number, g: number, b: number): [number, number, number] {
+function srgbToOklab(
+  r: number,
+  g: number,
+  b: number,
+): [number, number, number] {
   const lr = srgbToLinear(r);
   const lg = srgbToLinear(g);
   const lb = srgbToLinear(b);

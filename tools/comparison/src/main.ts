@@ -13,7 +13,11 @@ import {
   fileBufferToDisplayDataUri,
 } from "./image-loader.ts";
 import { buildHarnesses, runAllHarnesses } from "./harness-runner.ts";
-import { generateReport, categorizeImage, computeFormatStats } from "./report.ts";
+import {
+  generateReport,
+  categorizeImage,
+  computeFormatStats,
+} from "./report.ts";
 import { generateFixtures } from "./generate-fixtures.ts";
 import { ensureNaturalImages } from "./natural-images.ts";
 import { computeCompositeScores } from "./metrics.ts";
@@ -192,11 +196,16 @@ async function main(): Promise<void> {
   );
 
   // Print expanded metric summary
-  const formatNames = [...new Set(
-    entries.flatMap((e) => e.formatResults.map((r) => r.formatName)),
-  )];
+  const formatNames = [
+    ...new Set(
+      entries.flatMap((e) => e.formatResults.map((r) => r.formatName)),
+    ),
+  ];
 
-  const printSummary = (label: string, stats: ReturnType<typeof computeFormatStats>) => {
+  const printSummary = (
+    label: string,
+    stats: ReturnType<typeof computeFormatStats>,
+  ) => {
     console.log(`\n=== Format Summary (${label}) ===`);
     console.log(
       `  ${"Format".padEnd(14)} ${"Size(B)".padStart(8)} ${"DSSIM".padStart(8)} ${"dE(wtd)".padStart(9)} ${"Composite".padStart(10)} ${"PSNR(dB)".padStart(9)}`,
@@ -208,10 +217,8 @@ async function main(): Promise<void> {
     }
   };
 
-  const naturalStats = computeFormatStats(
-    entries,
-    formatNames,
-    (e) => (["Natural", "Realistic"] as ImageCategory[]).includes(e.category),
+  const naturalStats = computeFormatStats(entries, formatNames, (e) =>
+    (["Natural", "Realistic"] as ImageCategory[]).includes(e.category),
   );
   const allStats = computeFormatStats(entries, formatNames);
 

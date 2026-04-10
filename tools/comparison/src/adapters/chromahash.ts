@@ -38,8 +38,7 @@ function decodeViaRust(
   h: number;
   rgba: Uint8Array;
 } {
-  const extraArgs =
-    maxW !== undefined ? [String(maxW), String(maxH!)] : [];
+  const extraArgs = maxW !== undefined ? [String(maxW), String(maxH!)] : [];
   const output = execFileSync(RUST_CLI, ["decode", ...extraArgs], {
     input: Buffer.from(hash),
     encoding: "buffer",
