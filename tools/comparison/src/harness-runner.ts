@@ -19,8 +19,8 @@ function decodeViaRust(hash: Uint8Array): {
   const newline = output.indexOf(0x0a);
   const header = output.subarray(0, newline).toString("ascii");
   const parts = header.split(" ");
-  const w = parseInt(parts[0] ?? "0", 10);
-  const h = parseInt(parts[1] ?? "0", 10);
+  const w = Number.parseInt(parts[0] ?? "0", 10);
+  const h = Number.parseInt(parts[1] ?? "0", 10);
   const rgba = new Uint8Array(output.subarray(newline + 1));
   return { w, h, rgba };
 }
