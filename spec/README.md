@@ -1,8 +1,8 @@
 # ChromaHash Format Specification
 
-**Version:** 0.3.0
+**Version:** 0.4.0
 **Status:** Draft
-**Date:** 2026-03-23
+**Date:** 2026-04-10
 
 > ChromaHash is a fixed-size, 32-byte Low Quality Image Placeholder (LQIP) format
 > designed for professional photo management at scale. It encodes a perceptually
@@ -106,9 +106,18 @@ Bit 47 in the header serves as a version discriminator:
 |---------|--------|-------|
 | v0.1    | 0      | Original spec — fixed grids, MAX_CHROMA=0.5, hard gamut clamp |
 | v0.2+   | 1      | Adaptive grids, MAX_CHROMA=0.45, soft gamut clamp, full-res encoding |
+| v0.4    | 1      | Same bit value; v0.4 changes scan order and deriveGrid (bitstream-incompatible with v0.3) |
 
 Encoders MUST set bit 47 to 1. Decoders MAY check bit 47. Since v0.1 was never publicly
 released, all valid hashes have bit 47 = 1.
+
+> **Pre-1.0 compatibility note:** ChromaHash is a Draft format. v0.2, v0.3, and v0.4 all
+> share `bit 47 = 1`. A v0.3 decoder applied to a v0.4 hash will silently produce garbled
+> output (and vice-versa), because the scan order and grid dimensions change. There are no
+> spare header bits to add a finer version discriminator without sacrificing aspect precision
+> or DC precision. Applications that need to distinguish versions MUST track the format
+> version via producer-side metadata (e.g. a database column or file-format tag). This is
+> expected for a pre-1.0 Draft specification where format evolution is anticipated.
 
 ### 2.6 Padding Bits
 
@@ -318,16 +327,16 @@ value = DC + Σ_j  AC[j] × cos(π/w × cx_j × (x + 0.5)) × cos(π/h × cy_j �
 
 Normalization factor: `C(cx, cy) = (cx > 0 ? 2 : 1) × (cy > 0 ? 2 : 1)`
 
-### 6.2 Triangular Coefficient Selection
+### 6.2 Triangular Coefficient Selection and Scan Order
 
-The condition selecting which `(cx, cy)` pairs to include (excluding DC at `(0, 0)`):
+The **set** of selected `(cx, cy)` AC pairs (excluding DC at `(0, 0)`) satisfies:
 
 ```
 cx × ny < nx × (ny − cy)
 ```
 
-This selects coefficients below the diagonal in frequency space. Example for a 4×4 grid
-(9 AC coefficients):
+This selects coefficients below the diagonal in frequency space (unchanged from v0.3).
+Example membership for a 4×4 grid (9 AC coefficients):
 
 ```
 cy\cx  0    1    2    3
@@ -337,16 +346,41 @@ cy\cx  0    1    2    3
   3    ✓
 ```
 
-Coefficients are scanned **row-major** within the triangle:
+**Scan order (v0.4):** Coefficients are sorted by **per-pixel frequency priority**:
 
 ```
-for cy in 0 .. ny-1:
-    cx_start = (cy == 0) ? 1 : 0
-    for cx in cx_start .. while cx×ny < nx×(ny−cy):
-        emit coefficient (cx, cy)
+function scanOrder(nx, ny, aspect_byte):
+    (w, h) = decodeOutputSize(aspect_byte)        // §8.2
+    entries = []
+    for cy in 0 .. ny-1:
+        cx_start = (cy == 0) ? 1 : 0
+        for cx in cx_start .. while cx×ny < nx×(ny−cy):
+            priority = (cx × h)² + (cy × w)²     // integer, u64-safe
+            entries.append((priority, cx, cy))
+    sort entries ascending by (priority, cx, cy) // lex tiebreak for determinism
+    return [(cx, cy) for (_, cx, cy) in entries]
 ```
 
-Run `spec/scan_order.py` for all scan orders.
+**Important:** Scan order depends on `(nx, ny, w, h)`, not on `(nx, ny)` alone.
+The same grid shape produced for different `aspect_byte` values may yield different
+scan orders because `decodeOutputSize(aspect_byte)` returns different `(w, h)`.
+
+**Priority formula properties:**
+- `priority = (cx×h)² + (cy×w)²` is the squared Euclidean distance to DC in pixel
+  space. Sorting ascending places perceptually most important coefficients first.
+- **Square grids** (w=h=32): priority ∝ `cx²+cy²`, giving isotropic radial order.
+  First two slots: `(0,1)` and `(1,0)` (tied; cx tiebreak), then `(1,1)`, etc.
+- **Extreme landscape** (e.g. 14×4 at ratio=16, w=32, h=2):
+  `priority = 4cx² + 1024cy²`. All cy=0 entries precede cy=1 (row-major preserved
+  where aspect warrants it).
+- All arithmetic is integer; `w, h ≤ 32`, so `(cx×h)² + (cy×w)² ≤ 2×(14×32)² ≈ 4×10⁵`,
+  fits in a u32.
+
+**sqrt is correctly rounded:** Implementations MUST use IEEE 754 correctly-rounded
+`sqrt` (required by IEEE 754-2008 §5.4.1, satisfied by all compliant runtimes).
+This ensures bit-exact cross-language results without a portable wrapper.
+
+Run `spec/scan_order.py --json` for all unique scan orders.
 
 ### 6.3 Adaptive Grid Geometry
 
@@ -355,24 +389,41 @@ mode flag or extra storage — grid geometry is self-describing.
 
 ```
 function deriveGrid(aspect_byte, base_n):
-    ratio = 2^(aspect_byte / 255 × 8 − 4)
+    ratio  = 2^(aspect_byte / 255 × 8 − 4)
+    nx_cap = 2 × base_n
 
     if ratio >= 1.0:
         scale = min(ratio, 16.0)
-        nx = round(base_n × scale^0.25)
-        ny = round(base_n / scale^0.25)
+        nx    = min(round(base_n × sqrt(scale)), nx_cap)
+        ny    = round(base_n² / nx)
     else:
         scale = min(1.0 / ratio, 16.0)
-        nx = round(base_n / scale^0.25)
-        ny = round(base_n × scale^0.25)
+        ny    = min(round(base_n × sqrt(scale)), nx_cap)
+        nx    = round(base_n² / ny)
 
-    nx = max(nx, 3)
-    ny = max(ny, 3)
-    return (nx, ny)
+    return (max(nx, 3), max(ny, 3))
 ```
 
-All `round()` calls use round half away from zero (§2.2). The result is converted to
-integer before the `max()` clamping. The `scale^0.25` exponent provides gentle adaptation.
+All `round()` calls use round half away from zero (§2.2). `sqrt` MUST be IEEE 754
+correctly-rounded (§2.3). Results are converted to integer before the floor clamping.
+
+**Design rationale (v0.4):**
+- `sqrt(scale)` instead of `scale^0.25` bends the grid to match moderate aspect ratios
+  (3:2, 4:3, 16:9) more closely, reducing DCT anisotropy.
+- `nx_cap = 2×base_n` prevents over-stretching at extreme ratios (>~4:1); cap degenerates
+  to approximately v0.3 behaviour for anamorphic content.
+- **Product preservation:** `ny = round(base_n²/nx)` keeps the product nx×ny close to
+  `base_n²`, so total coefficient count is stable across aspect ratios.
+
+**Worked examples (base_n=7):**
+
+| Input ratio | aspect_byte | scale | nx | ny | Notes |
+|---|---|---|---|---|---|
+| 1:1   | 128 | 1.01 | 7  | 7  | square |
+| 3:2   | 146 | 1.49 | 9  | 5  | v0.4: wider grid (v0.3 gave 8×6) |
+| 16:9  | 154 | 1.78 | 9  | 5  | v0.4: 1.8:1 grid (v0.3 gave 8×6 ≈ 1.3:1) |
+| 4:1   | 191 | 4.00 | 14 | 4  | cap hit: nx_cap=14 |
+| 16:1  | 255 | 16.0 | 14 | 4  | fully at cap |
 
 | Channel | Mode | base_n | AC cap | Bit budget |
 |---|---|---|---|---|
@@ -390,8 +441,10 @@ never changes, only the mapping from positions to frequency coordinates.
 **Encode (capping):** When the scan order produces more AC positions than the cap, store
 only the first `cap` in scan order. Higher-frequency coefficients are dropped.
 
-**Encode (zero-padding):** When the scan order produces fewer positions than the cap
-(only occurs for alpha-mode L with 4×8/8×4 grids producing 19 vs cap 20), pad with zeros.
+**Encode (zero-padding):** When the scan order produces fewer positions than the cap,
+pad with zeros. In v0.4, product preservation guarantees raw AC ≥ cap for all grids,
+so zero-padding is never required in practice; the encoder MUST still be prepared to
+zero-pad for forward compatibility.
 
 **Decode:** Read exactly `cap` AC values from the bitstream. Map the first
 `min(cap, len(scan))` to scan positions. Extra scan positions beyond cap have implicit
@@ -400,63 +453,56 @@ zero coefficients. Extra bitstream values beyond `len(scan)` are discarded.
 ### 6.5 Exhaustive Grid Tables
 
 All unique (nx, ny) pairs produced by `deriveGrid` across all 256 aspect byte values.
-Portrait grids mirror landscape (e.g. 4×14 mirrors 14×4).
+Portrait grids mirror landscape grids (portrait bytes = 255 − landscape bytes, with nx/ny swapped).
 
-**L no-alpha (base_n=7, cap=27) — 21 shapes, all raw AC ≥ 27:**
-
-| Bytes | nx | ny | Raw AC | | Bytes | nx | ny | Raw AC |
-|---|---|---|---|---|---|---|---|---|
-| 0–6 | 4 | 14 | 35 | | 115–140 | 7 | 7 | 27 |
-| 7–20 | 4 | 13 | 33 | | 141 | 8 | 7 | 34 |
-| 21–36 | 4 | 12 | 29 | | 142–163 | 8 | 6 | 29 |
-| 37–46 | 4 | 11 | 28 | | 164–171 | 9 | 6 | 32 |
-| 47–52 | 5 | 11 | 34 | | 172–183 | 9 | 5 | 28 |
-| 53–71 | 5 | 10 | 29 | | 184–202 | 10 | 5 | 29 |
-| 72–83 | 5 | 9 | 28 | | 203–208 | 11 | 5 | 34 |
-| 84–91 | 6 | 9 | 32 | | 209–218 | 11 | 4 | 28 |
-| 92–113 | 6 | 8 | 29 | | 219–234 | 12 | 4 | 29 |
-| 114 | 7 | 8 | 34 | | 235–248 | 13 | 4 | 33 |
-| | | | | | 249–255 | 14 | 4 | 35 |
-
-**Chroma a/b (base_n=4, cap=9) — 11 shapes, all raw AC ≥ 9:**
+**L no-alpha (base_n=7, cap=27) — 15 shapes, all raw AC ≥ 27:**
 
 | Bytes | nx | ny | Raw AC | | Bytes | nx | ny | Raw AC |
 |---|---|---|---|---|---|---|---|---|
-| 0–11 | 3 | 8 | 16 | | 150–152 | 5 | 4 | 13 |
-| 12–38 | 3 | 7 | 14 | | 153–186 | 5 | 3 | 10 |
-| 39–68 | 3 | 6 | 11 | | 187–216 | 6 | 3 | 11 |
-| 69–102 | 3 | 5 | 10 | | 217–243 | 7 | 3 | 14 |
-| 103–105 | 4 | 5 | 13 | | 244–255 | 8 | 3 | 16 |
-| 106–149 | 4 | 4 | 9 | | | | | |
+| 0–67   | 4  | 14 | 35 | | 122–133 | 7  | 7  | 27 |
+| 68–74  | 4  | 13 | 33 | | 134–145 | 8  | 6  | 29 |
+| 75–81  | 4  | 12 | 29 | | 146–155 | 9  | 5  | 28 |
+| 82–90  | 4  | 11 | 28 | | 156–164 | 10 | 5  | 29 |
+| 91–99  | 5  | 10 | 29 | | 165–173 | 11 | 4  | 28 |
+| 100–109| 5  | 9  | 28 | | 174–180 | 12 | 4  | 29 |
+| 110–121| 6  | 8  | 29 | | 181–187 | 13 | 4  | 33 |
+|        |    |    |    | | 188–255 | 14 | 4  | 35 |
 
-**Alpha-mode L (base_n=6, cap=20) — 19 shapes:**
+**Chroma a/b (base_n=4, cap=9) — 9 shapes, all raw AC ≥ 9:**
 
 | Bytes | nx | ny | Raw AC | | Bytes | nx | ny | Raw AC |
 |---|---|---|---|---|---|---|---|---|
-| 0–7 | 3 | 12 | 23 | | 143 | 7 | 6 | 26 |
-| 8–24 | 3 | 11 | 22 | | 144–168 | 7 | 5 | 22 |
-| 25–28 | 3 | 10 | 20 | | 169–180 | 8 | 5 | 25 |
-| 29–42 | 4 | 10 | 25 | | 181–191 | 8 | 4 | **19** |
-| 43–63 | 4 | 9 | 23 | | 192–212 | 9 | 4 | 23 |
-| 64–74 | 4 | 8 | **19** | | 213–226 | 10 | 4 | 25 |
-| 75–86 | 5 | 8 | 25 | | 227–230 | 10 | 3 | 20 |
-| 87–111 | 5 | 7 | 22 | | 231–247 | 11 | 3 | 22 |
-| 112 | 6 | 7 | 26 | | 248–255 | 12 | 3 | 23 |
-| 113–142 | 6 | 6 | 20 | | | | | |
+| 0–69   | 3 | 8 | 16 | | 139–156 | 5 | 3 | 10 |
+| 70–82  | 3 | 7 | 14 | | 157–172 | 6 | 3 | 11 |
+| 83–98  | 3 | 6 | 11 | | 173–185 | 7 | 3 | 14 |
+| 99–116 | 3 | 5 | 10 | | 186–255 | 8 | 3 | 16 |
+| 117–138| 4 | 4 | 9  | |         |   |   |    |
 
-Entries marked **19** have raw AC < cap (20); the 20th bitstream slot is zero-padded.
+**Alpha-mode L (base_n=6, cap=20) — 13 shapes, all raw AC ≥ 20:**
+
+| Bytes | nx | ny | Raw AC | | Bytes | nx | ny | Raw AC |
+|---|---|---|---|---|---|---|---|---|
+| 0–67   | 3  | 12 | 23 | | 121–134 | 6  | 6  | 20 |
+| 68–76  | 3  | 11 | 22 | | 135–148 | 7  | 5  | 22 |
+| 77–85  | 4  | 10 | 25 | | 149–159 | 8  | 5  | 25 |
+| 86–95  | 4  | 9  | 23 | | 160–169 | 9  | 4  | 23 |
+| 96–106 | 5  | 8  | 25 | | 170–178 | 10 | 4  | 25 |
+| 107–120| 5  | 7  | 22 | | 179–187 | 11 | 3  | 22 |
+|        |    |    |    | | 188–255 | 12 | 3  | 23 |
+
+Zero-padding never required in v0.4 (product preservation ensures raw AC ≥ cap).
 
 **Alpha channel (base_n=3, cap=5) — 7 shapes, all raw AC ≥ 5:**
 
 | Bytes | nx | ny | Raw AC |
 |---|---|---|---|
-| 0–16 | 3 | 6 | 11 |
-| 17–52 | 3 | 5 | 10 |
-| 53–99 | 3 | 4 | 8 |
-| 100–155 | 3 | 3 | 5 |
-| 156–202 | 4 | 3 | 8 |
-| 203–238 | 5 | 3 | 10 |
-| 239–255 | 6 | 3 | 11 |
+| 0–71   | 3 | 6 | 11 |
+| 72–90  | 3 | 5 | 10 |
+| 91–113 | 3 | 4 | 8  |
+| 114–141| 3 | 3 | 5  |
+| 142–164| 4 | 3 | 8  |
+| 165–183| 5 | 3 | 10 |
+| 184–255| 6 | 3 | 11 |
 
 ---
 
@@ -642,21 +688,26 @@ function encode(W, H, rgba, gamut) -> byte[32]:
     cos_x = precompute_cos_table(W, max_cx)
     cos_y = precompute_cos_table(H, max_cy)
 
-    // 7. DCT encode each channel
-    (L_dc, L_ac, L_scale) = dctEncode(L_chan, W, H, L_nx, L_ny, cos_x, cos_y)
-    (a_dc, a_ac, a_scale) = dctEncode(a_chan, W, H, C_nx, C_ny, cos_x, cos_y)
-    (b_dc, b_ac, b_scale) = dctEncode(b_chan, W, H, C_nx, C_ny, cos_x, cos_y)
-    if hasAlpha:
-        (A_dc, A_ac, A_scale) = dctEncode(alphas, W, H, A_nx, A_ny, cos_x, cos_y)
+    // 7. Build per-channel scan orders (v0.4: depends on aspect_byte, not just grid dims)
+    L_scan = scanOrder(L_nx, L_ny, aspect_byte)   // §6.2
+    C_scan = scanOrder(C_nx, C_ny, aspect_byte)
+    if hasAlpha: A_scan = scanOrder(A_nx, A_ny, aspect_byte)
 
-    // 8. Cap/zero-pad AC to fixed bit budget
-    // Use min() guards: only alpha-mode L grids 4×8/8×4 produce fewer raw AC than cap.
+    // 8. DCT encode each channel (AC emitted in scan order)
+    (L_dc, L_ac, L_scale) = dctEncode(L_chan, W, H, L_scan, cos_x, cos_y)
+    (a_dc, a_ac, a_scale) = dctEncode(a_chan, W, H, C_scan, cos_x, cos_y)
+    (b_dc, b_ac, b_scale) = dctEncode(b_chan, W, H, C_scan, cos_x, cos_y)
+    if hasAlpha:
+        (A_dc, A_ac, A_scale) = dctEncode(alphas, W, H, A_scan, cos_x, cos_y)
+
+    // 9. Cap/zero-pad AC to fixed bit budget
+    // v0.4: product preservation guarantees raw AC >= cap; zero-padding never required.
     L_cap = 20 if hasAlpha else 27
     L_ac = L_ac[0 .. min(L_cap, len(L_ac)) - 1]; while len(L_ac) < L_cap: L_ac.append(0)
     a_ac = a_ac[0 .. min(9, len(a_ac)) - 1]; b_ac = b_ac[0 .. min(9, len(b_ac)) - 1]
     if hasAlpha: A_ac = A_ac[0 .. min(5, len(A_ac)) - 1]
 
-    // 9. Quantize header
+    // 10. Quantize header
     L_dc_q  = round(127 * clamp(L_dc, 0, 1))
     a_dc_q  = round(64 + 63 * clamp(a_dc / MAX_CHROMA_A, -1, 1))
     b_dc_q  = round(64 + 63 * clamp(b_dc / MAX_CHROMA_B, -1, 1))
@@ -664,7 +715,7 @@ function encode(W, H, rgba, gamut) -> byte[32]:
     a_scl_q = round(63 * clamp(a_scale / MAX_A_SCALE, 0, 1))
     b_scl_q = round(31 * clamp(b_scale / MAX_B_SCALE, 0, 1))
 
-    // 10. Pack header (48 bits, little-endian)
+    // 11. Pack header (48 bits, little-endian)
     header = L_dc_q | (a_dc_q << 7) | (b_dc_q << 14)
            | (L_scl_q << 21) | (a_scl_q << 27) | (b_scl_q << 33)
            | (aspect_byte << 38)
@@ -673,7 +724,7 @@ function encode(W, H, rgba, gamut) -> byte[32]:
     hash = new byte[32]
     for i in 0..5: hash[i] = (header >> (i*8)) & 0xFF
 
-    // 11. Pack AC with µ-law companding
+    // 12. Pack AC with µ-law companding
     //     When scale=0 (solid color), write the µ-law midpoint for zero.
     function qAC(value, scale, mu, bits):
         if scale == 0: return muLawQuantize(0, mu, bits)
@@ -740,8 +791,8 @@ function decode(hash) -> (w, h, rgba):
         (L_nx, L_ny) = deriveGrid(aspect, 7)
     (C_nx, C_ny) = deriveGrid(aspect, 4)
 
-    L_scan = triangular_scan_order(L_nx, L_ny)
-    C_scan = triangular_scan_order(C_nx, C_ny)
+    L_scan = scanOrder(L_nx, L_ny, aspect)
+    C_scan = scanOrder(C_nx, C_ny, aspect)
     L_cap = 20 if hasAlpha else 27; C_cap = 9
 
     // 4. Decode aspect ratio and output size
@@ -754,7 +805,7 @@ function decode(hash) -> (w, h, rgba):
     if hasAlpha:
         A_dc    = readBits(hash, bitpos, 5) / 31.0; bitpos += 5
         A_scale = readBits(hash, bitpos, 4) / 15.0 * MAX_A_ALPHA_SCALE; bitpos += 4
-        A_scan  = triangular_scan_order(A_nx, A_ny); A_cap = 5
+        A_scan  = scanOrder(A_nx, A_ny, aspect); A_cap = 5
 
         L_ac = []
         for i in 0..6:  L_ac.append(muLawDequantize(readBits(hash,bitpos,6),5,6)*L_scale); bitpos += 6
@@ -1040,17 +1091,17 @@ near-constant channels (e.g., solid colors): dividing by a near-zero scale ampli
 platform-specific ULP differences into divergent quantized codes across implementations.
 
 ```
-dctEncode(channel, w, h, nx, ny, cos_x, cos_y):
-    dc = 0; ac = []; scale = 0
-    for cy in 0..ny-1:
-        for cx in 0.. while cx*ny < nx*(ny-cy):
-            f = 0
-            for y in 0..h-1:
-                for x in 0..w-1:
-                    f += channel[x + y*w] * cos_x[cx][x] * cos_y[cy][y]
-            f /= w * h
-            if cx > 0 or cy > 0: ac.append(f); scale = max(scale, abs(f))
-            else: dc = f
+dctEncode(channel, w, h, scan, cos_x, cos_y):
+    // DC: cx=0, cy=0 — cos(0)=1 everywhere, so DC = mean(channel)
+    dc = sum(channel) / (w * h)
+    ac = []; scale = 0
+    for (cx, cy) in scan:
+        f = 0
+        for y in 0..h-1:
+            for x in 0..w-1:
+                f += channel[x + y*w] * cos_x[cx][x] * cos_y[cy][y]
+        f /= w * h
+        ac.append(f); scale = max(scale, abs(f))
     if scale < 1e-10:
         for i in 0..len(ac)-1: ac[i] = 0
         scale = 0
@@ -1075,7 +1126,57 @@ readBits(hash, bitpos, count):
 
 ---
 
-## 13. Trade-offs & Limitations
+## 13. Changes from v0.3 to v0.4
+
+v0.3 and v0.4 share header bit 47 = 1. There is no new discriminator bit — a v0.3
+decoder will silently produce garbled output on v0.4 hashes. This is acceptable for a
+pre-1.0 Draft format. Producers wishing to reject v0.4 hashes should track the version
+via out-of-band metadata (e.g. a database column), not the hash bytes.
+
+### Change 1 — Per-pixel frequency priority scan order (§6.2)
+
+**Problem.** The old row-major enumeration `for cy { for cx }` biased the first AC slots
+— and therefore the highest-precision bits — toward horizontal frequencies. For a 6×6
+grid the first seven slots were `(1,0),(2,0),(3,0),(4,0),(5,0),(0,1),(1,1)` (five pure
+horizontals). A human eye weighs vertical and diagonal midband content equally.
+
+**Fix.** AC coefficients are now sorted by per-pixel spatial frequency priority
+`(cx·h)² + (cy·w)²`, where `(w, h) = decodeOutputSize(aspect_byte)`. This is a pure
+integer sort, bit-exact across all platforms (values fit in u32). Ties are broken
+lexicographically by `(cx, cy)`. For square images the order becomes isotropic: `(0,1)`
+and `(1,0)` are tied (both priority 1), `(1,1)` next (priority 2), etc. For extreme
+aspect ratios the sort degenerates back to row-major, which is correct there.
+
+The *set* of selected coefficients is unchanged — the triangle condition
+`cx·ny < nx·(ny-cy)` and AC counts per `(nx, ny)` are identical to v0.3.
+
+**Scan order depends on `(w, h)`, not just `(nx, ny)`.** Multiple `aspect_byte` values
+can produce the same grid shape but different decode output dimensions (e.g. a 14×4
+grid appears for ratios ~3.7:1 through 16:1, during which `h` steps through 9, 8, …, 2).
+Each `(h, w)` pair yields a distinct ordering. The full table of 272 unique
+`(nx, ny, w, h)` tuples can be generated with `python3 spec/scan_order.py --json`.
+
+### Change 2 — `deriveGrid` uses `sqrt(scale)` with long-axis cap (§6.3)
+
+**Problem.** v0.3 used `scale^0.25` which barely bent the DCT grid away from square for
+common aspect ratios. 16:9 (ratio ≈ 1.78) produced an 8×6 grid (aspect 1.33:1),
+wasting horizontal resolution.
+
+**Fix.** The new formula bends with `sqrt(scale)` instead of `scale^0.25`, capped at
+`2·base_n` on the long axis, with the short axis derived by product preservation
+(`ny = round(base_n² / nx)`). 16:9 now produces a 9×5 grid (aspect 1.8:1). Past ~4:1
+the cap kicks in and behaviour matches v0.3 for anamorphic content.
+
+`sqrt` (unlike `pow`) is a required correctly-rounded IEEE 754-2008 §5.4.1 operation,
+bit-exact across all mainstream platforms, so no portable wrapper is needed.
+
+**Product preservation** keeps `nx·ny` close to `base_n²` across all aspects. This
+guarantees that the raw AC coefficient count always meets or exceeds the per-channel cap,
+so zero-padding is never required in v0.4.
+
+---
+
+## 14. Trade-offs & Limitations
 
 | Trade-off | Details |
 |-----------|---------|

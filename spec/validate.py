@@ -337,22 +337,24 @@ def validate_aspect_ratio():
 
 
 def validate_derive_grid():
-    """Check deriveGrid() produces correct grids for all aspect bytes."""
+    """Check deriveGrid() produces correct grids for all aspect bytes. Per spec §6.3 (v0.4)."""
     print("\n9. Adaptive grid derivation (deriveGrid)")
 
     def round_half_away_from_zero(x):
         return math.floor(x + 0.5) if x >= 0 else math.ceil(x - 0.5)
 
     def derive_grid(aspect_byte, base_n):
+        """v0.4: sqrt(scale) with nx_cap and product preservation."""
         ratio = 2.0 ** (aspect_byte / 255.0 * 8.0 - 4.0)
+        nx_cap = 2 * base_n
         if ratio >= 1.0:
             scale = min(ratio, 16.0)
-            nx = round_half_away_from_zero(base_n * scale ** 0.25)
-            ny = round_half_away_from_zero(base_n / scale ** 0.25)
+            nx = min(round_half_away_from_zero(base_n * math.sqrt(scale)), nx_cap)
+            ny = round_half_away_from_zero(base_n * base_n / nx)
         else:
             scale = min(1.0 / ratio, 16.0)
-            nx = round_half_away_from_zero(base_n / scale ** 0.25)
-            ny = round_half_away_from_zero(base_n * scale ** 0.25)
+            ny = min(round_half_away_from_zero(base_n * math.sqrt(scale)), nx_cap)
+            nx = round_half_away_from_zero(base_n * base_n / ny)
         return (max(int(nx), 3), max(int(ny), 3))
 
     def tri_ac(nx, ny):
@@ -375,31 +377,26 @@ def validate_derive_grid():
     for base_n, cap, label in channels:
         min_ac = 999
         all_ok = True
-        unique_grids = set()
         for b in range(256):
             nx, ny = derive_grid(b, base_n)
             ac = tri_ac(nx, ny)
-            unique_grids.add((nx, ny))
             min_ac = min(min_ac, ac)
             if nx < 3 or ny < 3:
                 all_ok = False
 
         check(all_ok, f"{label} (base_n={base_n}): all grids have nx,ny ≥ 3")
-        # For all channels except alpha-mode L, min_ac >= cap
-        if base_n != 6:
-            check(min_ac >= cap,
-                  f"{label} (base_n={base_n}): min raw AC {min_ac} ≥ cap {cap}")
-        else:
-            # Alpha-mode L: 4x8 and 8x4 produce 19, cap is 20
-            check(min_ac >= cap - 1,
-                  f"{label} (base_n={base_n}): min raw AC {min_ac} ≥ cap-1 ({cap - 1})")
+        # v0.4: product preservation ensures min_ac >= cap for all channels
+        check(min_ac >= cap,
+              f"{label} (base_n={base_n}): min raw AC {min_ac} ≥ cap {cap}")
 
-    # Spot-check known grid values from REVISION.md tables
+    # Spot-check known grid values (extreme bytes unchanged from v0.3; moderates new)
     spot_checks = [
         # (aspect_byte, base_n, expected_nx, expected_ny)
-        (0, 7, 4, 14),     # L extreme portrait
-        (128, 7, 7, 7),    # L square (approx 1:1)
-        (255, 7, 14, 4),   # L extreme landscape
+        (0, 7, 4, 14),     # L extreme portrait (unchanged at cap)
+        (128, 7, 7, 7),    # L square
+        (255, 7, 14, 4),   # L extreme landscape (unchanged at cap)
+        (154, 7, 9, 5),    # L ~16:9 landscape (v0.4 improvement: was 8×6)
+        (146, 7, 9, 5),    # L ~3:2 landscape (v0.4 improvement: was 8×6 or 9×5)
         (0, 4, 3, 8),      # chroma extreme portrait
         (128, 4, 4, 4),    # chroma square
         (255, 4, 8, 3),    # chroma extreme landscape
@@ -416,7 +413,6 @@ def validate_derive_grid():
               f"deriveGrid({ab}, {bn}) = ({nx},{ny}), expected ({exp_nx},{exp_ny})")
 
     # Verify portrait/landscape symmetry: grid at byte b mirrors grid at byte (255-b)
-    # with swapped nx, ny (due to log-symmetric aspect encoding)
     sym_ok = True
     for base_n in [7, 4, 6, 3]:
         for b in range(128):
@@ -425,6 +421,59 @@ def validate_derive_grid():
             if not (nx_lo == ny_hi and ny_lo == nx_hi):
                 sym_ok = False
     check(sym_ok, "Portrait/landscape grid symmetry across all channels")
+
+
+def validate_scan_order():
+    """Check per-pixel priority scan order for representative grids. Per spec §6.2 (v0.4)."""
+    print("\n10. Scan order (per-pixel frequency priority)")
+
+    def decode_output_size(aspect_byte):
+        ratio = 2.0 ** (aspect_byte / 255.0 * 8.0 - 4.0)
+        if ratio >= 1.0:
+            h = max(round(32.0 / ratio + 0.5 if 32.0 / ratio % 1 >= 0.5 else round(32.0 / ratio)), 1)
+            # use math.floor(x + 0.5)
+            h = max(math.floor(32.0 / ratio + 0.5), 1)
+            return (32, h)
+        else:
+            w = max(math.floor(32.0 * ratio + 0.5), 1)
+            return (w, 32)
+
+    def scan_order(nx, ny, aspect_byte):
+        w, h = decode_output_size(aspect_byte)
+        members = []
+        for cy in range(ny):
+            cx = 1 if cy == 0 else 0
+            while cx * ny < nx * (ny - cy):
+                members.append((cx, cy))
+                cx += 1
+        members.sort(key=lambda p: ((p[0] * h) ** 2 + (p[1] * w) ** 2, p[0], p[1]))
+        return members
+
+    # Square 4×4 at byte=128 (w=h=32): expect radial order, first two (0,1)/(1,0)
+    order_4x4 = scan_order(4, 4, 128)
+    check(len(order_4x4) == 9, "4×4 square: 9 AC coefficients")
+    check(order_4x4[0] == (0, 1) and order_4x4[1] == (1, 0),
+          "4×4 square: first two slots are (0,1),(1,0) — tied radial priority, cx tiebreak")
+    check(order_4x4[2] == (1, 1), "4×4 square: third slot is (1,1)")
+    check(order_4x4[-1] == (3, 0), "4×4 square: last slot is (3,0) — highest row frequency")
+
+    # Square 3×3 at byte=128: expect [(0,1),(1,0),(1,1),(0,2),(2,0)]
+    order_3x3 = scan_order(3, 3, 128)
+    expected_3x3 = [(0, 1), (1, 0), (1, 1), (0, 2), (2, 0)]
+    check(order_3x3 == expected_3x3, f"3×3 square: {order_3x3} == {expected_3x3}")
+
+    # Extreme landscape 14×4 at byte=255 (w=32, h=2): all cy=0 before cy>0 (row-major preserved)
+    order_14x4 = scan_order(14, 4, 255)
+    check(len(order_14x4) == 35, "14×4 landscape: 35 AC coefficients")
+    first_nonzero = next(i for i, (_, cy) in enumerate(order_14x4) if cy > 0)
+    last_zero = max(i for i, (_, cy) in enumerate(order_14x4) if cy == 0)
+    check(first_nonzero > last_zero,
+          "14×4 extreme landscape: cy=0 row precedes cy>0 rows (row-major degeneracy)")
+
+    # Square grid: verify DC (0,0) is absent
+    for (nx, ny, byte) in [(3, 3, 128), (4, 4, 128), (6, 6, 128), (7, 7, 128)]:
+        order = scan_order(nx, ny, byte)
+        check((0, 0) not in order, f"{nx}×{ny}: DC (0,0) excluded from scan order")
 
 
 # =========================================================================
@@ -444,6 +493,7 @@ if __name__ == "__main__":
     validate_mu_law()
     validate_aspect_ratio()
     validate_derive_grid()
+    validate_scan_order()
 
     print(f"\n{'=' * 60}")
     print(f"Results: {passed} passed, {failed} failed")

@@ -2,7 +2,7 @@ use crate::aspect::{decode_output_size, derive_grid};
 use crate::bitpack::read_bits;
 use crate::color::{oklab_to_linear_srgb, soft_gamut_clamp};
 use crate::constants::*;
-use crate::dct::{dct_decode_pixel, triangular_scan_order};
+use crate::dct::{dct_decode_pixel, scan_order};
 use crate::math_utils::{clamp01, round_half_away_from_zero};
 use crate::mulaw::mu_law_dequantize;
 use crate::transfer::srgb_gamma;
@@ -49,9 +49,9 @@ fn render_at_size(hash: &[u8; 32], w: usize, h: usize) -> Vec<u8> {
     let b_scl_q = ((header >> 33) & 0x1F) as u32;
     let aspect = ((header >> 38) & 0xFF) as u8;
     let has_alpha = ((header >> 46) & 1) == 1;
-    // bit 47: version (informational; always use v0.2 logic)
+    // bit 47: version (informational; always use v0.4 logic)
 
-    // 2. Decode DC values and scale factors (v0.2: MAX_CHROMA = 0.45)
+    // 2. Decode DC values and scale factors
     let l_dc = l_dc_q as f64 / 127.0;
     let a_dc = (a_dc_q as f64 - 64.0) / 63.0 * MAX_CHROMA_A;
     let b_dc = (b_dc_q as f64 - 64.0) / 63.0 * MAX_CHROMA_B;
@@ -68,8 +68,8 @@ fn render_at_size(hash: &[u8; 32], w: usize, h: usize) -> Vec<u8> {
     let (c_nx, c_ny) = derive_grid(aspect, 4);
 
     // 4. Compute scan orders and usable AC counts
-    let l_scan = triangular_scan_order(l_nx, l_ny);
-    let chroma_scan = triangular_scan_order(c_nx, c_ny);
+    let l_scan = scan_order(l_nx, l_ny, aspect);
+    let chroma_scan = scan_order(c_nx, c_ny, aspect);
     let l_cap = if has_alpha { 20usize } else { 27 };
     let c_cap = 9usize;
     let l_usable = l_cap.min(l_scan.len());
@@ -128,7 +128,7 @@ fn render_at_size(hash: &[u8; 32], w: usize, h: usize) -> Vec<u8> {
     // Alpha channel: derive its adaptive grid and usable count
     let (alpha_ac, alpha_scan, alpha_usable) = if has_alpha {
         let (a_nx, a_ny) = derive_grid(aspect, 3);
-        let alpha_scan_inner = triangular_scan_order(a_nx, a_ny);
+        let alpha_scan_inner = scan_order(a_nx, a_ny, aspect);
         let a_usable = 5usize.min(alpha_scan_inner.len());
         let mut aac = Vec::with_capacity(5);
         for _ in 0..5 {

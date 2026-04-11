@@ -1,22 +1,22 @@
 use crate::math_utils::{portable_ln, portable_pow, round_half_away_from_zero};
 
-/// Derive adaptive DCT grid (nx, ny) from aspect byte and base_n. Per spec §6.3.
-/// All round() calls use round_half_away_from_zero. Uses portable_pow for determinism.
+/// Derive adaptive DCT grid (nx, ny) from aspect byte and base_n. Per spec §6.3 (v0.4).
+/// Uses sqrt(scale) with nx_cap = 2*base_n and product preservation (ny = round(base_n²/nx)).
+/// sqrt uses IEEE 754 correctly-rounded f64::sqrt for cross-language determinism.
 pub fn derive_grid(aspect_byte: u8, base_n: u32) -> (usize, usize) {
     let ratio = portable_pow(2.0, aspect_byte as f64 / 255.0 * 8.0 - 4.0);
     let base = base_n as f64;
+    let nx_cap = (2 * base_n) as i64;
 
     let (nx, ny) = if ratio >= 1.0 {
         let scale = ratio.min(16.0);
-        let s = portable_pow(scale, 0.25);
-        let nx = round_half_away_from_zero(base * s) as i64;
-        let ny = round_half_away_from_zero(base / s) as i64;
+        let nx = (round_half_away_from_zero(base * scale.sqrt()) as i64).min(nx_cap);
+        let ny = round_half_away_from_zero(base * base / nx as f64) as i64;
         (nx, ny)
     } else {
         let scale = (1.0 / ratio).min(16.0);
-        let s = portable_pow(scale, 0.25);
-        let nx = round_half_away_from_zero(base / s) as i64;
-        let ny = round_half_away_from_zero(base * s) as i64;
+        let ny = (round_half_away_from_zero(base * scale.sqrt()) as i64).min(nx_cap);
+        let nx = round_half_away_from_zero(base * base / ny as f64) as i64;
         (nx, ny)
     };
 
@@ -137,22 +137,39 @@ mod tests {
         // byte=128 ≈ 1:1 → (4,4) for base_n=4
         let (nx, ny) = derive_grid(128, 4);
         assert_eq!((nx, ny), (4, 4), "square should give (4,4) for base_n=4");
-        // byte=0 → ratio=1/16, scale=16, s=2 → nx=round(4/2)=2→3, ny=round(4*2)=8 → (3,8)
+        // byte=0 → ratio=1/16, scale=16, sqrt(16)=4, ny=min(round(4*4)=16, cap=8)=8, nx=round(16/8)=2→3 → (3,8)
         let (nx, ny) = derive_grid(0, 4);
         assert_eq!((nx, ny), (3, 8), "byte=0 base_n=4 should give (3,8)");
-        // byte=255 → ratio=16, scale=16, s=2 → nx=round(4*2)=8, ny=round(4/2)=2→3 → (8,3)
+        // byte=255 → ratio=16, scale=16, sqrt(16)=4, nx=min(round(4*4)=16, cap=8)=8, ny=round(16/8)=2→3 → (8,3)
         let (nx, ny) = derive_grid(255, 4);
         assert_eq!((nx, ny), (8, 3), "byte=255 base_n=4 should give (8,3)");
     }
 
     #[test]
     fn derive_grid_alpha_base6() {
-        // byte=0 → ratio=1/16, scale=16, s=2 → nx=round(6/2)=3, ny=round(6*2)=12 → (3,12)
+        // byte=0 → ratio=1/16, scale=16, sqrt(16)=4, ny=min(round(6*4)=24, cap=12)=12, nx=round(36/12)=3 → (3,12)
         let (nx, ny) = derive_grid(0, 6);
         assert_eq!((nx, ny), (3, 12), "byte=0 base_n=6 should give (3,12)");
-        // byte=255 → ratio=16, scale=16, s=2 → nx=round(6*2)=12, ny=round(6/2)=3 → (12,3)
+        // byte=255 → ratio=16, scale=16, sqrt(16)=4, nx=min(round(6*4)=24, cap=12)=12, ny=round(36/12)=3 → (12,3)
         let (nx, ny) = derive_grid(255, 6);
         assert_eq!((nx, ny), (12, 3), "byte=255 base_n=6 should give (12,3)");
+    }
+
+    #[test]
+    fn derive_grid_moderate_16_9() {
+        // 16:9 aspect: v0.4 gives (9,5) for base_n=7, vs (8,6) in v0.3.
+        // sqrt(1.778)=1.333, round(7*1.333)=9, round(49/9)=5 → (9,5).
+        let byte = encode_aspect(16, 9);
+        let (nx, ny) = derive_grid(byte, 7);
+        assert_eq!((nx, ny), (9, 5), "16:9 base_n=7 should give (9,5) in v0.4");
+    }
+
+    #[test]
+    fn derive_grid_moderate_3_2() {
+        // 3:2 aspect: sqrt(1.5)=1.225, round(7*1.225)=9, round(49/9)=5 → (9,5)
+        let byte = encode_aspect(3, 2);
+        let (nx, ny) = derive_grid(byte, 7);
+        assert_eq!((nx, ny), (9, 5), "3:2 base_n=7 should give (9,5) in v0.4");
     }
 
     #[test]

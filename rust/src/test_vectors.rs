@@ -9,7 +9,7 @@ mod tests {
         gamma_rgb_to_oklab, linear_rgb_to_oklab, oklab_to_linear_srgb, soft_gamut_clamp,
     };
     use crate::constants::Gamut;
-    use crate::dct::triangular_scan_order;
+    use crate::dct::scan_order;
     use crate::math_utils::{cbrt_halley, cbrt_signed};
     use crate::mulaw::{mu_compress, mu_expand, mu_law_dequantize, mu_law_quantize};
 
@@ -144,50 +144,33 @@ mod tests {
         }
 
         // --- unit-dct.json ---
-        // Enumerate all 30 unique grid shapes from deriveGrid across all 256 aspect bytes × 4 base_n values
+        // Enumerate all unique (nx, ny, w, h) tuples from deriveGrid across all 256 aspect bytes × 4 base_n values.
+        // Scan order depends on (nx, ny, w, h) — same grid shape can have multiple orders for different aspect bytes.
         {
             let mut cases = Vec::new();
             let mut seen = std::collections::BTreeSet::new();
 
-            // Add grids from all (aspect_byte, base_n) combinations
             for byte in 0u8..=255 {
                 for &base_n in &[3u32, 4, 6, 7] {
                     let (nx, ny) = derive_grid(byte, base_n);
-                    if seen.insert((nx, ny)) {
-                        let order = triangular_scan_order(nx, ny);
+                    let (dw, dh) = decode_output_size(byte);
+                    let key = (nx, ny, dw, dh);
+                    if seen.insert(key) {
+                        let order = scan_order(nx, ny, byte);
                         let pairs: Vec<String> = order
                             .iter()
                             .map(|&(cx, cy)| format!("[{cx},{cy}]"))
                             .collect();
                         cases.push(format!(
                             r#"  {{
-    "name": "scan_order_{nx}x{ny}",
-    "input": {{ "nx": {nx}, "ny": {ny} }},
+    "name": "scan_order_{nx}x{ny}_w{dw}h{dh}",
+    "input": {{ "nx": {nx}, "ny": {ny}, "w": {dw}, "h": {dh} }},
     "expected": {{ "ac_count": {}, "scan_order": [{}] }}
   }}"#,
                             order.len(),
                             pairs.join(","),
                         ));
                     }
-                }
-            }
-            // Also include classic square grids if not already present
-            for &(nx, ny) in &[(3usize, 3), (4, 4), (6, 6), (7, 7)] {
-                if seen.insert((nx, ny)) {
-                    let order = triangular_scan_order(nx, ny);
-                    let pairs: Vec<String> = order
-                        .iter()
-                        .map(|&(cx, cy)| format!("[{cx},{cy}]"))
-                        .collect();
-                    cases.push(format!(
-                        r#"  {{
-    "name": "scan_order_{nx}x{ny}",
-    "input": {{ "nx": {nx}, "ny": {ny} }},
-    "expected": {{ "ac_count": {}, "scan_order": [{}] }}
-  }}"#,
-                        order.len(),
-                        pairs.join(","),
-                    ));
                 }
             }
             let json = format!("[\n{}\n]\n", cases.join(",\n"));
