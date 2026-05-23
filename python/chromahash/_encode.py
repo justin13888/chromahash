@@ -12,7 +12,7 @@ from ._constants import (
     MAX_L_SCALE,
     Gamut,
 )
-from ._dct import dct_encode
+from ._dct import dct_encode, scan_order
 from ._math_utils import clamp01, clamp_neg1_1, round_half_away_from_zero
 from ._mulaw import mu_law_quantize
 
@@ -66,18 +66,23 @@ def encode(w: int, h: int, rgba: bytes | bytearray, gamut: Gamut) -> bytes:
         a_chan.append(avg_a * (1.0 - alpha) + alpha * oklab_pixels[i][1])
         b_chan.append(avg_b * (1.0 - alpha) + alpha * oklab_pixels[i][2])
 
-    # 5. Derive adaptive grid dimensions (v0.2)
+    # 5. Derive adaptive grid dimensions (v0.4)
     aspect = encode_aspect(w, h)
     l_nx, l_ny = derive_grid(aspect, 6 if has_alpha else 7)
     c_nx, c_ny = derive_grid(aspect, 4)
     alpha_nx, alpha_ny = derive_grid(aspect, 3) if has_alpha else (3, 3)
 
-    # 6. DCT encode each channel
-    l_dc, l_ac_raw, l_scale = dct_encode(l_chan, w, h, l_nx, l_ny)
-    a_dc, a_ac_raw, a_scale = dct_encode(a_chan, w, h, c_nx, c_ny)
-    b_dc, b_ac_raw, b_scale = dct_encode(b_chan, w, h, c_nx, c_ny)
+    # 5b. Build per-channel scan orders (v0.4: depends on aspect byte)
+    l_scan = scan_order(l_nx, l_ny, aspect)
+    c_scan = scan_order(c_nx, c_ny, aspect)
+    alpha_scan = scan_order(alpha_nx, alpha_ny, aspect) if has_alpha else []
+
+    # 6. DCT encode each channel (AC emitted in scan order)
+    l_dc, l_ac_raw, l_scale = dct_encode(l_chan, w, h, l_scan)
+    a_dc, a_ac_raw, a_scale = dct_encode(a_chan, w, h, c_scan)
+    b_dc, b_ac_raw, b_scale = dct_encode(b_chan, w, h, c_scan)
     if has_alpha:
-        alpha_dc, alpha_ac_raw, alpha_scale = dct_encode(alpha_pixels, w, h, alpha_nx, alpha_ny)
+        alpha_dc, alpha_ac_raw, alpha_scale = dct_encode(alpha_pixels, w, h, alpha_scan)
     else:
         alpha_dc, alpha_ac_raw, alpha_scale = 0.0, [], 0.0
 

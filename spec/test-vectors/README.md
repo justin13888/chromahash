@@ -4,17 +4,17 @@ Golden test vectors generated from the Rust reference implementation.
 
 ## Files
 
-### Unit tests (v0.3)
+### Unit tests (v0.4)
 
 - `unit-color.json` — OKLAB color space transforms (RGB ↔ OKLAB)
 - `unit-mulaw.json` — µ-law companding round-trips
-- `unit-dct.json` — DCT scan order for square and non-square grids
+- `unit-dct.json` — DCT scan order keyed on `(nx, ny, w, h)` per spec §6.2
 - `unit-aspect.json` — Aspect ratio encoding/decoding and `deriveGrid` mappings
 - `unit-bitpack.json` — Bit packing `readBits`/`writeBits` operations
 - `unit-cbrt.json` — Halley cube root accuracy
 - `unit-softgamutclamp.json` — Oklch soft gamut clamp
 
-### Integration tests (v0.3)
+### Integration tests (v0.4)
 
 - `integration-encode.json` — Full encode: input RGBA → 32-byte hash
 - `integration-decode.json` — Full decode: 32-byte hash → output RGBA

@@ -11,7 +11,7 @@ from ._constants import (
     MAX_CHROMA_B,
     MAX_L_SCALE,
 )
-from ._dct import dct_decode_pixel, triangular_scan_order
+from ._dct import dct_decode_pixel, scan_order
 from ._math_utils import clamp01, round_half_away_from_zero
 from ._mulaw import mu_law_dequantize
 
@@ -95,17 +95,17 @@ def decode(hash_bytes: bytes) -> tuple[int, int, bytes]:
     else:
         alpha_ac = []
 
-    # Derive adaptive grid and compute usable scan orders (v0.2)
+    # Derive adaptive grid and compute usable scan orders (v0.4)
     l_dec_cap = 20 if has_alpha else 27
     l_nx, l_ny = derive_grid(aspect, 6 if has_alpha else 7)
     c_nx, c_ny = derive_grid(aspect, 4)
 
-    l_scan_full = triangular_scan_order(l_nx, l_ny)
+    l_scan_full = scan_order(l_nx, l_ny, aspect)
     l_usable = min(l_dec_cap, len(l_scan_full))
     l_scan = l_scan_full[:l_usable]
     l_ac_used = l_ac[:l_usable]
 
-    chroma_scan_full = triangular_scan_order(c_nx, c_ny)
+    chroma_scan_full = scan_order(c_nx, c_ny, aspect)
     c_usable = min(9, len(chroma_scan_full))
     chroma_scan = chroma_scan_full[:c_usable]
     a_ac_used = a_ac[:c_usable]
@@ -115,7 +115,7 @@ def decode(hash_bytes: bytes) -> tuple[int, int, bytes]:
     alpha_ac_used: list[float] = []
     if has_alpha:
         a_nx, a_ny = derive_grid(aspect, 3)
-        alpha_scan_full = triangular_scan_order(a_nx, a_ny)
+        alpha_scan_full = scan_order(a_nx, a_ny, aspect)
         a_usable = min(5, len(alpha_scan_full))
         alpha_scan = alpha_scan_full[:a_usable]
         alpha_ac_used = alpha_ac[:a_usable]
