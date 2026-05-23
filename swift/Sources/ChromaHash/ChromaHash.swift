@@ -90,19 +90,25 @@ func encodeHash(w: Int, h: Int, rgba: [UInt8], gamut: Gamut) -> [UInt8] {
     bChan[i] = avgB * (1.0 - alpha) + alpha * oklabPixels[i][2]
   }
 
-  // 5. Derive adaptive grid dimensions (v0.2)
-  let aspectByte = Int(encodeAspect(w: w, h: h))
+  // 5. Derive adaptive grid dimensions (v0.4)
+  let aspectByteU8 = encodeAspect(w: w, h: h)
+  let aspectByte = Int(aspectByteU8)
   let (lNx, lNy) = deriveGrid(aspectByte, hasAlpha ? 6 : 7)
   let (cNx, cNy) = deriveGrid(aspectByte, 4)
 
-  // 6. DCT encode each channel
-  let lResult = dctEncode(channel: lChan, w: w, h: h, nx: lNx, ny: lNy)
-  let aResult = dctEncode(channel: aChan, w: w, h: h, nx: cNx, ny: cNy)
-  let bResult = dctEncode(channel: bChan, w: w, h: h, nx: cNx, ny: cNy)
+  // 5b. Build per-channel scan orders (v0.4: depends on aspect byte)
+  let lScanEnc = scanOrder(nx: lNx, ny: lNy, aspectByte: aspectByteU8)
+  let cScanEnc = scanOrder(nx: cNx, ny: cNy, aspectByte: aspectByteU8)
+
+  // 6. DCT encode each channel (AC emitted in scan order)
+  let lResult = dctEncode(channel: lChan, w: w, h: h, scan: lScanEnc)
+  let aResult = dctEncode(channel: aChan, w: w, h: h, scan: cScanEnc)
+  let bResult = dctEncode(channel: bChan, w: w, h: h, scan: cScanEnc)
   let alphaResult: (dc: Double, ac: [Double], scale: Double)
   if hasAlpha {
     let (alphaNx, alphaNy) = deriveGrid(aspectByte, 3)
-    alphaResult = dctEncode(channel: alphaPixels, w: w, h: h, nx: alphaNx, ny: alphaNy)
+    let alphaScanEnc = scanOrder(nx: alphaNx, ny: alphaNy, aspectByte: aspectByteU8)
+    alphaResult = dctEncode(channel: alphaPixels, w: w, h: h, scan: alphaScanEnc)
   } else {
     alphaResult = (dc: 0.0, ac: [], scale: 0.0)
   }
@@ -320,20 +326,20 @@ func decodeHash(hash: [UInt8]) -> (width: Int, height: Int, rgba: [UInt8]) {
     alphaAC = []
   }
 
-  // Precompute adaptive scan orders with usable capping
-  let lScanFull = triangularScanOrder(nx: lNx, ny: lNy)
+  // Precompute adaptive scan orders with usable capping (v0.4)
+  let lScanFull = scanOrder(nx: lNx, ny: lNy, aspectByte: aspect)
   let lDecCap = hasAlpha ? 20 : 27
   let lUsable = min(lDecCap, lScanFull.count)
   let lScan = Array(lScanFull.prefix(lUsable))
 
-  let chromaScanFull = triangularScanOrder(nx: cNx, ny: cNy)
+  let chromaScanFull = scanOrder(nx: cNx, ny: cNy, aspectByte: aspect)
   let cUsable = min(9, chromaScanFull.count)
   let chromaScan = Array(chromaScanFull.prefix(cUsable))
 
   let alphaScan: [(Int, Int)]
   if hasAlpha {
     let (aNx, aNy) = deriveGrid(Int(aspect), 3)
-    let alphaScanFull = triangularScanOrder(nx: aNx, ny: aNy)
+    let alphaScanFull = scanOrder(nx: aNx, ny: aNy, aspectByte: aspect)
     let aUsable = min(5, alphaScanFull.count)
     alphaScan = Array(alphaScanFull.prefix(aUsable))
   } else {
