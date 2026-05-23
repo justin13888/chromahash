@@ -67,23 +67,28 @@ internal static class Encoder
             bChan[i] = avgB * (1.0 - alpha) + alpha * oklabPixels[i][2];
         }
 
-        // 5. Derive adaptive grid dimensions (v0.2)
+        // 5. Derive adaptive grid dimensions (v0.4)
         byte aspectByte = Aspect.EncodeAspect(w, h);
         (int lNx, int lNy) = Aspect.DeriveGrid(aspectByte, hasAlpha ? 6 : 7);
         (int cNx, int cNy) = Aspect.DeriveGrid(aspectByte, 4);
         (int aNx, int aNy) = hasAlpha ? Aspect.DeriveGrid(aspectByte, 3) : (3, 3);
 
-        // 6. DCT encode each channel
-        (double lDc, List<double> lAcRaw, double lScale) = Dct.DctEncode(lChan, iw, ih, lNx, lNy);
-        (double aDc, List<double> aAcRaw, double aScale) = Dct.DctEncode(aChan, iw, ih, cNx, cNy);
-        (double bDc, List<double> bAcRaw, double bScale) = Dct.DctEncode(bChan, iw, ih, cNx, cNy);
+        // 5b. Build per-channel scan orders (v0.4: depends on aspect byte)
+        var lScanEnc = Dct.ScanOrder(lNx, lNy, aspectByte);
+        var cScanEnc = Dct.ScanOrder(cNx, cNy, aspectByte);
+        var alphaScanEnc = hasAlpha ? Dct.ScanOrder(aNx, aNy, aspectByte) : new List<(int, int)>();
+
+        // 6. DCT encode each channel (AC emitted in scan order)
+        (double lDc, List<double> lAcRaw, double lScale) = Dct.DctEncode(lChan, iw, ih, lScanEnc);
+        (double aDc, List<double> aAcRaw, double aScale) = Dct.DctEncode(aChan, iw, ih, cScanEnc);
+        (double bDc, List<double> bAcRaw, double bScale) = Dct.DctEncode(bChan, iw, ih, cScanEnc);
 
         double alphaDc = 0.0,
             alphaScale = 0.0;
         List<double> alphaAcRaw = [];
 
         if (hasAlpha)
-            (alphaDc, alphaAcRaw, alphaScale) = Dct.DctEncode(alphaPixels, iw, ih, aNx, aNy);
+            (alphaDc, alphaAcRaw, alphaScale) = Dct.DctEncode(alphaPixels, iw, ih, alphaScanEnc);
 
         // Cap to bit budget and zero-pad (per spec §10)
         int lCap = hasAlpha ? 20 : 27;

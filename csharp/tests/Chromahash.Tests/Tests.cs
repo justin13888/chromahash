@@ -392,29 +392,30 @@ public class DctTests
     }
 
     [Fact]
-    public void ScanOrder4x4()
+    public void ScanOrder4x4SquareIsRadial()
     {
+        // aspectByte=128 → w=h=32 → priority ∝ cx²+cy².
         var order = DctAccessor.ScanOrder(4, 4);
         var expected = new List<(int, int)>
         {
-            (1, 0),
-            (2, 0),
-            (3, 0),
             (0, 1),
+            (1, 0),
             (1, 1),
-            (2, 1),
             (0, 2),
+            (2, 0),
             (1, 2),
+            (2, 1),
             (0, 3),
+            (3, 0),
         };
         Assert.Equal(expected, order);
     }
 
     [Fact]
-    public void ScanOrder3x3()
+    public void ScanOrder3x3SquareIsRadial()
     {
         var order = DctAccessor.ScanOrder(3, 3);
-        var expected = new List<(int, int)> { (1, 0), (2, 0), (0, 1), (1, 1), (0, 2) };
+        var expected = new List<(int, int)> { (0, 1), (1, 0), (1, 1), (0, 2), (2, 0) };
         Assert.Equal(expected, order);
     }
 
@@ -423,7 +424,8 @@ public class DctTests
     {
         double val = 0.7;
         double[] channel = Enumerable.Repeat(val, 16).ToArray();
-        var (dc, _, _) = DctAccessor.Encode(channel, 4, 4, 4, 4);
+        var scan = DctAccessor.ScanOrder(4, 4);
+        var (dc, _, _) = DctAccessor.Encode(channel, 4, 4, scan);
         Assert.True(Math.Abs(dc - val) < 1e-12, $"DC of constant channel should = {val}, got {dc}");
     }
 
@@ -431,7 +433,8 @@ public class DctTests
     public void AcOfConstantChannelIsZero()
     {
         double[] channel = Enumerable.Repeat(0.5, 16).ToArray();
-        var (_, ac, scale) = DctAccessor.Encode(channel, 4, 4, 4, 4);
+        var scan = DctAccessor.ScanOrder(4, 4);
+        var (_, ac, scale) = DctAccessor.Encode(channel, 4, 4, scan);
         Assert.True(scale < 1e-12, "AC of constant channel should be 0");
         foreach (double v in ac)
             Assert.True(Math.Abs(v) < 1e-12, $"AC should be 0, got {v}");
@@ -442,10 +445,8 @@ public class DctTests
     {
         const double val = 0.42;
         double[] channel = Enumerable.Repeat(val, 64).ToArray();
-        const int nx = 4,
-            ny = 4;
-        var (dc, ac, _) = DctAccessor.Encode(channel, 8, 8, nx, ny);
-        var scan = DctAccessor.ScanOrder(nx, ny);
+        var scan = DctAccessor.ScanOrder(4, 4);
+        var (dc, ac, _) = DctAccessor.Encode(channel, 8, 8, scan);
         for (int y = 0; y < 8; y++)
         {
             for (int x = 0; x < 8; x++)
@@ -469,10 +470,8 @@ public class DctTests
             for (int x = 0; x < w; x++)
                 channel[x + y * w] = (x / (double)w + y / (double)h) / 2.0;
 
-        const int nx = 7,
-            ny = 7;
-        var (dc, ac, _) = DctAccessor.Encode(channel, w, h, nx, ny);
-        var scan = DctAccessor.ScanOrder(nx, ny);
+        var scan = DctAccessor.ScanOrder(7, 7);
+        var (dc, ac, _) = DctAccessor.Encode(channel, w, h, scan);
 
         double maxErr = 0.0;
         for (int y = 0; y < h; y++)
@@ -900,11 +899,27 @@ public class SpecVectorTests
         foreach (var tc in cases)
         {
             string name = tc.GetProperty("name").GetString()!;
-            int nx = tc.GetProperty("input").GetProperty("nx").GetInt32();
-            int ny = tc.GetProperty("input").GetProperty("ny").GetInt32();
+            var input = tc.GetProperty("input");
+            int nx = input.GetProperty("nx").GetInt32();
+            int ny = input.GetProperty("ny").GetInt32();
+            int wt = input.GetProperty("w").GetInt32();
+            int ht = input.GetProperty("h").GetInt32();
             var expected = tc.GetProperty("expected");
 
-            var order = DctAccessor.ScanOrder(nx, ny);
+            // Find an aspect byte producing (wt, ht) — scan order is keyed on it.
+            int aspectByte = -1;
+            for (int b = 0; b < 256; b++)
+            {
+                var (bw, bh) = ChromaHash.Aspect.DecodeOutputSize((byte)b);
+                if ((int)bw == wt && (int)bh == ht)
+                {
+                    aspectByte = b;
+                    break;
+                }
+            }
+            Assert.True(aspectByte >= 0, $"{name}: no aspect byte for (w={wt}, h={ht})");
+
+            var order = DctAccessor.ScanOrder(nx, ny, (byte)aspectByte);
             Assert.True(
                 order.Count == expected.GetProperty("ac_count").GetInt32(),
                 $"{name}: scan order count = {order.Count}"
@@ -1065,16 +1080,15 @@ internal static class BitPackAccessor
 
 internal static class DctAccessor
 {
-    public static List<(int Cx, int Cy)> ScanOrder(int nx, int ny) =>
-        Dct.TriangularScanOrder(nx, ny);
+    public static List<(int Cx, int Cy)> ScanOrder(int nx, int ny, byte aspectByte = 128) =>
+        Dct.ScanOrder(nx, ny, aspectByte);
 
     public static (double Dc, List<double> Ac, double Scale) Encode(
         double[] channel,
         int w,
         int h,
-        int nx,
-        int ny
-    ) => Dct.DctEncode(channel, w, h, nx, ny);
+        List<(int Cx, int Cy)> scan
+    ) => Dct.DctEncode(channel, w, h, scan);
 
     public static double DecodePixel(
         double dc,
