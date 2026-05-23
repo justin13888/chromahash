@@ -5,63 +5,72 @@ import kotlin.math.abs
 import kotlin.math.max
 
 /**
- * Compute the triangular scan order for an nx*ny grid, excluding DC.
- * Per spec: row-major, condition cx*ny < nx*(ny-cy), skip (0,0).
+ * Compute the AC coefficient scan order for an nx×ny grid keyed on aspectByte.
+ * Per spec §6.2 (v0.4): coefficients sorted ascending by per-pixel frequency priority
+ * `(cx*h)^2 + (cy*w)^2` where (w,h) = decodeOutputSize(aspectByte).
+ * Ties broken by (cx, cy). Excludes DC at (0,0).
  */
-internal fun triangularScanOrder(
+internal fun scanOrder(
     nx: Int,
     ny: Int,
+    aspectByte: Int,
 ): List<Pair<Int, Int>> {
-    val order = mutableListOf<Pair<Int, Int>>()
+    val (w, h) = decodeOutputSize(aspectByte)
+
+    data class Entry(val priority: Long, val cx: Int, val cy: Int)
+    val entries = mutableListOf<Entry>()
     for (cy in 0 until ny) {
         val cxStart = if (cy == 0) 1 else 0
         var cx = cxStart
         while (cx * ny < nx * (ny - cy)) {
-            order.add(Pair(cx, cy))
+            val a = cx.toLong() * h.toLong()
+            val b = cy.toLong() * w.toLong()
+            entries.add(Entry(a * a + b * b, cx, cy))
             cx++
         }
     }
-    return order
+    entries.sortWith(
+        compareBy<Entry> { it.priority }.thenBy { it.cx }.thenBy { it.cy },
+    )
+    return entries.map { Pair(it.cx, it.cy) }
 }
 
 /**
- * Forward DCT encode for a channel. Per spec dctEncode.
+ * Forward DCT encode for a channel. Per spec §12.6 dctEncode (v0.4).
+ * AC values are emitted in `scan` order.
  * Returns Triple(dc, acCoefficients, scale).
  */
 internal fun dctEncode(
     channel: DoubleArray,
     w: Int,
     h: Int,
-    nx: Int,
-    ny: Int,
+    scan: List<Pair<Int, Int>>,
 ): Triple<Double, DoubleArray, Double> {
     val wh = (w * h).toDouble()
-    var dc = 0.0
-    val acList = mutableListOf<Double>()
+
+    // DC = mean (cos(0)=1 everywhere)
+    var sum = 0.0
+    for (v in channel) sum += v
+    val dc = sum / wh
+
+    val acList = DoubleArray(scan.size)
     var scale = 0.0
 
-    for (cy in 0 until ny) {
-        var cx = 0
-        while (cx * ny < nx * (ny - cy)) {
-            var f = 0.0
-            for (y in 0 until h) {
-                val fy = portableCos(PI / h.toDouble() * cy.toDouble() * (y.toDouble() + 0.5))
-                for (x in 0 until w) {
-                    f +=
-                        channel[x + y * w] *
-                        portableCos(PI / w.toDouble() * cx.toDouble() * (x.toDouble() + 0.5)) *
-                        fy
-                }
+    for ((idx, pair) in scan.withIndex()) {
+        val (cx, cy) = pair
+        var f = 0.0
+        for (y in 0 until h) {
+            val fy = portableCos(PI / h.toDouble() * cy.toDouble() * (y.toDouble() + 0.5))
+            for (x in 0 until w) {
+                f +=
+                    channel[x + y * w] *
+                    portableCos(PI / w.toDouble() * cx.toDouble() * (x.toDouble() + 0.5)) *
+                    fy
             }
-            f /= wh
-            if (cx > 0 || cy > 0) {
-                acList.add(f)
-                scale = max(scale, abs(f))
-            } else {
-                dc = f
-            }
-            cx++
         }
+        f /= wh
+        acList[idx] = f
+        scale = max(scale, abs(f))
     }
 
     // Floor near-zero scale to exactly zero. When the channel is (near-)constant,
@@ -69,11 +78,11 @@ internal fun dctEncode(
     // threshold, dividing AC/scale amplifies platform-specific ULP differences
     // (e.g. different cbrt implementations) into divergent quantized codes.
     if (scale < 1e-10) {
-        acList.replaceAll { 0.0 }
+        for (i in acList.indices) acList[i] = 0.0
         scale = 0.0
     }
 
-    return Triple(dc, acList.toDoubleArray(), scale)
+    return Triple(dc, acList, scale)
 }
 
 /** Inverse DCT at a single pixel (x, y) for a channel. */

@@ -1,12 +1,41 @@
 package chromahash
 
+import org.json.JSONArray
+import java.io.File
+import java.nio.file.Paths
 import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class ChromaHashTest {
+    // ---- Spec vector loading ----
+
+    private fun specVectorsDir(): File {
+        // <repo>/kotlin/src/test/kotlin/chromahash/<this file>
+        // -> <repo>/spec/test-vectors
+        val cwd = Paths.get("").toAbsolutePath().toFile()
+        return cwd.resolve("../spec/test-vectors")
+    }
+
+    private fun loadJsonArray(name: String): JSONArray? {
+        val f = specVectorsDir().resolve(name)
+        if (!f.exists()) return null
+        return JSONArray(f.readText())
+    }
+
+    private fun gamutFromName(name: String): Gamut =
+        when (name) {
+            "sRGB" -> Gamut.SRGB
+            "Display P3" -> Gamut.DISPLAY_P3
+            "Adobe RGB" -> Gamut.ADOBE_RGB
+            "BT.2020" -> Gamut.BT2020
+            "ProPhoto RGB" -> Gamut.PROPHOTO_RGB
+            else -> Gamut.SRGB
+        }
+
     // ---- MathUtils tests ----
 
     @Test
@@ -50,7 +79,7 @@ class ChromaHashTest {
         assertEquals(0.0, cbrtHalley(0.0))
     }
 
-    // ---- Aspect tests (from unit-aspect.json) ----
+    // ---- Aspect tests ----
 
     @Test
     fun `aspect 1 to 1`() {
@@ -86,7 +115,6 @@ class ChromaHashTest {
 
     @Test
     fun `aspect 4 to 1`() {
-        // 4:1 → byte 191 in v0.3 (255 is reserved for 16:1)
         assertEquals(191, encodeAspect(4, 1))
         val (w, h) = decodeOutputSize(191)
         assertEquals(32, w)
@@ -95,7 +123,6 @@ class ChromaHashTest {
 
     @Test
     fun `aspect 1 to 4`() {
-        // 1:4 → byte 64 in v0.3 (0 is reserved for 1:16)
         assertEquals(64, encodeAspect(1, 4))
         val (w, h) = decodeOutputSize(64)
         assertEquals(8, w)
@@ -136,54 +163,76 @@ class ChromaHashTest {
 
     @Test
     fun `aspect 100 to 25 is 4 to 1`() {
-        // 100:25 = 4:1 → byte 191 in v0.3
         assertEquals(191, encodeAspect(100, 25))
         val (w, h) = decodeOutputSize(191)
         assertEquals(32, w)
         assertEquals(8, h)
     }
 
-    // ---- DCT scan order tests (from unit-dct.json) ----
+    // ---- DCT scan order tests (v0.4 priority-based) ----
 
     @Test
-    fun `scan order 3x3`() {
-        val order = triangularScanOrder(3, 3)
-        assertEquals(5, order.size)
+    fun `scan order counts`() {
+        // aspectByte=128 → square; AC count depends only on (nx, ny).
+        assertEquals(5, scanOrder(3, 3, 128).size)
+        assertEquals(9, scanOrder(4, 4, 128).size)
+        assertEquals(20, scanOrder(6, 6, 128).size)
+        assertEquals(27, scanOrder(7, 7, 128).size)
+    }
+
+    @Test
+    fun `scan order 4x4 square is radial`() {
+        val order = scanOrder(4, 4, 128)
         val expected =
             listOf(
-                Pair(1, 0),
-                Pair(2, 0),
-                Pair(0, 1),
-                Pair(1, 1),
-                Pair(0, 2),
+                Pair(0, 1), Pair(1, 0), Pair(1, 1),
+                Pair(0, 2), Pair(2, 0), Pair(1, 2),
+                Pair(2, 1), Pair(0, 3), Pair(3, 0),
             )
         assertEquals(expected, order)
     }
 
     @Test
-    fun `scan order 4x4`() {
-        val order = triangularScanOrder(4, 4)
-        assertEquals(9, order.size)
-        val expected =
-            listOf(
-                Pair(1, 0), Pair(2, 0), Pair(3, 0),
-                Pair(0, 1), Pair(1, 1), Pair(2, 1),
-                Pair(0, 2), Pair(1, 2),
-                Pair(0, 3),
-            )
+    fun `scan order 3x3 square is radial`() {
+        val order = scanOrder(3, 3, 128)
+        val expected = listOf(Pair(0, 1), Pair(1, 0), Pair(1, 1), Pair(0, 2), Pair(2, 0))
         assertEquals(expected, order)
     }
 
     @Test
-    fun `scan order 6x6`() {
-        val order = triangularScanOrder(6, 6)
-        assertEquals(20, order.size)
-    }
-
-    @Test
-    fun `scan order 7x7`() {
-        val order = triangularScanOrder(7, 7)
-        assertEquals(27, order.size)
+    fun `scan order spec vectors`() {
+        val arr = loadJsonArray("unit-dct.json") ?: return
+        for (i in 0 until arr.length()) {
+            val tc = arr.getJSONObject(i)
+            val name = tc.getString("name")
+            val input = tc.getJSONObject("input")
+            val expected = tc.getJSONObject("expected")
+            val nx = input.getInt("nx")
+            val ny = input.getInt("ny")
+            val w = input.getInt("w")
+            val h = input.getInt("h")
+            val acCount = expected.getInt("ac_count")
+            val expectedScan = expected.getJSONArray("scan_order")
+            // Find aspect byte producing (w, h)
+            var aspectByte = -1
+            for (b in 0..255) {
+                val (bw, bh) = decodeOutputSize(b)
+                if (bw == w && bh == h) {
+                    aspectByte = b
+                    break
+                }
+            }
+            assertTrue(aspectByte >= 0, "$name: no aspect byte for (w=$w, h=$h)")
+            val order = scanOrder(nx, ny, aspectByte)
+            assertEquals(acCount, order.size, "$name: ac_count")
+            for (j in 0 until order.size) {
+                if (j >= expectedScan.length()) break
+                val pair = order[j]
+                val exp = expectedScan.getJSONArray(j)
+                assertEquals(exp.getInt(0), pair.first, "$name: scan[$j].cx")
+                assertEquals(exp.getInt(1), pair.second, "$name: scan[$j].cy")
+            }
+        }
     }
 
     // ---- BitPack tests ----
@@ -202,428 +251,223 @@ class ChromaHashTest {
         assertEquals(0xCA, readBits(buf, 6, 8))
     }
 
-    // ---- Integration encode tests (from integration-encode.json) ----
+    @Test
+    fun `bitpack multiple fields`() {
+        val buf = ByteArray(8)
+        writeBits(buf, 0, 7, 100)
+        writeBits(buf, 7, 7, 64)
+        writeBits(buf, 14, 7, 80)
+        writeBits(buf, 21, 6, 33)
+        writeBits(buf, 27, 6, 20)
+        writeBits(buf, 33, 5, 15)
+        writeBits(buf, 38, 8, 128)
 
-    private fun solidImage(
-        w: Int,
-        h: Int,
-        r: Int,
-        g: Int,
-        b: Int,
-        a: Int,
-    ): ByteArray {
-        val pixelCount = w * h
-        val rgba = ByteArray(pixelCount * 4)
-        for (i in 0 until pixelCount) {
-            rgba[i * 4] = r.toByte()
-            rgba[i * 4 + 1] = g.toByte()
-            rgba[i * 4 + 2] = b.toByte()
-            rgba[i * 4 + 3] = a.toByte()
-        }
-        return rgba
+        assertEquals(100, readBits(buf, 0, 7))
+        assertEquals(64, readBits(buf, 7, 7))
+        assertEquals(80, readBits(buf, 14, 7))
+        assertEquals(33, readBits(buf, 21, 6))
+        assertEquals(20, readBits(buf, 27, 6))
+        assertEquals(15, readBits(buf, 33, 5))
+        assertEquals(128, readBits(buf, 38, 8))
     }
 
-    @Test
-    fun `encode solid gray 4x4`() {
-        val rgba = solidImage(4, 4, 128, 128, 128, 255)
-        val hash = ChromaHash.encode(4, 4, rgba, Gamut.SRGB)
-        val expected =
-            intArrayOf(
-                76, 32, 16, 0, 0, 160, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
-                16, 66, 8, 33, 132, 16, 66, 68, 68, 68, 68, 68, 68, 68, 68, 68,
-            )
-        assertHashEquals(expected, hash.hash)
-    }
+    // ---- MuLaw tests ----
 
     @Test
-    fun `encode solid red 4x4`() {
-        val rgba = solidImage(4, 4, 255, 0, 0, 255)
-        val hash = ChromaHash.encode(4, 4, rgba, Gamut.SRGB)
-        val expected =
-            intArrayOf(
-                208, 175, 20, 0, 0, 160, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
-                16, 66, 8, 33, 132, 16, 66, 68, 68, 68, 68, 68, 68, 68, 68, 68,
-            )
-        assertHashEquals(expected, hash.hash)
-    }
-
-    @Test
-    fun `encode solid green 4x4`() {
-        val rgba = solidImage(4, 4, 0, 255, 0, 255)
-        val hash = ChromaHash.encode(4, 4, rgba, Gamut.SRGB)
-        val expected =
-            intArrayOf(
-                238, 79, 22, 0, 0, 160, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
-                16, 66, 8, 33, 132, 16, 66, 68, 68, 68, 68, 68, 68, 68, 68, 68,
-            )
-        assertHashEquals(expected, hash.hash)
-    }
-
-    @Test
-    fun `encode solid blue 4x4`() {
-        val rgba = solidImage(4, 4, 0, 0, 255, 255)
-        val hash = ChromaHash.encode(4, 4, rgba, Gamut.SRGB)
-        val expected =
-            intArrayOf(
-                185, 29, 5, 0, 0, 160, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
-                16, 66, 8, 33, 132, 16, 66, 68, 68, 68, 68, 68, 68, 68, 68, 68,
-            )
-        assertHashEquals(expected, hash.hash)
-    }
-
-    @Test
-    fun `encode solid white 4x4`() {
-        val rgba = solidImage(4, 4, 255, 255, 255, 255)
-        val hash = ChromaHash.encode(4, 4, rgba, Gamut.SRGB)
-        val expected =
-            intArrayOf(
-                127, 32, 16, 0, 0, 160, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
-                16, 66, 8, 33, 132, 16, 66, 68, 68, 68, 68, 68, 68, 68, 68, 68,
-            )
-        assertHashEquals(expected, hash.hash)
-    }
-
-    @Test
-    fun `encode solid black 4x4`() {
-        val rgba = solidImage(4, 4, 0, 0, 0, 255)
-        val hash = ChromaHash.encode(4, 4, rgba, Gamut.SRGB)
-        val expected =
-            intArrayOf(
-                0, 32, 16, 0, 0, 160, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
-                16, 66, 8, 33, 132, 16, 66, 68, 68, 68, 68, 68, 68, 68, 68, 68,
-            )
-        assertHashEquals(expected, hash.hash)
-    }
-
-    @Test
-    fun `encode gradient 16x16`() {
-        val rgba = buildGradient16x16()
-        val hash = ChromaHash.encode(16, 16, rgba, Gamut.SRGB)
-        val expected =
-            intArrayOf(
-                70, 101, 110, 88, 12, 160, 228, 183, 250, 100, 0, 200, 185, 199, 237, 123,
-                15, 58, 248, 168, 132, 239, 73, 184, 227, 60, 187, 179, 60, 168, 187, 59,
-            )
-        assertHashEquals(expected, hash.hash)
-    }
-
-    @Test
-    fun `encode gradient 8x4`() {
-        val rgba = buildGradient8x4()
-        val hash = ChromaHash.encode(8, 4, rgba, Gamut.SRGB)
-        val expected =
-            intArrayOf(
-                200, 100, 142, 96, 206, 167, 199, 187, 250, 228, 11, 0, 57, 247, 94, 191,
-                239, 193, 23, 33, 124, 240, 65, 64, 68, 214, 187, 178, 60, 132, 186, 51,
-            )
-        assertHashEquals(expected, hash.hash)
-    }
-
-    @Test
-    fun `encode gradient 4x8`() {
-        val rgba = buildGradient4x8()
-        val hash = ChromaHash.encode(4, 8, rgba, Gamut.SRGB)
-        val expected =
-            intArrayOf(
-                73, 165, 142, 104, 12, 152, 229, 59, 24, 3, 64, 240, 189, 109, 159, 131,
-                240, 65, 72, 37, 124, 15, 70, 64, 206, 179, 187, 43, 133, 58, 187, 67,
-            )
-        assertHashEquals(expected, hash.hash)
-    }
-
-    @Test
-    fun `encode checkerboard alpha 8x8`() {
-        val rgba = buildCheckerboardAlpha8x8()
-        val hash = ChromaHash.encode(8, 8, rgba, Gamut.SRGB)
-        val expected =
-            intArrayOf(
-                208, 175, 20, 0, 0, 224, 16, 64, 16, 4, 65, 16, 132, 16, 66, 8,
-                33, 132, 16, 66, 136, 136, 136, 136, 136, 136, 136, 136, 136, 136, 135, 127,
-            )
-        assertHashEquals(expected, hash.hash)
-    }
-
-    @Test
-    fun `encode solid 1x1`() {
-        val rgba = solidImage(1, 1, 200, 100, 50, 255)
-        val hash = ChromaHash.encode(1, 1, rgba, Gamut.SRGB)
-        val expected =
-            intArrayOf(
-                78, 167, 243, 111, 12, 160, 16, 192, 15, 1, 132, 15, 66, 8, 222, 127,
-                0, 194, 7, 63, 4, 16, 2, 4, 68, 60, 56, 68, 64, 196, 131, 67,
-            )
-        assertHashEquals(expected, hash.hash)
-    }
-
-    @Test
-    fun `encode solid p3 4x4`() {
-        val rgba = solidImage(4, 4, 200, 100, 50, 255)
-        val hash = ChromaHash.encode(4, 4, rgba, Gamut.DISPLAY_P3)
-        val expected =
-            intArrayOf(
-                207, 40, 20, 0, 0, 160, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
-                16, 66, 8, 33, 132, 16, 66, 68, 68, 68, 68, 68, 68, 68, 68, 68,
-            )
-        assertHashEquals(expected, hash.hash)
-    }
-
-    // ---- Integration encode: average color tests ----
-
-    @Test
-    fun `average color solid gray`() {
-        val rgba = solidImage(4, 4, 128, 128, 128, 255)
-        val hash = ChromaHash.encode(4, 4, rgba, Gamut.SRGB)
-        val avg = hash.averageColor()
-        assertEquals(RgbaColor(128, 128, 128, 255), avg)
-    }
-
-    @Test
-    fun `average color solid red`() {
-        val rgba = solidImage(4, 4, 255, 0, 0, 255)
-        val hash = ChromaHash.encode(4, 4, rgba, Gamut.SRGB)
-        val avg = hash.averageColor()
-        assertEquals(RgbaColor(253, 23, 0, 255), avg)
-    }
-
-    @Test
-    fun `average color solid green`() {
-        val rgba = solidImage(4, 4, 0, 255, 0, 255)
-        val hash = ChromaHash.encode(4, 4, rgba, Gamut.SRGB)
-        val avg = hash.averageColor()
-        assertEquals(RgbaColor(0, 255, 25, 255), avg)
-    }
-
-    @Test
-    fun `average color solid blue`() {
-        val rgba = solidImage(4, 4, 0, 0, 255, 255)
-        val hash = ChromaHash.encode(4, 4, rgba, Gamut.SRGB)
-        val avg = hash.averageColor()
-        assertEquals(RgbaColor(0, 58, 214, 255), avg)
-    }
-
-    @Test
-    fun `average color solid white`() {
-        val rgba = solidImage(4, 4, 255, 255, 255, 255)
-        val hash = ChromaHash.encode(4, 4, rgba, Gamut.SRGB)
-        val avg = hash.averageColor()
-        assertEquals(RgbaColor(255, 255, 255, 255), avg)
-    }
-
-    @Test
-    fun `average color solid black`() {
-        val rgba = solidImage(4, 4, 0, 0, 0, 255)
-        val hash = ChromaHash.encode(4, 4, rgba, Gamut.SRGB)
-        val avg = hash.averageColor()
-        assertEquals(RgbaColor(0, 0, 0, 255), avg)
-    }
-
-    @Test
-    fun `average color checkerboard alpha`() {
-        val rgba = buildCheckerboardAlpha8x8()
-        val hash = ChromaHash.encode(8, 8, rgba, Gamut.SRGB)
-        val avg = hash.averageColor()
-        assertEquals(RgbaColor(253, 23, 0, 132), avg)
-    }
-
-    // ---- Decode tests ----
-
-    @Test
-    fun `decode solid gray produces uniform pixels`() {
-        val hashBytes =
-            intArrayOf(
-                76, 32, 16, 0, 0, 160, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
-                16, 66, 8, 33, 132, 16, 66, 68, 68, 68, 68, 68, 68, 68, 68, 68,
-            ).map { it.toByte() }.toByteArray()
-        val hash = ChromaHash.fromBytes(hashBytes)
-        val (w, h, rgba) = hash.decode()
-        assertEquals(32, w)
-        assertEquals(32, h)
-        // All pixels should be close to (128, 128, 128, 255)
-        for (i in 0 until w * h) {
-            val r = rgba[i * 4].toInt() and 0xFF
-            val g = rgba[i * 4 + 1].toInt() and 0xFF
-            val b = rgba[i * 4 + 2].toInt() and 0xFF
-            val a = rgba[i * 4 + 3].toInt() and 0xFF
-            assertTrue(abs(r - 128) <= 1, "pixel $i R=$r, expected ~128")
-            assertTrue(abs(g - 128) <= 1, "pixel $i G=$g, expected ~128")
-            assertTrue(abs(b - 128) <= 1, "pixel $i B=$b, expected ~128")
-            assertEquals(255, a, "pixel $i A=$a, expected 255")
+    fun `mulaw roundtrip extremes`() {
+        for (v in doubleArrayOf(-1.0, -0.5, 0.0, 0.5, 1.0)) {
+            val c = muCompress(v)
+            val rt = muExpand(c)
+            assertTrue(abs(rt - v) < 1e-12, "mu-law roundtrip failed at v=$v")
         }
     }
 
     @Test
-    fun `decode solid red produces uniform pixels`() {
-        val hashBytes =
-            intArrayOf(
-                208, 175, 20, 0, 0, 160, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
-                16, 66, 8, 33, 132, 16, 66, 68, 68, 68, 68, 68, 68, 68, 68, 68,
-            ).map { it.toByte() }.toByteArray()
-        val hash = ChromaHash.fromBytes(hashBytes)
-        val (w, h, rgba) = hash.decode()
-        assertEquals(32, w)
-        assertEquals(32, h)
-        for (i in 0 until w * h) {
-            val r = rgba[i * 4].toInt() and 0xFF
-            val g = rgba[i * 4 + 1].toInt() and 0xFF
-            val b = rgba[i * 4 + 2].toInt() and 0xFF
-            assertTrue(abs(r - 253) <= 1, "pixel $i R=$r, expected ~253")
-            assertTrue(abs(g - 23) <= 1, "pixel $i G=$g, expected ~23")
-            assertTrue(abs(b - 0) <= 1, "pixel $i B=$b, expected ~0")
-        }
+    fun `mulaw quantize 4 bit`() {
+        assertEquals(8, muLawQuantize(0.0, 4), "midpoint for 4-bit should be 8")
+        assertEquals(0, muLawQuantize(-1.0, 4))
+        assertEquals(15, muLawQuantize(1.0, 4))
     }
 
     @Test
-    fun `decode solid black all zeros`() {
-        val hashBytes =
-            intArrayOf(
-                0, 32, 16, 0, 0, 160, 16, 66, 8, 33, 132, 16, 66, 8, 33, 132,
-                16, 66, 8, 33, 132, 16, 66, 68, 68, 68, 68, 68, 68, 68, 68, 68,
-            ).map { it.toByte() }.toByteArray()
-        val hash = ChromaHash.fromBytes(hashBytes)
-        val (w, h, rgba) = hash.decode()
-        assertEquals(32, w)
-        assertEquals(32, h)
-        for (i in 0 until w * h) {
-            val r = rgba[i * 4].toInt() and 0xFF
-            val g = rgba[i * 4 + 1].toInt() and 0xFF
-            val b = rgba[i * 4 + 2].toInt() and 0xFF
-            val a = rgba[i * 4 + 3].toInt() and 0xFF
-            assertTrue(r <= 1, "pixel $i R=$r, expected ~0")
-            assertTrue(g <= 1, "pixel $i G=$g, expected ~0")
-            assertTrue(b <= 1, "pixel $i B=$b, expected ~0")
-            assertEquals(255, a)
-        }
+    fun `mulaw quantize 5 bit`() {
+        assertEquals(16, muLawQuantize(0.0, 5), "midpoint for 5-bit should be 16")
+        assertEquals(0, muLawQuantize(-1.0, 5))
+        assertEquals(31, muLawQuantize(1.0, 5))
+    }
+
+    // ---- Transfer tests ----
+
+    @Test
+    fun `srgb boundaries`() {
+        assertEquals(0.0, srgbEotf(0.0))
+        assertTrue(abs(srgbEotf(1.0) - 1.0) < 1e-12)
+        assertEquals(0.0, srgbGamma(0.0))
+        assertTrue(abs(srgbGamma(1.0) - 1.0) < 1e-12)
     }
 
     @Test
-    fun `decode produces valid dimensions`() {
-        val rgba = solidImage(4, 4, 128, 64, 32, 255)
+    fun `srgb roundtrip`() {
+        for (x in doubleArrayOf(0.0, 0.01, 0.04045, 0.1, 0.5, 0.9, 1.0)) {
+            val linear = srgbEotf(x)
+            val gamma = srgbGamma(linear)
+            assertTrue(abs(gamma - x) < 1e-4, "sRGB roundtrip failed at x=$x")
+        }
+    }
+
+    // ---- Color tests ----
+
+    @Test
+    fun `white to oklab`() {
+        val lab = linearRgbToOklab(doubleArrayOf(1.0, 1.0, 1.0), Gamut.SRGB)
+        assertTrue(abs(lab[0] - 1.0) < 1e-6, "white L should be near 1")
+        assertTrue(abs(lab[1]) < 1e-6, "white a should be near 0")
+        assertTrue(abs(lab[2]) < 1e-6, "white b should be near 0")
+    }
+
+    @Test
+    fun `black to oklab`() {
+        val lab = linearRgbToOklab(doubleArrayOf(0.0, 0.0, 0.0), Gamut.SRGB)
+        assertTrue(abs(lab[0]) < 1e-12, "black L should = 0")
+        assertTrue(abs(lab[1]) < 1e-12, "black a should = 0")
+        assertTrue(abs(lab[2]) < 1e-12, "black b should = 0")
+    }
+
+    @Test
+    fun `oklab roundtrip sRGB`() {
+        val testColors =
+            listOf(
+                doubleArrayOf(1.0, 0.0, 0.0),
+                doubleArrayOf(0.0, 1.0, 0.0),
+                doubleArrayOf(0.0, 0.0, 1.0),
+                doubleArrayOf(0.5, 0.5, 0.5),
+                doubleArrayOf(0.2, 0.7, 0.3),
+            )
+        for (rgb in testColors) {
+            val lab = linearRgbToOklab(rgb, Gamut.SRGB)
+            val rgb2 = oklabToLinearSrgb(lab)
+            for (i in 0..2) {
+                assertTrue(abs(rgb[i] - rgb2[i]) < 1e-6, "roundtrip failed for ${rgb.toList()} at $i")
+            }
+        }
+    }
+
+    // ---- Integration encode (spec vectors) ----
+
+    @Test
+    fun `integration encode spec vectors`() {
+        val arr = loadJsonArray("integration-encode.json") ?: return
+        for (i in 0 until arr.length()) {
+            val tc = arr.getJSONObject(i)
+            val name = tc.getString("name")
+            val input = tc.getJSONObject("input")
+            val width = input.getInt("width")
+            val height = input.getInt("height")
+            val gamut = gamutFromName(input.getString("gamut"))
+            val rgbaArr = input.getJSONArray("rgba")
+            val rgba = ByteArray(rgbaArr.length()) { (rgbaArr.getInt(it) and 0xFF).toByte() }
+            val expected = tc.getJSONObject("expected")
+            val expectedHashArr = expected.getJSONArray("hash")
+            val expectedHash =
+                ByteArray(expectedHashArr.length()) { (expectedHashArr.getInt(it) and 0xFF).toByte() }
+            val hash = ChromaHash.encode(width, height, rgba, gamut)
+            assertContentEquals(expectedHash, hash.hash, "$name: hash mismatch")
+            if (expected.has("average_color")) {
+                val avgArr = expected.getJSONArray("average_color")
+                val avg = hash.averageColor()
+                assertEquals(avgArr.getInt(0), avg.r, "$name: avg.r")
+                assertEquals(avgArr.getInt(1), avg.g, "$name: avg.g")
+                assertEquals(avgArr.getInt(2), avg.b, "$name: avg.b")
+                assertEquals(avgArr.getInt(3), avg.a, "$name: avg.a")
+            }
+        }
+    }
+
+    // ---- Integration decode (spec vectors) ----
+
+    @Test
+    fun `integration decode spec vectors`() {
+        val arr = loadJsonArray("integration-decode.json") ?: return
+        for (i in 0 until arr.length()) {
+            val tc = arr.getJSONObject(i)
+            val name = tc.getString("name")
+            val input = tc.getJSONObject("input")
+            val hashArr = input.getJSONArray("hash")
+            val hashBytes = ByteArray(hashArr.length()) { (hashArr.getInt(it) and 0xFF).toByte() }
+            val expected = tc.getJSONObject("expected")
+            val expectedW = expected.getInt("width")
+            val expectedH = expected.getInt("height")
+            val expectedRgba = expected.getJSONArray("rgba")
+            val hash = ChromaHash.fromBytes(hashBytes)
+            val result = hash.decode()
+            assertEquals(expectedW, result.width, "$name: width")
+            assertEquals(expectedH, result.height, "$name: height")
+            assertEquals(expectedRgba.length(), result.rgba.size, "$name: rgba length")
+            for (j in 0 until result.rgba.size) {
+                if (j >= expectedRgba.length()) break
+                val got = result.rgba[j].toInt() and 0xFF
+                assertEquals(expectedRgba.getInt(j), got, "$name: rgba[$j]")
+            }
+        }
+    }
+
+    // ---- Encode + Decode roundtrip ----
+
+    @Test
+    fun `encode decode roundtrip dimensions`() {
+        val rgba =
+            ByteArray(64) { i ->
+                when (i % 4) {
+                    0 -> 128.toByte()
+                    1 -> 64.toByte()
+                    2 -> 32.toByte()
+                    else -> 255.toByte()
+                }
+            }
         val hash = ChromaHash.encode(4, 4, rgba, Gamut.SRGB)
-        val (w, h, pixels) = hash.decode()
-        assertTrue(w in 1..32)
-        assertTrue(h in 1..32)
-        assertEquals(w * h * 4, pixels.size)
+        val result = hash.decode()
+        assertTrue(result.width in 1..32)
+        assertTrue(result.height in 1..32)
+        assertEquals(result.width * result.height * 4, result.rgba.size)
     }
-
-    // ---- fromBytes roundtrip ----
 
     @Test
     fun `fromBytes roundtrip`() {
-        val rgba = solidImage(4, 4, 128, 64, 32, 255)
+        val rgba =
+            ByteArray(64) { i ->
+                when (i % 4) {
+                    0 -> 128.toByte()
+                    1 -> 64.toByte()
+                    2 -> 32.toByte()
+                    else -> 255.toByte()
+                }
+            }
         val hash = ChromaHash.encode(4, 4, rgba, Gamut.SRGB)
-        val hash2 = ChromaHash.fromBytes(hash.hash.copyOf())
+        val hash2 = ChromaHash.fromBytes(hash.hash)
         assertEquals(hash, hash2)
     }
 
     @Test
     fun `deterministic encoding`() {
-        val rgba = solidImage(4, 4, 200, 100, 50, 255)
-        val hash1 = ChromaHash.encode(4, 4, rgba, Gamut.SRGB)
-        val hash2 = ChromaHash.encode(4, 4, rgba, Gamut.SRGB)
-        assertContentEquals(hash1.hash, hash2.hash)
+        val rgba =
+            ByteArray(64) { i ->
+                when (i % 4) {
+                    0 -> 200.toByte()
+                    1 -> 100.toByte()
+                    2 -> 50.toByte()
+                    else -> 255.toByte()
+                }
+            }
+        val h1 = ChromaHash.encode(4, 4, rgba, Gamut.SRGB)
+        val h2 = ChromaHash.encode(4, 4, rgba, Gamut.SRGB)
+        assertContentEquals(h1.hash, h2.hash, "encoding should be deterministic")
     }
 
     @Test
-    fun `all gamuts produce output`() {
-        val rgba = solidImage(4, 4, 200, 100, 50, 255)
-        for (gamut in Gamut.entries) {
-            val hash = ChromaHash.encode(4, 4, rgba, gamut)
-            assertEquals(32, hash.hash.size, "gamut $gamut should produce 32 bytes")
-        }
-    }
-
-    // ---- Helper functions to build test images matching test vectors ----
-
-    private fun assertHashEquals(
-        expected: IntArray,
-        actual: ByteArray,
-    ) {
-        assertEquals(expected.size, actual.size, "hash length mismatch")
-        for (i in expected.indices) {
-            val actualUnsigned = actual[i].toInt() and 0xFF
-            assertEquals(
-                expected[i],
-                actualUnsigned,
-                "hash byte $i: expected ${expected[i]}, got $actualUnsigned",
-            )
-        }
-    }
-
-    private fun buildGradient16x16(): ByteArray {
-        // Must match Rust reference: gradient_image(16, 16) in test_vectors.rs
-        val w = 16
-        val h = 16
-        val rgba = ByteArray(w * h * 4)
-        for (y in 0 until h) {
-            for (x in 0 until w) {
-                val tx = x.toDouble() / maxOf(w - 1, 1).toDouble()
-                val ty = y.toDouble() / maxOf(h - 1, 1).toDouble()
-                val idx = (y * w + x) * 4
-                rgba[idx] = (tx * 255.0).toInt().toByte()
-                rgba[idx + 1] = ((1.0 - tx) * ty * 255.0).toInt().toByte()
-                rgba[idx + 2] = ((1.0 - ty) * 255.0).toInt().toByte()
-                rgba[idx + 3] = 255.toByte()
-            }
-        }
-        return rgba
-    }
-
-    @Suppress("LongMethod")
-    private fun buildGradient8x4(): ByteArray {
-        // From integration-encode.json gradient_8x4
-        val data =
-            intArrayOf(
-                0, 0, 255, 255, 36, 0, 255, 255, 72, 0, 255, 255, 109, 0, 255, 255,
-                145, 0, 255, 255, 182, 0, 255, 255, 218, 0, 255, 255, 255, 0, 255, 255,
-                0, 85, 170, 255, 36, 72, 170, 255, 72, 60, 170, 255, 109, 48, 170, 255,
-                145, 36, 170, 255, 182, 24, 170, 255, 218, 12, 170, 255, 255, 0, 170, 255,
-                0, 170, 85, 255, 36, 145, 85, 255, 72, 121, 85, 255, 109, 97, 85, 255,
-                145, 72, 85, 255, 182, 48, 85, 255, 218, 24, 85, 255, 255, 0, 85, 255,
-                0, 255, 0, 255, 36, 218, 0, 255, 72, 182, 0, 255, 109, 145, 0, 255,
-                145, 109, 0, 255, 182, 72, 0, 255, 218, 36, 0, 255, 255, 0, 0, 255,
-            )
-        return data.map { it.toByte() }.toByteArray()
-    }
-
-    @Suppress("LongMethod")
-    private fun buildGradient4x8(): ByteArray {
-        // From integration-encode.json gradient_4x8
-        val data =
-            intArrayOf(
-                0, 0, 255, 255, 85, 0, 255, 255, 170, 0, 255, 255, 255, 0, 255, 255,
-                0, 36, 218, 255, 85, 24, 218, 255, 170, 12, 218, 255, 255, 0, 218, 255,
-                0, 72, 182, 255, 85, 48, 182, 255, 170, 24, 182, 255, 255, 0, 182, 255,
-                0, 109, 145, 255, 85, 72, 145, 255, 170, 36, 145, 255, 255, 0, 145, 255,
-                0, 145, 109, 255, 85, 97, 109, 255, 170, 48, 109, 255, 255, 0, 109, 255,
-                0, 182, 72, 255, 85, 121, 72, 255, 170, 60, 72, 255, 255, 0, 72, 255,
-                0, 218, 36, 255, 85, 145, 36, 255, 170, 72, 36, 255, 255, 0, 36, 255,
-                0, 255, 0, 255, 85, 170, 0, 255, 170, 85, 0, 255, 255, 0, 0, 255,
-            )
-        return data.map { it.toByte() }.toByteArray()
-    }
-
-    @Suppress("LongMethod")
-    private fun buildCheckerboardAlpha8x8(): ByteArray {
-        // From integration-encode.json checkerboard_alpha_8x8
-        val data =
-            intArrayOf(
-                255, 0, 0, 255, 0, 0, 255, 0, 255, 0, 0, 255, 0, 0, 255, 0,
-                255, 0, 0, 255, 0, 0, 255, 0, 255, 0, 0, 255, 0, 0, 255, 0,
-                0, 0, 255, 0, 255, 0, 0, 255, 0, 0, 255, 0, 255, 0, 0, 255,
-                0, 0, 255, 0, 255, 0, 0, 255, 0, 0, 255, 0, 255, 0, 0, 255,
-                255, 0, 0, 255, 0, 0, 255, 0, 255, 0, 0, 255, 0, 0, 255, 0,
-                255, 0, 0, 255, 0, 0, 255, 0, 255, 0, 0, 255, 0, 0, 255, 0,
-                0, 0, 255, 0, 255, 0, 0, 255, 0, 0, 255, 0, 255, 0, 0, 255,
-                0, 0, 255, 0, 255, 0, 0, 255, 0, 0, 255, 0, 255, 0, 0, 255,
-                255, 0, 0, 255, 0, 0, 255, 0, 255, 0, 0, 255, 0, 0, 255, 0,
-                255, 0, 0, 255, 0, 0, 255, 0, 255, 0, 0, 255, 0, 0, 255, 0,
-                0, 0, 255, 0, 255, 0, 0, 255, 0, 0, 255, 0, 255, 0, 0, 255,
-                0, 0, 255, 0, 255, 0, 0, 255, 0, 0, 255, 0, 255, 0, 0, 255,
-                255, 0, 0, 255, 0, 0, 255, 0, 255, 0, 0, 255, 0, 0, 255, 0,
-                255, 0, 0, 255, 0, 0, 255, 0, 255, 0, 0, 255, 0, 0, 255, 0,
-                0, 0, 255, 0, 255, 0, 0, 255, 0, 0, 255, 0, 255, 0, 0, 255,
-                0, 0, 255, 0, 255, 0, 0, 255, 0, 0, 255, 0, 255, 0, 0, 255,
-            )
-        return data.map { it.toByte() }.toByteArray()
+    fun `spec vectors directory exists`() {
+        val dir = specVectorsDir()
+        assertNotNull(dir, "spec vectors directory should be resolvable")
+        // Sanity check: directory exists or our test paths are wrong
+        assertTrue(dir.exists(), "spec vectors dir not found at ${dir.absolutePath}")
     }
 }
