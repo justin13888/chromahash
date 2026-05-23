@@ -2,10 +2,13 @@ pre-commit:
   piped: true
   commands:
     format-fix:
+      priority: 1
       run: just format-fix
     lint-fix:
+      priority: 2
       run: just lint-fix
     check-clean:
+      priority: 3
       run: git diff --exit-code
 
 pre-push:
