@@ -270,6 +270,8 @@ type dctTestCase struct {
 	Input struct {
 		NX int `json:"nx"`
 		NY int `json:"ny"`
+		W  int `json:"w"`
+		H  int `json:"h"`
 	} `json:"input"`
 	Expected struct {
 		AcCount   int      `json:"ac_count"`
@@ -288,7 +290,19 @@ func TestUnitDCT(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.Name, func(t *testing.T) {
-			order := triangularScanOrder(tc.Input.NX, tc.Input.NY)
+			// Find an aspect byte producing (w, h) — scan order is keyed on it.
+			aspectByte := -1
+			for byteVal := 0; byteVal < 256; byteVal++ {
+				bw, bh := decodeOutputSize(byteVal)
+				if bw == tc.Input.W && bh == tc.Input.H {
+					aspectByte = byteVal
+					break
+				}
+			}
+			if aspectByte < 0 {
+				t.Fatalf("no aspect byte for (w=%d, h=%d)", tc.Input.W, tc.Input.H)
+			}
+			order := scanOrder(tc.Input.NX, tc.Input.NY, aspectByte)
 			if len(order) != tc.Expected.AcCount {
 				t.Errorf("scan order count = %v, want %v", len(order), tc.Expected.AcCount)
 			}
