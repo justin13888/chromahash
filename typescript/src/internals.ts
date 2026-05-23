@@ -666,25 +666,27 @@ export function decodeOutputSize(byte: number): [number, number] {
   return [w, 32];
 }
 
-/** Derive adaptive DCT grid (nx, ny) from aspect byte and base_n. Per spec §3.2. */
+/** Derive adaptive DCT grid (nx, ny) from aspect byte and base_n. Per spec §6.3 (v0.4).
+ * Uses sqrt(scale) with nx_cap = 2*base_n and product preservation (ny = round(base_n²/nx)).
+ * sqrt is IEEE 754 correctly-rounded.
+ */
 export function deriveGrid(
   aspectByte: number,
   baseN: number,
 ): [number, number] {
   const ratio = portablePow(2.0, (aspectByte / 255.0) * 8.0 - 4.0);
   const base = baseN;
+  const nxCap = 2 * baseN;
   let nx: number;
   let ny: number;
   if (ratio >= 1.0) {
     const scale = Math.min(ratio, 16.0);
-    const s = portablePow(scale, 0.25);
-    nx = roundHalfAwayFromZero(base * s);
-    ny = roundHalfAwayFromZero(base / s);
+    nx = Math.min(roundHalfAwayFromZero(base * Math.sqrt(scale)), nxCap);
+    ny = roundHalfAwayFromZero((base * base) / nx);
   } else {
     const scale = Math.min(1.0 / ratio, 16.0);
-    const s = portablePow(scale, 0.25);
-    nx = roundHalfAwayFromZero(base / s);
-    ny = roundHalfAwayFromZero(base * s);
+    ny = Math.min(roundHalfAwayFromZero(base * Math.sqrt(scale)), nxCap);
+    nx = roundHalfAwayFromZero((base * base) / ny);
   }
   return [Math.max(nx, 3), Math.max(ny, 3)];
 }
@@ -693,61 +695,72 @@ export function deriveGrid(
 // DCT
 // ---------------------------------------------------------------------------
 
-/** Compute the triangular scan order for an nx*ny grid, excluding DC. */
-export function triangularScanOrder(
+/** Compute the AC coefficient scan order for an nx×ny grid keyed on aspect_byte.
+ * Per spec §6.2 (v0.4): coefficients sorted ascending by per-pixel frequency priority
+ * `(cx*h)² + (cy*w)²` where (w,h) = decodeOutputSize(aspect_byte).
+ * Ties broken by (cx, cy). Excludes DC at (0,0).
+ */
+export function scanOrder(
   nx: number,
   ny: number,
+  aspectByte: number,
 ): Array<[number, number]> {
-  const order: Array<[number, number]> = [];
+  const [w, h] = decodeOutputSize(aspectByte);
+  const entries: Array<[number, number, number]> = [];
   for (let cy = 0; cy < ny; cy++) {
     const cxStart = cy === 0 ? 1 : 0;
     let cx = cxStart;
     while (cx * ny < nx * (ny - cy)) {
-      order.push([cx, cy]);
+      const priority = cx * h * (cx * h) + cy * w * (cy * w);
+      entries.push([priority, cx, cy]);
       cx += 1;
     }
   }
-  return order;
+  entries.sort((a, b) => {
+    if (a[0] !== b[0]) return a[0] - b[0];
+    if (a[1] !== b[1]) return a[1] - b[1];
+    return a[2] - b[2];
+  });
+  return entries.map(([, cx, cy]) => [cx, cy] as [number, number]);
 }
 
 /**
- * Forward DCT encode for a channel.
- * Returns [dc, acCoefficients, scale].
+ * Forward DCT encode for a channel. Per spec §12.6 dctEncode (v0.4).
+ * Returns [dc, acCoefficients, scale]. AC values are emitted in `scan` order.
  */
 export function dctEncode(
   channel: Float64Array,
   w: number,
   h: number,
-  nx: number,
-  ny: number,
+  scan: ReadonlyArray<readonly [number, number]>,
 ): [number, number[], number] {
   const wh = w * h;
-  let dc = 0;
+
+  // DC = mean (cos(0)=1 everywhere)
+  let sum = 0;
+  for (let i = 0; i < channel.length; i++) sum += f64(channel, i);
+  const dc = sum / wh;
+
   const ac: number[] = [];
   let scale = 0;
 
-  for (let cy = 0; cy < ny; cy++) {
-    let cx = 0;
-    while (cx * ny < nx * (ny - cy)) {
-      let f = 0;
-      for (let y = 0; y < h; y++) {
-        const fy = portableCos((Math.PI / h) * cy * (y + 0.5));
-        for (let x = 0; x < w; x++) {
-          f +=
-            f64(channel, x + y * w) *
-            portableCos((Math.PI / w) * cx * (x + 0.5)) *
-            fy;
-        }
+  for (let j = 0; j < scan.length; j++) {
+    const entry = scan[j] as readonly [number, number];
+    const cx = entry[0];
+    const cy = entry[1];
+    let f = 0;
+    for (let y = 0; y < h; y++) {
+      const fy = portableCos((Math.PI / h) * cy * (y + 0.5));
+      for (let x = 0; x < w; x++) {
+        f +=
+          f64(channel, x + y * w) *
+          portableCos((Math.PI / w) * cx * (x + 0.5)) *
+          fy;
       }
-      f /= wh;
-      if (cx > 0 || cy > 0) {
-        ac.push(f);
-        scale = Math.max(scale, Math.abs(f));
-      } else {
-        dc = f;
-      }
-      cx += 1;
     }
+    f /= wh;
+    ac.push(f);
+    if (Math.abs(f) > scale) scale = Math.abs(f);
   }
 
   // Floor near-zero scale to exactly zero for cross-platform consistency

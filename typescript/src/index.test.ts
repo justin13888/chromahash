@@ -16,7 +16,7 @@ import {
   muLawDequantize,
   muLawQuantize,
   roundHalfAwayFromZero,
-  triangularScanOrder,
+  scanOrder,
 } from "./internals.ts";
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
@@ -165,7 +165,7 @@ describe("mu-law", () => {
 
 interface DctVector {
   name: string;
-  input: { nx: number; ny: number };
+  input: { nx: number; ny: number; w: number; h: number };
   expected: { ac_count: number; scan_order: [number, number][] };
 }
 
@@ -174,7 +174,20 @@ describe("DCT scan order", () => {
 
   for (const vec of vectors) {
     it(vec.name, () => {
-      const order = triangularScanOrder(vec.input.nx, vec.input.ny);
+      // Find an aspect byte that produces (w, h); scan_order is keyed on aspect byte.
+      let aspectByte: number | null = null;
+      for (let byte = 0; byte < 256; byte++) {
+        const [bw, bh] = decodeOutputSize(byte);
+        if (bw === vec.input.w && bh === vec.input.h) {
+          aspectByte = byte;
+          break;
+        }
+      }
+      assert.ok(
+        aspectByte !== null,
+        `no aspect byte for (w=${vec.input.w}, h=${vec.input.h})`,
+      );
+      const order = scanOrder(vec.input.nx, vec.input.ny, aspectByte);
       assert.equal(
         order.length,
         vec.expected.ac_count,

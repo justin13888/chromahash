@@ -9,7 +9,6 @@ export type { Gamut } from "./internals.ts";
 import type { Gamut } from "./internals.ts";
 import {
   at,
-  atPair,
   clamp01,
   clampNeg1_1,
   dctDecodePixel,
@@ -31,8 +30,8 @@ import {
   oklabToLinearSrgb,
   readBits,
   roundHalfAwayFromZero,
+  scanOrder,
   softGamutClamp,
-  triangularScanOrder,
   u8,
   writeBits,
 } from "./internals.ts";
@@ -102,18 +101,25 @@ function encodeImpl(
     bChan[i] = avgB * (1.0 - alpha) + alpha * f64(oklabB, i);
   }
 
-  // 5. Derive adaptive grid dimensions (v0.2)
+  // 5. Derive adaptive grid dimensions (v0.4)
   const aspect = encodeAspect(w, h);
   const [lNx, lNy] = deriveGrid(aspect, hasAlpha ? 6 : 7);
   const [cNx, cNy] = deriveGrid(aspect, 4);
   const [alphaNx, alphaNy] = hasAlpha ? deriveGrid(aspect, 3) : [3, 3];
 
-  // 6. DCT encode each channel
-  const [lDc, lAcRaw, lScale] = dctEncode(lChan, w, h, lNx, lNy);
-  const [aDc, aAcRaw, aScale] = dctEncode(aChan, w, h, cNx, cNy);
-  const [bDc, bAcRaw, bScale] = dctEncode(bChan, w, h, cNx, cNy);
+  // 5b. Build per-channel scan orders (v0.4: depends on aspect byte)
+  const lScan = scanOrder(lNx, lNy, aspect);
+  const cScan = scanOrder(cNx, cNy, aspect);
+  const alphaScanEnc = hasAlpha
+    ? scanOrder(alphaNx, alphaNy, aspect)
+    : ([] as Array<[number, number]>);
+
+  // 6. DCT encode each channel (AC emitted in scan order)
+  const [lDc, lAcRaw, lScale] = dctEncode(lChan, w, h, lScan);
+  const [aDc, aAcRaw, aScale] = dctEncode(aChan, w, h, cScan);
+  const [bDc, bAcRaw, bScale] = dctEncode(bChan, w, h, cScan);
   const [alphaDc, alphaAcRaw, alphaScale] = hasAlpha
-    ? dctEncode(alphaPixels, w, h, alphaNx, alphaNy)
+    ? dctEncode(alphaPixels, w, h, alphaScanEnc)
     : [0, [] as number[], 0];
 
   // Cap to bit budget and zero-pad (per spec §10)
@@ -310,16 +316,16 @@ function decodeImpl(hash: Uint8Array): {
     }
   }
 
-  // Derive adaptive grid and compute usable scan orders (v0.2)
+  // Derive adaptive grid and compute usable scan orders (v0.4)
   const lDecCap = hasAlpha ? 20 : 27;
   const [lNx, lNy] = deriveGrid(aspect, hasAlpha ? 6 : 7);
   const [cNx, cNy] = deriveGrid(aspect, 4);
-  const lScanFull = triangularScanOrder(lNx, lNy);
+  const lScanFull = scanOrder(lNx, lNy, aspect);
   const lUsable = Math.min(lDecCap, lScanFull.length);
   const lScan = lScanFull.slice(0, lUsable);
   const lAcCapped = lAc.slice(0, lUsable);
 
-  const chromaScanFull = triangularScanOrder(cNx, cNy);
+  const chromaScanFull = scanOrder(cNx, cNy, aspect);
   const cUsable = Math.min(9, chromaScanFull.length);
   const chromaScan = chromaScanFull.slice(0, cUsable);
   const aAcCapped = aAc.slice(0, cUsable);
@@ -329,7 +335,7 @@ function decodeImpl(hash: Uint8Array): {
   let alphaAcCapped: number[] = [];
   if (hasAlpha) {
     const [aNx, aNy] = deriveGrid(aspect, 3);
-    const alphaScanFull = triangularScanOrder(aNx, aNy);
+    const alphaScanFull = scanOrder(aNx, aNy, aspect);
     const aUsable = Math.min(5, alphaScanFull.length);
     alphaScan = alphaScanFull.slice(0, aUsable);
     alphaAcCapped = alphaAc.slice(0, aUsable);
