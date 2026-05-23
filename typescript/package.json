@@ -20,5 +20,8 @@
     "@biomejs/biome": "^1.9.0",
     "@types/node": "^25.4.0",
     "typescript": "^5.7.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["@biomejs/biome"]
   }
 }
