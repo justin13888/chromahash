@@ -74,19 +74,24 @@ class ChromaHash private constructor(
                 bChan[i] = avgB * (1.0 - alpha) + alpha * oklabPixels[i][2]
             }
 
-            // 5. Derive adaptive grid dimensions (v0.2)
+            // 5. Derive adaptive grid dimensions (v0.4)
             val aspectByte = encodeAspect(w, h)
             val (lNx, lNy) = deriveGrid(aspectByte, if (hasAlpha) 6 else 7)
             val (cNx, cNy) = deriveGrid(aspectByte, 4)
             val (alphaNx, alphaNy) = if (hasAlpha) deriveGrid(aspectByte, 3) else Pair(3, 3)
 
-            // 6. DCT encode each channel
-            val (lDc, lAcRaw, lScale) = dctEncode(lChan, w, h, lNx, lNy)
-            val (aDc, aAcRaw, aScale) = dctEncode(aChan, w, h, cNx, cNy)
-            val (bDc, bAcRaw, bScale) = dctEncode(bChan, w, h, cNx, cNy)
+            // 5b. Build per-channel scan orders (v0.4: depends on aspect byte)
+            val lScanEnc = scanOrder(lNx, lNy, aspectByte)
+            val cScanEnc = scanOrder(cNx, cNy, aspectByte)
+            val alphaScanEnc = if (hasAlpha) scanOrder(alphaNx, alphaNy, aspectByte) else emptyList()
+
+            // 6. DCT encode each channel (AC emitted in scan order)
+            val (lDc, lAcRaw, lScale) = dctEncode(lChan, w, h, lScanEnc)
+            val (aDc, aAcRaw, aScale) = dctEncode(aChan, w, h, cScanEnc)
+            val (bDc, bAcRaw, bScale) = dctEncode(bChan, w, h, cScanEnc)
             val (alphaDc, alphaAcRaw, alphaScale) =
                 if (hasAlpha) {
-                    dctEncode(alphaPixels, w, h, alphaNx, alphaNy)
+                    dctEncode(alphaPixels, w, h, alphaScanEnc)
                 } else {
                     Triple(0.0, DoubleArray(0), 0.0)
                 }
@@ -304,20 +309,20 @@ class ChromaHash private constructor(
             alphaAc = DoubleArray(0)
         }
 
-        // Precompute adaptive scan orders with usable capping
-        val lScanFull = triangularScanOrder(lNx, lNy)
+        // Precompute adaptive scan orders with usable capping (v0.4)
+        val lScanFull = scanOrder(lNx, lNy, aspect)
         val lDecCap = if (hasAlpha) 20 else 27
         val lUsable = minOf(lDecCap, lScanFull.size)
         val lScan = lScanFull.subList(0, lUsable)
 
-        val chromaScanFull = triangularScanOrder(cNx, cNy)
+        val chromaScanFull = scanOrder(cNx, cNy, aspect)
         val cUsable = minOf(9, chromaScanFull.size)
         val chromaScan = chromaScanFull.subList(0, cUsable)
 
         val alphaScan =
             if (hasAlpha) {
                 val (aNx, aNy) = deriveGrid(aspect, 3)
-                val alphaScanFull = triangularScanOrder(aNx, aNy)
+                val alphaScanFull = scanOrder(aNx, aNy, aspect)
                 val aUsable = minOf(5, alphaScanFull.size)
                 alphaScanFull.subList(0, aUsable)
             } else {

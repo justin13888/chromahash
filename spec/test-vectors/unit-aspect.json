@@ -24,10 +24,10 @@
       "output_width": 32,
       "output_height": 21,
       "derive_grid": {
-        "base_n_7": [8, 6],
+        "base_n_7": [9, 5],
         "base_n_6": [7, 5],
-        "base_n_4": [4, 4],
-        "base_n_3": [3, 3]
+        "base_n_4": [5, 3],
+        "base_n_3": [4, 3]
       }
     }
   },
@@ -40,9 +40,9 @@
       "output_width": 32,
       "output_height": 24,
       "derive_grid": {
-        "base_n_7": [8, 7],
-        "base_n_6": [6, 6],
-        "base_n_4": [4, 4],
+        "base_n_7": [8, 6],
+        "base_n_6": [7, 5],
+        "base_n_4": [5, 3],
         "base_n_3": [3, 3]
       }
     }
@@ -56,10 +56,10 @@
       "output_width": 32,
       "output_height": 18,
       "derive_grid": {
-        "base_n_7": [8, 6],
-        "base_n_6": [7, 5],
+        "base_n_7": [9, 5],
+        "base_n_6": [8, 5],
         "base_n_4": [5, 3],
-        "base_n_3": [3, 3]
+        "base_n_3": [4, 3]
       }
     }
   },
@@ -72,10 +72,10 @@
       "output_width": 32,
       "output_height": 8,
       "derive_grid": {
-        "base_n_7": [10, 5],
-        "base_n_6": [8, 4],
-        "base_n_4": [6, 3],
-        "base_n_3": [4, 3]
+        "base_n_7": [14, 4],
+        "base_n_6": [12, 3],
+        "base_n_4": [8, 3],
+        "base_n_3": [6, 3]
       }
     }
   },
@@ -88,10 +88,10 @@
       "output_width": 8,
       "output_height": 32,
       "derive_grid": {
-        "base_n_7": [5, 10],
-        "base_n_6": [4, 8],
-        "base_n_4": [3, 6],
-        "base_n_3": [3, 4]
+        "base_n_7": [4, 14],
+        "base_n_6": [3, 12],
+        "base_n_4": [3, 8],
+        "base_n_3": [3, 6]
       }
     }
   },
@@ -104,9 +104,9 @@
       "output_width": 32,
       "output_height": 16,
       "derive_grid": {
-        "base_n_7": [8, 6],
-        "base_n_6": [7, 5],
-        "base_n_4": [5, 3],
+        "base_n_7": [10, 5],
+        "base_n_6": [8, 5],
+        "base_n_4": [6, 3],
         "base_n_3": [4, 3]
       }
     }
@@ -120,9 +120,9 @@
       "output_width": 16,
       "output_height": 32,
       "derive_grid": {
-        "base_n_7": [6, 8],
-        "base_n_6": [5, 7],
-        "base_n_4": [3, 5],
+        "base_n_7": [5, 10],
+        "base_n_6": [5, 8],
+        "base_n_4": [3, 6],
         "base_n_3": [3, 4]
       }
     }
@@ -136,10 +136,10 @@
       "output_width": 32,
       "output_height": 8,
       "derive_grid": {
-        "base_n_7": [10, 5],
-        "base_n_6": [8, 4],
-        "base_n_4": [6, 3],
-        "base_n_3": [4, 3]
+        "base_n_7": [14, 4],
+        "base_n_6": [12, 3],
+        "base_n_4": [8, 3],
+        "base_n_3": [6, 3]
       }
     }
   }

@@ -17,10 +17,17 @@ repositories {
 
 dependencies {
     testImplementation(kotlin("test"))
+    testImplementation("org.json:json:20240303")
 }
 
 tasks.test {
     useJUnitPlatform()
+    testLogging {
+        events("passed", "skipped", "failed")
+        showStandardStreams = false
+        showExceptions = true
+        showStackTraces = true
+    }
 }
 
 tasks.named<JavaExec>("run") {

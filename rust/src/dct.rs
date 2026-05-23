@@ -1,59 +1,62 @@
 use std::f64::consts::PI;
 
+use crate::aspect::decode_output_size;
 use crate::math_utils::portable_cos;
 
-/// Compute the triangular scan order for an nx×ny grid, excluding DC.
-/// Per spec §6.2: row-major, condition cx*ny < nx*(ny-cy), skip (0,0).
-pub fn triangular_scan_order(nx: usize, ny: usize) -> Vec<(usize, usize)> {
-    let mut order = Vec::new();
+/// Compute the AC coefficient scan order for an nx×ny grid keyed on aspect_byte.
+/// Per spec §6.2 (v0.4): coefficients are sorted ascending by per-pixel frequency priority
+/// `(cx*h)² + (cy*w)²` where (w,h) = decodeOutputSize(aspect_byte). Ties broken by (cx, cy).
+/// Excludes DC at (0,0).
+pub fn scan_order(nx: usize, ny: usize, aspect_byte: u8) -> Vec<(usize, usize)> {
+    let (w, h) = decode_output_size(aspect_byte);
+    let w = w as u64;
+    let h = h as u64;
+
+    let mut entries: Vec<(u64, usize, usize)> = Vec::new();
     for cy in 0..ny {
         let cx_start = if cy == 0 { 1 } else { 0 };
         let mut cx = cx_start;
         while cx * ny < nx * (ny - cy) {
-            order.push((cx, cy));
+            let priority = (cx as u64 * h) * (cx as u64 * h) + (cy as u64 * w) * (cy as u64 * w);
+            entries.push((priority, cx, cy));
             cx += 1;
         }
     }
-    order
+    entries.sort_unstable_by_key(|&(p, cx, cy)| (p, cx, cy));
+    entries.into_iter().map(|(_, cx, cy)| (cx, cy)).collect()
 }
 
-/// Forward DCT encode for a channel. Per spec §12.6 dctEncode.
-/// Returns (dc, ac_coefficients, scale).
+/// Forward DCT encode for a channel. Per spec §12.6 dctEncode (v0.4).
+/// Returns (dc, ac_coefficients, scale). AC values are emitted in `scan` order.
 /// Superseded by dct_encode_separable for production use; retained for test verification.
 #[allow(dead_code)]
 pub fn dct_encode(
     channel: &[f64],
     w: usize,
     h: usize,
-    nx: usize,
-    ny: usize,
+    scan: &[(usize, usize)],
 ) -> (f64, Vec<f64>, f64) {
     let wh = (w * h) as f64;
-    let mut dc = 0.0;
-    let mut ac = Vec::new();
+
+    // DC = mean (cos(0) = 1 for all positions)
+    let dc: f64 = channel.iter().sum::<f64>() / wh;
+
+    let mut ac = Vec::with_capacity(scan.len());
     let mut scale = 0.0_f64;
 
-    for cy in 0..ny {
-        let mut cx = 0;
-        while cx * ny < nx * (ny - cy) {
-            let mut f = 0.0;
-            for y in 0..h {
-                let fy = portable_cos(PI / h as f64 * cy as f64 * (y as f64 + 0.5));
-                for x in 0..w {
-                    f += channel[x + y * w]
-                        * portable_cos(PI / w as f64 * cx as f64 * (x as f64 + 0.5))
-                        * fy;
-                }
+    for &(cx, cy) in scan {
+        let mut f = 0.0;
+        for y in 0..h {
+            let fy = portable_cos(PI / h as f64 * cy as f64 * (y as f64 + 0.5));
+            for x in 0..w {
+                f += channel[x + y * w]
+                    * portable_cos(PI / w as f64 * cx as f64 * (x as f64 + 0.5))
+                    * fy;
             }
-            f /= wh;
-            if cx > 0 || cy > 0 {
-                ac.push(f);
-                scale = scale.max(f.abs());
-            } else {
-                dc = f;
-            }
-            cx += 1;
         }
+        f /= wh;
+        ac.push(f);
+        scale = scale.max(f.abs());
     }
 
     // Floor near-zero scale to exactly zero. When the channel is (near-)constant,
@@ -84,41 +87,38 @@ pub fn precompute_cos_table(dim: usize, max_freq: usize) -> Vec<Vec<f64>> {
     table
 }
 
-/// Forward DCT encode using precomputed cosine tables. Per spec §12.6.
+/// Forward DCT encode using precomputed cosine tables. Per spec §12.6 (v0.4).
 /// Semantically identical to dct_encode but avoids redundant cosine evaluations.
+/// AC values are emitted in `scan` order; cos_x/cos_y must have entries for all (cx,cy) in scan.
 pub fn dct_encode_separable(
     channel: &[f64],
     w: usize,
     h: usize,
-    nx: usize,
-    ny: usize,
+    scan: &[(usize, usize)],
     cos_x: &[Vec<f64>],
     cos_y: &[Vec<f64>],
 ) -> (f64, Vec<f64>, f64) {
     let wh = (w * h) as f64;
-    let mut dc = 0.0;
-    let mut ac = Vec::new();
+
+    // DC = mean (cos_x[0] and cos_y[0] are all-ones by construction)
+    let dc: f64 = channel.iter().sum::<f64>() / wh;
+
+    let mut ac = Vec::with_capacity(scan.len());
     let mut scale = 0.0_f64;
 
-    for (cy, cy_row) in cos_y[..ny].iter().enumerate() {
-        let mut cx = 0;
-        while cx * ny < nx * (ny - cy) {
-            let mut f = 0.0;
-            for y in 0..h {
-                let fy = cy_row[y];
-                for x in 0..w {
-                    f += channel[x + y * w] * cos_x[cx][x] * fy;
-                }
+    for &(cx, cy) in scan {
+        let cy_row = &cos_y[cy];
+        let cx_row = &cos_x[cx];
+        let mut f = 0.0;
+        for y in 0..h {
+            let fy = cy_row[y];
+            for x in 0..w {
+                f += channel[x + y * w] * cx_row[x] * fy;
             }
-            f /= wh;
-            if cx > 0 || cy > 0 {
-                ac.push(f);
-                scale = scale.max(f.abs());
-            } else {
-                dc = f;
-            }
-            cx += 1;
         }
+        f /= wh;
+        ac.push(f);
+        scale = scale.max(f.abs());
     }
 
     if scale < 1e-10 {
@@ -156,34 +156,65 @@ mod tests {
 
     #[test]
     fn scan_order_counts() {
-        assert_eq!(triangular_scan_order(3, 3).len(), 5);
-        assert_eq!(triangular_scan_order(4, 4).len(), 9);
-        assert_eq!(triangular_scan_order(6, 6).len(), 20);
-        assert_eq!(triangular_scan_order(7, 7).len(), 27);
+        // AC count depends only on (nx, ny), not on aspect_byte. Use byte=128 (square).
+        assert_eq!(scan_order(3, 3, 128).len(), 5);
+        assert_eq!(scan_order(4, 4, 128).len(), 9);
+        assert_eq!(scan_order(6, 6, 128).len(), 20);
+        assert_eq!(scan_order(7, 7, 128).len(), 27);
     }
 
     #[test]
-    fn scan_order_4x4() {
-        let order = triangular_scan_order(4, 4);
+    fn scan_order_4x4_square_is_radial() {
+        // aspect_byte=128 → w=32, h=32 (square). Priorities ∝ cx²+cy².
+        // Tied priorities broken by cx first.
+        let order = scan_order(4, 4, 128);
         let expected = vec![
-            (1, 0),
-            (2, 0),
-            (3, 0),
-            (0, 1),
-            (1, 1),
-            (2, 1),
-            (0, 2),
-            (1, 2),
-            (0, 3),
+            (0, 1), // priority 1024
+            (1, 0), // priority 1024
+            (1, 1), // priority 2048
+            (0, 2), // priority 4096
+            (2, 0), // priority 4096
+            (1, 2), // priority 5120
+            (2, 1), // priority 5120
+            (0, 3), // priority 9216
+            (3, 0), // priority 9216
         ];
-        assert_eq!(order, expected);
+        assert_eq!(
+            order, expected,
+            "4×4 square should produce radial scan order"
+        );
     }
 
     #[test]
-    fn scan_order_3x3() {
-        let order = triangular_scan_order(3, 3);
-        let expected = vec![(1, 0), (2, 0), (0, 1), (1, 1), (0, 2)];
-        assert_eq!(order, expected);
+    fn scan_order_3x3_square_is_radial() {
+        let order = scan_order(3, 3, 128);
+        let expected = vec![
+            (0, 1), // priority 1024
+            (1, 0), // priority 1024
+            (1, 1), // priority 2048
+            (0, 2), // priority 4096
+            (2, 0), // priority 4096
+        ];
+        assert_eq!(
+            order, expected,
+            "3×3 square should produce radial scan order"
+        );
+    }
+
+    #[test]
+    fn scan_order_extreme_landscape_is_rowmajor() {
+        // byte=255 → ratio=16 → w=32, h=2 for decode_output_size.
+        // 14×4 grid: priority = (cx*2)² + (cy*32)² = 4cx² + 1024cy².
+        // All cy=0 entries (max 4*13²=676) < all cy=1 entries (min 1024). Row-major preserved.
+        let order = scan_order(14, 4, 255);
+        assert_eq!(order.len(), 35, "14×4 should have 35 AC coefficients");
+        // Verify all cy=0 entries appear before any cy>=1 entry
+        let first_nonzero_cy = order.iter().position(|&(_, cy)| cy > 0).unwrap();
+        let last_zero_cy = order.iter().rposition(|&(_, cy)| cy == 0).unwrap();
+        assert!(
+            first_nonzero_cy > last_zero_cy,
+            "all cy=0 entries should precede cy>0 entries for extreme landscape"
+        );
     }
 
     #[test]
@@ -192,7 +223,8 @@ mod tests {
         let h = 4;
         let val = 0.7;
         let channel = vec![val; w * h];
-        let (dc, _, _) = dct_encode(&channel, w, h, 4, 4);
+        let scan = scan_order(4, 4, 128);
+        let (dc, _, _) = dct_encode(&channel, w, h, &scan);
         assert!(
             (dc - val).abs() < 1e-12,
             "DC of constant channel should = {val}, got {dc}"
@@ -204,7 +236,8 @@ mod tests {
         let w = 4;
         let h = 4;
         let channel = vec![0.5; w * h];
-        let (_, ac, scale) = dct_encode(&channel, w, h, 4, 4);
+        let scan = scan_order(4, 4, 128);
+        let (_, ac, scale) = dct_encode(&channel, w, h, &scan);
         assert!(scale < 1e-12, "AC of constant channel should be 0");
         for (i, &v) in ac.iter().enumerate() {
             assert!(v.abs() < 1e-12, "AC[{i}] should be 0, got {v}");
@@ -218,10 +251,8 @@ mod tests {
         let h = 8;
         let val = 0.42;
         let channel = vec![val; w * h];
-        let nx = 4;
-        let ny = 4;
-        let (dc, ac, _) = dct_encode(&channel, w, h, nx, ny);
-        let scan = triangular_scan_order(nx, ny);
+        let scan = scan_order(4, 4, 128);
+        let (dc, ac, _) = dct_encode(&channel, w, h, &scan);
 
         for y in 0..h {
             for x in 0..w {
@@ -247,10 +278,11 @@ mod tests {
         }
         let nx = 5;
         let ny = 4;
+        let scan = scan_order(nx, ny, 128);
         let cos_x = precompute_cos_table(w, nx);
         let cos_y = precompute_cos_table(h, ny);
-        let (dc1, ac1, s1) = dct_encode(&channel, w, h, nx, ny);
-        let (dc2, ac2, s2) = dct_encode_separable(&channel, w, h, nx, ny, &cos_x, &cos_y);
+        let (dc1, ac1, s1) = dct_encode(&channel, w, h, &scan);
+        let (dc2, ac2, s2) = dct_encode_separable(&channel, w, h, &scan, &cos_x, &cos_y);
         assert_eq!(dc1, dc2, "DC must be bit-identical");
         assert_eq!(s1, s2, "scale must be bit-identical");
         assert_eq!(ac1.len(), ac2.len(), "AC count must match");
@@ -270,10 +302,8 @@ mod tests {
                 channel[x + y * w] = (x as f64 / w as f64 + y as f64 / h as f64) / 2.0;
             }
         }
-        let nx = 7;
-        let ny = 7;
-        let (dc, ac, _) = dct_encode(&channel, w, h, nx, ny);
-        let scan = triangular_scan_order(nx, ny);
+        let scan = scan_order(7, 7, 128);
+        let (dc, ac, _) = dct_encode(&channel, w, h, &scan);
 
         let mut max_err = 0.0_f64;
         for y in 0..h {

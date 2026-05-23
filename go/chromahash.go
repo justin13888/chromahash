@@ -69,7 +69,7 @@ func Encode(w, h int, rgba []byte, gamut Gamut) ChromaHash {
 		bChan[i] = avgB*(1.0-alpha) + alpha*oklabPixels[i][2]
 	}
 
-	// 5. Derive adaptive grid dimensions (v0.2).
+	// 5. Derive adaptive grid dimensions (v0.4).
 	aspectByte := encodeAspect(w, h)
 	lBaseN := 7
 	if hasAlpha {
@@ -82,15 +82,23 @@ func Encode(w, h int, rgba []byte, gamut Gamut) ChromaHash {
 		alphaNx, alphaNy = deriveGrid(aspectByte, 3)
 	}
 
-	// 6. DCT encode each channel.
-	lDC, lACRaw, lScale := dctEncode(lChan, w, h, lNx, lNy)
-	aDC, aACRaw, aScale := dctEncode(aChan, w, h, cNx, cNy)
-	bDC, bACRaw, bScale := dctEncode(bChan, w, h, cNx, cNy)
+	// 5b. Build per-channel scan orders (v0.4: depends on aspect byte).
+	lScan := scanOrder(lNx, lNy, aspectByte)
+	cScan := scanOrder(cNx, cNy, aspectByte)
+	var alphaScanEnc [][2]int
+	if hasAlpha {
+		alphaScanEnc = scanOrder(alphaNx, alphaNy, aspectByte)
+	}
+
+	// 6. DCT encode each channel (AC emitted in scan order).
+	lDC, lACRaw, lScale := dctEncode(lChan, w, h, lScan)
+	aDC, aACRaw, aScale := dctEncode(aChan, w, h, cScan)
+	bDC, bACRaw, bScale := dctEncode(bChan, w, h, cScan)
 
 	var alphaDC, alphaScale float64
 	var alphaACRaw []float64
 	if hasAlpha {
-		alphaDC, alphaACRaw, alphaScale = dctEncode(alphaPixels, w, h, alphaNx, alphaNy)
+		alphaDC, alphaACRaw, alphaScale = dctEncode(alphaPixels, w, h, alphaScanEnc)
 	}
 
 	// Cap to bit budget and zero-pad (per spec §10).
@@ -300,7 +308,7 @@ func (ch ChromaHash) Decode() (int, int, []byte) {
 		}
 	}
 
-	// Derive adaptive grid and compute usable scan orders (v0.2).
+	// Derive adaptive grid and compute usable scan orders (v0.4).
 	lDecCap := 27
 	if hasAlpha {
 		lDecCap = 20
@@ -312,7 +320,7 @@ func (ch ChromaHash) Decode() (int, int, []byte) {
 	lNx, lNy := deriveGrid(aspect, lBaseN)
 	cNx, cNy := deriveGrid(aspect, 4)
 
-	lScanFull := triangularScanOrder(lNx, lNy)
+	lScanFull := scanOrder(lNx, lNy, aspect)
 	lUsable := lDecCap
 	if len(lScanFull) < lUsable {
 		lUsable = len(lScanFull)
@@ -320,7 +328,7 @@ func (ch ChromaHash) Decode() (int, int, []byte) {
 	lScan := lScanFull[:lUsable]
 	lACUsed := lAC[:lUsable]
 
-	chromaScanFull := triangularScanOrder(cNx, cNy)
+	chromaScanFull := scanOrder(cNx, cNy, aspect)
 	cUsable := 9
 	if len(chromaScanFull) < cUsable {
 		cUsable = len(chromaScanFull)
@@ -333,7 +341,7 @@ func (ch ChromaHash) Decode() (int, int, []byte) {
 	var alphaACUsed []float64
 	if hasAlpha {
 		aNx, aNy := deriveGrid(aspect, 3)
-		alphaScanFull := triangularScanOrder(aNx, aNy)
+		alphaScanFull := scanOrder(aNx, aNy, aspect)
 		aUsable := 5
 		if len(alphaScanFull) < aUsable {
 			aUsable = len(alphaScanFull)

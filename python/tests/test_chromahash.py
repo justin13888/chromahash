@@ -17,7 +17,7 @@ from chromahash._color import (
     linear_rgb_to_oklab,
     oklab_to_linear_srgb,
 )
-from chromahash._dct import dct_decode_pixel, dct_encode, triangular_scan_order
+from chromahash._dct import dct_decode_pixel, dct_encode, scan_order
 from chromahash._math_utils import cbrt_halley, clamp01, matvec3, round_half_away_from_zero
 from chromahash._mulaw import mu_compress, mu_expand, mu_law_dequantize, mu_law_quantize
 from chromahash._transfer import (
@@ -287,34 +287,38 @@ def test_bitpack_max_values():
 
 
 def test_scan_order_counts():
-    assert len(triangular_scan_order(3, 3)) == 5
-    assert len(triangular_scan_order(4, 4)) == 9
-    assert len(triangular_scan_order(6, 6)) == 20
-    assert len(triangular_scan_order(7, 7)) == 27
+    # AC count depends only on (nx, ny); aspect_byte=128 (square) for stability.
+    assert len(scan_order(3, 3, 128)) == 5
+    assert len(scan_order(4, 4, 128)) == 9
+    assert len(scan_order(6, 6, 128)) == 20
+    assert len(scan_order(7, 7, 128)) == 27
 
 
-def test_scan_order_4x4():
-    order = triangular_scan_order(4, 4)
-    expected = [(1, 0), (2, 0), (3, 0), (0, 1), (1, 1), (2, 1), (0, 2), (1, 2), (0, 3)]
+def test_scan_order_4x4_square_is_radial():
+    # aspect_byte=128 → w=h=32 → priority ∝ cx²+cy². Ties broken by cx, then cy.
+    order = scan_order(4, 4, 128)
+    expected = [(0, 1), (1, 0), (1, 1), (0, 2), (2, 0), (1, 2), (2, 1), (0, 3), (3, 0)]
     assert order == expected
 
 
-def test_scan_order_3x3():
-    order = triangular_scan_order(3, 3)
-    expected = [(1, 0), (2, 0), (0, 1), (1, 1), (0, 2)]
+def test_scan_order_3x3_square_is_radial():
+    order = scan_order(3, 3, 128)
+    expected = [(0, 1), (1, 0), (1, 1), (0, 2), (2, 0)]
     assert order == expected
 
 
 def test_dc_of_constant_channel():
     val = 0.7
     channel = [val] * 16
-    dc, _, _ = dct_encode(channel, 4, 4, 4, 4)
+    scan = scan_order(4, 4, 128)
+    dc, _, _ = dct_encode(channel, 4, 4, scan)
     assert abs(dc - val) < 1e-12, f"DC of constant channel should = {val}, got {dc}"
 
 
 def test_ac_of_constant_channel_is_zero():
     channel = [0.5] * 16
-    _, ac, scale = dct_encode(channel, 4, 4, 4, 4)
+    scan = scan_order(4, 4, 128)
+    _, ac, scale = dct_encode(channel, 4, 4, scan)
     assert scale < 1e-12, "AC of constant channel should be 0"
     for i, v in enumerate(ac):
         assert abs(v) < 1e-12, f"AC[{i}] should be 0, got {v}"
@@ -323,9 +327,8 @@ def test_ac_of_constant_channel_is_zero():
 def test_dct_encode_decode_roundtrip_constant():
     val = 0.42
     channel = [val] * 64
-    nx, ny = 4, 4
-    dc, ac, _ = dct_encode(channel, 8, 8, nx, ny)
-    scan = triangular_scan_order(nx, ny)
+    scan = scan_order(4, 4, 128)
+    dc, ac, _ = dct_encode(channel, 8, 8, scan)
     for y in range(8):
         for x in range(8):
             reconstructed = dct_decode_pixel(dc, ac, scan, x, y, 8, 8)
@@ -335,9 +338,8 @@ def test_dct_encode_decode_roundtrip_constant():
 def test_dct_encode_decode_gradient():
     w, h = 8, 8
     channel = [(x / w + y / h) / 2.0 for y in range(h) for x in range(w)]
-    nx, ny = 7, 7
-    dc, ac, _ = dct_encode(channel, w, h, nx, ny)
-    scan = triangular_scan_order(nx, ny)
+    scan = scan_order(7, 7, 128)
+    dc, ac, _ = dct_encode(channel, w, h, scan)
     max_err = 0.0
     for y in range(h):
         for x in range(w):
@@ -627,7 +629,15 @@ def test_unit_dct_vectors():
         cases = json.load(f)
     for tc in cases:
         nx, ny = tc["input"]["nx"], tc["input"]["ny"]
-        order = triangular_scan_order(nx, ny)
+        wt, ht = tc["input"]["w"], tc["input"]["h"]
+        # Find an aspect byte that produces this (w, h).
+        aspect_byte = None
+        for byte in range(256):
+            if decode_output_size(byte) == (wt, ht):
+                aspect_byte = byte
+                break
+        assert aspect_byte is not None, f"{tc['name']}: no aspect byte for (w={wt}, h={ht})"
+        order = scan_order(nx, ny, aspect_byte)
         assert len(order) == tc["expected"]["ac_count"], (
             f"{tc['name']}: scan order count = {len(order)}, want {tc['expected']['ac_count']}"
         )

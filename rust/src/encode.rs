@@ -2,7 +2,7 @@ use crate::aspect::{derive_grid, encode_aspect};
 use crate::bitpack::write_bits;
 use crate::color::linear_rgb_to_oklab;
 use crate::constants::*;
-use crate::dct::{dct_encode_separable, precompute_cos_table};
+use crate::dct::{dct_encode_separable, precompute_cos_table, scan_order};
 use crate::math_utils::{clamp_neg1_1, clamp01, round_half_away_from_zero};
 use crate::mulaw::mu_law_quantize;
 use crate::transfer::{adobe_rgb_eotf, bt2020_pq_eotf, prophoto_rgb_eotf, srgb_eotf};
@@ -103,13 +103,22 @@ pub fn encode(w: u32, h: u32, rgba: &[u8], gamut: Gamut) -> [u8; 32] {
     let cos_x = precompute_cos_table(w, max_cx);
     let cos_y = precompute_cos_table(h, max_cy);
 
+    // 6b. Build per-channel scan orders (depend on aspect byte, not just grid dims)
+    let l_scan = scan_order(l_nx, l_ny, aspect);
+    let c_scan = scan_order(c_nx, c_ny, aspect);
+    let alpha_scan = if has_alpha {
+        scan_order(alpha_nx, alpha_ny, aspect)
+    } else {
+        vec![]
+    };
+
     // 7. DCT encode each channel
-    let (l_dc, mut l_ac, l_scale) = dct_encode_separable(&l_chan, w, h, l_nx, l_ny, &cos_x, &cos_y);
-    let (a_dc, mut a_ac, a_scale) = dct_encode_separable(&a_chan, w, h, c_nx, c_ny, &cos_x, &cos_y);
-    let (b_dc, mut b_ac, b_scale) = dct_encode_separable(&b_chan, w, h, c_nx, c_ny, &cos_x, &cos_y);
+    let (l_dc, mut l_ac, l_scale) = dct_encode_separable(&l_chan, w, h, &l_scan, &cos_x, &cos_y);
+    let (a_dc, mut a_ac, a_scale) = dct_encode_separable(&a_chan, w, h, &c_scan, &cos_x, &cos_y);
+    let (b_dc, mut b_ac, b_scale) = dct_encode_separable(&b_chan, w, h, &c_scan, &cos_x, &cos_y);
 
     let (alpha_dc, mut alpha_ac, alpha_scale) = if has_alpha {
-        dct_encode_separable(&alpha_pixels, w, h, alpha_nx, alpha_ny, &cos_x, &cos_y)
+        dct_encode_separable(&alpha_pixels, w, h, &alpha_scan, &cos_x, &cos_y)
     } else {
         (0.0, vec![], 0.0)
     };

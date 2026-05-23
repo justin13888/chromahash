@@ -47,12 +47,12 @@ internal static class Decoder
             bitpos += 4;
         }
 
-        // Derive adaptive grid and compute usable scan orders (v0.2)
+        // Derive adaptive grid and compute usable scan orders (v0.4)
         int lDecCap = hasAlpha ? 20 : 27;
         (int lNx, int lNy) = Aspect.DeriveGrid(aspect, hasAlpha ? 6 : 7);
         (int cNx, int cNy) = Aspect.DeriveGrid(aspect, 4);
 
-        var lScanFull = Dct.TriangularScanOrder(lNx, lNy);
+        var lScanFull = Dct.ScanOrder(lNx, lNy, aspect);
         int lUsable = Math.Min(lDecCap, lScanFull.Count);
 
         List<double> lAc;
@@ -83,7 +83,7 @@ internal static class Decoder
             }
         }
 
-        var chromaScanFull = Dct.TriangularScanOrder(cNx, cNy);
+        var chromaScanFull = Dct.ScanOrder(cNx, cNy, aspect);
         int cUsable = Math.Min(9, chromaScanFull.Count);
 
         var aAc = new List<double>(9);
@@ -108,7 +108,7 @@ internal static class Decoder
         if (hasAlpha)
         {
             (int aNx, int aNy) = Aspect.DeriveGrid(aspect, 3);
-            alphaScanFull = Dct.TriangularScanOrder(aNx, aNy);
+            alphaScanFull = Dct.ScanOrder(aNx, aNy, aspect);
             aUsable = Math.Min(5, alphaScanFull.Count);
 
             alphaAc = new List<double>(5);
