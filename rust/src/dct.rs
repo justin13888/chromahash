@@ -179,7 +179,10 @@ mod tests {
             (0, 3), // priority 9216
             (3, 0), // priority 9216
         ];
-        assert_eq!(order, expected, "4×4 square should produce radial scan order");
+        assert_eq!(
+            order, expected,
+            "4×4 square should produce radial scan order"
+        );
     }
 
     #[test]
@@ -192,7 +195,10 @@ mod tests {
             (0, 2), // priority 4096
             (2, 0), // priority 4096
         ];
-        assert_eq!(order, expected, "3×3 square should produce radial scan order");
+        assert_eq!(
+            order, expected,
+            "3×3 square should produce radial scan order"
+        );
     }
 
     #[test]
