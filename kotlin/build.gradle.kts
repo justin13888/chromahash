@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "io.chromahash"
-version = "0.3.0"
+version = "0.4.0"
 
 application {
     mainClass.set("chromahash.EncodeStdinKt")
@@ -32,6 +32,13 @@ tasks.test {
 
 tasks.named<JavaExec>("run") {
     standardInput = System.`in`
+}
+
+tasks.register<JavaExec>("bench") {
+    group = "verification"
+    description = "Run the batch-encode throughput benchmark"
+    mainClass.set("chromahash.BatchBenchKt")
+    classpath = sourceSets["main"].runtimeClasspath
 }
 
 kotlin {
