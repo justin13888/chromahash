@@ -453,3 +453,6 @@ export class ChromaHash {
     return new ChromaHash(new Uint8Array(bytes));
   }
 }
+
+export { BatchEncoder } from "./batch.ts";
+export type { ImageInput } from "./batch.ts";
