@@ -60,4 +60,6 @@ class ChromaHash:
         return f"ChromaHash({self._hash.hex()})"
 
 
-__all__ = ["ChromaHash", "Gamut"]
+from ._batch import BatchEncoder, ImageInput  # noqa: E402
+
+__all__ = ["BatchEncoder", "ChromaHash", "Gamut", "ImageInput"]

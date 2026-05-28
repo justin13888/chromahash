@@ -1,6 +1,6 @@
 {
   "name": "@chromahash/typescript",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Modern, high-quality image placeholder representation for professional formats",
   "license": "MIT OR Apache-2.0",
   "type": "module",
@@ -9,6 +9,7 @@
   "scripts": {
     "build": "tsc",
     "test": "node --test",
+    "bench": "node src/batch-bench.ts",
     "format": "biome format --write .",
     "format:check": "biome format .",
     "lint": "biome lint .",

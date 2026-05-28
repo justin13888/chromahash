@@ -1,4 +1,5 @@
 mod aspect;
+mod batch;
 mod bitpack;
 mod color;
 mod constants;
@@ -10,6 +11,7 @@ mod mulaw;
 mod test_vectors;
 mod transfer;
 
+pub use batch::{BatchEncoder, ImageInput};
 pub use constants::Gamut;
 
 /// ChromaHash: a 32-byte LQIP (Low Quality Image Placeholder).
