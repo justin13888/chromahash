@@ -73,6 +73,35 @@ build-benchmark:
 benchmark: build-benchmark
     cd tools/benchmark && uv run benchmark.py
 
+# ─── Batch benchmarks ─────────────────────────────────────────────────────────
+
+# Intentionally sequential — running these in parallel would skew the numbers,
+# since each benchmark wants the whole machine.
+
+# Run every BatchEncoder throughput benchmark (serial vs. batch + scaling sweep)
+bench-batch: bench-batch-rust bench-batch-go bench-batch-swift bench-batch-kotlin bench-batch-csharp bench-batch-python bench-batch-ts
+
+bench-batch-rust:
+    cargo run --manifest-path rust/Cargo.toml --release --example batch_bench
+
+bench-batch-ts:
+    mise exec node@24 -- pnpm --prefix typescript run bench
+
+bench-batch-kotlin:
+    mise exec java@21 gradle@9.4.0 -- sh -c 'cd kotlin && ./gradlew bench -q'
+
+bench-batch-swift:
+    cd swift && mise exec swift@6.2.4 -- swift run -c release ChromaHashBatchBench
+
+bench-batch-go:
+    cd go && go test -bench=Encode -benchmem -run='^$' ./...
+
+bench-batch-python:
+    cd python && uv run python benchmarks/batch_bench.py
+
+bench-batch-csharp:
+    mise exec dotnet@9 -- dotnet run -c Release --project csharp/benchmarks/Chromahash.Bench
+
 # ─── Rust ────────────────────────────────────────────────────────────────────
 
 format-rust:
