@@ -60,7 +60,7 @@ compare: build-compare
 
 # ─── Benchmark ──────────────────────────────────────────────────────────────
 
-# Build benchmark harnesses (release mode)
+# Build benchmark harnesses (release mode), incl. the ThumbHash baseline harness
 build-benchmark:
     cargo build --manifest-path rust/Cargo.toml --release --example encode_stdin
     mise exec node@24 -- pnpm --prefix typescript run build
@@ -68,10 +68,11 @@ build-benchmark:
     mise exec java@21 gradle@9.4.0 -- sh -c 'cd kotlin && ./gradlew installDist -q'
     cd swift && mise exec swift@6.2.4 -- swift build -c release
     mise exec dotnet@9 -- dotnet build csharp/src/Chromahash.Cli -c Release --verbosity quiet
+    mise exec node@24 -- pnpm --prefix tools/comparison run build
 
-# Run performance benchmark
+# Run performance benchmark (encode/decode × single/bulk, chromahash vs ThumbHash)
 benchmark: build-benchmark
-    cd tools/benchmark && uv run benchmark.py
+    cd tools/benchmark && uv run benchmark.py --skip-build
 
 # ─── Batch benchmarks ─────────────────────────────────────────────────────────
 

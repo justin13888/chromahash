@@ -20,6 +20,8 @@ fun main(args: Array<String>) {
         System.err.println("  chromahash encode <width> <height> <gamut>")
         System.err.println("  chromahash decode")
         System.err.println("  chromahash average-color")
+        System.err.println("  chromahash batch-encode <width> <height> <gamut> <count>")
+        System.err.println("  chromahash batch-decode <count>")
         System.exit(1)
     }
 
@@ -64,6 +66,39 @@ fun main(args: Array<String>) {
             val ch = ChromaHash.fromBytes(hashBytes)
             val color = ch.averageColor()
             System.out.write(byteArrayOf(color.r.toByte(), color.g.toByte(), color.b.toByte(), color.a.toByte()))
+            System.out.flush()
+        }
+        "batch-encode" -> {
+            // Read one image, encode it `count` times through the parallel
+            // BatchEncoder. Used to benchmark bulk throughput.
+            if (args.size != 5) {
+                System.err.println("Usage: chromahash batch-encode <width> <height> <gamut> <count>")
+                System.exit(1)
+            }
+            val w = args[1].toInt()
+            val h = args[2].toInt()
+            val gamut = parseGamut(args[3])
+            val count = args[4].toInt()
+
+            val rgba = System.`in`.readNBytes(w * h * 4)
+            val items = List(count) { ImageInput(w, h, rgba, gamut) }
+            val hashes = BatchEncoder().use { it.encodeBatch(items) }
+            // Write one result-derived byte so the work cannot be optimized away.
+            System.out.write(byteArrayOf(hashes[0].hash[0]))
+            System.out.flush()
+        }
+        "batch-decode" -> {
+            // No batch decode API exists; loop the single decode `count` times.
+            if (args.size != 2) {
+                System.err.println("Usage: chromahash batch-decode <count>")
+                System.exit(1)
+            }
+            val count = args[1].toInt()
+            val hashBytes = System.`in`.readNBytes(32)
+            val ch = ChromaHash.fromBytes(hashBytes)
+            var acc = 0
+            repeat(count) { acc = acc xor (ch.decode().rgba[0].toInt() and 0xFF) }
+            System.out.write(byteArrayOf(acc.toByte()))
             System.out.flush()
         }
         else -> {

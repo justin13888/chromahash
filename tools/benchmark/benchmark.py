@@ -1,64 +1,75 @@
 #!/usr/bin/env python3
-"""Performance benchmark for chromahash — all 7 language implementations.
+"""Performance benchmark for chromahash vs. ThumbHash baseline.
 
-Runs hyperfine to compare encode, decode, and average-color across
-Rust, TypeScript, Go, Python, Kotlin, Swift, and C#.
+Runs hyperfine to compare **encode** and **decode** in two regimes — a **single**
+call and a **bulk 1000** (batched) run — across all 7 chromahash language
+implementations (Rust, TypeScript, Go, Python, Kotlin, Swift, C#) plus ThumbHash
+(the JS reference implementation) as a baseline.
+
+The input is a fixed 100x100 sRGB RGB gradient. The size is dictated by ThumbHash,
+which caps the longest dimension at ~100px.
+
+IMPORTANT — interpreting the numbers:
+  * single-mode times are dominated by **process startup** (JVM/.NET/Node cold
+    start swamps the microsecond-scale op). They are a startup/latency proxy, not
+    per-op compute.
+  * bulk-mode runs 1000 ops in one process, amortizing startup. The bulk
+    **per-op** time (median / count) is the real compute number, and reflects the
+    parallel batch encoder (Rust/Go/Kotlin/Swift/C#) vs. the serial one
+    (TypeScript/Python, and ThumbHash's loop).
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import os
-import re
+import shlex
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
-from PIL import Image
-
 ROOT = Path(__file__).resolve().parent.parent.parent
-
-FIXTURES_DIR_DEFAULT = ROOT / "tools" / "comparison" / "fixtures" / "synthetic"
 OUTPUT_DIR_DEFAULT = Path(__file__).resolve().parent / "output"
 
-# Gamut detection from fixture filename
-GAMUT_PATTERNS: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(r"gamut[_-]p3", re.IGNORECASE), "displayp3"),
-    (re.compile(r"gamut[_-]adobe[_-]?rgb", re.IGNORECASE), "adobergb"),
-    (re.compile(r"gamut[_-]bt2020", re.IGNORECASE), "bt2020"),
-    (re.compile(r"gamut[_-]prophoto", re.IGNORECASE), "prophoto"),
-]
+GRADIENT_W = 100
+GRADIENT_H = 100
+GAMUT = "srgb"
+DEFAULT_BULK_COUNT = 1000
 
-HARNESSES: dict[str, dict[str, str]] = {
+# chromahash in 7 languages + ThumbHash (JS reference baseline).
+# "thumbhash": True marks the baseline whose command shape differs — it takes no
+# gamut argument and decodes its own (variable-length) hash.
+HARNESSES: dict[str, dict] = {
     "Rust": {"cmd": str(ROOT / "rust/target/release/examples/encode_stdin")},
     "Go": {"cmd": str(ROOT / "go/encode-stdin")},
     "TypeScript": {"cmd": f"node {ROOT / 'typescript/dist/encode-stdin.js'}"},
     "Python": {
-        "cmd": f"uv run python -m chromahash.encode_stdin",
+        "cmd": "uv run python -m chromahash.encode_stdin",
         "cwd": str(ROOT / "python"),
     },
-    "Kotlin": {
-        "cmd": str(ROOT / "kotlin/build/install/chromahash/bin/chromahash"),
-    },
+    "Kotlin": {"cmd": str(ROOT / "kotlin/build/install/chromahash/bin/chromahash")},
     "Swift": {"cmd": str(ROOT / "swift/.build/release/ChromaHashCLI")},
     "C#": {
         "cmd": f"dotnet exec {ROOT / 'csharp/src/Chromahash.Cli/bin/Release/net9.0/Chromahash.Cli.dll'}",
     },
+    "ThumbHash": {
+        "cmd": f"node {ROOT / 'tools/comparison/dist/thumbhash-stdin.js'}",
+        "thumbhash": True,
+    },
 }
 
-OPERATIONS = ["encode", "decode", "average-color"]
-
-
-def detect_gamut(filename: str) -> str:
-    for pattern, gamut in GAMUT_PATTERNS:
-        if pattern.search(filename):
-            return gamut
-    return "srgb"
+OPERATIONS = ["encode", "decode"]
+MODES = ["single", "bulk"]
 
 
 def build_harnesses() -> None:
+    """Build every harness in release mode.
+
+    Note: `just benchmark` already builds with mise-pinned toolchains and then
+    runs this script with --skip-build. This function exists for standalone
+    `uv run benchmark.py` use and relies on the toolchains being on PATH.
+    """
     print("Building all harnesses (release mode)...")
     steps = [
         (
@@ -74,205 +85,152 @@ def build_harnesses() -> None:
             ],
             str(ROOT),
         ),
-        (
-            "TypeScript",
-            [
-                "pnpm",
-                "--prefix",
-                str(ROOT / "typescript"),
-                "run",
-                "build",
-            ],
-            str(ROOT),
-        ),
-        (
-            "Go",
-            ["go", "build", "-o", str(ROOT / "go/encode-stdin"), "./cmd/encode-stdin"],
-            str(ROOT / "go"),
-        ),
-        (
-            "Kotlin",
-            ["./gradlew", "installDist", "-q"],
-            str(ROOT / "kotlin"),
-        ),
-        (
-            "Swift",
-            ["swift", "build", "-c", "release"],
-            str(ROOT / "swift"),
-        ),
+        ("TypeScript", ["pnpm", "--prefix", str(ROOT / "typescript"), "run", "build"], str(ROOT)),
+        ("Go", ["go", "build", "-o", str(ROOT / "go/encode-stdin"), "./cmd/encode-stdin"], str(ROOT / "go")),
+        ("Kotlin", ["./gradlew", "installDist", "-q"], str(ROOT / "kotlin")),
+        ("Swift", ["swift", "build", "-c", "release"], str(ROOT / "swift")),
         (
             "C#",
-            [
-                "dotnet",
-                "build",
-                str(ROOT / "csharp/src/Chromahash.Cli"),
-                "-c",
-                "Release",
-                "--verbosity",
-                "quiet",
-            ],
+            ["dotnet", "build", str(ROOT / "csharp/src/Chromahash.Cli"), "-c", "Release", "--verbosity", "quiet"],
             str(ROOT),
         ),
+        # ThumbHash harness lives in the comparison tool (which owns the dep).
+        ("ThumbHash", ["pnpm", "--prefix", str(ROOT / "tools/comparison"), "run", "build"], str(ROOT)),
     ]
 
     for label, cmd, cwd in steps:
         print(f"  Building {label}...")
         try:
-            subprocess.run(
-                cmd,
-                cwd=cwd,
-                check=True,
-                capture_output=True,
-                timeout=120,
-            )
+            subprocess.run(cmd, cwd=cwd, check=True, capture_output=True, timeout=300)
         except subprocess.CalledProcessError as e:
             print(f"  WARNING: {label} build failed: {e.stderr.decode()[:200]}")
         except FileNotFoundError:
             print(f"  WARNING: {label} build command not found, skipping")
 
 
-def prepare_fixtures(
-    fixtures_dir: Path, tmp_dir: Path
-) -> list[dict[str, str | int]]:
-    """Load PNGs, extract RGBA bytes and produce hashes via Rust."""
-    fixtures = []
-    png_files = sorted(fixtures_dir.glob("*.png"))
-    if not png_files:
-        print(f"No PNG files found in {fixtures_dir}")
+def make_gradient_rgba(w: int, h: int) -> bytes:
+    """Deterministic w×h RGBA gradient: R ramps with x, G with y, B fixed, A=255."""
+    buf = bytearray(w * h * 4)
+    for y in range(h):
+        for x in range(w):
+            i = (y * w + x) * 4
+            buf[i] = x * 255 // (w - 1) if w > 1 else 0
+            buf[i + 1] = y * 255 // (h - 1) if h > 1 else 0
+            buf[i + 2] = 128
+            buf[i + 3] = 255
+    return bytes(buf)
+
+
+def run_harness(config: dict, sub_args: list[str], stdin_bytes: bytes) -> bytes:
+    """Run a harness once with sub_args, feeding stdin_bytes; return stdout."""
+    parts = shlex.split(config["cmd"]) + sub_args
+    result = subprocess.run(
+        parts,
+        input=stdin_bytes,
+        capture_output=True,
+        cwd=config.get("cwd"),
+        timeout=60,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.decode()[:300])
+    return result.stdout
+
+
+def prepare_fixtures(tmp_dir: Path) -> dict[str, Path]:
+    """Write the gradient and the two decode-hash fixtures to tmp_dir.
+
+    chromahash hashes are byte-identical across all 7 languages (spec guarantee),
+    so one shared hash (produced by the Rust harness) drives every chromahash
+    decode. ThumbHash decodes its own, semantically different hash.
+    """
+    gradient = make_gradient_rgba(GRADIENT_W, GRADIENT_H)
+    gradient_file = tmp_dir / "gradient.rgba"
+    gradient_file.write_bytes(gradient)
+
+    chroma_hash = run_harness(
+        HARNESSES["Rust"], ["encode", str(GRADIENT_W), str(GRADIENT_H), GAMUT], gradient
+    )
+    if len(chroma_hash) != 32:
+        print(f"ERROR: Rust encode returned {len(chroma_hash)} bytes (expected 32)")
         sys.exit(1)
+    chroma_hash_file = tmp_dir / "chroma.hash"
+    chroma_hash_file.write_bytes(chroma_hash)
 
-    rust_cmd = HARNESSES["Rust"]["cmd"]
+    thumb_hash = run_harness(
+        HARNESSES["ThumbHash"], ["encode", str(GRADIENT_W), str(GRADIENT_H)], gradient
+    )
+    if not thumb_hash:
+        print("ERROR: ThumbHash encode returned no bytes")
+        sys.exit(1)
+    thumb_hash_file = tmp_dir / "thumb.hash"
+    thumb_hash_file.write_bytes(thumb_hash)
 
-    for png_path in png_files:
-        name = png_path.stem
-        img = Image.open(png_path).convert("RGBA")
-        w, h = img.size
-        rgba_bytes = img.tobytes()
-
-        rgba_file = tmp_dir / f"{name}.rgba"
-        rgba_file.write_bytes(rgba_bytes)
-
-        gamut = detect_gamut(name)
-
-        # Produce hash using Rust encode
-        result = subprocess.run(
-            [rust_cmd, "encode", str(w), str(h), gamut],
-            input=rgba_bytes,
-            capture_output=True,
-            timeout=30,
-        )
-        if result.returncode != 0:
-            print(f"  WARNING: Rust encode failed for {name}: {result.stderr.decode()[:200]}")
-            continue
-
-        hash_bytes = result.stdout
-        if len(hash_bytes) != 32:
-            print(f"  WARNING: Rust encode returned {len(hash_bytes)} bytes for {name}")
-            continue
-
-        hash_file = tmp_dir / f"{name}.hash"
-        hash_file.write_bytes(hash_bytes)
-
-        fixtures.append(
-            {
-                "name": name,
-                "rgba_file": str(rgba_file),
-                "hash_file": str(hash_file),
-                "width": w,
-                "height": h,
-                "gamut": gamut,
-                "pixels": w * h,
-            }
-        )
-
-    print(f"Prepared {len(fixtures)} fixtures")
-    return fixtures
+    return {
+        "gradient": gradient_file,
+        "chroma_hash": chroma_hash_file,
+        "thumb_hash": thumb_hash_file,
+    }
 
 
-def build_hyperfine_cmd(
-    operation: str,
-    fixture: dict[str, str | int],
-    warmup: int,
-    min_runs: int,
-    output_json: str,
-) -> list[str]:
-    """Build a hyperfine command comparing all languages for one (operation, fixture) pair."""
-    cmd = [
-        "hyperfine",
-        "--warmup",
-        str(warmup),
-        "--min-runs",
-        str(min_runs),
-        "--export-json",
-        output_json,
-    ]
+def harness_command(
+    config: dict, operation: str, mode: str, count: int, files: dict[str, Path]
+) -> str:
+    """Build the shell command for one (harness, operation, mode) cell."""
+    cmd = config["cmd"]
+    is_thumb = config.get("thumbhash", False)
+    gamut_arg = "" if is_thumb else f" {GAMUT}"
 
-    for lang, config in HARNESSES.items():
-        harness_cmd = config["cmd"]
-        cwd = config.get("cwd")
+    if operation == "encode":
+        verb = "encode" if mode == "single" else "batch-encode"
+        count_arg = "" if mode == "single" else f" {count}"
+        sub = f"{verb} {GRADIENT_W} {GRADIENT_H}{gamut_arg}{count_arg}"
+        redirect = files["gradient"]
+    else:  # decode
+        sub = "decode" if mode == "single" else f"batch-decode {count}"
+        redirect = files["thumb_hash"] if is_thumb else files["chroma_hash"]
 
-        if operation == "encode":
-            w = fixture["width"]
-            h = fixture["height"]
-            gamut = fixture["gamut"]
-            rgba_file = fixture["rgba_file"]
-            if cwd:
-                bench_cmd = f"cd {cwd} && {harness_cmd} encode {w} {h} {gamut} < {rgba_file}"
-            else:
-                bench_cmd = f"{harness_cmd} encode {w} {h} {gamut} < {rgba_file}"
-        elif operation == "decode":
-            hash_file = fixture["hash_file"]
-            if cwd:
-                bench_cmd = f"cd {cwd} && {harness_cmd} decode < {hash_file}"
-            else:
-                bench_cmd = f"{harness_cmd} decode < {hash_file}"
-        elif operation == "average-color":
-            hash_file = fixture["hash_file"]
-            if cwd:
-                bench_cmd = f"cd {cwd} && {harness_cmd} average-color < {hash_file}"
-            else:
-                bench_cmd = f"{harness_cmd} average-color < {hash_file}"
-        else:
-            raise ValueError(f"unknown operation: {operation}")
-
-        cmd.extend(["-n", lang, bench_cmd])
-
-    return cmd
+    full = f"{cmd} {sub} < {redirect}"
+    cwd = config.get("cwd")
+    if cwd:
+        full = f"cd {cwd} && {full}"
+    return full
 
 
 def run_benchmarks(
-    fixtures: list[dict[str, str | int]],
+    files: dict[str, Path],
     output_dir: Path,
     warmup: int,
     min_runs: int,
+    count: int,
 ) -> list[dict]:
-    """Run hyperfine for each (operation, fixture) pair."""
+    """Run one hyperfine comparison per (operation, mode) across all harnesses."""
     results_dir = output_dir / "json"
     results_dir.mkdir(parents=True, exist_ok=True)
 
-    all_results = []
-    total = len(fixtures) * len(OPERATIONS)
+    all_results: list[dict] = []
+    total = len(OPERATIONS) * len(MODES)
     idx = 0
 
-    for fixture in fixtures:
-        for operation in OPERATIONS:
+    for operation in OPERATIONS:
+        for mode in MODES:
             idx += 1
-            name = fixture["name"]
-            json_file = str(results_dir / f"{name}_{operation}.json")
+            json_file = results_dir / f"{operation}_{mode}.json"
+            print(f"  [{idx}/{total}] {operation} — {mode}")
 
-            print(f"  [{idx}/{total}] {operation} — {name}")
-
-            cmd = build_hyperfine_cmd(
-                operation, fixture, warmup, min_runs, json_file
-            )
+            cmd = [
+                "hyperfine",
+                "--warmup",
+                str(warmup),
+                "--min-runs",
+                str(min_runs),
+                "--export-json",
+                str(json_file),
+            ]
+            for name, config in HARNESSES.items():
+                cmd.extend(["-n", name, harness_command(config, operation, mode, count, files)])
 
             try:
-                subprocess.run(
-                    cmd,
-                    check=True,
-                    capture_output=True,
-                    timeout=300,
-                )
+                subprocess.run(cmd, check=True, capture_output=True, timeout=900)
             except subprocess.CalledProcessError as e:
                 print(f"    WARNING: hyperfine failed: {e.stderr.decode()[:300]}")
                 continue
@@ -283,9 +241,8 @@ def run_benchmarks(
             try:
                 with open(json_file) as f:
                     data = json.load(f)
-                data["_fixture"] = name
                 data["_operation"] = operation
-                data["_pixels"] = fixture["pixels"]
+                data["_mode"] = mode
                 all_results.append(data)
             except (json.JSONDecodeError, FileNotFoundError) as e:
                 print(f"    WARNING: failed to parse results: {e}")
@@ -293,224 +250,106 @@ def run_benchmarks(
     return all_results
 
 
-def parse_results(
-    all_results: list[dict],
-) -> dict[str, dict[str, list[float]]]:
-    """Parse hyperfine JSON into {lang: {operation: [median_times]}}."""
-    lang_op_times: dict[str, dict[str, list[float]]] = {}
-
+def collect_medians(all_results: list[dict]) -> dict[str, dict[tuple[str, str], float]]:
+    """{impl: {(operation, mode): median_seconds}}."""
+    medians: dict[str, dict[tuple[str, str], float]] = {}
     for result in all_results:
-        operation = result["_operation"]
+        key = (result["_operation"], result["_mode"])
         for bench in result.get("results", []):
-            lang = bench["command"]
-            median = bench["median"]
-            lang_op_times.setdefault(lang, {}).setdefault(operation, []).append(
-                median
-            )
+            medians.setdefault(bench["command"], {})[key] = bench["median"]
+    return medians
 
-    return lang_op_times
+
+def format_table(medians: dict[str, dict[tuple[str, str], float]], count: int) -> str:
+    """Build the markdown summary table."""
+    lines = [
+        f"## Benchmark Summary — 100×100 RGB gradient, bulk count = {count}",
+        "",
+        "| Implementation | encode single | decode single | encode bulk (total) | encode bulk (per-op) | decode bulk (total) | decode bulk (per-op) |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
+    ]
+
+    def ms(name: str, op: str, mode: str) -> str:
+        v = medians.get(name, {}).get((op, mode))
+        return f"{v * 1000:.2f} ms" if v is not None else "N/A"
+
+    def per_op_us(name: str, op: str) -> str:
+        v = medians.get(name, {}).get((op, "bulk"))
+        return f"{v / count * 1e6:.2f} µs" if v is not None else "N/A"
+
+    for name in HARNESSES:
+        label = f"{name} _(baseline)_" if HARNESSES[name].get("thumbhash") else name
+        lines.append(
+            f"| {label} | {ms(name, 'encode', 'single')} | {ms(name, 'decode', 'single')} "
+            f"| {ms(name, 'encode', 'bulk')} | {per_op_us(name, 'encode')} "
+            f"| {ms(name, 'decode', 'bulk')} | {per_op_us(name, 'decode')} |"
+        )
+
+    lines += [
+        "",
+        "> **single** times include process startup (JVM/.NET/Node cold start dominates) "
+        "— a startup/latency proxy, not per-op compute. **bulk per-op** (= median / count) "
+        "is the real compute number.",
+    ]
+    return "\n".join(lines)
 
 
 def generate_charts(
-    all_results: list[dict], output_dir: Path
+    medians: dict[str, dict[tuple[str, str], float]], output_dir: Path, count: int
 ) -> None:
-    """Generate summary, detail, and size-breakdown charts."""
+    """Two charts: single-mode (startup-dominated) and bulk per-op (real compute)."""
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     import numpy as np
 
-    languages = list(HARNESSES.keys())
-    operations = OPERATIONS
+    names = list(HARNESSES.keys())
+    x = np.arange(len(names))
+    width = 0.38
 
-    # ── Summary chart: grouped bars, avg median per (lang, op) ──
-    lang_op_avg: dict[str, dict[str, float]] = {}
-    lang_op_counts: dict[str, dict[str, int]] = {}
-
-    for result in all_results:
-        operation = result["_operation"]
-        for bench in result.get("results", []):
-            lang = bench["command"]
-            median = bench["median"]
-            lang_op_avg.setdefault(lang, {}).setdefault(operation, 0.0)
-            lang_op_counts.setdefault(lang, {}).setdefault(operation, 0)
-            lang_op_avg[lang][operation] += median
-            lang_op_counts[lang][operation] += 1
-
-    for lang in lang_op_avg:
-        for op in lang_op_avg[lang]:
-            count = lang_op_counts[lang].get(op, 1)
-            if count > 0:
-                lang_op_avg[lang][op] /= count
-
+    # ── Single-mode (startup-dominated) ──
     fig, ax = plt.subplots(figsize=(12, 6))
-    x = np.arange(len(languages))
-    width = 0.25
-
-    for i, op in enumerate(operations):
-        vals = [lang_op_avg.get(lang, {}).get(op, 0) * 1000 for lang in languages]
+    for i, op in enumerate(OPERATIONS):
+        vals = [medians.get(n, {}).get((op, "single"), np.nan) * 1000 for n in names]
         ax.bar(x + i * width, vals, width, label=op)
-
-    ax.set_ylabel("Median Time (ms)")
-    ax.set_title("ChromaHash Benchmark — Average Across All Fixtures")
-    ax.set_xticks(x + width)
-    ax.set_xticklabels(languages, rotation=30, ha="right")
+    ax.set_ylabel("Median time (ms)")
+    ax.set_title("Single call — process startup + one op (startup-dominated)")
+    ax.set_xticks(x + width / 2)
+    ax.set_xticklabels(names, rotation=30, ha="right")
     ax.set_yscale("log")
     ax.legend()
     ax.grid(axis="y", alpha=0.3)
     fig.tight_layout()
-    fig.savefig(output_dir / "benchmark-summary.png", dpi=150)
+    fig.savefig(output_dir / "benchmark-single.png", dpi=150)
     plt.close(fig)
-    print(f"  Saved {output_dir / 'benchmark-summary.png'}")
+    print(f"  Saved {output_dir / 'benchmark-single.png'}")
 
-    # ── Detail chart: heatmap of median times ──
-    fixture_names = []
-    seen = set()
-    for r in all_results:
-        name = r["_fixture"]
-        if name not in seen:
-            fixture_names.append(name)
-            seen.add(name)
-
-    # Build matrix: rows=fixtures, cols=languages*operations
-    col_labels = [f"{lang}\n{op}" for op in operations for lang in languages]
-    matrix = np.full((len(fixture_names), len(col_labels)), np.nan)
-
-    fixture_idx = {name: i for i, name in enumerate(fixture_names)}
-
-    for result in all_results:
-        fname = result["_fixture"]
-        operation = result["_operation"]
-        row = fixture_idx[fname]
-        for bench in result.get("results", []):
-            lang = bench["command"]
-            try:
-                op_offset = operations.index(operation)
-                lang_offset = languages.index(lang)
-                col = op_offset * len(languages) + lang_offset
-                matrix[row, col] = bench["median"] * 1000
-            except ValueError:
-                continue
-
-    if len(fixture_names) > 0:
-        fig, ax = plt.subplots(
-            figsize=(max(14, len(col_labels) * 0.8), max(8, len(fixture_names) * 0.35))
-        )
-        im = ax.imshow(matrix, aspect="auto", cmap="YlOrRd")
-        ax.set_xticks(range(len(col_labels)))
-        ax.set_xticklabels(col_labels, rotation=60, ha="right", fontsize=7)
-        ax.set_yticks(range(len(fixture_names)))
-        ax.set_yticklabels(fixture_names, fontsize=7)
-        ax.set_title("ChromaHash Benchmark — Per-Fixture Detail (ms)")
-        fig.colorbar(im, label="ms")
-        fig.tight_layout()
-        fig.savefig(output_dir / "benchmark-detail.png", dpi=150)
-        plt.close(fig)
-        print(f"  Saved {output_dir / 'benchmark-detail.png'}")
-
-    # ── Size breakdown: encode time vs pixel count ──
-    lang_pixels: dict[str, list[tuple[int, float]]] = {}
-    for result in all_results:
-        if result["_operation"] != "encode":
-            continue
-        pixels = result["_pixels"]
-        for bench in result.get("results", []):
-            lang = bench["command"]
-            lang_pixels.setdefault(lang, []).append((pixels, bench["median"] * 1000))
-
-    if lang_pixels:
-        fig, ax = plt.subplots(figsize=(10, 6))
-        for lang in languages:
-            pts = lang_pixels.get(lang, [])
-            if not pts:
-                continue
-            pts.sort()
-            px = [p[0] for p in pts]
-            ms = [p[1] for p in pts]
-            ax.plot(px, ms, "o-", label=lang, markersize=3)
-
-        ax.set_xlabel("Image Size (pixels)")
-        ax.set_ylabel("Encode Time (ms)")
-        ax.set_title("ChromaHash Encode Time vs Image Size")
-        ax.set_xscale("log")
-        ax.set_yscale("log")
-        ax.legend()
-        ax.grid(alpha=0.3)
-        fig.tight_layout()
-        fig.savefig(output_dir / "benchmark-by-size.png", dpi=150)
-        plt.close(fig)
-        print(f"  Saved {output_dir / 'benchmark-by-size.png'}")
-
-
-def print_summary_table(all_results: list[dict]) -> None:
-    """Print a markdown summary table to stdout."""
-    languages = list(HARNESSES.keys())
-
-    # Collect avg medians per (lang, op)
-    sums: dict[str, dict[str, float]] = {}
-    counts: dict[str, dict[str, int]] = {}
-
-    for result in all_results:
-        operation = result["_operation"]
-        for bench in result.get("results", []):
-            lang = bench["command"]
-            median = bench["median"]
-            sums.setdefault(lang, {}).setdefault(operation, 0.0)
-            counts.setdefault(lang, {}).setdefault(operation, 0)
-            sums[lang][operation] += median
-            counts[lang][operation] += 1
-
-    print("\n## Benchmark Summary (average median across all fixtures)\n")
-    header = "| Language | " + " | ".join(OPERATIONS) + " |"
-    sep = "|" + "|".join(["---"] * (len(OPERATIONS) + 1)) + "|"
-    print(header)
-    print(sep)
-
-    for lang in languages:
-        row = f"| {lang} |"
-        for op in OPERATIONS:
-            s = sums.get(lang, {}).get(op, 0)
-            c = counts.get(lang, {}).get(op, 0)
-            if c > 0:
-                avg_ms = (s / c) * 1000
-                row += f" {avg_ms:.2f} ms |"
-            else:
-                row += " N/A |"
-        print(row)
+    # ── Bulk per-op (real compute) ──
+    fig, ax = plt.subplots(figsize=(12, 6))
+    for i, op in enumerate(OPERATIONS):
+        vals = [medians.get(n, {}).get((op, "bulk"), np.nan) / count * 1e6 for n in names]
+        ax.bar(x + i * width, vals, width, label=op)
+    ax.set_ylabel("Per-op time (µs)")
+    ax.set_title(f"Bulk {count} — per-op compute (median / count)")
+    ax.set_xticks(x + width / 2)
+    ax.set_xticklabels(names, rotation=30, ha="right")
+    ax.set_yscale("log")
+    ax.legend()
+    ax.grid(axis="y", alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(output_dir / "benchmark-bulk.png", dpi=150)
+    plt.close(fig)
+    print(f"  Saved {output_dir / 'benchmark-bulk.png'}")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="ChromaHash performance benchmark")
-    parser.add_argument(
-        "--fixtures-dir",
-        type=Path,
-        default=FIXTURES_DIR_DEFAULT,
-        help="Directory containing synthetic PNG fixtures",
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        default=OUTPUT_DIR_DEFAULT,
-        help="Directory for benchmark output",
-    )
-    parser.add_argument(
-        "--warmup",
-        type=int,
-        default=3,
-        help="Number of warmup runs per benchmark",
-    )
-    parser.add_argument(
-        "--min-runs",
-        type=int,
-        default=10,
-        help="Minimum number of timed runs",
-    )
-    parser.add_argument(
-        "--skip-build",
-        action="store_true",
-        help="Skip building harnesses",
-    )
+    parser = argparse.ArgumentParser(description="ChromaHash vs ThumbHash performance benchmark")
+    parser.add_argument("--output-dir", type=Path, default=OUTPUT_DIR_DEFAULT, help="Directory for benchmark output")
+    parser.add_argument("--warmup", type=int, default=3, help="Number of warmup runs per benchmark")
+    parser.add_argument("--min-runs", type=int, default=10, help="Minimum number of timed runs")
+    parser.add_argument("--bulk-count", type=int, default=DEFAULT_BULK_COUNT, help="Images per bulk run")
+    parser.add_argument("--skip-build", action="store_true", help="Skip building harnesses")
     args = parser.parse_args()
 
     output_dir: Path = args.output_dir
@@ -519,25 +358,25 @@ def main() -> None:
     if not args.skip_build:
         build_harnesses()
 
-    print("\nPreparing fixtures...")
+    print("\nPreparing fixtures (100×100 gradient + decode hashes)...")
     with tempfile.TemporaryDirectory(prefix="chromahash-bench-") as tmp_dir:
-        fixtures = prepare_fixtures(args.fixtures_dir, Path(tmp_dir))
+        files = prepare_fixtures(Path(tmp_dir))
 
-        if not fixtures:
-            print("No fixtures to benchmark")
-            sys.exit(1)
-
-        print(f"\nRunning benchmarks ({len(fixtures)} fixtures × {len(OPERATIONS)} operations)...")
-        all_results = run_benchmarks(fixtures, output_dir, args.warmup, args.min_runs)
+        print(f"\nRunning benchmarks ({len(OPERATIONS)} operations × {len(MODES)} modes)...")
+        all_results = run_benchmarks(files, output_dir, args.warmup, args.min_runs, args.bulk_count)
 
     if not all_results:
         print("No benchmark results collected")
         sys.exit(1)
 
-    print("\nGenerating charts...")
-    generate_charts(all_results, output_dir)
+    medians = collect_medians(all_results)
 
-    print_summary_table(all_results)
+    print("\nGenerating charts...")
+    generate_charts(medians, output_dir, args.bulk_count)
+
+    table = format_table(medians, args.bulk_count)
+    print("\n" + table)
+    (output_dir / "benchmark-summary.md").write_text(table + "\n")
     print(f"\nResults saved to {output_dir}")
 
 

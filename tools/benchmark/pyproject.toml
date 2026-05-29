@@ -1,8 +1,8 @@
 [project]
 name = "chromahash-benchmark"
-version = "0.3.0"
+version = "0.4.0"
 requires-python = ">=3.12"
-dependencies = ["Pillow", "matplotlib"]
+dependencies = ["matplotlib"]
 
 [tool.uv]
 dev-dependencies = []
