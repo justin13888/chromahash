@@ -18,6 +18,10 @@ chromahash is a multi-language library implementing a compact, high-fidelity Low
 
 The canonical format is defined in [`spec/`](spec/).
 
+## Guides
+
+- [Decoding on Android](docs/android.md) — call the native Rust core from Kotlin/Java over JNI (UniFFI) for fast, SIMD-ready placeholder decoding
+
 ## Setup
 
 ### Prerequisites
@@ -146,6 +150,7 @@ chromahash/
 ├── python/             # Python implementation (uv + Ruff)
 ├── csharp/             # C# implementation (.NET 9)
 ├── spec/               # Format specification and test vectors
+├── docs/               # Integration guides (e.g. Android via Rust/JNI)
 ├── tools/              # Shared developer tooling (comparison, benchmarks)
 ├── .github/workflows/  # Per-language GitHub Actions CI
 ├── justfile            # Cross-language task runner
