@@ -11,8 +11,8 @@ import {
   at,
   clamp01,
   clampNeg1_1,
-  dctDecodePixel,
-  dctEncode,
+  dctDecodePixelSeparable,
+  dctEncodeSeparable,
   decodeOutputSize,
   deriveGrid,
   encodeAspect,
@@ -28,6 +28,7 @@ import {
   muLawDequantize,
   muLawQuantize,
   oklabToLinearSrgb,
+  precomputeCosTable,
   readBits,
   roundHalfAwayFromZero,
   scanOrder,
@@ -114,12 +115,39 @@ function encodeImpl(
     ? scanOrder(alphaNx, alphaNy, aspect)
     : ([] as Array<[number, number]>);
 
+  // 5c. Precompute cosine tables once (L grid dominates chroma/alpha)
+  const maxCx = Math.max(lNx, cNx);
+  const maxCy = Math.max(lNy, cNy);
+  const cosX = precomputeCosTable(w, maxCx);
+  const cosY = precomputeCosTable(h, maxCy);
+
   // 6. DCT encode each channel (AC emitted in scan order)
-  const [lDc, lAcRaw, lScale] = dctEncode(lChan, w, h, lScan);
-  const [aDc, aAcRaw, aScale] = dctEncode(aChan, w, h, cScan);
-  const [bDc, bAcRaw, bScale] = dctEncode(bChan, w, h, cScan);
+  const [lDc, lAcRaw, lScale] = dctEncodeSeparable(
+    lChan,
+    w,
+    h,
+    lScan,
+    cosX,
+    cosY,
+  );
+  const [aDc, aAcRaw, aScale] = dctEncodeSeparable(
+    aChan,
+    w,
+    h,
+    cScan,
+    cosX,
+    cosY,
+  );
+  const [bDc, bAcRaw, bScale] = dctEncodeSeparable(
+    bChan,
+    w,
+    h,
+    cScan,
+    cosX,
+    cosY,
+  );
   const [alphaDc, alphaAcRaw, alphaScale] = hasAlpha
-    ? dctEncode(alphaPixels, w, h, alphaScanEnc)
+    ? dctEncodeSeparable(alphaPixels, w, h, alphaScanEnc, cosX, cosY)
     : [0, [] as number[], 0];
 
   // Cap to bit budget and zero-pad (per spec §10)
@@ -341,16 +369,54 @@ function decodeImpl(hash: Uint8Array): {
     alphaAcCapped = alphaAc.slice(0, aUsable);
   }
 
+  // 5d. Precompute cosine tables once (L grid dominates chroma/alpha)
+  const maxCx = Math.max(lNx, cNx);
+  const maxCy = Math.max(lNy, cNy);
+  const cosX = precomputeCosTable(w, maxCx);
+  const cosY = precomputeCosTable(h, maxCy);
+
   // 6. Render output image
   const rgbaOut = new Uint8Array(w * h * 4);
 
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
-      const l = dctDecodePixel(lDc, lAcCapped, lScan, x, y, w, h);
-      const a = dctDecodePixel(aDc, aAcCapped, chromaScan, x, y, w, h);
-      const b = dctDecodePixel(bDc, bAcCapped, chromaScan, x, y, w, h);
+      const l = dctDecodePixelSeparable(
+        lDc,
+        lAcCapped,
+        lScan,
+        x,
+        y,
+        cosX,
+        cosY,
+      );
+      const a = dctDecodePixelSeparable(
+        aDc,
+        aAcCapped,
+        chromaScan,
+        x,
+        y,
+        cosX,
+        cosY,
+      );
+      const b = dctDecodePixelSeparable(
+        bDc,
+        bAcCapped,
+        chromaScan,
+        x,
+        y,
+        cosX,
+        cosY,
+      );
       const alpha = hasAlpha
-        ? dctDecodePixel(alphaDcVal, alphaAcCapped, alphaScan, x, y, w, h)
+        ? dctDecodePixelSeparable(
+            alphaDcVal,
+            alphaAcCapped,
+            alphaScan,
+            x,
+            y,
+            cosX,
+            cosY,
+          )
         : 1.0;
 
       // Clamp L from DCT ringing, soft gamut clamp (v0.2)
