@@ -90,15 +90,27 @@ func Encode(w, h int, rgba []byte, gamut Gamut) ChromaHash {
 		alphaScanEnc = scanOrder(alphaNx, alphaNy, aspectByte)
 	}
 
+	// 5c. Precompute cosine tables once (L grid dominates chroma/alpha).
+	maxCx := lNx
+	if cNx > maxCx {
+		maxCx = cNx
+	}
+	maxCy := lNy
+	if cNy > maxCy {
+		maxCy = cNy
+	}
+	cosX := precomputeCosTable(w, maxCx)
+	cosY := precomputeCosTable(h, maxCy)
+
 	// 6. DCT encode each channel (AC emitted in scan order).
-	lDC, lACRaw, lScale := dctEncode(lChan, w, h, lScan)
-	aDC, aACRaw, aScale := dctEncode(aChan, w, h, cScan)
-	bDC, bACRaw, bScale := dctEncode(bChan, w, h, cScan)
+	lDC, lACRaw, lScale := dctEncodeSeparable(lChan, w, h, lScan, cosX, cosY)
+	aDC, aACRaw, aScale := dctEncodeSeparable(aChan, w, h, cScan, cosX, cosY)
+	bDC, bACRaw, bScale := dctEncodeSeparable(bChan, w, h, cScan, cosX, cosY)
 
 	var alphaDC, alphaScale float64
 	var alphaACRaw []float64
 	if hasAlpha {
-		alphaDC, alphaACRaw, alphaScale = dctEncode(alphaPixels, w, h, alphaScanEnc)
+		alphaDC, alphaACRaw, alphaScale = dctEncodeSeparable(alphaPixels, w, h, alphaScanEnc, cosX, cosY)
 	}
 
 	// Cap to bit budget and zero-pad (per spec §10).
@@ -350,16 +362,28 @@ func (ch ChromaHash) Decode() (int, int, []byte) {
 		alphaACUsed = alphaAC[:aUsable]
 	}
 
+	// 5d. Precompute cosine tables once (L grid dominates chroma/alpha).
+	maxCx := lNx
+	if cNx > maxCx {
+		maxCx = cNx
+	}
+	maxCy := lNy
+	if cNy > maxCy {
+		maxCy = cNy
+	}
+	cosX := precomputeCosTable(w, maxCx)
+	cosY := precomputeCosTable(h, maxCy)
+
 	// 6. Render output image.
 	rgba := make([]byte, w*h*4)
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
-			l := dctDecodePixel(lDC, lACUsed, lScan, x, y, w, h)
-			a := dctDecodePixel(aDC, aACUsed, chromaScan, x, y, w, h)
-			b := dctDecodePixel(bDC, bACUsed, chromaScan, x, y, w, h)
+			l := dctDecodePixelSeparable(lDC, lACUsed, lScan, x, y, cosX, cosY)
+			a := dctDecodePixelSeparable(aDC, aACUsed, chromaScan, x, y, cosX, cosY)
+			b := dctDecodePixelSeparable(bDC, bACUsed, chromaScan, x, y, cosX, cosY)
 			var alpha float64
 			if hasAlpha {
-				alpha = dctDecodePixel(alphaDCVal, alphaACUsed, alphaScan, x, y, w, h)
+				alpha = dctDecodePixelSeparable(alphaDCVal, alphaACUsed, alphaScan, x, y, cosX, cosY)
 			} else {
 				alpha = 1.0
 			}

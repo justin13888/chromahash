@@ -319,6 +319,62 @@ func TestUnitDCT(t *testing.T) {
 	}
 }
 
+// ── separable DCT equivalence ───────────────────────────────────────────────
+
+func TestSeparableMatchesDctEncode(t *testing.T) {
+	// dctEncodeSeparable must produce bit-identical output to dctEncode.
+	w, h := 8, 6
+	nx, ny := 5, 4
+	scan := scanOrder(nx, ny, 128)
+	cosX := precomputeCosTable(w, nx)
+	cosY := precomputeCosTable(h, ny)
+	channel := make([]float64, w*h)
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			channel[x+y*w] = math.Sin(float64(x)*0.13 + float64(y)*0.07)
+		}
+	}
+	dc1, ac1, s1 := dctEncode(channel, w, h, scan)
+	dc2, ac2, s2 := dctEncodeSeparable(channel, w, h, scan, cosX, cosY)
+	if dc1 != dc2 {
+		t.Errorf("DC must be bit-identical: %v vs %v", dc1, dc2)
+	}
+	if s1 != s2 {
+		t.Errorf("scale must be bit-identical: %v vs %v", s1, s2)
+	}
+	if len(ac1) != len(ac2) {
+		t.Fatalf("AC length mismatch: %d vs %d", len(ac1), len(ac2))
+	}
+	for i := range ac1 {
+		if ac1[i] != ac2[i] {
+			t.Errorf("AC[%d] must be bit-identical: %v vs %v", i, ac1[i], ac2[i])
+		}
+	}
+}
+
+func TestSeparableDecodeMatchesDctDecodePixel(t *testing.T) {
+	// dctDecodePixelSeparable must produce bit-identical output to dctDecodePixel.
+	w, h := 8, 6
+	nx, ny := 5, 4
+	scan := scanOrder(nx, ny, 128)
+	cosX := precomputeCosTable(w, nx)
+	cosY := precomputeCosTable(h, ny)
+	dc := 0.37
+	ac := make([]float64, len(scan))
+	for j := range ac {
+		ac[j] = math.Sin(float64(j)*0.123) * 0.4
+	}
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			naive := dctDecodePixel(dc, ac, scan, x, y, w, h)
+			sep := dctDecodePixelSeparable(dc, ac, scan, x, y, cosX, cosY)
+			if naive != sep {
+				t.Errorf("decode must be bit-identical at (%d,%d): %v vs %v", x, y, naive, sep)
+			}
+		}
+	}
+}
+
 // ── unit-aspect.json ──────────────────────────────────────────────────────────
 
 type aspectTestCase struct {
