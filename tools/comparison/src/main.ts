@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { parseArgs } from "node:util";
@@ -36,6 +37,7 @@ const { values } = parseArgs({
     "skip-harnesses": { type: "boolean", default: false },
     "generate-fixtures": { type: "boolean", default: true },
     "skip-natural": { type: "boolean", default: false },
+    commit: { type: "string" },
   },
 });
 
@@ -45,6 +47,30 @@ const iterations = Number.parseInt(values.iterations ?? "10", 10);
 const skipHarnesses = values["skip-harnesses"] ?? false;
 const shouldGenerateFixtures = values["generate-fixtures"] ?? true;
 const skipNatural = values["skip-natural"] ?? false;
+
+/**
+ * Resolve the source commit the report is built from: an explicit --commit flag,
+ * the CI-provided GITHUB_SHA, then a local `git rev-parse HEAD`, else null.
+ */
+function resolveCommit(toolRoot: string): string | null {
+  if (values.commit) return values.commit;
+  if (process.env.GITHUB_SHA) return process.env.GITHUB_SHA;
+  try {
+    return execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: toolRoot,
+      encoding: "utf8",
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
+/** Base repo URL from CI env (used to link the footer commit), else null. */
+function resolveRepoUrl(): string | null {
+  const server = process.env.GITHUB_SERVER_URL;
+  const repo = process.env.GITHUB_REPOSITORY;
+  return server && repo ? `${server}/${repo}` : null;
+}
 
 async function main(): Promise<void> {
   const toolRoot = path.resolve(import.meta.dirname, "..");
@@ -185,7 +211,11 @@ async function main(): Promise<void> {
   }
 
   // Generate HTML report
-  const html = generateReport(entries);
+  const html = generateReport(entries, {
+    commit: resolveCommit(toolRoot),
+    repoUrl: resolveRepoUrl(),
+    generatedAt: `${new Date().toISOString().slice(0, 16).replace("T", " ")} UTC`,
+  });
   const absOutput = path.resolve(toolRoot, outputPath);
   await fs.mkdir(path.dirname(absOutput), { recursive: true });
   await fs.writeFile(absOutput, html);

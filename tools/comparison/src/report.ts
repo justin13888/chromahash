@@ -23,6 +23,34 @@ export interface FormatStat {
 }
 
 /**
+ * Provenance metadata stamped into the report footer for record-keeping.
+ */
+export interface ReportMeta {
+  /** Full commit SHA the report was built from, or null when unknown. */
+  commit: string | null;
+  /** Base repository URL (e.g. https://github.com/justin13888/chromahash), or null. */
+  repoUrl: string | null;
+  /** Pre-formatted generation timestamp, e.g. "2026-05-29 14:32 UTC". */
+  generatedAt: string;
+}
+
+/**
+ * Render the report footer: always shows the generation time, and the source
+ * commit (linked to the repo when a repoUrl is available) when known.
+ */
+function reportFooter(meta: ReportMeta): string {
+  let commitHtml = "";
+  if (meta.commit) {
+    const short = meta.commit.slice(0, 12);
+    const inner = meta.repoUrl
+      ? `<a href="${meta.repoUrl}/commit/${meta.commit}"><code>${short}</code></a>`
+      : `<code>${short}</code>`;
+    commitHtml = ` &middot; commit ${inner}`;
+  }
+  return `<footer class="report-footer">ChromaHash Comparison Report &middot; generated ${meta.generatedAt}${commitHtml}</footer>`;
+}
+
+/**
  * Compute summary statistics for each format, optionally filtered to a subset of entries.
  */
 export function computeFormatStats(
@@ -123,7 +151,10 @@ ${stats
 /**
  * Generate a self-contained HTML report with all images embedded as data URIs.
  */
-export function generateReport(entries: ImageEntry[]): string {
+export function generateReport(
+  entries: ImageEntry[],
+  meta: ReportMeta,
+): string {
   const formatNames = [
     "ChromaHash",
     "ThumbHash",
@@ -225,6 +256,9 @@ export function generateReport(entries: ImageEntry[]): string {
   details.methodology summary { padding: 10px 14px; cursor: pointer; font-size: 0.9rem; user-select: none; }
   details.methodology .inner { padding: 12px 16px; font-size: 0.82rem; line-height: 1.6; }
   details.methodology table { font-size: 0.82rem; }
+  footer.report-footer { margin-top: 40px; padding-top: 16px; text-align: center; font-size: 0.78rem; color: #888; border-top: 1px solid #444; }
+  body.light footer.report-footer { color: #777; border-color: #ddd; }
+  footer.report-footer a { color: inherit; }
 </style>
 </head>
 <body>
@@ -372,6 +406,7 @@ function toggleBlur() {
   document.body.classList.toggle('blur');
 }
 </script>
+${reportFooter(meta)}
 </body>
 </html>`;
 }
