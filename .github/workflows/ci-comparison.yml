@@ -79,5 +79,19 @@ jobs:
       - name: Build C# solution (includes CLI)
         run: dotnet build csharp/Chromahash.sln --verbosity quiet
 
+      # Build the report straight into index.html so it is deploy-ready for
+      # Cloudflare Pages (which serves a directory and resolves index.html at /).
       - name: Run comparison (skip cross-language harnesses)
-        run: pnpm --prefix tools/comparison run compare --skip-harnesses
+        run: pnpm --prefix tools/comparison run compare --skip-harnesses --output output/index.html
+
+      # Hand the report off to the Deploy Comparison Report workflow, which runs
+      # in a separate context and cannot see this job's working tree. Only master
+      # pushes are deployed, so don't store the artifact for PR runs.
+      - name: Upload comparison report
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        uses: actions/upload-artifact@v4
+        with:
+          name: comparison-report
+          path: tools/comparison/output/index.html
+          if-no-files-found: error
+          retention-days: 7

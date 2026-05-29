@@ -1,0 +1,56 @@
+name: Deploy Comparison Report
+
+# Publishes the comparison report (built and uploaded by "CI (Comparison Tool)")
+# to Cloudflare Pages. This is a separate "release" workflow that only runs once
+# CI has successfully built the comparison tool, satisfying issue #13.
+#
+# NOTE: workflow_run only fires for workflow definitions on the default branch, so
+# this won't trigger until it is merged to master; the first deploy happens on the
+# first master push after merge. The deploy step is also inert until the two repo
+# secrets below exist.
+#
+# Prerequisites (one-time, configured outside this repo):
+#   1. A Cloudflare Pages (direct-upload) project named `chromahash-comparison`
+#      with its production branch set to `master`.
+#   2. Repo secrets:
+#        - CLOUDFLARE_API_TOKEN  (token with the Cloudflare Pages: Edit permission)
+#        - CLOUDFLARE_ACCOUNT_ID (the Cloudflare account ID)
+
+on:
+  workflow_run:
+    workflows: ["CI (Comparison Tool)"]
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read # required to download the artifact from the triggering run
+
+jobs:
+  deploy:
+    # Only deploy after CI passed, and only for master pushes (not PRs / not failures).
+    if: >-
+      github.event.workflow_run.conclusion == 'success'
+      && github.event.workflow_run.event == 'push'
+      && github.event.workflow_run.head_branch == 'master'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download comparison report
+        uses: actions/download-artifact@v4
+        with:
+          name: comparison-report
+          path: report
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # --branch=master makes this a production deployment, provided the Pages
+      # project's production branch is set to master.
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: >-
+            pages deploy report
+            --project-name=chromahash-comparison
+            --branch=master
+            --commit-hash=${{ github.event.workflow_run.head_sha }}
