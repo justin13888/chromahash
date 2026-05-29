@@ -1,0 +1,6 @@
+# Generated-Kotlin configuration for `uniffi-bindgen`.
+# A dedicated package keeps the native bindings from colliding with the
+# pure-JVM `chromahash` package. `ffi` (not `native`) is used because `native`
+# is a reserved word in Java and would break pure-Java consumers of the AAR.
+[bindings.kotlin]
+package_name = "io.chromahash.ffi"

@@ -8,31 +8,31 @@ default:
 
 # Format all implementations
 [parallel]
-format: format-rust format-ts format-kotlin format-swift format-go format-python format-csharp format-compare
+format: format-rust format-ts format-kotlin format-swift format-go format-python format-csharp format-android format-compare
 
 # Lint all implementations
 [parallel]
-lint: lint-rust lint-ts lint-kotlin lint-swift lint-go lint-python lint-csharp lint-compare
+lint: lint-rust lint-ts lint-kotlin lint-swift lint-go lint-python lint-csharp lint-android lint-compare
 
 # Auto-fix formatting in all implementations
 [parallel]
-format-fix: format-fix-rust format-fix-ts format-fix-kotlin format-fix-swift format-fix-go format-fix-python format-fix-csharp format-fix-compare
+format-fix: format-fix-rust format-fix-ts format-fix-kotlin format-fix-swift format-fix-go format-fix-python format-fix-csharp format-fix-android format-fix-compare
 
 # Auto-fix linting in all implementations
 [parallel]
-lint-fix: lint-fix-rust lint-fix-ts lint-fix-kotlin lint-fix-swift lint-fix-go lint-fix-python lint-fix-csharp lint-fix-compare
+lint-fix: lint-fix-rust lint-fix-ts lint-fix-kotlin lint-fix-swift lint-fix-go lint-fix-python lint-fix-csharp lint-fix-android lint-fix-compare
 
 # Run all tests
 [parallel]
-test: test-rust test-ts test-kotlin test-swift test-go test-python test-csharp
+test: test-rust test-ts test-kotlin test-swift test-go test-python test-csharp test-android
 
 # Build all implementations
 [parallel]
-build: build-rust build-ts build-kotlin build-swift build-go build-python build-csharp
+build: build-rust build-ts build-kotlin build-swift build-go build-python build-csharp build-android-crate
 
 # Check formatting (no writes) across all implementations
 [parallel]
-format-check: format-check-rust format-check-ts format-check-kotlin format-check-swift format-check-go format-check-python format-check-csharp format-check-compare
+format-check: format-check-rust format-check-ts format-check-kotlin format-check-swift format-check-go format-check-python format-check-csharp format-check-android format-check-compare
 
 # ─── Comparison tool ────────────────────────────────────────────────────────
 
@@ -124,6 +124,40 @@ test-rust:
 
 build-rust:
     cargo build --manifest-path rust/Cargo.toml
+
+# ─── Android binding (chromahash-uniffi) ──────────────────────────────────────
+# Host-only recipes (no Android NDK/SDK required) — wired into the aggregates so
+# the lefthook gates stay green. The AAR build (`build-android-aar`) needs the NDK
+# + SDK and is intentionally kept OUT of the aggregates.
+
+format-android:
+    cargo fmt --manifest-path bindings/android/Cargo.toml
+
+format-fix-android: format-android
+
+format-check-android:
+    cargo fmt --manifest-path bindings/android/Cargo.toml --check
+
+lint-android:
+    cargo clippy --manifest-path bindings/android/Cargo.toml -- -D warnings
+
+lint-fix-android:
+    cargo clippy --manifest-path bindings/android/Cargo.toml --fix --allow-staged --allow-dirty
+    cargo clippy --manifest-path bindings/android/Cargo.toml -- -D warnings
+
+# Runs the spec test vectors through the binding (the enforced correctness gate)
+test-android:
+    cargo test --manifest-path bindings/android/Cargo.toml
+
+# Host build of the binding crate (lib + cdylib + bindgen bin); no cross-compile
+build-android-crate:
+    cargo build --manifest-path bindings/android/Cargo.toml
+
+# Cross-compile every ABI + generate Kotlin + assemble the AAR.
+# Requires the Android NDK (ANDROID_NDK_HOME / ANDROID_NDK_LATEST_HOME), SDK, and
+# `cargo install cargo-ndk` + the android rustup targets. Not part of `just build`.
+build-android-aar:
+    mise exec java@21 gradle@9.4.0 -- sh -c 'cd bindings/android/android && ./gradlew assembleRelease'
 
 # ─── TypeScript ──────────────────────────────────────────────────────────────
 
