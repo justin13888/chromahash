@@ -12,7 +12,7 @@ from ._constants import (
     MAX_L_SCALE,
     Gamut,
 )
-from ._dct import dct_encode, scan_order
+from ._dct import dct_encode_separable, precompute_cos_table, scan_order
 from ._math_utils import clamp01, clamp_neg1_1, round_half_away_from_zero
 from ._mulaw import mu_law_quantize
 
@@ -77,12 +77,20 @@ def encode(w: int, h: int, rgba: bytes | bytearray, gamut: Gamut) -> bytes:
     c_scan = scan_order(c_nx, c_ny, aspect)
     alpha_scan = scan_order(alpha_nx, alpha_ny, aspect) if has_alpha else []
 
+    # 5c. Precompute cosine tables once (L grid dominates chroma/alpha)
+    max_cx = max(l_nx, c_nx)
+    max_cy = max(l_ny, c_ny)
+    cos_x = precompute_cos_table(w, max_cx)
+    cos_y = precompute_cos_table(h, max_cy)
+
     # 6. DCT encode each channel (AC emitted in scan order)
-    l_dc, l_ac_raw, l_scale = dct_encode(l_chan, w, h, l_scan)
-    a_dc, a_ac_raw, a_scale = dct_encode(a_chan, w, h, c_scan)
-    b_dc, b_ac_raw, b_scale = dct_encode(b_chan, w, h, c_scan)
+    l_dc, l_ac_raw, l_scale = dct_encode_separable(l_chan, w, h, l_scan, cos_x, cos_y)
+    a_dc, a_ac_raw, a_scale = dct_encode_separable(a_chan, w, h, c_scan, cos_x, cos_y)
+    b_dc, b_ac_raw, b_scale = dct_encode_separable(b_chan, w, h, c_scan, cos_x, cos_y)
     if has_alpha:
-        alpha_dc, alpha_ac_raw, alpha_scale = dct_encode(alpha_pixels, w, h, alpha_scan)
+        alpha_dc, alpha_ac_raw, alpha_scale = dct_encode_separable(
+            alpha_pixels, w, h, alpha_scan, cos_x, cos_y
+        )
     else:
         alpha_dc, alpha_ac_raw, alpha_scale = 0.0, [], 0.0
 
