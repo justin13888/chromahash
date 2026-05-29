@@ -18,6 +18,16 @@ chromahash is a multi-language library implementing a compact, high-fidelity Low
 
 The canonical format is defined in [`spec/`](spec/).
 
+## Bindings
+
+| Target  | Directory             | What it is                                                               |
+| ------- | --------------------- | ------------------------------------------------------------------------ |
+| Android | [`bindings/android/`] | UniFFI binding crate + Gradle library module — the Rust core as a Kotlin AAR over JNI, for fast placeholder decoding on-device |
+
+## Guides
+
+- [Decoding on Android](docs/android.md) — how the [`bindings/android/`] AAR wraps the native Rust core for fast, SIMD-ready placeholder decoding
+
 ## Setup
 
 ### Prerequisites
@@ -131,8 +141,9 @@ GitHub Actions runs a separate workflow per language, triggered only when files 
 | [ci-go](.github/workflows/ci-go.yml)                 | `go/**`             |
 | [ci-python](.github/workflows/ci-python.yml)         | `python/**`         |
 | [ci-csharp](.github/workflows/ci-csharp.yml)         | `csharp/**`         |
+| [ci-android](.github/workflows/ci-android.yml)       | `bindings/android/**` |
 
-Each workflow runs format check, lint, and tests.
+Each per-language workflow runs format check, lint, and tests. `ci-android` additionally cross-compiles the native ABIs and assembles the AAR.
 
 ## Project structure
 
@@ -145,7 +156,9 @@ chromahash/
 ├── go/                 # Go implementation (standard library only)
 ├── python/             # Python implementation (uv + Ruff)
 ├── csharp/             # C# implementation (.NET 9)
+├── bindings/android/   # Android binding: UniFFI crate + Gradle library module (AAR)
 ├── spec/               # Format specification and test vectors
+├── docs/               # Integration guides (e.g. Android via Rust/JNI)
 ├── tools/              # Shared developer tooling (comparison, benchmarks)
 ├── .github/workflows/  # Per-language GitHub Actions CI
 ├── justfile            # Cross-language task runner
@@ -166,7 +179,7 @@ chromahash/
 - Python: zero external runtime dependencies, use `round_half_away_from_zero`, use Ruff for formatting and linting
 - Write tests for all public API surface
 - Use [conventional commits](https://www.conventionalcommits.org/): `type(scope): description`
-  - scope = `rust`, `ts`, `kotlin`, `swift`, `go`, `py`, `csharp`, or `spec`
+  - scope = `rust`, `ts`, `kotlin`, `swift`, `go`, `py`, `csharp`, `android`, or `spec`
 - Keep implementations in sync — a feature in one language should land in all seven
 
 ## License

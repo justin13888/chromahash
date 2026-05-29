@@ -1,0 +1,25 @@
+[package]
+name = "chromahash-uniffi"
+version = "0.5.0"
+edition = "2024"
+description = "UniFFI bindings exposing the ChromaHash core to Kotlin/Android over FFI"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[lib]
+name = "chromahash_uniffi"
+# "lib" lets the integration tests link the crate; "cdylib" is the Android .so;
+# "staticlib" supports the hand-written jni-rs / iOS paths.
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[dependencies]
+chromahash = { path = "../../rust" }
+uniffi = { version = "0.31", features = ["cli"] }
+
+[dev-dependencies]
+# Test-only: parse the spec test vectors. The core crate stays zero-dependency.
+serde_json = "1"
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "uniffi-bindgen.rs"
