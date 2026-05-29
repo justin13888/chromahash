@@ -441,6 +441,55 @@ public class DctTests
     }
 
     [Fact]
+    public void SeparableMatchesDctEncode()
+    {
+        // DctEncodeSeparable must produce bit-identical output to DctEncode.
+        const int w = 8;
+        const int h = 6;
+        const int nx = 5;
+        const int ny = 4;
+        var scan = DctAccessor.ScanOrder(nx, ny);
+        var cosX = DctAccessor.PrecomputeCosTable(w, nx);
+        var cosY = DctAccessor.PrecomputeCosTable(h, ny);
+        double[] channel = new double[w * h];
+        for (int i = 0; i < channel.Length; i++)
+            channel[i] = (double)((i * 7) % 17) / 17.0 - 0.5;
+        var (dc1, ac1, s1) = DctAccessor.Encode(channel, w, h, scan);
+        var (dc2, ac2, s2) = DctAccessor.EncodeSeparable(channel, w, h, scan, cosX, cosY);
+        Assert.Equal(dc1, dc2);
+        Assert.Equal(s1, s2);
+        Assert.Equal(ac1.Count, ac2.Count);
+        for (int i = 0; i < ac1.Count; i++)
+            Assert.Equal(ac1[i], ac2[i]);
+    }
+
+    [Fact]
+    public void SeparableDecodeMatchesDctDecodePixel()
+    {
+        // DctDecodePixelSeparable must produce bit-identical output to DctDecodePixel.
+        const int w = 8;
+        const int h = 6;
+        const int nx = 5;
+        const int ny = 4;
+        var scan = DctAccessor.ScanOrder(nx, ny);
+        var cosX = DctAccessor.PrecomputeCosTable(w, nx);
+        var cosY = DctAccessor.PrecomputeCosTable(h, ny);
+        const double dc = 0.37;
+        var ac = new List<double>(scan.Count);
+        for (int j = 0; j < scan.Count; j++)
+            ac.Add((double)((j * 5) % 11) / 11.0 - 0.5);
+        for (int y = 0; y < h; y++)
+        {
+            for (int x = 0; x < w; x++)
+            {
+                double naive = DctAccessor.DecodePixel(dc, ac, scan, x, y, w, h);
+                double sep = DctAccessor.DecodePixelSeparable(dc, ac, scan, x, y, cosX, cosY);
+                Assert.Equal(naive, sep);
+            }
+        }
+    }
+
+    [Fact]
     public void EncodeDecodeRoundtripConstant()
     {
         const double val = 0.42;
@@ -1099,6 +1148,28 @@ internal static class DctAccessor
         int w,
         int h
     ) => Dct.DctDecodePixel(dc, ac, scan, x, y, w, h);
+
+    public static double[][] PrecomputeCosTable(int dim, int maxFreq) =>
+        Dct.PrecomputeCosTable(dim, maxFreq);
+
+    public static (double Dc, List<double> Ac, double Scale) EncodeSeparable(
+        double[] channel,
+        int w,
+        int h,
+        List<(int Cx, int Cy)> scan,
+        double[][] cosX,
+        double[][] cosY
+    ) => Dct.DctEncodeSeparable(channel, w, h, scan, cosX, cosY);
+
+    public static double DecodePixelSeparable(
+        double dc,
+        List<double> ac,
+        List<(int Cx, int Cy)> scan,
+        int x,
+        int y,
+        double[][] cosX,
+        double[][] cosY
+    ) => Dct.DctDecodePixelSeparable(dc, ac, scan, x, y, cosX, cosY);
 }
 
 internal static class AspectAccessor

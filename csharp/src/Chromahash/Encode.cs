@@ -78,17 +78,51 @@ internal static class Encoder
         var cScanEnc = Dct.ScanOrder(cNx, cNy, aspectByte);
         var alphaScanEnc = hasAlpha ? Dct.ScanOrder(aNx, aNy, aspectByte) : new List<(int, int)>();
 
+        // 5c. Precompute cosine tables once (L grid dominates chroma/alpha)
+        int maxCx = Math.Max(lNx, cNx);
+        int maxCy = Math.Max(lNy, cNy);
+        double[][] cosX = Dct.PrecomputeCosTable(iw, maxCx);
+        double[][] cosY = Dct.PrecomputeCosTable(ih, maxCy);
+
         // 6. DCT encode each channel (AC emitted in scan order)
-        (double lDc, List<double> lAcRaw, double lScale) = Dct.DctEncode(lChan, iw, ih, lScanEnc);
-        (double aDc, List<double> aAcRaw, double aScale) = Dct.DctEncode(aChan, iw, ih, cScanEnc);
-        (double bDc, List<double> bAcRaw, double bScale) = Dct.DctEncode(bChan, iw, ih, cScanEnc);
+        (double lDc, List<double> lAcRaw, double lScale) = Dct.DctEncodeSeparable(
+            lChan,
+            iw,
+            ih,
+            lScanEnc,
+            cosX,
+            cosY
+        );
+        (double aDc, List<double> aAcRaw, double aScale) = Dct.DctEncodeSeparable(
+            aChan,
+            iw,
+            ih,
+            cScanEnc,
+            cosX,
+            cosY
+        );
+        (double bDc, List<double> bAcRaw, double bScale) = Dct.DctEncodeSeparable(
+            bChan,
+            iw,
+            ih,
+            cScanEnc,
+            cosX,
+            cosY
+        );
 
         double alphaDc = 0.0,
             alphaScale = 0.0;
         List<double> alphaAcRaw = [];
 
         if (hasAlpha)
-            (alphaDc, alphaAcRaw, alphaScale) = Dct.DctEncode(alphaPixels, iw, ih, alphaScanEnc);
+            (alphaDc, alphaAcRaw, alphaScale) = Dct.DctEncodeSeparable(
+                alphaPixels,
+                iw,
+                ih,
+                alphaScanEnc,
+                cosX,
+                cosY
+            );
 
         // Cap to bit budget and zero-pad (per spec §10)
         int lCap = hasAlpha ? 20 : 27;
