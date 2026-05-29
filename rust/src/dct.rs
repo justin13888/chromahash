@@ -130,6 +130,8 @@ pub fn dct_encode_separable(
 }
 
 /// Inverse DCT at a single pixel (x, y) for a channel.
+/// Superseded by dct_decode_pixel_separable for production use; retained for test verification.
+#[allow(dead_code)]
 pub fn dct_decode_pixel(
     dc: f64,
     ac: &[f64],
@@ -145,6 +147,31 @@ pub fn dct_decode_pixel(
         let cy_factor = if cy > 0 { 2.0 } else { 1.0 };
         let fx = portable_cos(PI / w as f64 * cx as f64 * (x as f64 + 0.5));
         let fy = portable_cos(PI / h as f64 * cy as f64 * (y as f64 + 0.5));
+        value += ac[j] * fx * fy * cx_factor * cy_factor;
+    }
+    value
+}
+
+/// Inverse DCT at a single pixel using precomputed cosine tables. Per spec §12.6.
+/// Semantically identical to dct_decode_pixel but reads cos_x[cx][x] / cos_y[cy][y]
+/// instead of evaluating portable_cos in the inner loop. cos_x/cos_y must cover all
+/// (cx, cy) in scan_order. The cx/cy factors stay as separate multiplies to preserve
+/// the exact floating-point operation order.
+pub fn dct_decode_pixel_separable(
+    dc: f64,
+    ac: &[f64],
+    scan_order: &[(usize, usize)],
+    x: usize,
+    y: usize,
+    cos_x: &[Vec<f64>],
+    cos_y: &[Vec<f64>],
+) -> f64 {
+    let mut value = dc;
+    for (j, &(cx, cy)) in scan_order.iter().enumerate() {
+        let cx_factor = if cx > 0 { 2.0 } else { 1.0 };
+        let cy_factor = if cy > 0 { 2.0 } else { 1.0 };
+        let fx = cos_x[cx][x];
+        let fy = cos_y[cy][y];
         value += ac[j] * fx * fy * cx_factor * cy_factor;
     }
     value
@@ -288,6 +315,29 @@ mod tests {
         assert_eq!(ac1.len(), ac2.len(), "AC count must match");
         for (i, (v1, v2)) in ac1.iter().zip(ac2.iter()).enumerate() {
             assert_eq!(v1, v2, "AC[{i}] must be bit-identical");
+        }
+    }
+
+    #[test]
+    fn separable_decode_matches_dct_decode_pixel() {
+        // dct_decode_pixel_separable must produce bit-identical output to dct_decode_pixel
+        let w = 8;
+        let h = 6;
+        let nx = 5;
+        let ny = 4;
+        let scan = scan_order(nx, ny, 128);
+        let cos_x = precompute_cos_table(w, nx);
+        let cos_y = precompute_cos_table(h, ny);
+        let dc = 0.37;
+        let ac: Vec<f64> = (0..scan.len())
+            .map(|j| (j as f64 * 0.123).sin() * 0.4)
+            .collect();
+        for y in 0..h {
+            for x in 0..w {
+                let naive = dct_decode_pixel(dc, &ac, &scan, x, y, w, h);
+                let sep = dct_decode_pixel_separable(dc, &ac, &scan, x, y, &cos_x, &cos_y);
+                assert_eq!(naive, sep, "decode must be bit-identical at ({x},{y})");
+            }
         }
     }
 

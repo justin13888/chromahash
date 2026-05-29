@@ -134,15 +134,21 @@ internal static class Decoder
         int ih = (int)h;
         byte[] rgba = new byte[iw * ih * 4];
 
+        // Precompute cosine tables once (L grid dominates chroma/alpha)
+        int maxCx = Math.Max(lNx, cNx);
+        int maxCy = Math.Max(lNy, cNy);
+        double[][] cosX = Dct.PrecomputeCosTable(iw, maxCx);
+        double[][] cosY = Dct.PrecomputeCosTable(ih, maxCy);
+
         for (int y = 0; y < ih; y++)
         {
             for (int x = 0; x < iw; x++)
             {
-                double l = Dct.DctDecodePixel(lDc, lAcUsed, lScan, x, y, iw, ih);
-                double a = Dct.DctDecodePixel(aDc, aAcUsed, chromaScan, x, y, iw, ih);
-                double b = Dct.DctDecodePixel(bDc, bAcUsed, chromaScan, x, y, iw, ih);
+                double l = Dct.DctDecodePixelSeparable(lDc, lAcUsed, lScan, x, y, cosX, cosY);
+                double a = Dct.DctDecodePixelSeparable(aDc, aAcUsed, chromaScan, x, y, cosX, cosY);
+                double b = Dct.DctDecodePixelSeparable(bDc, bAcUsed, chromaScan, x, y, cosX, cosY);
                 double alpha = hasAlpha
-                    ? Dct.DctDecodePixel(alphaDcVal, alphaAcUsed, alphaScan, x, y, iw, ih)
+                    ? Dct.DctDecodePixelSeparable(alphaDcVal, alphaAcUsed, alphaScan, x, y, cosX, cosY)
                     : 1.0;
 
                 double lClamped = Clamp01(l);

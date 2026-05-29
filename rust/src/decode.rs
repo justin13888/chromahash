@@ -2,7 +2,7 @@ use crate::aspect::{decode_output_size, derive_grid};
 use crate::bitpack::read_bits;
 use crate::color::{oklab_to_linear_srgb, soft_gamut_clamp};
 use crate::constants::*;
-use crate::dct::{dct_decode_pixel, scan_order};
+use crate::dct::{dct_decode_pixel_separable, precompute_cos_table, scan_order};
 use crate::math_utils::{clamp01, round_half_away_from_zero};
 use crate::mulaw::mu_law_dequantize;
 use crate::transfer::srgb_gamma;
@@ -144,39 +144,53 @@ fn render_at_size(hash: &[u8; 32], w: usize, h: usize) -> Vec<u8> {
     // 6. Build gamma LUT (v0.2)
     let gamma_lut = build_gamma_lut();
 
+    // 6b. Precompute cosine tables once (L grid dominates chroma/alpha; mirror encode).
+    let max_cx = l_nx.max(c_nx);
+    let max_cy = l_ny.max(c_ny);
+    let cos_x = precompute_cos_table(w, max_cx);
+    let cos_y = precompute_cos_table(h, max_cy);
+
     // 7. Render output image
     let mut rgba_out = vec![0u8; w * h * 4];
 
     for y in 0..h {
         for x in 0..w {
-            let l = dct_decode_pixel(l_dc, &l_ac[..l_usable], &l_scan[..l_usable], x, y, w, h);
-            let a = dct_decode_pixel(
+            let l = dct_decode_pixel_separable(
+                l_dc,
+                &l_ac[..l_usable],
+                &l_scan[..l_usable],
+                x,
+                y,
+                &cos_x,
+                &cos_y,
+            );
+            let a = dct_decode_pixel_separable(
                 a_dc,
                 &a_ac[..c_usable],
                 &chroma_scan[..c_usable],
                 x,
                 y,
-                w,
-                h,
+                &cos_x,
+                &cos_y,
             );
-            let b = dct_decode_pixel(
+            let b = dct_decode_pixel_separable(
                 b_dc,
                 &b_ac[..c_usable],
                 &chroma_scan[..c_usable],
                 x,
                 y,
-                w,
-                h,
+                &cos_x,
+                &cos_y,
             );
             let alpha = if has_alpha {
-                dct_decode_pixel(
+                dct_decode_pixel_separable(
                     alpha_dc_val,
                     &alpha_ac[..alpha_usable],
                     &alpha_scan[..alpha_usable],
                     x,
                     y,
-                    w,
-                    h,
+                    &cos_x,
+                    &cos_y,
                 )
             } else {
                 1.0

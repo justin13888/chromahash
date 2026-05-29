@@ -164,6 +164,11 @@ export function atPair(
   return arr[i] as [number, number];
 }
 
+/** Safe indexed read of a row from a 2D number array (caller must ensure bounds). */
+export function atRow(arr: number[][], i: number): number[] {
+  return arr[i] as number[];
+}
+
 // ---------------------------------------------------------------------------
 // Math utilities
 // ---------------------------------------------------------------------------
@@ -772,6 +777,71 @@ export function dctEncode(
   return [dc, ac, scale];
 }
 
+/**
+ * Precompute cosine table for DCT: table[freq][pos] = cos(π/dim · freq · (pos+0.5)).
+ * Per spec §12.6. Uses portableCos for cross-platform determinism.
+ */
+export function precomputeCosTable(dim: number, maxFreq: number): number[][] {
+  const table: number[][] = [];
+  for (let freq = 0; freq < maxFreq; freq++) {
+    const row: number[] = [];
+    for (let pos = 0; pos < dim; pos++) {
+      row.push(portableCos((Math.PI / dim) * freq * (pos + 0.5)));
+    }
+    table.push(row);
+  }
+  return table;
+}
+
+/**
+ * Forward DCT encode using precomputed cosine tables. Per spec §12.6 (v0.4).
+ * Semantically identical to dctEncode but avoids redundant cosine evaluations.
+ * cosX/cosY must have rows for all (cx, cy) in `scan`.
+ */
+export function dctEncodeSeparable(
+  channel: Float64Array,
+  w: number,
+  h: number,
+  scan: ReadonlyArray<readonly [number, number]>,
+  cosX: number[][],
+  cosY: number[][],
+): [number, number[], number] {
+  const wh = w * h;
+
+  // DC = mean (cosX[0]/cosY[0] are all-ones by construction)
+  let sum = 0;
+  for (let i = 0; i < channel.length; i++) sum += f64(channel, i);
+  const dc = sum / wh;
+
+  const ac: number[] = [];
+  let scale = 0;
+
+  for (let j = 0; j < scan.length; j++) {
+    const entry = scan[j] as readonly [number, number];
+    const cx = entry[0];
+    const cy = entry[1];
+    const cxRow = atRow(cosX, cx);
+    const cyRow = atRow(cosY, cy);
+    let f = 0;
+    for (let y = 0; y < h; y++) {
+      const fy = at(cyRow, y);
+      for (let x = 0; x < w; x++) {
+        f += f64(channel, x + y * w) * at(cxRow, x) * fy;
+      }
+    }
+    f /= wh;
+    ac.push(f);
+    if (Math.abs(f) > scale) scale = Math.abs(f);
+  }
+
+  if (scale < 1e-10) {
+    ac.fill(0);
+    scale = 0;
+  }
+
+  return [dc, ac, scale];
+}
+
 /** Inverse DCT at a single pixel (x, y) for a channel. */
 export function dctDecodePixel(
   dc: number,
@@ -789,6 +859,33 @@ export function dctDecodePixel(
     const cyFactor = cy > 0 ? 2.0 : 1.0;
     const fx = portableCos((Math.PI / w) * cx * (x + 0.5));
     const fy = portableCos((Math.PI / h) * cy * (y + 0.5));
+    value += at(ac, j) * fx * fy * cxFactor * cyFactor;
+  }
+  return value;
+}
+
+/**
+ * Inverse DCT at a single pixel using precomputed cosine tables. Per spec §12.6.
+ * Semantically identical to dctDecodePixel but reads cosX[cx][x] / cosY[cy][y]
+ * instead of evaluating portableCos. The cx/cy factors stay as separate multiplies
+ * to preserve the exact floating-point operation order.
+ */
+export function dctDecodePixelSeparable(
+  dc: number,
+  ac: number[],
+  scanOrder: Array<[number, number]>,
+  x: number,
+  y: number,
+  cosX: number[][],
+  cosY: number[][],
+): number {
+  let value = dc;
+  for (let j = 0; j < scanOrder.length; j++) {
+    const [cx, cy] = atPair(scanOrder, j);
+    const cxFactor = cx > 0 ? 2.0 : 1.0;
+    const cyFactor = cy > 0 ? 2.0 : 1.0;
+    const fx = at(atRow(cosX, cx), x);
+    const fy = at(atRow(cosY, cy), y);
     value += at(ac, j) * fx * fy * cxFactor * cyFactor;
   }
   return value;

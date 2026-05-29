@@ -59,6 +59,52 @@ def dct_encode(
     return (dc, ac, scale)
 
 
+def precompute_cos_table(dim: int, max_freq: int) -> list[list[float]]:
+    """Precompute cosine table for DCT: table[freq][pos] = cos(pi/dim * freq * (pos+0.5)).
+    Per spec §12.6. Uses portable_cos for cross-platform determinism.
+    """
+    return [
+        [portable_cos(math.pi / dim * freq * (pos + 0.5)) for pos in range(dim)]
+        for freq in range(max_freq)
+    ]
+
+
+def dct_encode_separable(
+    channel: list[float],
+    w: int,
+    h: int,
+    scan: list[tuple[int, int]],
+    cos_x: list[list[float]],
+    cos_y: list[list[float]],
+) -> tuple[float, list[float], float]:
+    """Forward DCT encode using precomputed cosine tables. Per spec §12.6 (v0.4).
+    Semantically identical to dct_encode but avoids redundant cosine evaluations.
+    cos_x/cos_y must have rows for all (cx, cy) in `scan`.
+    """
+    wh = w * h
+    dc = sum(channel) / wh
+
+    ac: list[float] = []
+    scale = 0.0
+    for cx, cy in scan:
+        cx_row = cos_x[cx]
+        cy_row = cos_y[cy]
+        f = 0.0
+        for y in range(h):
+            fy = cy_row[y]
+            for x in range(w):
+                f += channel[x + y * w] * cx_row[x] * fy
+        f /= wh
+        ac.append(f)
+        scale = max(scale, abs(f))
+
+    if scale < 1e-10:
+        ac = [0.0] * len(ac)
+        scale = 0.0
+
+    return (dc, ac, scale)
+
+
 def dct_decode_pixel(
     dc: float,
     ac: list[float],
@@ -75,5 +121,28 @@ def dct_decode_pixel(
         cy_factor = 2.0 if cy > 0 else 1.0
         fx = portable_cos(math.pi / w * cx * (x + 0.5))
         fy = portable_cos(math.pi / h * cy * (y + 0.5))
+        value += ac[j] * fx * fy * cx_factor * cy_factor
+    return value
+
+
+def dct_decode_pixel_separable(
+    dc: float,
+    ac: list[float],
+    scan_order: list[tuple[int, int]],
+    x: int,
+    y: int,
+    cos_x: list[list[float]],
+    cos_y: list[list[float]],
+) -> float:
+    """Inverse DCT at a single pixel using precomputed cosine tables. Per spec §12.6.
+    Semantically identical to dct_decode_pixel but reads cos_x[cx][x] / cos_y[cy][y].
+    The cx/cy factors stay as separate multiplies to preserve the float operation order.
+    """
+    value = dc
+    for j, (cx, cy) in enumerate(scan_order):
+        cx_factor = 2.0 if cx > 0 else 1.0
+        cy_factor = 2.0 if cy > 0 else 1.0
+        fx = cos_x[cx][x]
+        fy = cos_y[cy][y]
         value += ac[j] * fx * fy * cx_factor * cy_factor
     return value

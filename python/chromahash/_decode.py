@@ -11,7 +11,7 @@ from ._constants import (
     MAX_CHROMA_B,
     MAX_L_SCALE,
 )
-from ._dct import dct_decode_pixel, scan_order
+from ._dct import dct_decode_pixel_separable, precompute_cos_table, scan_order
 from ._math_utils import clamp01, round_half_away_from_zero
 from ._mulaw import mu_law_dequantize
 
@@ -120,16 +120,24 @@ def decode(hash_bytes: bytes) -> tuple[int, int, bytes]:
         alpha_scan = alpha_scan_full[:a_usable]
         alpha_ac_used = alpha_ac[:a_usable]
 
+    # 5d. Precompute cosine tables once (L grid dominates chroma/alpha)
+    max_cx = max(l_nx, c_nx)
+    max_cy = max(l_ny, c_ny)
+    cos_x = precompute_cos_table(w, max_cx)
+    cos_y = precompute_cos_table(h, max_cy)
+
     # 6. Render output image
     rgba = bytearray(w * h * 4)
 
     for y in range(h):
         for x in range(w):
-            ok_l = dct_decode_pixel(l_dc, l_ac_used, l_scan, x, y, w, h)
-            ok_a = dct_decode_pixel(a_dc, a_ac_used, chroma_scan, x, y, w, h)
-            ok_b = dct_decode_pixel(b_dc, b_ac_used, chroma_scan, x, y, w, h)
+            ok_l = dct_decode_pixel_separable(l_dc, l_ac_used, l_scan, x, y, cos_x, cos_y)
+            ok_a = dct_decode_pixel_separable(a_dc, a_ac_used, chroma_scan, x, y, cos_x, cos_y)
+            ok_b = dct_decode_pixel_separable(b_dc, b_ac_used, chroma_scan, x, y, cos_x, cos_y)
             alpha = (
-                dct_decode_pixel(alpha_dc_val, alpha_ac_used, alpha_scan, x, y, w, h)
+                dct_decode_pixel_separable(
+                    alpha_dc_val, alpha_ac_used, alpha_scan, x, y, cos_x, cos_y
+                )
                 if has_alpha
                 else 1.0
             )

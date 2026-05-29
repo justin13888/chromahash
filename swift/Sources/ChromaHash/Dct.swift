@@ -70,6 +70,62 @@ func dctEncode(
   return (dc, ac, scale)
 }
 
+/// Precompute cosine table for DCT: table[freq][pos] = cos(π/dim · freq · (pos+0.5)).
+/// Per spec §12.6. Uses portableCos for cross-platform determinism.
+func precomputeCosTable(dim: Int, maxFreq: Int) -> [[Double]] {
+  var table: [[Double]] = []
+  table.reserveCapacity(maxFreq)
+  for freq in 0..<maxFreq {
+    var row: [Double] = []
+    row.reserveCapacity(dim)
+    for pos in 0..<dim {
+      row.append(portableCos(Double.pi / Double(dim) * Double(freq) * (Double(pos) + 0.5)))
+    }
+    table.append(row)
+  }
+  return table
+}
+
+/// Forward DCT encode using precomputed cosine tables. Per spec §12.6 (v0.4).
+/// Semantically identical to dctEncode but avoids redundant cosine evaluations.
+/// cosX/cosY must have rows for all (cx, cy) in `scan`.
+func dctEncodeSeparable(
+  channel: [Double], w: Int, h: Int, scan: [(Int, Int)],
+  cosX: [[Double]], cosY: [[Double]]
+) -> (dc: Double, ac: [Double], scale: Double) {
+  let wh = Double(w * h)
+
+  // DC = mean (cosX[0]/cosY[0] are all-ones by construction)
+  var sum = 0.0
+  for v in channel { sum += v }
+  let dc = sum / wh
+
+  var ac: [Double] = []
+  ac.reserveCapacity(scan.count)
+  var scale = 0.0
+  for (cx, cy) in scan {
+    let cxRow = cosX[cx]
+    let cyRow = cosY[cy]
+    var f = 0.0
+    for y in 0..<h {
+      let fy = cyRow[y]
+      for x in 0..<w {
+        f += channel[x + y * w] * cxRow[x] * fy
+      }
+    }
+    f /= wh
+    ac.append(f)
+    if abs(f) > scale { scale = abs(f) }
+  }
+
+  if scale < 1e-10 {
+    for i in ac.indices { ac[i] = 0.0 }
+    scale = 0.0
+  }
+
+  return (dc, ac, scale)
+}
+
 /// Inverse DCT at a single pixel (x, y) for a channel.
 func dctDecodePixel(
   dc: Double, ac: [Double], scanOrder: [(Int, Int)],
@@ -82,6 +138,25 @@ func dctDecodePixel(
     let cyFactor: Double = cy > 0 ? 2.0 : 1.0
     let fx = portableCos(Double.pi / Double(w) * Double(cx) * (Double(x) + 0.5))
     let fy = portableCos(Double.pi / Double(h) * Double(cy) * (Double(y) + 0.5))
+    value += ac[j] * fx * fy * cxFactor * cyFactor
+  }
+  return value
+}
+
+/// Inverse DCT at a single pixel using precomputed cosine tables. Per spec §12.6.
+/// Semantically identical to dctDecodePixel but reads cosX[cx][x] / cosY[cy][y].
+/// The cx/cy factors stay as separate multiplies to preserve the float operation order.
+func dctDecodePixelSeparable(
+  dc: Double, ac: [Double], scanOrder: [(Int, Int)],
+  x: Int, y: Int, cosX: [[Double]], cosY: [[Double]]
+) -> Double {
+  var value = dc
+  for (j, pair) in scanOrder.enumerated() {
+    let (cx, cy) = pair
+    let cxFactor: Double = cx > 0 ? 2.0 : 1.0
+    let cyFactor: Double = cy > 0 ? 2.0 : 1.0
+    let fx = cosX[cx][x]
+    let fy = cosY[cy][y]
     value += ac[j] * fx * fy * cxFactor * cyFactor
   }
   return value
