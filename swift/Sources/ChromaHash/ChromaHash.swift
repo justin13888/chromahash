@@ -100,15 +100,25 @@ func encodeHash(w: Int, h: Int, rgba: [UInt8], gamut: Gamut) -> [UInt8] {
   let lScanEnc = scanOrder(nx: lNx, ny: lNy, aspectByte: aspectByteU8)
   let cScanEnc = scanOrder(nx: cNx, ny: cNy, aspectByte: aspectByteU8)
 
+  // 5c. Precompute cosine tables once (L grid dominates chroma/alpha)
+  let maxCx = max(lNx, cNx)
+  let maxCy = max(lNy, cNy)
+  let cosX = precomputeCosTable(dim: w, maxFreq: maxCx)
+  let cosY = precomputeCosTable(dim: h, maxFreq: maxCy)
+
   // 6. DCT encode each channel (AC emitted in scan order)
-  let lResult = dctEncode(channel: lChan, w: w, h: h, scan: lScanEnc)
-  let aResult = dctEncode(channel: aChan, w: w, h: h, scan: cScanEnc)
-  let bResult = dctEncode(channel: bChan, w: w, h: h, scan: cScanEnc)
+  let lResult = dctEncodeSeparable(
+    channel: lChan, w: w, h: h, scan: lScanEnc, cosX: cosX, cosY: cosY)
+  let aResult = dctEncodeSeparable(
+    channel: aChan, w: w, h: h, scan: cScanEnc, cosX: cosX, cosY: cosY)
+  let bResult = dctEncodeSeparable(
+    channel: bChan, w: w, h: h, scan: cScanEnc, cosX: cosX, cosY: cosY)
   let alphaResult: (dc: Double, ac: [Double], scale: Double)
   if hasAlpha {
     let (alphaNx, alphaNy) = deriveGrid(aspectByte, 3)
     let alphaScanEnc = scanOrder(nx: alphaNx, ny: alphaNy, aspectByte: aspectByteU8)
-    alphaResult = dctEncode(channel: alphaPixels, w: w, h: h, scan: alphaScanEnc)
+    alphaResult = dctEncodeSeparable(
+      channel: alphaPixels, w: w, h: h, scan: alphaScanEnc, cosX: cosX, cosY: cosY)
   } else {
     alphaResult = (dc: 0.0, ac: [], scale: 0.0)
   }
@@ -346,21 +356,27 @@ func decodeHash(hash: [UInt8]) -> (width: Int, height: Int, rgba: [UInt8]) {
     alphaScan = []
   }
 
+  // 5d. Precompute cosine tables once (L grid dominates chroma/alpha)
+  let maxCx = max(lNx, cNx)
+  let maxCy = max(lNy, cNy)
+  let cosX = precomputeCosTable(dim: w, maxFreq: maxCx)
+  let cosY = precomputeCosTable(dim: h, maxFreq: maxCy)
+
   // 6. Render output image
   var rgbaOut = [UInt8](repeating: 0, count: w * h * 4)
 
   for y in 0..<h {
     for x in 0..<w {
-      let l = dctDecodePixel(
-        dc: lDc, ac: lAC, scanOrder: lScan, x: x, y: y, w: w, h: h)
-      let a = dctDecodePixel(
-        dc: aDc, ac: aAC, scanOrder: chromaScan, x: x, y: y, w: w, h: h)
-      let b = dctDecodePixel(
-        dc: bDc, ac: bAC, scanOrder: chromaScan, x: x, y: y, w: w, h: h)
+      let l = dctDecodePixelSeparable(
+        dc: lDc, ac: lAC, scanOrder: lScan, x: x, y: y, cosX: cosX, cosY: cosY)
+      let a = dctDecodePixelSeparable(
+        dc: aDc, ac: aAC, scanOrder: chromaScan, x: x, y: y, cosX: cosX, cosY: cosY)
+      let b = dctDecodePixelSeparable(
+        dc: bDc, ac: bAC, scanOrder: chromaScan, x: x, y: y, cosX: cosX, cosY: cosY)
       let alpha: Double
       if hasAlpha {
-        alpha = dctDecodePixel(
-          dc: alphaDcVal, ac: alphaAC, scanOrder: alphaScan, x: x, y: y, w: w, h: h)
+        alpha = dctDecodePixelSeparable(
+          dc: alphaDcVal, ac: alphaAC, scanOrder: alphaScan, x: x, y: y, cosX: cosX, cosY: cosY)
       } else {
         alpha = 1.0
       }

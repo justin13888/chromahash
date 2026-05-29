@@ -134,6 +134,53 @@ func gamutFromName(_ name: String) -> Gamut {
   #expect(scanOrder(nx: 7, ny: 7, aspectByte: 128).count == 27)
 }
 
+@Test func separableMatchesDctEncode() {
+  // dctEncodeSeparable must produce bit-identical output to dctEncode.
+  let w = 8
+  let h = 6
+  let nx = 5
+  let ny = 4
+  let scan = scanOrder(nx: nx, ny: ny, aspectByte: 128)
+  let cosX = precomputeCosTable(dim: w, maxFreq: nx)
+  let cosY = precomputeCosTable(dim: h, maxFreq: ny)
+  var channel = [Double](repeating: 0.0, count: w * h)
+  for y in 0..<h {
+    for x in 0..<w {
+      channel[x + y * w] = (Double(x) * 0.13 + Double(y) * 0.07).truncatingRemainder(
+        dividingBy: 1.0)
+    }
+  }
+  let naive = dctEncode(channel: channel, w: w, h: h, scan: scan)
+  let sep = dctEncodeSeparable(channel: channel, w: w, h: h, scan: scan, cosX: cosX, cosY: cosY)
+  #expect(naive.dc == sep.dc, "DC must be bit-identical")
+  #expect(naive.scale == sep.scale, "scale must be bit-identical")
+  #expect(naive.ac.count == sep.ac.count, "AC count must match")
+  for i in naive.ac.indices {
+    #expect(naive.ac[i] == sep.ac[i], "AC[\(i)] must be bit-identical")
+  }
+}
+
+@Test func separableDecodeMatchesDctDecodePixel() {
+  // dctDecodePixelSeparable must produce bit-identical output to dctDecodePixel.
+  let w = 8
+  let h = 6
+  let nx = 5
+  let ny = 4
+  let scan = scanOrder(nx: nx, ny: ny, aspectByte: 128)
+  let cosX = precomputeCosTable(dim: w, maxFreq: nx)
+  let cosY = precomputeCosTable(dim: h, maxFreq: ny)
+  let dc = 0.37
+  let ac = (0..<scan.count).map { j in Double((j * 5) % 11) / 11.0 - 0.5 }
+  for y in 0..<h {
+    for x in 0..<w {
+      let naive = dctDecodePixel(dc: dc, ac: ac, scanOrder: scan, x: x, y: y, w: w, h: h)
+      let sep = dctDecodePixelSeparable(
+        dc: dc, ac: ac, scanOrder: scan, x: x, y: y, cosX: cosX, cosY: cosY)
+      #expect(naive == sep, "decode must be bit-identical at (\(x),\(y))")
+    }
+  }
+}
+
 @Test func scanOrder4x4SquareIsRadial() {
   // aspectByte=128 → w=h=32 → priority ∝ cx²+cy².
   // (0,1) and (1,0) tied at 1; cx tiebreak → (0,1) first.
