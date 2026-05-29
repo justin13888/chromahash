@@ -181,6 +181,45 @@ class ChromaHashTest {
     }
 
     @Test
+    fun `separable matches dctEncode`() {
+        // dctEncodeSeparable must produce bit-identical output to dctEncode.
+        val w = 8
+        val h = 6
+        val nx = 5
+        val ny = 4
+        val scan = scanOrder(nx, ny, 128)
+        val cosX = precomputeCosTable(w, nx)
+        val cosY = precomputeCosTable(h, ny)
+        val channel = DoubleArray(w * h) { i -> ((i * 7) % 17).toDouble() / 17.0 - 0.5 }
+        val (dc1, ac1, s1) = dctEncode(channel, w, h, scan)
+        val (dc2, ac2, s2) = dctEncodeSeparable(channel, w, h, scan, cosX, cosY)
+        assertEquals(dc1, dc2, "DC must be bit-identical")
+        assertEquals(s1, s2, "scale must be bit-identical")
+        assertContentEquals(ac1, ac2, "AC must be bit-identical")
+    }
+
+    @Test
+    fun `separable decode matches dctDecodePixel`() {
+        // dctDecodePixelSeparable must produce bit-identical output to dctDecodePixel.
+        val w = 8
+        val h = 6
+        val nx = 5
+        val ny = 4
+        val scan = scanOrder(nx, ny, 128)
+        val cosX = precomputeCosTable(w, nx)
+        val cosY = precomputeCosTable(h, ny)
+        val dc = 0.37
+        val ac = DoubleArray(scan.size) { j -> ((j * 5) % 11).toDouble() / 11.0 - 0.5 }
+        for (y in 0 until h) {
+            for (x in 0 until w) {
+                val naive = dctDecodePixel(dc, ac, scan, x, y, w, h)
+                val sep = dctDecodePixelSeparable(dc, ac, scan, x, y, cosX, cosY)
+                assertEquals(naive, sep, "decode must be bit-identical at ($x,$y)")
+            }
+        }
+    }
+
+    @Test
     fun `scan order 4x4 square is radial`() {
         val order = scanOrder(4, 4, 128)
         val expected =

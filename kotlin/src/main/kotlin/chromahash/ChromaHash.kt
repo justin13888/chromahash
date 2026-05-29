@@ -1,5 +1,7 @@
 package chromahash
 
+import kotlin.math.max
+
 /**
  * ChromaHash: modern, high-quality image placeholder representation.
  * A 32-byte LQIP (Low Quality Image Placeholder).
@@ -85,13 +87,19 @@ class ChromaHash private constructor(
             val cScanEnc = scanOrder(cNx, cNy, aspectByte)
             val alphaScanEnc = if (hasAlpha) scanOrder(alphaNx, alphaNy, aspectByte) else emptyList()
 
+            // 5c. Precompute cosine tables once (L grid dominates chroma/alpha)
+            val maxCx = max(lNx, cNx)
+            val maxCy = max(lNy, cNy)
+            val cosX = precomputeCosTable(w, maxCx)
+            val cosY = precomputeCosTable(h, maxCy)
+
             // 6. DCT encode each channel (AC emitted in scan order)
-            val (lDc, lAcRaw, lScale) = dctEncode(lChan, w, h, lScanEnc)
-            val (aDc, aAcRaw, aScale) = dctEncode(aChan, w, h, cScanEnc)
-            val (bDc, bAcRaw, bScale) = dctEncode(bChan, w, h, cScanEnc)
+            val (lDc, lAcRaw, lScale) = dctEncodeSeparable(lChan, w, h, lScanEnc, cosX, cosY)
+            val (aDc, aAcRaw, aScale) = dctEncodeSeparable(aChan, w, h, cScanEnc, cosX, cosY)
+            val (bDc, bAcRaw, bScale) = dctEncodeSeparable(bChan, w, h, cScanEnc, cosX, cosY)
             val (alphaDc, alphaAcRaw, alphaScale) =
                 if (hasAlpha) {
-                    dctEncode(alphaPixels, w, h, alphaScanEnc)
+                    dctEncodeSeparable(alphaPixels, w, h, alphaScanEnc, cosX, cosY)
                 } else {
                     Triple(0.0, DoubleArray(0), 0.0)
                 }
@@ -329,17 +337,23 @@ class ChromaHash private constructor(
                 emptyList()
             }
 
+        // 5d. Precompute cosine tables once (L grid dominates chroma/alpha)
+        val maxCx = max(lNx, cNx)
+        val maxCy = max(lNy, cNy)
+        val cosX = precomputeCosTable(outW, maxCx)
+        val cosY = precomputeCosTable(outH, maxCy)
+
         // 6. Render output image
         val rgba = ByteArray(outW * outH * 4)
 
         for (y in 0 until outH) {
             for (x in 0 until outW) {
-                val l = dctDecodePixel(lDc, lAc, lScan, x, y, outW, outH)
-                val a = dctDecodePixel(aDc, aAc, chromaScan, x, y, outW, outH)
-                val b = dctDecodePixel(bDc, bAc, chromaScan, x, y, outW, outH)
+                val l = dctDecodePixelSeparable(lDc, lAc, lScan, x, y, cosX, cosY)
+                val a = dctDecodePixelSeparable(aDc, aAc, chromaScan, x, y, cosX, cosY)
+                val b = dctDecodePixelSeparable(bDc, bAc, chromaScan, x, y, cosX, cosY)
                 val alpha =
                     if (hasAlpha) {
-                        dctDecodePixel(alphaDcVal, alphaAc, alphaScan, x, y, outW, outH)
+                        dctDecodePixelSeparable(alphaDcVal, alphaAc, alphaScan, x, y, cosX, cosY)
                     } else {
                         1.0
                     }

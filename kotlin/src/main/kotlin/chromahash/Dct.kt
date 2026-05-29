@@ -85,6 +85,67 @@ internal fun dctEncode(
     return Triple(dc, acList, scale)
 }
 
+/**
+ * Precompute cosine table for DCT: table[freq][pos] = cos(PI/dim * freq * (pos+0.5)).
+ * Per spec §12.6. Uses portableCos for cross-platform determinism.
+ */
+internal fun precomputeCosTable(
+    dim: Int,
+    maxFreq: Int,
+): Array<DoubleArray> =
+    Array(maxFreq) { freq ->
+        DoubleArray(dim) { pos ->
+            portableCos(PI / dim.toDouble() * freq.toDouble() * (pos.toDouble() + 0.5))
+        }
+    }
+
+/**
+ * Forward DCT encode using precomputed cosine tables. Per spec §12.6 (v0.4).
+ * Semantically identical to dctEncode but avoids redundant cosine evaluations.
+ * cosX/cosY must have rows for all (cx, cy) in `scan`.
+ */
+internal fun dctEncodeSeparable(
+    channel: DoubleArray,
+    w: Int,
+    h: Int,
+    scan: List<Pair<Int, Int>>,
+    cosX: Array<DoubleArray>,
+    cosY: Array<DoubleArray>,
+): Triple<Double, DoubleArray, Double> {
+    val wh = (w * h).toDouble()
+
+    // DC = mean (cosX[0]/cosY[0] are all-ones by construction)
+    var sum = 0.0
+    for (v in channel) sum += v
+    val dc = sum / wh
+
+    val acList = DoubleArray(scan.size)
+    var scale = 0.0
+
+    for ((idx, pair) in scan.withIndex()) {
+        val (cx, cy) = pair
+        val cxRow = cosX[cx]
+        val cyRow = cosY[cy]
+        var f = 0.0
+        for (y in 0 until h) {
+            val fy = cyRow[y]
+            for (x in 0 until w) {
+                f += channel[x + y * w] * cxRow[x] * fy
+            }
+        }
+        f /= wh
+        acList[idx] = f
+        scale = max(scale, abs(f))
+    }
+
+    if (scale < 1e-10) {
+        for (i in acList.indices) acList[i] = 0.0
+        scale = 0.0
+    }
+
+    return Triple(dc, acList, scale)
+}
+
 /** Inverse DCT at a single pixel (x, y) for a channel. */
 internal fun dctDecodePixel(
     dc: Double,
@@ -102,6 +163,32 @@ internal fun dctDecodePixel(
         val cyFactor = if (cy > 0) 2.0 else 1.0
         val fx = portableCos(PI / w.toDouble() * cx.toDouble() * (x.toDouble() + 0.5))
         val fy = portableCos(PI / h.toDouble() * cy.toDouble() * (y.toDouble() + 0.5))
+        value += ac[j] * fx * fy * cxFactor * cyFactor
+    }
+    return value
+}
+
+/**
+ * Inverse DCT at a single pixel using precomputed cosine tables. Per spec §12.6.
+ * Semantically identical to dctDecodePixel but reads cosX[cx][x] / cosY[cy][y].
+ * The cx/cy factors stay as separate multiplies to preserve the float operation order.
+ */
+internal fun dctDecodePixelSeparable(
+    dc: Double,
+    ac: DoubleArray,
+    scanOrder: List<Pair<Int, Int>>,
+    x: Int,
+    y: Int,
+    cosX: Array<DoubleArray>,
+    cosY: Array<DoubleArray>,
+): Double {
+    var value = dc
+    for ((j, pair) in scanOrder.withIndex()) {
+        val (cx, cy) = pair
+        val cxFactor = if (cx > 0) 2.0 else 1.0
+        val cyFactor = if (cy > 0) 2.0 else 1.0
+        val fx = cosX[cx][x]
+        val fy = cosY[cy][y]
         value += ac[j] * fx * fy * cxFactor * cyFactor
     }
     return value
