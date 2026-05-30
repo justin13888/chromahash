@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
-"""Performance benchmark for chromahash vs. ThumbHash baseline.
+"""Performance benchmark for chromahash vs. ThumbHash baselines.
 
 Runs hyperfine to compare **encode** and **decode** in two regimes — a **single**
 call and a **bulk 1000** (batched) run — across all 7 chromahash language
-implementations (Rust, TypeScript, Go, Python, Kotlin, Swift, C#) plus ThumbHash
-(the JS reference implementation) as a baseline.
+implementations (Rust, TypeScript, Go, Python, Kotlin, Swift, C#) plus two
+ThumbHash baselines:
+  * **ThumbHash (Rust)** — Evan Wallace's official `thumbhash` crate, the fastest
+    native port. This is the apples-to-apples opponent for native chromahash:
+    same language, and its bulk encode is parallelized across cores to match
+    chromahash's `BatchEncoder`. Without it the only baseline was JS-on-Node, so
+    chromahash's lead reflected the runtime, not the algorithm.
+  * **ThumbHash (JS)** — the JS reference (npm `thumbhash`), kept for the
+    JS/TS-runtime comparison (vs. chromahash's TypeScript build).
 
 The input is a fixed 100x100 sRGB RGB gradient. The size is dictated by ThumbHash,
 which caps the longest dimension at ~100px.
@@ -12,11 +19,13 @@ which caps the longest dimension at ~100px.
 IMPORTANT — interpreting the numbers:
   * single-mode times are dominated by **process startup** (JVM/.NET/Node cold
     start swamps the microsecond-scale op). They are a startup/latency proxy, not
-    per-op compute.
+    per-op compute. The native ThumbHash (Rust) has near-zero startup, so its
+    single-mode number is finally comparable to native chromahash.
   * bulk-mode runs 1000 ops in one process, amortizing startup. The bulk
-    **per-op** time (median / count) is the real compute number, and reflects the
-    parallel batch encoder (Rust/Go/Kotlin/Swift/C#) vs. the serial one
-    (TypeScript/Python, and ThumbHash's loop).
+    **per-op** time (median / count) is the real compute number. The parallel
+    batch encoders (chromahash Rust/Go/Kotlin/Swift/C# and ThumbHash Rust) share
+    one tier; the serial ones (chromahash TypeScript/Python and ThumbHash JS,
+    which loop on one core) share another. Compare like with like.
 """
 
 from __future__ import annotations
@@ -37,9 +46,12 @@ GRADIENT_H = 100
 GAMUT = "srgb"
 DEFAULT_BULK_COUNT = 1000
 
-# chromahash in 7 languages + ThumbHash (JS reference baseline).
-# "thumbhash": True marks the baseline whose command shape differs — it takes no
-# gamut argument and decodes its own (variable-length) hash.
+# chromahash in 7 languages + two ThumbHash baselines (native Rust + JS reference).
+# "thumbhash": True marks a baseline whose command shape differs — it takes no
+# gamut argument and decodes its own (variable-length) hash. Each ThumbHash
+# baseline decodes a hash it produced itself: unlike chromahash, ThumbHash is not
+# byte-identical across runtimes (DCT-coefficient quantization diverges with
+# float rounding), so the Rust and JS hashes differ by a byte or two.
 HARNESSES: dict[str, dict] = {
     "Rust": {"cmd": str(ROOT / "rust/target/release/examples/encode_stdin")},
     "Go": {"cmd": str(ROOT / "go/encode-stdin")},
@@ -53,7 +65,14 @@ HARNESSES: dict[str, dict] = {
     "C#": {
         "cmd": f"dotnet exec {ROOT / 'csharp/src/Chromahash.Cli/bin/Release/net9.0/Chromahash.Cli.dll'}",
     },
-    "ThumbHash": {
+    # Fastest native ThumbHash — official crate, parallel bulk encode. The
+    # apples-to-apples opponent for native chromahash.
+    "ThumbHash (Rust)": {
+        "cmd": str(ROOT / "tools/thumbhash-rs/target/release/thumbhash-stdin"),
+        "thumbhash": True,
+    },
+    # JS reference impl on Node — the runtime peer of chromahash's TypeScript.
+    "ThumbHash (JS)": {
         "cmd": f"node {ROOT / 'tools/comparison/dist/thumbhash-stdin.js'}",
         "thumbhash": True,
     },
@@ -94,8 +113,14 @@ def build_harnesses() -> None:
             ["dotnet", "build", str(ROOT / "csharp/src/Chromahash.Cli"), "-c", "Release", "--verbosity", "quiet"],
             str(ROOT),
         ),
-        # ThumbHash harness lives in the comparison tool (which owns the dep).
-        ("ThumbHash", ["pnpm", "--prefix", str(ROOT / "tools/comparison"), "run", "build"], str(ROOT)),
+        # Native ThumbHash harness — standalone crate (keeps the core zero-dep).
+        (
+            "ThumbHash (Rust)",
+            ["cargo", "build", "--manifest-path", str(ROOT / "tools/thumbhash-rs/Cargo.toml"), "--release"],
+            str(ROOT),
+        ),
+        # JS ThumbHash harness lives in the comparison tool (which owns the dep).
+        ("ThumbHash (JS)", ["pnpm", "--prefix", str(ROOT / "tools/comparison"), "run", "build"], str(ROOT)),
     ]
 
     for label, cmd, cwd in steps:
@@ -136,12 +161,15 @@ def run_harness(config: dict, sub_args: list[str], stdin_bytes: bytes) -> bytes:
     return result.stdout
 
 
-def prepare_fixtures(tmp_dir: Path) -> dict[str, Path]:
-    """Write the gradient and the two decode-hash fixtures to tmp_dir.
+def prepare_fixtures(tmp_dir: Path) -> dict:
+    """Write the gradient and the decode-hash fixtures to tmp_dir.
+
+    Returns {"gradient": Path, "chroma_hash": Path, "thumb_hash": {name: Path}}.
 
     chromahash hashes are byte-identical across all 7 languages (spec guarantee),
     so one shared hash (produced by the Rust harness) drives every chromahash
-    decode. ThumbHash decodes its own, semantically different hash.
+    decode. ThumbHash is *not* byte-identical across runtimes, so each ThumbHash
+    baseline decodes a hash it encoded itself (keyed by harness name).
     """
     gradient = make_gradient_rgba(GRADIENT_W, GRADIENT_H)
     gradient_file = tmp_dir / "gradient.rgba"
@@ -156,24 +184,28 @@ def prepare_fixtures(tmp_dir: Path) -> dict[str, Path]:
     chroma_hash_file = tmp_dir / "chroma.hash"
     chroma_hash_file.write_bytes(chroma_hash)
 
-    thumb_hash = run_harness(
-        HARNESSES["ThumbHash"], ["encode", str(GRADIENT_W), str(GRADIENT_H)], gradient
-    )
-    if not thumb_hash:
-        print("ERROR: ThumbHash encode returned no bytes")
-        sys.exit(1)
-    thumb_hash_file = tmp_dir / "thumb.hash"
-    thumb_hash_file.write_bytes(thumb_hash)
+    thumb_hash_files: dict[str, Path] = {}
+    for name, config in HARNESSES.items():
+        if not config.get("thumbhash"):
+            continue
+        thumb_hash = run_harness(config, ["encode", str(GRADIENT_W), str(GRADIENT_H)], gradient)
+        if not thumb_hash:
+            print(f"ERROR: {name} encode returned no bytes")
+            sys.exit(1)
+        slug = "".join(c if c.isalnum() else "_" for c in name.lower())
+        thumb_hash_file = tmp_dir / f"thumb_{slug}.hash"
+        thumb_hash_file.write_bytes(thumb_hash)
+        thumb_hash_files[name] = thumb_hash_file
 
     return {
         "gradient": gradient_file,
         "chroma_hash": chroma_hash_file,
-        "thumb_hash": thumb_hash_file,
+        "thumb_hash": thumb_hash_files,
     }
 
 
 def harness_command(
-    config: dict, operation: str, mode: str, count: int, files: dict[str, Path]
+    name: str, config: dict, operation: str, mode: str, count: int, files: dict
 ) -> str:
     """Build the shell command for one (harness, operation, mode) cell."""
     cmd = config["cmd"]
@@ -187,7 +219,7 @@ def harness_command(
         redirect = files["gradient"]
     else:  # decode
         sub = "decode" if mode == "single" else f"batch-decode {count}"
-        redirect = files["thumb_hash"] if is_thumb else files["chroma_hash"]
+        redirect = files["thumb_hash"][name] if is_thumb else files["chroma_hash"]
 
     full = f"{cmd} {sub} < {redirect}"
     cwd = config.get("cwd")
@@ -197,7 +229,7 @@ def harness_command(
 
 
 def run_benchmarks(
-    files: dict[str, Path],
+    files: dict,
     output_dir: Path,
     warmup: int,
     min_runs: int,
@@ -227,7 +259,7 @@ def run_benchmarks(
                 str(json_file),
             ]
             for name, config in HARNESSES.items():
-                cmd.extend(["-n", name, harness_command(config, operation, mode, count, files)])
+                cmd.extend(["-n", name, harness_command(name, config, operation, mode, count, files)])
 
             try:
                 subprocess.run(cmd, check=True, capture_output=True, timeout=900)
@@ -278,7 +310,7 @@ def format_table(medians: dict[str, dict[tuple[str, str], float]], count: int) -
         return f"{v / count * 1e6:.2f} µs" if v is not None else "N/A"
 
     for name in HARNESSES:
-        label = f"{name} _(baseline)_" if HARNESSES[name].get("thumbhash") else name
+        label = f"{name} _(ThumbHash baseline)_" if HARNESSES[name].get("thumbhash") else name
         lines.append(
             f"| {label} | {ms(name, 'encode', 'single')} | {ms(name, 'decode', 'single')} "
             f"| {ms(name, 'encode', 'bulk')} | {per_op_us(name, 'encode')} "
@@ -290,6 +322,12 @@ def format_table(medians: dict[str, dict[tuple[str, str], float]], count: int) -
         "> **single** times include process startup (JVM/.NET/Node cold start dominates) "
         "— a startup/latency proxy, not per-op compute. **bulk per-op** (= median / count) "
         "is the real compute number.",
+        ">",
+        "> Two ThumbHash baselines: **(Rust)** is the fastest native port (official "
+        "`thumbhash` crate, parallel bulk encode) — compare it against native chromahash. "
+        "**(JS)** is the JS reference on Node (serial) — compare it against chromahash's "
+        "TypeScript. For bulk encode, the parallel tier is chromahash Rust/Go/Kotlin/Swift/C# "
+        "+ ThumbHash (Rust); the serial tier is chromahash TypeScript/Python + ThumbHash (JS).",
     ]
     return "\n".join(lines)
 
