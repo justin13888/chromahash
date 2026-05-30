@@ -68,7 +68,13 @@ uv run benchmark.py --skip-build --bulk-count 50 --warmup 1 --min-runs 3
 ```
 
 Flags: `--bulk-count N` (default 1000), `--warmup N` (default 3),
-`--min-runs N` (default 10), `--skip-build`, `--output-dir DIR`.
+`--min-runs N` (default 10), `--timeout N` (per-comparison hyperfine timeout in
+seconds, default 3600), `--skip-build`, `--output-dir DIR`.
+
+The serial-tier harnesses (Python/TypeScript) dominate bulk mode and scale with
+the machine — the Python `encode_bulk` cell alone can take >20 min at the default
+`--bulk-count 1000 --min-runs 10` on a slow host. Raise `--timeout` (or lower
+`--bulk-count`/`--min-runs`) if a comparison is skipped for exceeding it.
 
 Requires `hyperfine` on `PATH`.
 

@@ -1,0 +1,23 @@
+# Native ThumbHash baseline harness for the benchmark.
+#
+# Deliberately a standalone crate (no Cargo workspace at the repo root) so the
+# core `chromahash` crate stays zero-dependency. The only dependency here is
+# Evan Wallace's official `thumbhash` crate — the fastest reference port — used
+# purely as a benchmark baseline.
+#
+# No `[profile.release]` overrides: this mirrors the core `chromahash` crate's
+# default release profile so the native-vs-native comparison is apples-to-apples
+# (same opt-level, no LTO advantage on either side).
+[package]
+name = "thumbhash-stdin"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "thumbhash-stdin"
+path = "src/main.rs"
+
+[dependencies]
+# Official crate, published by ThumbHash's author (evanw), zero dependencies.
+thumbhash = "0.1.0"

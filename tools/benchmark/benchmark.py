@@ -45,6 +45,11 @@ GRADIENT_W = 100
 GRADIENT_H = 100
 GAMUT = "srgb"
 DEFAULT_BULK_COUNT = 1000
+# Per-comparison hyperfine timeout (seconds). One comparison times every harness,
+# so the serial-tier (Python/TypeScript) bulk runs dominate and scale with the
+# machine — at the default bulk-count/min-runs the Python encode_bulk cell alone
+# can take >20 min on a slow host. Generous by design; override with --timeout.
+DEFAULT_TIMEOUT = 3600
 
 # chromahash in 7 languages + two ThumbHash baselines (native Rust + JS reference).
 # "thumbhash": True marks a baseline whose command shape differs — it takes no
@@ -234,6 +239,7 @@ def run_benchmarks(
     warmup: int,
     min_runs: int,
     count: int,
+    timeout: int,
 ) -> list[dict]:
     """Run one hyperfine comparison per (operation, mode) across all harnesses."""
     results_dir = output_dir / "json"
@@ -262,9 +268,20 @@ def run_benchmarks(
                 cmd.extend(["-n", name, harness_command(name, config, operation, mode, count, files)])
 
             try:
-                subprocess.run(cmd, check=True, capture_output=True, timeout=900)
+                subprocess.run(cmd, check=True, capture_output=True, timeout=timeout)
             except subprocess.CalledProcessError as e:
                 print(f"    WARNING: hyperfine failed: {e.stderr.decode()[:300]}")
+                continue
+            except subprocess.TimeoutExpired:
+                # A single comparison ran past --timeout. The serial-tier harnesses
+                # (Python/TypeScript) dominate bulk mode and scale with the machine,
+                # so this is usually "too slow", not "hung". Warn and keep the other
+                # cells rather than crashing the whole matrix; raise --timeout (or
+                # lower --bulk-count / --min-runs) to capture this cell.
+                print(
+                    f"    WARNING: {operation} — {mode} exceeded --timeout ({timeout}s); "
+                    "skipping. Raise --timeout or lower --bulk-count/--min-runs."
+                )
                 continue
             except FileNotFoundError:
                 print("    ERROR: hyperfine not found. Install it: https://github.com/sharkdp/hyperfine")
@@ -387,6 +404,16 @@ def main() -> None:
     parser.add_argument("--warmup", type=int, default=3, help="Number of warmup runs per benchmark")
     parser.add_argument("--min-runs", type=int, default=10, help="Minimum number of timed runs")
     parser.add_argument("--bulk-count", type=int, default=DEFAULT_BULK_COUNT, help="Images per bulk run")
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=DEFAULT_TIMEOUT,
+        help=(
+            "Per-comparison hyperfine timeout in seconds. One comparison times all "
+            "harnesses, so the serial-tier (Python/TypeScript) bulk runs dominate and "
+            "scale with the machine; raise this on slower hosts."
+        ),
+    )
     parser.add_argument("--skip-build", action="store_true", help="Skip building harnesses")
     args = parser.parse_args()
 
@@ -401,7 +428,9 @@ def main() -> None:
         files = prepare_fixtures(Path(tmp_dir))
 
         print(f"\nRunning benchmarks ({len(OPERATIONS)} operations × {len(MODES)} modes)...")
-        all_results = run_benchmarks(files, output_dir, args.warmup, args.min_runs, args.bulk_count)
+        all_results = run_benchmarks(
+            files, output_dir, args.warmup, args.min_runs, args.bulk_count, args.timeout
+        )
 
     if not all_results:
         print("No benchmark results collected")
