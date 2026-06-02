@@ -8,19 +8,19 @@ default:
 
 # Format all implementations
 [parallel]
-format: format-rust format-ts format-kotlin format-swift format-go format-python format-csharp format-android format-compare
+format: format-rust format-ts format-kotlin format-swift format-go format-python format-csharp format-android format-compare format-thumbhash
 
 # Lint all implementations
 [parallel]
-lint: lint-rust lint-ts lint-kotlin lint-swift lint-go lint-python lint-csharp lint-android lint-compare
+lint: lint-rust lint-ts lint-kotlin lint-swift lint-go lint-python lint-csharp lint-android lint-compare lint-thumbhash
 
 # Auto-fix formatting in all implementations
 [parallel]
-format-fix: format-fix-rust format-fix-ts format-fix-kotlin format-fix-swift format-fix-go format-fix-python format-fix-csharp format-fix-android format-fix-compare
+format-fix: format-fix-rust format-fix-ts format-fix-kotlin format-fix-swift format-fix-go format-fix-python format-fix-csharp format-fix-android format-fix-compare format-fix-thumbhash
 
 # Auto-fix linting in all implementations
 [parallel]
-lint-fix: lint-fix-rust lint-fix-ts lint-fix-kotlin lint-fix-swift lint-fix-go lint-fix-python lint-fix-csharp lint-fix-android lint-fix-compare
+lint-fix: lint-fix-rust lint-fix-ts lint-fix-kotlin lint-fix-swift lint-fix-go lint-fix-python lint-fix-csharp lint-fix-android lint-fix-compare lint-fix-thumbhash
 
 # Run all tests
 [parallel]
@@ -32,7 +32,7 @@ build: build-rust build-ts build-kotlin build-swift build-go build-python build-
 
 # Check formatting (no writes) across all implementations
 [parallel]
-format-check: format-check-rust format-check-ts format-check-kotlin format-check-swift format-check-go format-check-python format-check-csharp format-check-android format-check-compare
+format-check: format-check-rust format-check-ts format-check-kotlin format-check-swift format-check-go format-check-python format-check-csharp format-check-android format-check-compare format-check-thumbhash
 
 # ─── Comparison tool ────────────────────────────────────────────────────────
 
@@ -50,6 +50,24 @@ lint-compare:
 lint-fix-compare:
     mise exec -- pnpm --prefix tools/comparison run lint:fix
 
+# ─── ThumbHash baseline (native Rust) ─────────────────────────────────────────
+# Standalone benchmark harness crate (keeps the core chromahash crate zero-dep).
+
+format-thumbhash:
+    cargo fmt --manifest-path tools/thumbhash-rs/Cargo.toml
+
+format-fix-thumbhash: format-thumbhash
+
+format-check-thumbhash:
+    cargo fmt --manifest-path tools/thumbhash-rs/Cargo.toml --check
+
+lint-thumbhash:
+    cargo clippy --manifest-path tools/thumbhash-rs/Cargo.toml -- -D warnings
+
+lint-fix-thumbhash:
+    cargo clippy --manifest-path tools/thumbhash-rs/Cargo.toml --fix --allow-staged --allow-dirty
+    cargo clippy --manifest-path tools/thumbhash-rs/Cargo.toml -- -D warnings
+
 # Build the comparison tool
 build-compare:
     mise exec -- pnpm --prefix tools/comparison run build
@@ -60,7 +78,7 @@ compare: build-compare
 
 # ─── Benchmark ──────────────────────────────────────────────────────────────
 
-# Build benchmark harnesses (release mode)
+# Build benchmark harnesses (release mode), incl. both ThumbHash baselines (native Rust + JS)
 build-benchmark:
     cargo build --manifest-path rust/Cargo.toml --release --example encode_stdin
     mise exec node@24 -- pnpm --prefix typescript run build
@@ -68,10 +86,12 @@ build-benchmark:
     mise exec java@21 gradle@9.4.0 -- sh -c 'cd kotlin && ./gradlew installDist -q'
     cd swift && mise exec swift@6.2.4 -- swift build -c release
     mise exec dotnet@9 -- dotnet build csharp/src/Chromahash.Cli -c Release --verbosity quiet
+    cargo build --manifest-path tools/thumbhash-rs/Cargo.toml --release
+    mise exec node@24 -- pnpm --prefix tools/comparison run build
 
-# Run performance benchmark
+# Run performance benchmark (encode/decode × single/bulk, chromahash vs ThumbHash)
 benchmark: build-benchmark
-    cd tools/benchmark && uv run benchmark.py
+    cd tools/benchmark && uv run benchmark.py --skip-build
 
 # ─── Batch benchmarks ─────────────────────────────────────────────────────────
 

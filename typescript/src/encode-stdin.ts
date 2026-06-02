@@ -1,4 +1,5 @@
-import { ChromaHash } from "./index.ts";
+import { BatchEncoder, ChromaHash } from "./index.ts";
+import type { ImageInput } from "./index.ts";
 import type { Gamut } from "./internals.ts";
 
 const gamutMap: Record<string, Gamut> = {
@@ -11,7 +12,7 @@ const gamutMap: Record<string, Gamut> = {
 
 function usage(): never {
   process.stderr.write(
-    "Usage:\n  encode-stdin encode <width> <height> <gamut>\n  encode-stdin decode\n  encode-stdin average-color\n",
+    "Usage:\n  encode-stdin encode <width> <height> <gamut>\n  encode-stdin decode\n  encode-stdin average-color\n  encode-stdin batch-encode <width> <height> <gamut> <count>\n  encode-stdin batch-decode <count>\n",
   );
   process.exit(1);
 }
@@ -86,6 +87,63 @@ switch (subcommand) {
     const ch2 = ChromaHash.fromBytes(new Uint8Array(hashBuf2));
     const avg = ch2.averageColor();
     process.stdout.write(Buffer.from([avg.r, avg.g, avg.b, avg.a]));
+    break;
+  }
+  case "batch-encode": {
+    // Read one image, encode it `count` times through the BatchEncoder
+    // (serial in JS). Used to benchmark bulk throughput.
+    const wArg = args[1];
+    const hArg = args[2];
+    const gamutArg = args[3];
+    const countArg = args[4];
+    if (!wArg || !hArg || !gamutArg || !countArg) {
+      process.stderr.write(
+        "Usage: encode-stdin batch-encode <width> <height> <gamut> <count>\n",
+      );
+      process.exit(1);
+    }
+    const w = Number.parseInt(wArg, 10);
+    const h = Number.parseInt(hArg, 10);
+    const count = Number.parseInt(countArg, 10);
+    const gamut = gamutMap[gamutArg];
+    if (!gamut) {
+      process.stderr.write(`unknown gamut: ${gamutArg}\n`);
+      process.exit(1);
+    }
+    const stdinBuf = await readStdin();
+    const rgba = new Uint8Array(stdinBuf);
+    const items: ImageInput[] = Array.from({ length: count }, () => ({
+      w,
+      h,
+      rgba,
+      gamut,
+    }));
+    const encoder = new BatchEncoder();
+    const hashes = encoder.encodeBatch(items);
+    encoder.close();
+    // Write one result-derived byte so the work cannot be optimized away.
+    process.stdout.write(Buffer.from([hashes[0]?.hash[0] ?? 0]));
+    break;
+  }
+  case "batch-decode": {
+    // No batch decode API exists; loop the single decode `count` times.
+    const countArg = args[1];
+    if (!countArg) {
+      process.stderr.write("Usage: encode-stdin batch-decode <count>\n");
+      process.exit(1);
+    }
+    const count = Number.parseInt(countArg, 10);
+    const hashBuf = await readStdin();
+    if (hashBuf.length !== 32) {
+      process.stderr.write(`expected 32 bytes, got ${hashBuf.length}\n`);
+      process.exit(1);
+    }
+    const ch = ChromaHash.fromBytes(new Uint8Array(hashBuf));
+    let acc = 0;
+    for (let i = 0; i < count; i++) {
+      acc ^= ch.decode().rgba[0] ?? 0;
+    }
+    process.stdout.write(Buffer.from([acc & 0xff]));
     break;
   }
   default:

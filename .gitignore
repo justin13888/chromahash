@@ -18,6 +18,7 @@ pnpm-debug.log*
 
 # === Rust ===
 rust/target/
+tools/thumbhash-rs/target/
 **/*.rs.bk
 Cargo.lock
 
