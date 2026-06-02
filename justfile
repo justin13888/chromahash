@@ -305,3 +305,50 @@ test-csharp:
 
 build-csharp:
     mise exec dotnet@9 -- dotnet build csharp/Chromahash.sln --verbosity quiet
+
+# ─── Changelog / Release ─────────────────────────────────────────────────────
+# git-cliff generates the [Unreleased] section from conventional commits; the
+# curated history and Keep a Changelog preamble are preserved. See RELEASING.md.
+
+# Regenerate the CHANGELOG [Unreleased] section from conventional commits (idempotent)
+changelog:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    frag="$(mktemp)"
+    mise exec -- git-cliff --unreleased --config cliff.toml > "$frag"
+    awk -v frag="$frag" '
+        /<!-- git-cliff-unreleased-start -->/ { print; while ((getline l < frag) > 0) { if (l=="" && !seen) continue; seen=1; print l } close(frag); skip=1; next }
+        /<!-- git-cliff-unreleased-end -->/ { skip=0 }
+        !skip { print }
+    ' CHANGELOG.md > CHANGELOG.md.tmp
+    mv CHANGELOG.md.tmp CHANGELOG.md
+    rm -f "$frag"
+    echo "Updated [Unreleased] in CHANGELOG.md — review and add any manual 'Removed' entries."
+
+# Cut a CHANGELOG release section from [Unreleased] (see RELEASING.md for full steps)
+release version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    frag="$(mktemp)"
+    mise exec -- git-cliff --tag "v{{version}}" --unreleased --config cliff.toml > "$frag"
+    awk -v frag="$frag" '
+        /<!-- git-cliff-unreleased-start -->/ {
+            print "<!-- git-cliff-unreleased-start -->"
+            print "## [Unreleased]"
+            print "<!-- git-cliff-unreleased-end -->"
+            print ""
+            while ((getline l < frag) > 0) { if (l=="" && !seen) continue; seen=1; print l }
+            close(frag)
+            skip=1; next
+        }
+        /<!-- git-cliff-unreleased-end -->/ { skip=0; next }
+        !skip { print }
+    ' CHANGELOG.md > CHANGELOG.md.tmp
+    mv CHANGELOG.md.tmp CHANGELOG.md
+    rm -f "$frag"
+    echo "Cut [{{version}}] in CHANGELOG.md. Remaining manual steps:"
+    echo "  1. Update the link-reference block at the bottom of CHANGELOG.md:"
+    echo "       [Unreleased]: .../compare/v{{version}}...HEAD"
+    echo "       [{{version}}]: .../compare/<prev>...v{{version}}"
+    echo "  2. Bump the version to {{version}} across all implementations and tools."
+    echo "  3. Commit, then: git tag -a v{{version}} -m 'v{{version}}' && git push --tags"
