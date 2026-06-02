@@ -1,0 +1,42 @@
+name: CI (Commits)
+
+# Enforce conventional commits on every PR: validate each commit in the PR and
+# the PR title (the latter covers squash merges, where the title becomes the
+# commit subject). Mirrors the local `commit-msg` lefthook hook (convco).
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  commit-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history so the PR commit range is reachable
+
+      - name: Install convco
+        # Pinned to match .mise.toml ("cargo:convco"). Keep these versions in sync.
+        env:
+          CONVCO_VERSION: "0.6.4"
+        run: |
+          curl -sSfL "https://github.com/convco/convco/releases/download/v${CONVCO_VERSION}/convco-ubuntu.zip" -o convco.zip
+          unzip -o convco.zip convco
+          chmod +x convco
+          echo "$PWD" >> "$GITHUB_PATH"
+
+      - name: Lint commits in the PR
+        # convco excludes merge commits by default, so merges from the base branch
+        # don't trip the check.
+        run: convco check "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+
+      - name: Lint PR title
+        # Pass the title via env (not inline interpolation) to avoid shell injection.
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: printf '%s\n' "$PR_TITLE" | convco check --from-stdin

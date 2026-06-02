@@ -1,3 +1,9 @@
+commit-msg:
+  commands:
+    convco:
+      # {1} is the path to the commit message file; convco lints it via stdin.
+      run: mise exec -- convco check --from-stdin < {1}
+
 pre-commit:
   piped: true
   commands:

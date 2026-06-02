@@ -11,7 +11,42 @@ from an older minor version applied to a newer hash will silently produce garble
 Applications that need to distinguish versions MUST track the format version via
 producer-side metadata. See `spec/README.md` §2.5 for details.
 
+<!-- git-cliff-unreleased-start -->
 ## [Unreleased]
+
+### Added
+
+- **rust**: Add stateful BatchEncoder with persistent thread pool
+- **go**: Add BatchEncoder with owned goroutine pool
+- **swift**: Add BatchEncoder with owned OperationQueue pool
+- **kotlin**: Add BatchEncoder with owned ExecutorService pool
+- **csharp**: Add BatchEncoder with owned thread pool
+- **py**: Add serial BatchEncoder for API parity
+- **ts**: Add serial BatchEncoder for API parity
+- **android**: Add UniFFI binding crate, AAR module, CI, and docs
+- **comparison**: Deploy report to Cloudflare Pages with commit-hash footer
+- Add cross-language encode/decode benchmark vs ThumbHash (#20)
+- Add native Rust ThumbHash baseline for fair algorithm comparison
+- **tools**: Add --timeout flag and native ThumbHash baseline
+
+### Changed
+
+- **rust**: Use precomputed cosine tables in decode
+- **ts**: Precompute separable cosine tables in encode and decode
+- **py**: Precompute separable cosine tables in encode and decode
+- **go**: Precompute separable cosine tables in encode and decode
+- **swift**: Precompute separable cosine tables in encode and decode
+- **kotlin**: Precompute separable cosine tables in encode and decode
+- **csharp**: Precompute separable cosine tables in encode and decode
+
+### Documentation
+
+- Fix LICENSE-APACHE
+- Add Android integration guide
+- Add chromahash benchmark results
+- Add pre-v1 CHANGELOG
+
+<!-- git-cliff-unreleased-end -->
 
 ## [0.4.0] - 2026-05-22
 
