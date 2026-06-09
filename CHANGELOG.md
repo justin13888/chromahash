@@ -46,6 +46,12 @@ producer-side metadata. See `spec/README.md` §2.5 for details.
 - Add chromahash benchmark results
 - Add pre-v1 CHANGELOG
 
+### Removed
+
+- **comparison**: Remove the in-house PSNR/DSSIM/OKLAB ΔE metrics and the normalized
+  composite score; all quality metrics now come from `iqa-cli`, with CIEDE2000 (ΔE00) as
+  the primary metric and every format scored at identical (source) dimensions (#26)
+
 <!-- git-cliff-unreleased-end -->
 
 ## [0.4.0] - 2026-05-22

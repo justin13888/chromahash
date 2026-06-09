@@ -54,6 +54,19 @@ jobs:
       # Build CLI harnesses (verify they compile)
       - uses: dtolnay/rust-toolchain@stable
 
+      # Cache the installed iqa-cli binary so the vendored C++ (ssimulacra2 /
+      # butteraugli / libjxl) isn't rebuilt on every run. Keyed by version.
+      - name: Cache iqa-cli
+        id: cache-iqa
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/iqa-cli
+          key: iqa-cli-0.2.0-${{ runner.os }}
+
+      - name: Install iqa-cli
+        if: steps.cache-iqa.outputs.cache-hit != 'true'
+        run: cargo install iqa-cli --locked --version 0.2.0
+
       - name: Build Rust harness
         run: cargo build --manifest-path rust/Cargo.toml --example encode_stdin
 

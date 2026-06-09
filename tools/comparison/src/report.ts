@@ -1,4 +1,9 @@
-import type { FormatResult, HarnessResult, ImageCategory } from "./types.ts";
+import type {
+  FormatResult,
+  HarnessResult,
+  ImageCategory,
+  MetricResult,
+} from "./types.ts";
 
 interface ImageEntry {
   name: string;
@@ -16,9 +21,13 @@ export interface FormatStat {
   avgSize: number;
   avgEncode: number;
   avgDecode: number;
+  /** Primary metric: mean CIEDE2000 ΔE00 (lower is better). */
+  avgCiede: number | null;
   avgDssim: number | null;
-  avgDe: number | null;
-  avgComp: number | null;
+  avgMsSsim: number | null;
+  avgPsnrHvsM: number | null;
+  avgSsimulacra2: number | null;
+  avgButteraugli: number | null;
   avgPsnr: number | null;
 }
 
@@ -50,6 +59,17 @@ function reportFooter(meta: ReportMeta): string {
   return `<footer class="report-footer">ChromaHash Comparison Report &middot; generated ${meta.generatedAt}${commitHtml}</footer>`;
 }
 
+/** Average a nullable metric field across results, ignoring null/non-finite values. */
+function avgMetric(
+  results: FormatResult[],
+  pick: (m: MetricResult) => number | null,
+): number | null {
+  const vals = results
+    .map((r) => pick(r.metrics))
+    .filter((v): v is number => v !== null && Number.isFinite(v));
+  return vals.length > 0 ? vals.reduce((s, v) => s + v, 0) / vals.length : null;
+}
+
 /**
  * Compute summary statistics for each format, optionally filtered to a subset of entries.
  */
@@ -71,79 +91,59 @@ export function computeFormatStats(
     const avgDecode =
       results.reduce((s, r) => s + r.decodeTimeMs, 0) / (results.length || 1);
 
-    const dssimResults = results.filter((r) => r.metrics.dssim !== null);
-    const avgDssim =
-      dssimResults.length > 0
-        ? dssimResults.reduce((s, r) => s + (r.metrics.dssim ?? 0), 0) /
-          dssimResults.length
-        : null;
-
-    const deResults = results.filter((r) => r.metrics.deltaEWeighted !== null);
-    const avgDe =
-      deResults.length > 0
-        ? deResults.reduce((s, r) => s + (r.metrics.deltaEWeighted ?? 0), 0) /
-          deResults.length
-        : null;
-
-    const compResults = results.filter(
-      (r) => r.metrics.compositeScore !== null,
-    );
-    const avgComp =
-      compResults.length > 0
-        ? compResults.reduce((s, r) => s + (r.metrics.compositeScore ?? 0), 0) /
-          compResults.length
-        : null;
-
-    const psnrResults = results.filter(
-      (r) => r.metrics.psnrDb !== null && Number.isFinite(r.metrics.psnrDb),
-    );
-    const avgPsnr =
-      psnrResults.length > 0
-        ? psnrResults.reduce((s, r) => s + (r.metrics.psnrDb ?? 0), 0) /
-          psnrResults.length
-        : null;
-
     return {
       name,
       avgSize,
       avgEncode,
       avgDecode,
-      avgDssim,
-      avgDe,
-      avgComp,
-      avgPsnr,
+      avgCiede: avgMetric(results, (m) => m.ciede2000),
+      avgDssim: avgMetric(results, (m) => m.dssim),
+      avgMsSsim: avgMetric(results, (m) => m.msSsim),
+      avgPsnrHvsM: avgMetric(results, (m) => m.psnrHvsM),
+      avgSsimulacra2: avgMetric(results, (m) => m.ssimulacra2),
+      avgButteraugli: avgMetric(results, (m) => m.butteraugli),
+      avgPsnr: avgMetric(results, (m) => m.psnrDb),
     };
   });
 }
 
+/** Format a nullable metric to fixed precision, or "N/A". */
+function fmt(v: number | null, digits: number): string {
+  return v !== null ? v.toFixed(digits) : "N/A";
+}
+
+/** Wrap a value in a good/warn/bad colour span using ascending thresholds (lower is better). */
+function gradeCell(
+  v: number | null,
+  digits: number,
+  good: number,
+  warn: number,
+): string {
+  if (v === null) return "N/A";
+  const cls =
+    v < good ? "metric-good" : v < warn ? "metric-warn" : "metric-bad";
+  return `<span class="${cls}">${v.toFixed(digits)}</span>`;
+}
+
 function formatStatsTable(stats: FormatStat[]): string {
   return `<table>
-<tr><th>Format</th><th>Avg Size (B)</th><th>Encode (ms)</th><th>Decode (ms)</th><th>Avg DSSIM ↓</th><th>Avg dE wtd ↓</th><th>Avg Composite ↓</th><th>Avg PSNR (dB) ↑</th></tr>
+<tr><th>Format</th><th>Avg Size (B)</th><th>Encode (ms)</th><th>Decode (ms)</th><th>Avg ΔE00 ↓</th><th>Avg DSSIM ↓</th><th>Avg MS-SSIM ↑</th><th>Avg PSNR-HVS-M ↑</th><th>Avg SSIMULACRA2 ↑</th><th>Avg Butteraugli ↓</th><th>Avg PSNR (dB) ↑</th></tr>
 ${stats
-  .map((s) => {
-    const dssimCell =
-      s.avgDssim !== null
-        ? `<span class="${s.avgDssim < 0.1 ? "metric-good" : s.avgDssim < 0.25 ? "metric-warn" : "metric-bad"}">${s.avgDssim.toFixed(4)}</span>`
-        : "N/A";
-    const deCell =
-      s.avgDe !== null
-        ? `<span class="${s.avgDe < 0.04 ? "metric-good" : s.avgDe < 0.12 ? "metric-warn" : "metric-bad"}">${s.avgDe.toFixed(4)}</span>`
-        : "N/A";
-    const compCell =
-      s.avgComp !== null
-        ? `<span class="${s.avgComp < 0.3 ? "metric-good" : s.avgComp < 0.6 ? "metric-warn" : "metric-bad"}">${s.avgComp.toFixed(3)}</span>`
-        : "N/A";
-    return `<tr>
+  .map(
+    (s) => `<tr>
   <td><strong>${s.name}</strong></td>
   <td>${s.avgSize.toFixed(1)}</td>
   <td>${s.avgEncode.toFixed(3)}</td>
   <td>${s.avgDecode.toFixed(3)}</td>
-  <td>${dssimCell}</td>
-  <td>${deCell}</td>
-  <td>${compCell}</td>
-  <td>${s.avgPsnr !== null ? s.avgPsnr.toFixed(1) : "N/A"}</td>
-</tr>`;
-  })
+  <td>${gradeCell(s.avgCiede, 2, 2, 5)}</td>
+  <td>${gradeCell(s.avgDssim, 4, 0.1, 0.25)}</td>
+  <td>${fmt(s.avgMsSsim, 4)}</td>
+  <td>${fmt(s.avgPsnrHvsM, 1)}</td>
+  <td>${fmt(s.avgSsimulacra2, 1)}</td>
+  <td>${fmt(s.avgButteraugli, 2)}</td>
+  <td>${fmt(s.avgPsnr, 1)}</td>
+</tr>`,
+  )
   .join("\n")}
 </table>`;
 }
@@ -287,15 +287,18 @@ ${formatStatsTable(allStats)}
 <details class="methodology">
 <summary>Methodology</summary>
 <div class="inner">
-<p><strong>Blur-then-compare</strong>: The encoder input is Lanczos-3 downscaled to each format's native decoded resolution before comparison, avoiding nearest-neighbor upsampling artifacts that inflate PSNR penalty. For ChromaHash, decoded output larger than the source is downscaled to source dims before metric computation.</p>
+<p><strong>Identical-dimension comparison</strong>: every format's decoded preview is Lanczos-3 resampled to the encoder-input (source) resolution and compared against that input, so all formats are scored at the same W×H per image. <strong>CIEDE2000 (ΔE00) is the primary metric</strong> — color accuracy dominates perceived quality for low-fidelity placeholders, where PSNR correlates poorly. All metrics are computed by <a href="https://crates.io/crates/iqa-cli"><code>iqa-cli</code></a> (the iqa-rs crate); window-based metrics are omitted (N/A) for images below their minimum size.</p>
 <table style="margin:10px 0">
-<tr><th>Metric</th><th>What it measures</th><th>Good threshold</th></tr>
-<tr><td><strong>DSSIM</strong></td><td>(1−SSIM)/2 over luminance; structural fidelity ignoring uniform brightness shifts</td><td>&lt; 0.10</td></tr>
-<tr><td><strong>dE wtd</strong></td><td>OKLAB ΔE weighted by local luminance variance (saliency proxy); JND ≈ 0.02</td><td>&lt; 0.04</td></tr>
-<tr><td><strong>Composite</strong></td><td>0.55·norm(DSSIM) + 0.45·norm(dE wtd); min-max normalised per image across raster formats</td><td>0 = best</td></tr>
-<tr><td><strong>PSNR</strong></td><td>Classic pixel MSE metric; shown for familiarity but penalises intentional LQIP blur</td><td>reference only</td></tr>
+<tr><th>Metric</th><th>What it measures</th><th>Direction</th></tr>
+<tr><td><strong>ΔE00 (CIEDE2000)</strong></td><td><strong>Primary.</strong> Mean perceptual color difference over sRGB→CIELAB (D65)</td><td>lower; JND ≈ 1</td></tr>
+<tr><td><strong>DSSIM</strong></td><td>(1−SSIM)/2; structural fidelity</td><td>lower; 0 = identical</td></tr>
+<tr><td><strong>MS-SSIM</strong></td><td>Multi-scale SSIM</td><td>higher; 1 = identical</td></tr>
+<tr><td><strong>PSNR-HVS-M</strong></td><td>DCT-domain PSNR with CSF + contrast masking (dB)</td><td>higher</td></tr>
+<tr><td><strong>SSIMULACRA2</strong></td><td>Perceptual full-reference score</td><td>higher; 100 = identical</td></tr>
+<tr><td><strong>Butteraugli</strong></td><td>Perceptual distance (libjxl)</td><td>lower; 0 = identical</td></tr>
+<tr><td><strong>PSNR</strong></td><td>Classic pixel MSE metric; penalises intentional LQIP blur</td><td>higher; reference only</td></tr>
 </table>
-<p style="margin-top:8px"><em>Thresholds calibrated for 32-byte hash-based formats. DSSIM good &lt; 0.10, warn &lt; 0.25. dE wtd good &lt; 0.04, warn &lt; 0.12.</em></p>
+<p style="margin-top:8px"><em>ΔE00 colour coding: good &lt; 2, warn &lt; 5, bad ≥ 5. DSSIM: good &lt; 0.10, warn &lt; 0.25.</em></p>
 </div>
 </details>
 
@@ -326,15 +329,15 @@ ${catEntries
       <div class="label">${r.formatName}<br>${r.decodedWidth}x${r.decodedHeight}px | ${r.encodedSizeBytes}B</div>
     </div>`;
       }
-      const compStr =
-        r.metrics.compositeScore !== null
-          ? ` | C:${r.metrics.compositeScore.toFixed(2)}`
+      const ciedeStr =
+        r.metrics.ciede2000 !== null
+          ? ` | ΔE:${r.metrics.ciede2000.toFixed(2)}`
           : "";
       const dssimStr =
         r.metrics.dssim !== null ? ` DSSIM:${r.metrics.dssim.toFixed(3)}` : "";
       return `<div class="image-cell">
       <img src="${r.dataUri}" alt="${r.formatName}">
-      <div class="label">${r.formatName}<br>${r.decodedWidth}x${r.decodedHeight}px | ${r.encodedSizeBytes}B${compStr}${dssimStr}</div>
+      <div class="label">${r.formatName}<br>${r.decodedWidth}x${r.decodedHeight}px | ${r.encodedSizeBytes}B${ciedeStr}${dssimStr}</div>
     </div>`;
     })
     .join("\n  ")}

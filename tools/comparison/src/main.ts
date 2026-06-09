@@ -21,7 +21,6 @@ import {
 } from "./report.ts";
 import { generateFixtures } from "./generate-fixtures.ts";
 import { ensureNaturalImages } from "./natural-images.ts";
-import { computeCompositeScores } from "./metrics.ts";
 import type {
   FormatAdapter,
   FormatResult,
@@ -195,9 +194,6 @@ async function main(): Promise<void> {
       }
     }
 
-    // Compute composite scores now that all formats for this image have run
-    computeCompositeScores(formatResults);
-
     entries.push({
       name,
       category,
@@ -232,17 +228,20 @@ async function main(): Promise<void> {
     ),
   ];
 
+  const cell = (v: number | null, digits: number, width: number): string =>
+    (v !== null ? v.toFixed(digits) : "N/A").padStart(width);
+
   const printSummary = (
     label: string,
     stats: ReturnType<typeof computeFormatStats>,
   ) => {
     console.log(`\n=== Format Summary (${label}) ===`);
     console.log(
-      `  ${"Format".padEnd(14)} ${"Size(B)".padStart(8)} ${"DSSIM".padStart(8)} ${"dE(wtd)".padStart(9)} ${"Composite".padStart(10)} ${"PSNR(dB)".padStart(9)}`,
+      `  ${"Format".padEnd(14)} ${"Size(B)".padStart(8)} ${"ΔE00".padStart(8)} ${"DSSIM".padStart(8)} ${"MS-SSIM".padStart(8)} ${"SSIM2".padStart(8)} ${"Butter".padStart(8)} ${"PSNR(dB)".padStart(9)}`,
     );
     for (const s of stats) {
       console.log(
-        `  ${s.name.padEnd(14)} ${s.avgSize.toFixed(0).padStart(8)} ${(s.avgDssim !== null ? s.avgDssim.toFixed(4) : "N/A").padStart(8)} ${(s.avgDe !== null ? s.avgDe.toFixed(4) : "N/A").padStart(9)} ${(s.avgComp !== null ? s.avgComp.toFixed(3) : "N/A").padStart(10)} ${(s.avgPsnr !== null ? s.avgPsnr.toFixed(1) : "N/A").padStart(9)}`,
+        `  ${s.name.padEnd(14)} ${s.avgSize.toFixed(0).padStart(8)} ${cell(s.avgCiede, 2, 8)} ${cell(s.avgDssim, 4, 8)} ${cell(s.avgMsSsim, 4, 8)} ${cell(s.avgSsimulacra2, 1, 8)} ${cell(s.avgButteraugli, 2, 8)} ${cell(s.avgPsnr, 1, 9)}`,
       );
     }
   };

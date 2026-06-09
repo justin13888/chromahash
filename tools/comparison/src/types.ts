@@ -18,24 +18,29 @@ export interface ImageInput {
   gamut?: string;
 }
 
-/** Per-format quality metrics. All fields are null for CSS-only formats (e.g. unpic). */
+/**
+ * Per-format quality metrics, computed by `iqa-cli` between the decoded preview
+ * and the encoder input, both resampled to identical (source) dimensions.
+ * All fields are null for CSS-only formats (e.g. unpic) or when iqa-cli is unavailable.
+ */
 export interface MetricResult {
-  /** PSNR in dB vs Lanczos-downscaled ground truth. Higher is better. */
-  psnrDb: number | null;
+  /**
+   * Primary metric: mean CIEDE2000 (ΔE00) color difference over sRGB→CIELAB (D65).
+   * Lower is better; ΔE00 JND ≈ 1.
+   */
+  ciede2000: number | null;
   /** DSSIM = (1 - SSIM) / 2. Lower is better; 0 = identical. */
   dssim: number | null;
-  /** Unweighted mean OKLAB ΔE. Lower is better; JND ≈ 0.02. */
-  deltaEMean: number | null;
-  /** Luminance-variance saliency-weighted mean OKLAB ΔE. Lower is better. */
-  deltaEWeighted: number | null;
-  /** 95th-percentile OKLAB ΔE. */
-  deltaE95: number | null;
-  /**
-   * Composite quality score: 0.55·norm(DSSIM) + 0.45·norm(weighted ΔE).
-   * Normalized per-image across raster formats (0 = best, 1 = worst).
-   * Null until computeCompositeScores() is called.
-   */
-  compositeScore: number | null;
+  /** Multi-scale SSIM. Higher is better; 1 = identical. */
+  msSsim: number | null;
+  /** PSNR-HVS-M (DCT-domain PSNR with CSF + contrast masking), in dB. Higher is better. */
+  psnrHvsM: number | null;
+  /** SSIMULACRA2 perceptual score. Higher is better (100 = identical). */
+  ssimulacra2: number | null;
+  /** Butteraugli distance. Lower is better; 0 = identical. */
+  butteraugli: number | null;
+  /** Classic PSNR in dB. Higher is better; reference only (weak LQIP correlation). */
+  psnrDb: number | null;
 }
 
 /** Result of encoding/decoding with a particular format. */
