@@ -72,7 +72,14 @@ lint-fix-thumbhash:
 build-compare:
     mise exec -- pnpm --prefix tools/comparison run build
 
-# Run the visual comparison (generates HTML report)
+# Install iqa-cli (the iqa-rs metrics CLI) — prerequisite for `compare`'s quality
+# metrics. Pulls in ssimulacra2/butteraugli, which build vendored C++ (needs a C/C++
+# toolchain). Without it the report still builds, but metrics show as N/A.
+install-iqa:
+    cargo install iqa-cli --locked --version 0.2.0
+
+# Run the visual comparison (generates HTML report). Requires iqa-cli on PATH for
+# quality metrics — run `just install-iqa` once first.
 compare: build-compare
     mise exec -- pnpm --prefix tools/comparison run compare
 
