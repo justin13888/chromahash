@@ -78,8 +78,9 @@ build-compare:
 install-iqa:
     cargo install iqa-cli --locked --version 0.2.0
 
-# Run the visual comparison (generates HTML report). Requires iqa-cli on PATH for
-# quality metrics — run `just install-iqa` once first.
+# Run the visual comparison. Emits output/report.html, output/report.json, and
+# standalone images under output/images/ (the HTML and JSON both reference them).
+# Requires iqa-cli on PATH for quality metrics — run `just install-iqa` once first.
 compare: build-compare
     mise exec -- pnpm --prefix tools/comparison run compare
 

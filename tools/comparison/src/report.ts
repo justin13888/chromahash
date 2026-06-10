@@ -1,5 +1,6 @@
 import type {
   FormatResult,
+  FormatStat,
   HarnessResult,
   ImageCategory,
   MetricResult,
@@ -14,21 +15,6 @@ interface ImageEntry {
   loResDataUri: string;
   formatResults: FormatResult[];
   harnessResults: HarnessResult[];
-}
-
-export interface FormatStat {
-  name: string;
-  avgSize: number;
-  avgEncode: number;
-  avgDecode: number;
-  /** Primary metric: mean CIEDE2000 ΔE00 (lower is better). */
-  avgCiede: number | null;
-  avgDssim: number | null;
-  avgMsSsim: number | null;
-  avgPsnrHvsM: number | null;
-  avgSsimulacra2: number | null;
-  avgButteraugli: number | null;
-  avgPsnr: number | null;
 }
 
 /**
@@ -148,29 +134,37 @@ ${stats
 </table>`;
 }
 
+/** Canonical LQIP format order, shared by the HTML report and the JSON output. */
+export const FORMAT_NAMES = [
+  "ChromaHash",
+  "ThumbHash",
+  "BlurHash",
+  "lqip-modern",
+  "unpic",
+];
+
+/** Canonical language order, shared by the HTML report and the JSON output. */
+export const LANGUAGES = [
+  "Rust",
+  "TypeScript",
+  "Kotlin",
+  "Swift",
+  "Go",
+  "Python",
+  "C#",
+];
+
 /**
- * Generate a self-contained HTML report with all images embedded as data URIs.
+ * Generate a self-contained HTML report. Images are referenced by whatever the
+ * entries' image fields contain — a relative path once materialized to disk, or
+ * a data URI otherwise.
  */
 export function generateReport(
   entries: ImageEntry[],
   meta: ReportMeta,
 ): string {
-  const formatNames = [
-    "ChromaHash",
-    "ThumbHash",
-    "BlurHash",
-    "lqip-modern",
-    "unpic",
-  ];
-  const languages = [
-    "Rust",
-    "TypeScript",
-    "Kotlin",
-    "Swift",
-    "Go",
-    "Python",
-    "C#",
-  ];
+  const formatNames = FORMAT_NAMES;
+  const languages = LANGUAGES;
 
   // Compute summary stats: natural/realistic only (primary), and all images
   const naturalFilter = (e: ImageEntry) =>

@@ -92,3 +92,91 @@ export type ImageCategory =
   | "Gamut"
   | "Natural"
   | "Realistic";
+
+/** Per-format summary statistics, averaged across a set of images. */
+export interface FormatStat {
+  name: string;
+  avgSize: number;
+  avgEncode: number;
+  avgDecode: number;
+  /** Primary metric: mean CIEDE2000 ΔE00 (lower is better). */
+  avgCiede: number | null;
+  avgDssim: number | null;
+  avgMsSsim: number | null;
+  avgPsnrHvsM: number | null;
+  avgSsimulacra2: number | null;
+  avgButteraugli: number | null;
+  avgPsnr: number | null;
+}
+
+/**
+ * A single format's encode/decode result as serialized into the JSON report.
+ * Mirrors {@link FormatResult} but references the decoded preview by relative
+ * file path instead of embedding it inline.
+ */
+export interface FormatJson {
+  formatName: string;
+  encodedSizeBytes: number;
+  decodedWidth: number;
+  decodedHeight: number;
+  encodeTimeMs: number;
+  decodeTimeMs: number;
+  /** Relative path to the standalone preview image, or null for CSS-only formats. */
+  preview: string | null;
+  /** CSS gradient string for CSS-only formats (e.g. unpic), else null. */
+  css: string | null;
+  metrics: MetricResult;
+}
+
+/** A single language implementation's result as serialized into the JSON report. */
+export interface ImplementationJson {
+  language: string;
+  /** Hex-encoded 32-byte hash, or "" if the harness errored. */
+  hash: string;
+  /** Whether this hash matches the reference (Rust) hash. */
+  matches: boolean;
+  /** Relative path to the standalone decoded preview, or null if the harness errored. */
+  preview: string | null;
+}
+
+/** A single image's full comparison record as serialized into the JSON report. */
+export interface ComparisonImageJson {
+  name: string;
+  category: ImageCategory;
+  originalWidth: number;
+  originalHeight: number;
+  /** Relative path to the standalone original (display-sized) image. */
+  original: string;
+  /** Relative path to the standalone encoder-input (downscaled) image. */
+  encoderInput: string;
+  /** Encoder-input width (the resolution all formats encode from). */
+  encoderInputWidth: number;
+  /** Encoder-input height. */
+  encoderInputHeight: number;
+  formats: FormatJson[];
+  implementations: ImplementationJson[];
+}
+
+/**
+ * The full machine-readable comparison report. Written alongside the HTML and
+ * referencing the same standalone images under `images/`.
+ */
+export interface ComparisonJson {
+  /** Schema version, bumped on breaking changes to this structure. */
+  schemaVersion: number;
+  /** Pre-formatted generation timestamp (matches the HTML footer). */
+  generatedAt: string;
+  /** Full commit SHA the report was built from, or null when unknown. */
+  commit: string | null;
+  /** Base repository URL, or null. */
+  repoUrl: string | null;
+  /** LQIP format names, in report order. */
+  formats: string[];
+  /** Language implementation names, in report order. */
+  languages: string[];
+  /** Summary statistics for natural/realistic images (primary) and all images. */
+  summary: { naturalAndRealistic: FormatStat[]; all: FormatStat[] };
+  /** Cross-language pass/fail; pass is null when harnesses were skipped. */
+  crossLanguage: { language: string; pass: boolean | null }[];
+  images: ComparisonImageJson[];
+}
