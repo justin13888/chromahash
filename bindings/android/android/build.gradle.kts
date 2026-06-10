@@ -1,3 +1,6 @@
+import com.vanniktech.maven.publish.AndroidSingleVariantLibrary
+import com.vanniktech.maven.publish.JavadocJar
+import com.vanniktech.maven.publish.SourcesJar
 import java.io.File
 
 plugins {
@@ -5,10 +8,13 @@ plugins {
     // applied separately. `src/main/kotlin` is a default source dir, which is
     // where uniffi-bindgen writes the generated ChromaHash bindings.
     id("com.android.library") version "9.1.1"
-    `maven-publish`
+    // Publishes the AAR to Maven Central + GitHub Packages (see Publishing below).
+    id("com.vanniktech.maven.publish") version "0.36.0"
 }
 
-group = "io.chromahash"
+// Maven coordinate group. This is the GitHub-verified Sonatype Central namespace
+// and is INDEPENDENT of the Kotlin/Android package `io.chromahash.ffi`.
+group = "io.github.justin13888"
 version = "0.5.0" // tracks the chromahash core crate version
 
 android {
@@ -18,11 +24,8 @@ android {
     defaultConfig {
         minSdk = 21
     }
-
-    // Expose a single publishable "release" component (the AAR) to maven-publish.
-    publishing {
-        singleVariant("release")
-    }
+    // NOTE: no `publishing { singleVariant("release") }` here — the vanniktech
+    // plugin's AndroidSingleVariantLibrary (below) configures the release variant.
 }
 
 dependencies {
@@ -90,18 +93,70 @@ tasks.named("preBuild") {
 }
 
 // ─── Publishing ───────────────────────────────────────────────────────────────
-// `./gradlew publishToMavenLocal` works out of the box. CI publishes to GitHub
-// Packages with GITHUB_ACTOR/GITHUB_TOKEN; locally you can set gpr.user/gpr.key.
-// Longer-term distribution (e.g. Maven Central) is tracked in the project issues.
-publishing {
-    publications {
-        register<MavenPublication>("release") {
-            groupId = project.group.toString()
-            artifactId = "chromahash-android"
-            version = project.version.toString()
-            afterEvaluate { from(components["release"]) }
+// Two distribution channels (issue #17):
+//   • Maven Central (Sonatype Central Portal) — the public, auth-free channel.
+//   • GitHub Packages — a secondary mirror tied to this repo (consumers need a PAT).
+// Local dev: `./gradlew publishToMavenLocal` (no signing/credentials needed).
+// Coordinate: io.github.justin13888:chromahash-android:<version>.
+// The one-time Maven Central bootstrap (namespace, signing key, secrets) and the
+// tag-driven release flow are documented in RELEASING.md.
+mavenPublishing {
+    // Argument-less in vanniktech 0.36.0 — already targets the Central Portal
+    // (legacy OSSRH support was removed). CI runs publishAndReleaseToMavenCentral.
+    publishToMavenCentral()
+    signAllPublications()
+
+    coordinates("io.github.justin13888", "chromahash-android", version.toString())
+
+    // Single "release" AAR variant. JavadocJar.Empty() ships an empty javadoc jar
+    // (Central requires one; real javadoc is meaningless for generated Kotlin).
+    configure(
+        AndroidSingleVariantLibrary(
+            javadocJar = JavadocJar.Empty(),
+            sourcesJar = SourcesJar.Sources(),
+            variant = "release",
+        ),
+    )
+
+    pom {
+        name.set("ChromaHash for Android")
+        description.set(
+            "Android binding for ChromaHash: the zero-dependency Rust core exposed to Kotlin " +
+                "over JNI via UniFFI, packaged as an AAR for fast on-device placeholder decoding.",
+        )
+        inceptionYear.set("2026")
+        url.set("https://github.com/justin13888/chromahash")
+        licenses {
+            license {
+                name.set("MIT License")
+                url.set("https://github.com/justin13888/chromahash/blob/master/LICENSE-MIT")
+                distribution.set("repo")
+            }
+            license {
+                name.set("The Apache License, Version 2.0")
+                url.set("https://github.com/justin13888/chromahash/blob/master/LICENSE-APACHE")
+                distribution.set("repo")
+            }
+        }
+        developers {
+            developer {
+                id.set("justin13888")
+                name.set("Justin Chung")
+                url.set("https://github.com/justin13888")
+            }
+        }
+        scm {
+            url.set("https://github.com/justin13888/chromahash")
+            connection.set("scm:git:git://github.com/justin13888/chromahash.git")
+            developerConnection.set("scm:git:ssh://git@github.com/justin13888/chromahash.git")
         }
     }
+}
+
+// Re-add GitHub Packages as a secondary target on the vanniktech-created
+// publication. vanniktech owns the publications + signing; we only register the
+// extra repository (CI sets GITHUB_ACTOR/GITHUB_TOKEN; locally set gpr.user/gpr.key).
+publishing {
     repositories {
         maven {
             name = "GitHubPackages"

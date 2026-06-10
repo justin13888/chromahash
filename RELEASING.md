@@ -113,3 +113,63 @@ already-published skip check.)
 
 The `chromahash-uniffi` binding crate stays `publish = false` and is never
 published to crates.io.
+
+## Publishing the Android AAR
+
+The same `vX.Y.Z` tag triggers the [`release-android`](.github/workflows/release-android.yml)
+workflow, which builds the AAR (cross-compiling the binding crate for every ABI) and publishes
+it to **two** channels:
+
+- **Maven Central** (Sonatype Central Portal) — the public, auth-free channel apps consume.
+- **GitHub Packages** — a secondary mirror tied to this repo (consumers need a PAT to read it).
+
+The coordinate is `io.github.justin13888:chromahash-android:X.Y.Z`. The `io.github.justin13888`
+namespace is GitHub-verified on Sonatype Central (no domain needed); the Kotlin package stays
+`io.chromahash.ffi` and is independent of the Maven group. Publishing uses the
+[vanniktech maven-publish](https://vanniktech.github.io/gradle-maven-publish-plugin/) plugin
+(see `bindings/android/android/build.gradle.kts`).
+
+The workflow is idempotent against Maven Central: a version already on `repo1.maven.org` is
+skipped, so re-pushing a tag is safe. **Caveat:** Central propagation to `repo1`/search lags the
+Portal by up to ~30 minutes, so a re-push within that window may re-attempt (Central rejects
+duplicate coordinates — it fails safe, just noisily). The skip is keyed on Central, so if Central
+succeeds but the GitHub Packages mirror fails, a re-push skips both — acceptable for a mirror.
+
+### One-time bootstrap
+
+Maven Central needs a verified namespace and a GPG signing key. Do this once (the `just` recipes
+automate everything except the two browser steps):
+
+1. **Claim the namespace.** Sign in to <https://central.sonatype.com/> with GitHub, then
+   **Namespaces → Add Namespace → `io.github.justin13888`**. Because it matches the GitHub
+   account it is auto-verified.
+2. **Generate a Portal token.** Central Portal → **Account → Generate User Token**. Keep the
+   username + password halves — they become the `MAVEN_CENTRAL_USERNAME` / `MAVEN_CENTRAL_PASSWORD`
+   secrets.
+3. **Generate the signing key and push all four secrets:**
+
+   ```bash
+   just android-gen-signing-key   # GPG keygen, export signing-key.asc, upload the public key
+   just android-set-secrets       # prompts for the Portal token, sets all 4 GitHub secrets via gh
+   rm signing-key.asc signing-password.txt   # delete the local key material (or keep in a vault)
+   ```
+
+   `gpg` is the only external tool required (one-time key generation); `cargo-ndk` and `gh` are
+   mise-managed. The generated `signing-key.asc` / `signing-password.txt` are gitignored.
+4. **First publish (staged).** For the very first release, stage it so you can inspect it in the
+   Portal before releasing, instead of relying on the workflow's auto-release:
+
+   ```bash
+   cd bindings/android/android
+   ORG_GRADLE_PROJECT_mavenCentralUsername=<tokenUser> \
+   ORG_GRADLE_PROJECT_mavenCentralPassword=<tokenPass> \
+   ORG_GRADLE_PROJECT_signingInMemoryKey="$(cat ../../../signing-key.asc)" \
+   ORG_GRADLE_PROJECT_signingInMemoryKeyPassword="$(cat ../../../signing-password.txt)" \
+   mise exec java@21 gradle@9.4.0 -- ./gradlew publishToMavenCentral --no-configuration-cache
+   ```
+
+   Then on <https://central.sonatype.com/publishing/deployments> review the deployment and click
+   **Publish**. After this first green release, every subsequent `vX.Y.Z` tag publishes and
+   auto-releases via the workflow with no manual step.
+
+GitHub Packages needs no bootstrap — CI's built-in `GITHUB_TOKEN` authenticates it.

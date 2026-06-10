@@ -8,6 +8,8 @@ python = "3.13"
 dotnet = "9"
 "aqua:orhun/git-cliff" = "2.13.1"
 "cargo:convco" = "0.6.4"
+"cargo:cargo-ndk" = "4.1.2" # cross-compile the Android binding's cdylib per ABI
+"aqua:cli/cli" = "2.93.0"   # gh — used by the Android publishing bootstrap recipes
 
 [settings]
 experimental = true

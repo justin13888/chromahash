@@ -1,0 +1,100 @@
+name: Release (Android)
+
+# Publish the chromahash-android AAR when a release tag is pushed.
+# Releases are cut with `just release X.Y.Z`, which creates and pushes the
+# `vX.Y.Z` tag (see RELEASING.md). This workflow publishes the AAR to BOTH
+# Maven Central (Sonatype Central Portal) and GitHub Packages.
+#
+# Idempotent against Maven Central: a version already on Central is skipped, so
+# re-pushing a tag is safe. NOTE the skip is keyed on Central, so if Central
+# succeeds but the GitHub Packages mirror fails, a re-push will skip both — GitHub
+# Packages is a secondary mirror, so this is an accepted trade-off.
+#
+# The one-time bootstrap (namespace, GPG signing key, repo secrets) is documented
+# in RELEASING.md → "Publishing the Android AAR".
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  packages: write # publish to GitHub Packages
+
+concurrency:
+  group: release-android-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # mise provides java, gradle, and cargo-ndk (toolchain-from-mise policy);
+      # the same versions developers use locally, pinned in .mise.toml.
+      - uses: jdx/mise-action@v2
+        with:
+          install: true
+
+      # rustup owns the Android target triples (not a mise concern).
+      - name: Install Rust Android targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,i686-linux-android
+
+      - name: Cache Cargo + Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            bindings/android/target
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-release-android-${{ hashFiles('bindings/android/Cargo.toml', 'bindings/android/android/**/*.gradle*') }}
+
+      - name: Verify tag matches build.gradle.kts version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          gradle_ver="$(grep -oE '^version = "[^"]+"' bindings/android/android/build.gradle.kts \
+            | head -1 | sed -E 's/version = "(.*)"/\1/')"
+          if [ "$tag" != "$gradle_ver" ]; then
+            echo "Tag v$tag does not match bindings/android/android/build.gradle.kts version $gradle_ver" >&2
+            exit 1
+          fi
+
+      - name: Skip if version already on Maven Central
+        id: check
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          url="https://repo1.maven.org/maven2/io/github/justin13888/chromahash-android/$ver/chromahash-android-$ver.pom"
+          if curl -sSfI "$url" >/dev/null 2>&1; then
+            echo "Version $ver already on Maven Central — skipping."
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # A single Gradle invocation cross-compiles the AAR once (preBuild → cargo-ndk
+      # → uniffi-bindgen) and publishes it to both channels:
+      #   • publishAndReleaseToMavenCentral — uploads + auto-releases on the Portal.
+      #   • publishMavenPublicationToGitHubPackagesRepository — mirrors to GH Packages.
+      # vanniktech reads credentials/signing from ORG_GRADLE_PROJECT_* env vars.
+      - name: Publish to Maven Central + GitHub Packages
+        if: steps.check.outputs.published == 'false'
+        working-directory: bindings/android/android
+        env:
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_PASSWORD }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          export ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-$ANDROID_NDK_LATEST_HOME}"
+          echo "Using NDK at: $ANDROID_NDK_HOME"
+          mise exec java@21 gradle@9.4.0 -- ./gradlew \
+            publishAndReleaseToMavenCentral \
+            publishMavenPublicationToGitHubPackagesRepository \
+            --no-configuration-cache --stacktrace

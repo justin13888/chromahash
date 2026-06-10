@@ -181,10 +181,71 @@ build-android-crate:
     cargo build --manifest-path bindings/android/Cargo.toml
 
 # Cross-compile every ABI + generate Kotlin + assemble the AAR.
-# Requires the Android NDK (ANDROID_NDK_HOME / ANDROID_NDK_LATEST_HOME), SDK, and
-# `cargo install cargo-ndk` + the android rustup targets. Not part of `just build`.
+# Requires the Android NDK (ANDROID_NDK_HOME / ANDROID_NDK_LATEST_HOME) + SDK and
+# the android rustup targets. cargo-ndk is mise-managed (`cargo:cargo-ndk`).
+# Not part of `just build`.
 build-android-aar:
     mise exec java@21 gradle@9.4.0 -- sh -c 'cd bindings/android/android && ./gradlew assembleRelease'
+
+# ─── Android publishing bootstrap (issue #17) ─────────────────────────────────
+# One-time helpers for Maven Central. Full walkthrough in RELEASING.md →
+# "Publishing the Android AAR". `gpg` is the one external tool (key generation).
+
+# Generate a GPG signing key, export it to gitignored files, upload the public key (one-time).
+android-gen-signing-key email="2daegu@hopnine.com" name="Justin Chung":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v gpg >/dev/null 2>&1 || { echo "gpg not found — install GnuPG (e.g. brew install gnupg)"; exit 1; }
+    if [ -f signing-key.asc ]; then echo "signing-key.asc already exists — remove it first to regenerate"; exit 1; fi
+    # Read a bounded chunk first, then truncate with bash — piping urandom
+    # straight into `head -c 32` makes `head` close the pipe early, killing the
+    # upstream reader with SIGPIPE, which `pipefail` turns into a 141 crash.
+    raw="$(LC_ALL=C tr -dc 'A-Za-z0-9' < <(head -c 256 /dev/urandom))"
+    pass="${raw:0:32}"
+    batch="$(mktemp)"
+    trap 'rm -f "$batch"' EXIT
+    cat > "$batch" <<EOF
+    %echo Generating ChromaHash Android signing key
+    Key-Type: RSA
+    Key-Length: 4096
+    Subkey-Type: RSA
+    Subkey-Length: 4096
+    Name-Real: {{ name }}
+    Name-Email: {{ email }}
+    Expire-Date: 0
+    Passphrase: $pass
+    %commit
+    %echo done
+    EOF
+    gpg --batch --generate-key "$batch"
+    keyid="$(gpg --list-secret-keys --keyid-format=long --with-colons "{{ email }}" | awk -F: '/^sec:/ {print $5; exit}')"
+    gpg --batch --pinentry-mode loopback --passphrase "$pass" --armor --export-secret-keys "$keyid" > signing-key.asc
+    printf '%s' "$pass" > signing-password.txt
+    echo
+    echo "Generated key $keyid. Uploading the PUBLIC key (Maven Central verifies signatures against it)…"
+    gpg --keyserver keyserver.ubuntu.com --send-keys "$keyid" \
+        || echo "  upload failed — retry later: gpg --keyserver keys.openpgp.org --send-keys $keyid"
+    echo
+    echo "Wrote (BOTH gitignored — never commit, delete after setting secrets):"
+    echo "  signing-key.asc       → SIGNING_KEY secret"
+    echo "  signing-password.txt  → SIGNING_PASSWORD secret"
+    echo
+    echo "Next: just android-set-secrets"
+
+# Set the 4 Maven Central GitHub secrets via gh (prompts for the Portal token).
+android-set-secrets:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    test -f signing-key.asc || { echo "signing-key.asc missing — run: just android-gen-signing-key"; exit 1; }
+    test -f signing-password.txt || { echo "signing-password.txt missing — run: just android-gen-signing-key"; exit 1; }
+    read -rp "Central Portal token username: " cu
+    read -rsp "Central Portal token password: " cp; echo
+    mise exec -- gh secret set MAVEN_CENTRAL_USERNAME --body "$cu"
+    mise exec -- gh secret set MAVEN_CENTRAL_PASSWORD --body "$cp"
+    mise exec -- gh secret set SIGNING_KEY < signing-key.asc
+    mise exec -- gh secret set SIGNING_PASSWORD --body "$(cat signing-password.txt)"
+    echo "Set MAVEN_CENTRAL_USERNAME, MAVEN_CENTRAL_PASSWORD, SIGNING_KEY, SIGNING_PASSWORD on $(mise exec -- gh repo view --json nameWithOwner -q .nameWithOwner)"
+    echo "Now delete the local key files: rm signing-key.asc signing-password.txt"
 
 # ─── TypeScript ──────────────────────────────────────────────────────────────
 
