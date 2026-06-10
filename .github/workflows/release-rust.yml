@@ -50,7 +50,10 @@ jobs:
         id: check
         run: |
           ver="${GITHUB_REF_NAME#v}"
-          if curl -sSf "https://crates.io/api/v1/crates/chromahash/$ver" >/dev/null 2>&1; then
+          # crates.io rejects a default/empty User-Agent with 403, which would make
+          # this check wrongly report "not published" and attempt a duplicate publish.
+          ua="chromahash-release (https://github.com/justin13888/chromahash)"
+          if curl -sSf -A "$ua" "https://crates.io/api/v1/crates/chromahash/$ver" >/dev/null 2>&1; then
             echo "Version $ver already published — skipping."
             echo "published=true" >> "$GITHUB_OUTPUT"
           else
