@@ -2,8 +2,15 @@
 name = "chromahash"
 version = "0.5.0"
 edition = "2024"
+rust-version = "1.85"
 description = "Modern, high-quality image placeholder representation for professional formats"
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/justin13888/chromahash"
+homepage = "https://github.com/justin13888/chromahash"
+documentation = "https://docs.rs/chromahash"
+readme = "README.md"
+keywords = ["image", "placeholder", "lqip", "thumbnail", "preview"]
+categories = ["multimedia::images", "encoding", "compression"]
 
 [dependencies]
 
