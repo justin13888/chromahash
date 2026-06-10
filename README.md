@@ -4,6 +4,17 @@
 
 chromahash is a multi-language library implementing a compact, high-fidelity Low Quality Image Placeholder (LQIP) format. All seven implementations are spec-compatible — identical input produces identical output across languages.
 
+## Why ChromaHash?
+
+ChromaHash is built for professional photo management at scale, where perceptual quality, layout precision, and wide-gamut correctness matter. Every claim below is defined and quantified in the [format specification](spec/).
+
+- **Perceptual, human-centric quality.** Color is encoded in the [OKLAB](https://bottosson.github.io/posts/oklab/) perceptually-uniform color space (the same model adopted by CSS Color 4), so quantization steps map to evenly-perceived changes. AC coefficients use µ-law companding (µ=5) to spend precision where DCT energy actually clusters, a per-pixel frequency-priority scan order weights vertical and diagonal detail the way the eye does instead of biasing horizontal frequencies, and out-of-gamut colors are softened with a hue-preserving Oklch clamp rather than hard-clipped.
+- **Wide-gamut aware.** Encodes from sRGB, Display P3, Adobe RGB, BT.2020, or ProPhoto RGB sources into absolute OKLAB coordinates and always decodes to sRGB — wide-gamut color is preserved instead of being flattened to sRGB-only like most LQIP formats.
+- **Precise layout.** An 8-bit log₂ aspect ratio keeps placeholder dimensions within ~1.09% of the original across ratios up to 16:1 (vs ThumbHash's 3-bit ~7% and ~7:1). The DCT grid adaptively reshapes to the aspect ratio, so no coefficients are wasted on non-square images.
+- **Fixed 32 bytes.** Every hash is exactly 32 bytes — memory-aligned, cache-friendly, and a zero-overhead database column or cache key with no length framing to parse.
+- **Fast decode with alpha.** Decoding runs in ~36µs native / ~182µs JS (well under 1ms), and transparent images are supported within the same fixed 32 bytes.
+- **First-class cross-language implementations.** Rust, TypeScript, Kotlin, Swift, Go, Python, and C# (plus an Android AAR binding), all validated **bit-exact** against the shared [`spec/`](spec/) test vectors. See [Appendix A of the spec](spec/README.md#appendix-a-thumbhash-comparison--acknowledgment) for the full ThumbHash comparison.
+
 ## Implementations
 
 | Language   | Directory        | Runtime / Build     | Status |
