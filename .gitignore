@@ -16,6 +16,10 @@ pnpm-debug.log*
 .env.local
 .env.*.local
 
+# Local-only Maven Central signing material (just android-gen-signing-key) — NEVER commit.
+signing-key.asc
+signing-password.txt
+
 # === Rust ===
 rust/target/
 tools/thumbhash-rs/target/

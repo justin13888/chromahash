@@ -98,8 +98,12 @@ AAR; `arm64-v8a` covers essentially all modern physical devices.
 
 The generated Kotlin runtime depends on **JNA** (the Android `@aar` artifact,
 `net.java.dev.jna:jna:5.14.0@aar`) and loads the `.so` itself — you don't call `System.loadLibrary`.
-Publishing is wired via `maven-publish` (GitHub Packages + `publishToMavenLocal`); the long-term
-distribution channel is tracked in [issue #17](https://github.com/justin13888/chromahash/issues/17).
+Publishing is wired via the [vanniktech maven-publish](https://vanniktech.github.io/gradle-maven-publish-plugin/)
+plugin to **Maven Central** and **GitHub Packages** as `io.github.justin13888:chromahash-android`
+(plus `publishToMavenLocal` for local dev); a `vX.Y.Z` tag publishes both channels via the
+[`release-android`](../.github/workflows/release-android.yml) workflow. See
+[RELEASING.md](../RELEASING.md#publishing-the-android-aar) and the
+[binding README](../bindings/android/README.md#publish).
 
 ## 5. Use it from an app
 
@@ -194,6 +198,11 @@ optional host-JVM end-to-end check through the generated Kotlin is described in 
   crate. No NDK; this is the required correctness gate.
 - **`aar`** — installs the Rust Android targets + `cargo-ndk`, points at the runner's NDK
   (`ANDROID_NDK_LATEST_HOME`), and runs `gradle assembleRelease`, uploading the AAR artifact.
+
+Releases are separate: pushing a `vX.Y.Z` tag triggers
+[`.github/workflows/release-android.yml`](../.github/workflows/release-android.yml), which builds
+the AAR the same way and publishes it to Maven Central + GitHub Packages (see
+[RELEASING.md](../RELEASING.md#publishing-the-android-aar)).
 
 ## 10. Alternative: hand-written `jni-rs`
 
