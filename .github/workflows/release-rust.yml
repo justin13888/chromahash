@@ -1,0 +1,69 @@
+name: Release (Rust)
+
+# Publish the `chromahash` crate to crates.io when a release tag is pushed.
+# Releases are cut with `just release X.Y.Z`, which creates and pushes the
+# `vX.Y.Z` tag (see RELEASING.md). This workflow then publishes via crates.io
+# trusted publishing (OIDC) — no stored token. It is idempotent: a version that
+# is already on crates.io (e.g. the one-time bootstrap release published
+# manually) is skipped.
+#
+# crates.io's trusted-publisher config references this workflow's filename
+# (release-rust.yml) — don't rename it without updating crates.io.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-rust-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # OIDC token for crates.io trusted publishing
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Verify tag matches Cargo.toml version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          crate="$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name=="chromahash") | .version')"
+          if [ "$tag" != "$crate" ]; then
+            echo "Tag v$tag does not match rust/Cargo.toml version $crate" >&2
+            exit 1
+          fi
+
+      - name: Skip if version already on crates.io
+        id: check
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          if curl -sSf "https://crates.io/api/v1/crates/chromahash/$ver" >/dev/null 2>&1; then
+            echo "Version $ver already published — skipping."
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Authenticate with crates.io (trusted publishing)
+        if: steps.check.outputs.published == 'false'
+        id: auth
+        uses: rust-lang/crates-io-auth-action@v1
+
+      - name: Publish
+        if: steps.check.outputs.published == 'false'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: cargo publish --locked

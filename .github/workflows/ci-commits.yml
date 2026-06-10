@@ -1,12 +1,17 @@
 name: CI (Commits)
 
-# Enforce conventional commits on every PR: validate each commit in the PR and
-# the PR title (the latter covers squash merges, where the title becomes the
-# commit subject). Mirrors the local `commit-msg` lefthook hook (convco).
+# Enforce conventional commits on every PR and on every push to master:
+#  - PRs: validate each commit in the PR and the PR title (the latter covers
+#    squash merges, where the title becomes the commit subject).
+#  - master: validate the commits landing on master (covers direct pushes and
+#    anything that bypasses a PR).
+# Mirrors the local `commit-msg` / `pre-push` lefthook hooks (convco).
 
 on:
   pull_request:
     types: [opened, edited, synchronize, reopened]
+  push:
+    branches: [master]
 
 permissions:
   contents: read
@@ -18,7 +23,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # full history so the PR commit range is reachable
+          fetch-depth: 0 # full history so the commit range is reachable
 
       - name: Install convco
         # Pinned to match .mise.toml ("cargo:convco"). Keep these versions in sync.
@@ -31,12 +36,29 @@ jobs:
           echo "$PWD" >> "$GITHUB_PATH"
 
       - name: Lint commits in the PR
+        if: github.event_name == 'pull_request'
         # convco excludes merge commits by default, so merges from the base branch
         # don't trip the check.
         run: convco check "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
 
       - name: Lint PR title
+        if: github.event_name == 'pull_request'
         # Pass the title via env (not inline interpolation) to avoid shell injection.
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: printf '%s\n' "$PR_TITLE" | convco check --from-stdin
+
+      - name: Lint commits pushed to master
+        if: github.event_name == 'push'
+        # Lint the commits introduced by this push. On a fresh branch ref the
+        # "before" SHA is all-zeros, so fall back to just the tip commit.
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          if [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            range="$AFTER^..$AFTER"
+          else
+            range="$BEFORE..$AFTER"
+          fi
+          convco check "$range"

@@ -85,3 +85,31 @@ manually add any `Removed` entries.
    git tag -a vX.Y.Z -m "vX.Y.Z"
    git push && git push --tags
    ```
+
+## Publishing the Rust crate
+
+Pushing the `vX.Y.Z` tag triggers the [`release-rust`](.github/workflows/release-rust.yml)
+workflow, which publishes the [`chromahash`](https://crates.io/crates/chromahash)
+crate to crates.io via [trusted publishing](https://crates.io/docs/trusted-publishing)
+(OIDC — no stored token). The workflow is idempotent: if the tagged version is
+already on crates.io it is skipped, so re-pushing a tag is safe.
+
+### One-time bootstrap
+
+Trusted publishing cannot create a brand-new crate, so the **first** publish is
+manual. On the first release, after bumping the version, publish locally from
+`rust/`:
+
+```bash
+cargo publish --dry-run   # sanity-check packaging and metadata
+cargo publish             # claims the `chromahash` name (uses your crates.io token)
+```
+
+Then, on crates.io → the `chromahash` crate → **Settings → Trusted Publishing**,
+add a GitHub Actions publisher: repository `justin13888/chromahash`, workflow
+`release-rust.yml`. Every subsequent `vX.Y.Z` tag then publishes automatically
+with no token. (The bootstrap release's own tag is a no-op thanks to the
+already-published skip check.)
+
+The `chromahash-uniffi` binding crate stays `publish = false` and is never
+published to crates.io.

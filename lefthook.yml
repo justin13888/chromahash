@@ -19,6 +19,14 @@ pre-commit:
 
 pre-push:
   commands:
+    commit-lint:
+      # Lint the conventional-commit format of the commits being pushed (those
+      # ahead of origin/master), complementing the per-commit `commit-msg` hook
+      # and mirroring the master check in the `ci-commits` workflow. Skips
+      # gracefully if origin/master isn't present locally.
+      run: |
+        base="$(git rev-parse --verify --quiet origin/master)" || base=""
+        if [ -n "$base" ]; then mise exec -- convco check "$base..HEAD"; fi
     format-check:
       run: just format-check
     lint-check:
