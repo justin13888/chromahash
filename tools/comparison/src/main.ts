@@ -12,26 +12,35 @@ import {
   loadImage,
   rgbaToDataUri,
   fileBufferToDisplayDataUri,
+  writeImageFile,
 } from "./image-loader.ts";
 import { buildHarnesses, runAllHarnesses } from "./harness-runner.ts";
 import {
   generateReport,
   categorizeImage,
   computeFormatStats,
+  FORMAT_NAMES,
+  LANGUAGES,
 } from "./report.ts";
+import type { ReportMeta } from "./report.ts";
 import { generateFixtures } from "./generate-fixtures.ts";
 import { ensureNaturalImages } from "./natural-images.ts";
 import type {
+  ComparisonImageJson,
+  ComparisonJson,
   FormatAdapter,
+  FormatJson,
   FormatResult,
   HarnessResult,
   ImageCategory,
+  ImplementationJson,
 } from "./types.ts";
 
 const { values } = parseArgs({
   options: {
     images: { type: "string", default: "fixtures/**/*.{png,jpg}" },
     output: { type: "string", default: "output/report.html" },
+    json: { type: "string" },
     iterations: { type: "string", default: "10" },
     "skip-harnesses": { type: "boolean", default: false },
     "generate-fixtures": { type: "boolean", default: true },
@@ -46,6 +55,24 @@ const iterations = Number.parseInt(values.iterations ?? "10", 10);
 const skipHarnesses = values["skip-harnesses"] ?? false;
 const shouldGenerateFixtures = values["generate-fixtures"] ?? true;
 const skipNatural = values["skip-natural"] ?? false;
+
+/** Derive the JSON output path from the HTML output path by swapping the extension. */
+function deriveJsonPath(htmlPath: string): string {
+  const ext = path.extname(htmlPath);
+  return `${htmlPath.slice(0, htmlPath.length - ext.length)}.json`;
+}
+
+const jsonPath = values.json ?? deriveJsonPath(outputPath);
+
+/** Make a filesystem- and URL-safe slug for image file names. */
+function slugify(value: string): string {
+  return value.replace(/#/g, "sharp").replace(/[^A-Za-z0-9._-]+/g, "-");
+}
+
+/** Hex-encode a hash (empty input -> empty string). */
+function toHex(bytes: Uint8Array): string {
+  return bytes.length > 0 ? Buffer.from(bytes).toString("hex") : "";
+}
 
 /**
  * Resolve the source commit the report is built from: an explicit --commit flag,
@@ -136,6 +163,8 @@ async function main(): Promise<void> {
     category: ImageCategory;
     originalWidth: number;
     originalHeight: number;
+    smallWidth: number;
+    smallHeight: number;
     originalDataUri: string;
     loResDataUri: string;
     formatResults: FormatResult[];
@@ -199,6 +228,8 @@ async function main(): Promise<void> {
       category,
       originalWidth: input.originalWidth,
       originalHeight: input.originalHeight,
+      smallWidth: input.smallWidth,
+      smallHeight: input.smallHeight,
       originalDataUri,
       loResDataUri,
       formatResults,
@@ -206,28 +237,139 @@ async function main(): Promise<void> {
     });
   }
 
-  // Generate HTML report
-  const html = generateReport(entries, {
+  const absOutput = path.resolve(toolRoot, outputPath);
+  const absJson = path.resolve(toolRoot, jsonPath);
+  const meta: ReportMeta = {
     commit: resolveCommit(toolRoot),
     repoUrl: resolveRepoUrl(),
     generatedAt: `${new Date().toISOString().slice(0, 16).replace("T", " ")} UTC`,
+  };
+
+  // Materialize every image as a standalone file under <output dir>/images/, and
+  // rewrite each entry's inline data URIs to relative paths so the HTML and JSON
+  // both reference the same assets. The directory is recreated each run so no
+  // stale images linger.
+  const imagesSubdir = "images";
+  const imagesDir = path.join(path.dirname(absOutput), imagesSubdir);
+  await fs.rm(imagesDir, { recursive: true, force: true });
+  await fs.mkdir(imagesDir, { recursive: true });
+
+  const jsonImages: ComparisonImageJson[] = [];
+  for (const entry of entries) {
+    const base = slugify(entry.name);
+
+    const [originalFile, inputFile] = await Promise.all([
+      writeImageFile(entry.originalDataUri, imagesDir, `${base}__original`),
+      writeImageFile(entry.loResDataUri, imagesDir, `${base}__input`),
+    ]);
+    entry.originalDataUri = `${imagesSubdir}/${originalFile.fileName}`;
+    entry.loResDataUri = `${imagesSubdir}/${inputFile.fileName}`;
+
+    const formats: FormatJson[] = await Promise.all(
+      entry.formatResults.map(async (r): Promise<FormatJson> => {
+        let preview: string | null = null;
+        let css: string | null = null;
+        if (r.dataUri.startsWith("css:")) {
+          // CSS-only formats (e.g. unpic) keep their sentinel; no file is written.
+          css = r.dataUri.slice(4);
+        } else if (r.dataUri) {
+          const file = await writeImageFile(
+            r.dataUri,
+            imagesDir,
+            `${base}__fmt-${slugify(r.formatName)}`,
+          );
+          preview = `${imagesSubdir}/${file.fileName}`;
+          r.dataUri = preview;
+        }
+        return {
+          formatName: r.formatName,
+          encodedSizeBytes: r.encodedSizeBytes,
+          decodedWidth: r.decodedWidth,
+          decodedHeight: r.decodedHeight,
+          encodeTimeMs: r.encodeTimeMs,
+          decodeTimeMs: r.decodeTimeMs,
+          preview,
+          css,
+          metrics: r.metrics,
+        };
+      }),
+    );
+
+    const implementations: ImplementationJson[] = await Promise.all(
+      entry.harnessResults.map(async (r): Promise<ImplementationJson> => {
+        let preview: string | null = null;
+        if (r.dataUri) {
+          const file = await writeImageFile(
+            r.dataUri,
+            imagesDir,
+            `${base}__lang-${slugify(r.language)}`,
+          );
+          preview = `${imagesSubdir}/${file.fileName}`;
+          r.dataUri = preview;
+        }
+        return {
+          language: r.language,
+          hash: toHex(r.hash),
+          matches: r.matches,
+          preview,
+        };
+      }),
+    );
+
+    jsonImages.push({
+      name: entry.name,
+      category: entry.category,
+      originalWidth: entry.originalWidth,
+      originalHeight: entry.originalHeight,
+      original: entry.originalDataUri,
+      encoderInput: entry.loResDataUri,
+      encoderInputWidth: entry.smallWidth,
+      encoderInputHeight: entry.smallHeight,
+      formats,
+      implementations,
+    });
+  }
+
+  // Summary stats are reused by both the JSON output and the console summary.
+  const naturalStats = computeFormatStats(entries, FORMAT_NAMES, (e) =>
+    (["Natural", "Realistic"] as ImageCategory[]).includes(e.category),
+  );
+  const allStats = computeFormatStats(entries, FORMAT_NAMES);
+
+  const harnessesSkipped = entries.every((e) => e.harnessResults.length === 0);
+  const crossLanguage = LANGUAGES.map((language) => {
+    if (harnessesSkipped) return { language, pass: null as boolean | null };
+    const pass = entries.every(
+      (e) =>
+        e.harnessResults.find((r) => r.language === language)?.matches ?? false,
+    );
+    return { language, pass };
   });
-  const absOutput = path.resolve(toolRoot, outputPath);
-  await fs.mkdir(path.dirname(absOutput), { recursive: true });
+
+  const json: ComparisonJson = {
+    schemaVersion: 1,
+    generatedAt: meta.generatedAt,
+    commit: meta.commit,
+    repoUrl: meta.repoUrl,
+    formats: FORMAT_NAMES,
+    languages: LANGUAGES,
+    summary: { naturalAndRealistic: naturalStats, all: allStats },
+    crossLanguage,
+    images: jsonImages,
+  };
+  await fs.mkdir(path.dirname(absJson), { recursive: true });
+  await fs.writeFile(absJson, `${JSON.stringify(json, null, 2)}\n`);
+
+  // Render the HTML report (now referencing the standalone images by path).
+  const html = generateReport(entries, meta);
   await fs.writeFile(absOutput, html);
 
-  const fileUrl = `file://${absOutput}`;
-  console.log(
-    `\nReport written to: \x1b]8;;${fileUrl}\x1b\\${absOutput}\x1b]8;;\x1b\\`,
-  );
+  const link = (p: string) => `\x1b]8;;file://${p}\x1b\\${p}\x1b]8;;\x1b\\`;
+  console.log(`\nReport written to: ${link(absOutput)}`);
+  console.log(`JSON written to:   ${link(absJson)}`);
+  console.log(`Images written to: ${link(imagesDir)}/`);
 
   // Print expanded metric summary
-  const formatNames = [
-    ...new Set(
-      entries.flatMap((e) => e.formatResults.map((r) => r.formatName)),
-    ),
-  ];
-
   const cell = (v: number | null, digits: number, width: number): string =>
     (v !== null ? v.toFixed(digits) : "N/A").padStart(width);
 
@@ -245,11 +387,6 @@ async function main(): Promise<void> {
       );
     }
   };
-
-  const naturalStats = computeFormatStats(entries, formatNames, (e) =>
-    (["Natural", "Realistic"] as ImageCategory[]).includes(e.category),
-  );
-  const allStats = computeFormatStats(entries, formatNames);
 
   printSummary("Natural Images Only", naturalStats);
   printSummary("All Images", allStats);

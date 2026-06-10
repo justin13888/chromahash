@@ -71,3 +71,59 @@ export async function fileBufferToDisplayDataUri(
     .toBuffer();
   return `data:image/jpeg;base64,${jpg.toString("base64")}`;
 }
+
+/** Map an image mime type to a file extension. */
+function mimeToExt(mime: string): string {
+  switch (mime) {
+    case "image/jpeg":
+      return "jpg";
+    case "image/png":
+      return "png";
+    case "image/webp":
+      return "webp";
+    case "image/gif":
+      return "gif";
+    case "image/avif":
+      return "avif";
+    default:
+      // Fall back to the subtype (e.g. "image/svg+xml" -> "svg+xml").
+      return mime.includes("/") ? mime.slice(mime.indexOf("/") + 1) : "bin";
+  }
+}
+
+/**
+ * Decode a `data:<mime>;base64,<payload>` URI into its raw bytes and a matching
+ * file extension. Throws if the string is not a base64 data URI.
+ */
+export function dataUriToBuffer(dataUri: string): {
+  buffer: Buffer;
+  ext: string;
+} {
+  const comma = dataUri.indexOf(",");
+  if (!dataUri.startsWith("data:") || comma === -1) {
+    throw new Error("Not a base64 data URI");
+  }
+  const header = dataUri.slice(5, comma); // between "data:" and ","
+  if (!header.includes(";base64")) {
+    throw new Error("Data URI is not base64-encoded");
+  }
+  const mime = header.slice(0, header.indexOf(";"));
+  const buffer = Buffer.from(dataUri.slice(comma + 1), "base64");
+  return { buffer, ext: mimeToExt(mime) };
+}
+
+/**
+ * Write a base64 data URI to `<dir>/<baseName>.<ext>` as a standalone file.
+ * The extension is derived from the URI's mime type. Returns the written
+ * file name (relative to `dir`) and its byte size.
+ */
+export async function writeImageFile(
+  dataUri: string,
+  dir: string,
+  baseName: string,
+): Promise<{ fileName: string; byteSize: number }> {
+  const { buffer, ext } = dataUriToBuffer(dataUri);
+  const fileName = `${baseName}.${ext}`;
+  await fs.writeFile(path.join(dir, fileName), buffer);
+  return { fileName, byteSize: buffer.length };
+}

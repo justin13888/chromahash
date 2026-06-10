@@ -99,12 +99,14 @@ jobs:
 
       # Hand the report off to the Deploy Comparison Report workflow, which runs
       # in a separate context and cannot see this job's working tree. Only master
-      # pushes are deployed, so don't store the artifact for PR runs.
+      # pushes are deployed, so don't store the artifact for PR runs. Upload the
+      # whole output directory so index.html, index.json, and the standalone
+      # images/ assets it references all travel together.
       - name: Upload comparison report
         if: github.event_name == 'push' && github.ref == 'refs/heads/master'
         uses: actions/upload-artifact@v4
         with:
           name: comparison-report
-          path: tools/comparison/output/index.html
+          path: tools/comparison/output
           if-no-files-found: error
           retention-days: 7
