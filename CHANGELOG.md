@@ -13,6 +13,9 @@ producer-side metadata. See `spec/README.md` §2.5 for details.
 
 <!-- git-cliff-unreleased-start -->
 ## [Unreleased]
+<!-- git-cliff-unreleased-end -->
+
+## [0.5.0] - 2026-06-10
 
 ### Added
 
@@ -28,6 +31,8 @@ producer-side metadata. See `spec/README.md` §2.5 for details.
 - Add cross-language encode/decode benchmark vs ThumbHash (#20)
 - Add native Rust ThumbHash baseline for fair algorithm comparison
 - **tools**: Add --timeout flag and native ThumbHash baseline
+- **comparison**: Use CIEDE2000 (via iqa-cli) as the primary quality metric
+- **android**: Publish AAR to Maven Central and GitHub Packages
 
 ### Changed
 
@@ -45,6 +50,8 @@ producer-side metadata. See `spec/README.md` §2.5 for details.
 - Add Android integration guide
 - Add chromahash benchmark results
 - Add pre-v1 CHANGELOG
+- Clean up README (#23)
+- Highlight key features in README
 
 ### Removed
 
@@ -52,7 +59,6 @@ producer-side metadata. See `spec/README.md` §2.5 for details.
   composite score; all quality metrics now come from `iqa-cli`, with CIEDE2000 (ΔE00) as
   the primary metric and every format scored at identical (source) dimensions (#26)
 
-<!-- git-cliff-unreleased-end -->
 
 ## [0.4.0] - 2026-05-22
 
@@ -127,7 +133,8 @@ The v0.2 reference reworked the format: adaptive grids, `MAX_CHROMA` lowered fro
 - Official format specification under `spec/`.
 - Monorepo scaffolding, README, and development guide.
 
-[Unreleased]: https://github.com/justin13888/chromahash/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/justin13888/chromahash/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/justin13888/chromahash/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/justin13888/chromahash/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/justin13888/chromahash/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/justin13888/chromahash/compare/v0.1.0...v0.2.0
