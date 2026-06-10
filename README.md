@@ -125,16 +125,6 @@ just format-check-csharp / just format-fix-csharp / just lint-csharp / just test
 | Python     | Ruff           | Ruff                      |
 | C#         | dotnet-format  | build -warnaserror        |
 
-## Git hooks
-
-[Lefthook](https://github.com/evilmartians/lefthook) enforces code quality via three hooks:
-
-| Hook         | Action                                                       |
-| ------------ | ------------------------------------------------------------ |
-| `commit-msg` | Lint the commit message as a conventional commit (convco)    |
-| `pre-commit` | Auto-fix formatting and linting on staged files              |
-| `pre-push`   | Check formatting, linting (no fix), and run tests            |
-
 ## CI
 
 GitHub Actions runs a separate workflow per language, triggered only when files in that implementation's directory change. One repo-wide workflow, [ci-commits](.github/workflows/ci-commits.yml), runs on every PR and validates that each commit (and the PR title, for squash merges) is a conventional commit.
@@ -179,20 +169,6 @@ chromahash/
 ├── LICENSE-MIT         # MIT license
 └── LICENSE-APACHE      # Apache 2.0 license
 ```
-
-## Conventions
-
-- All seven implementations **must** produce identical output for the same input — [`spec/`](spec/) is the source of truth
-- Strict TypeScript — no `any` types
-- Kotlin DSL only (`.gradle.kts`), target JVM 21
-- Swift 6 concurrency model, no `@unchecked Sendable` hacks
-- Go: zero external dependencies, all math uses `float64`, use `roundHalfAwayFromZero`
-- Python: zero external runtime dependencies, use `round_half_away_from_zero`, use Ruff for formatting and linting
-- Write tests for all public API surface
-- Use [conventional commits](https://www.conventionalcommits.org/): `type(scope): description` — enforced by the `commit-msg` hook and the `ci-commits` workflow (convco)
-  - scope = `rust`, `ts`, `kotlin`, `swift`, `go`, `py`, `csharp`, `android`, `spec`, `tools`, or `comparison`
-- The CHANGELOG's `[Unreleased]` section is generated from commits by `just changelog` (git-cliff) — don't hand-edit it except to add `Removed` entries (see [RELEASING.md](RELEASING.md))
-- Keep implementations in sync — a feature in one language should land in all seven
 
 ## License
 
