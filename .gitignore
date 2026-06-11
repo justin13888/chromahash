@@ -28,13 +28,9 @@ tools/thumbhash-rs/target/
 **/*.rs.bk
 Cargo.lock
 
-# === Gradle / Kotlin ===
-kotlin/.gradle/
-kotlin/build/
-kotlin/out/
+# === Gradle / JVM ===
 *.class
 *.jar
-!kotlin/gradle/wrapper/gradle-wrapper.jar
 *.war
 *.nar
 *.ear
@@ -42,6 +38,7 @@ kotlin/out/
 *.tar.gz
 *.rar
 .gradle/
+.kotlin/
 build/
 
 # === Swift / SPM ===
@@ -126,6 +123,11 @@ bindings/uniffi/android/src/main/jniLibs/
 bindings/uniffi/android/src/main/kotlin/
 # The root `*.jar` rule above would otherwise swallow the wrapper jar.
 !bindings/uniffi/android/gradle/wrapper/gradle-wrapper.jar
+
+# === JVM binding (chromahash-jvm) ===
+# Generated bindings + staged native lib live under build/ (ignored above).
+# The root `*.jar` rule above would otherwise swallow the wrapper jar.
+!bindings/uniffi/jvm/gradle/wrapper/gradle-wrapper.jar
 
 # === Editors ===
 .vscode/

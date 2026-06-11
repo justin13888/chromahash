@@ -8,31 +8,31 @@ default:
 
 # Format all implementations
 [parallel]
-format: format-rust format-c format-wasm format-ts format-kotlin format-swift format-go format-python format-csharp format-android format-compare format-thumbhash
+format: format-rust format-c format-wasm format-ts format-jvm format-swift format-go format-python format-csharp format-android format-compare format-thumbhash
 
 # Lint all implementations
 [parallel]
-lint: lint-rust lint-c lint-wasm lint-ts lint-kotlin lint-swift lint-go lint-python lint-csharp lint-android lint-compare lint-thumbhash
+lint: lint-rust lint-c lint-wasm lint-ts lint-jvm lint-swift lint-go lint-python lint-csharp lint-android lint-compare lint-thumbhash
 
 # Auto-fix formatting in all implementations
 [parallel]
-format-fix: format-fix-rust format-fix-c format-fix-wasm format-fix-ts format-fix-kotlin format-fix-swift format-fix-go format-fix-python format-fix-csharp format-fix-android format-fix-compare format-fix-thumbhash
+format-fix: format-fix-rust format-fix-c format-fix-wasm format-fix-ts format-fix-jvm format-fix-swift format-fix-go format-fix-python format-fix-csharp format-fix-android format-fix-compare format-fix-thumbhash
 
 # Auto-fix linting in all implementations
 [parallel]
-lint-fix: lint-fix-rust lint-fix-c lint-fix-wasm lint-fix-ts lint-fix-kotlin lint-fix-swift lint-fix-go lint-fix-python lint-fix-csharp lint-fix-android lint-fix-compare lint-fix-thumbhash
+lint-fix: lint-fix-rust lint-fix-c lint-fix-wasm lint-fix-ts lint-fix-jvm lint-fix-swift lint-fix-go lint-fix-python lint-fix-csharp lint-fix-android lint-fix-compare lint-fix-thumbhash
 
 # Run all tests
 [parallel]
-test: test-rust test-c test-wasm test-ts test-kotlin test-swift test-go test-python test-csharp test-android
+test: test-rust test-c test-wasm test-ts test-jvm test-swift test-go test-python test-csharp test-android
 
 # Build all implementations
 [parallel]
-build: build-rust build-c build-wasm build-ts build-kotlin build-swift build-go build-python build-csharp build-android-crate
+build: build-rust build-c build-wasm build-ts build-jvm build-swift build-go build-python build-csharp build-android-crate
 
 # Check formatting (no writes) across all implementations
 [parallel]
-format-check: format-check-rust format-check-c format-check-wasm format-check-ts format-check-kotlin format-check-swift format-check-go format-check-python format-check-csharp format-check-android format-check-compare format-check-thumbhash
+format-check: format-check-rust format-check-c format-check-wasm format-check-ts format-check-jvm format-check-swift format-check-go format-check-python format-check-csharp format-check-android format-check-compare format-check-thumbhash
 
 # ─── Comparison tool ────────────────────────────────────────────────────────
 
@@ -91,7 +91,7 @@ build-benchmark: go-cbuild swift-cbuild ts-cbuild
     cargo build --manifest-path rust/Cargo.toml --release --example encode_stdin
     mise exec node@24 -- pnpm --prefix typescript run build
     cd go && CGO_ENABLED=1 go build -o encode-stdin ./cmd/encode-stdin
-    mise exec java@21 gradle@9.4.0 -- sh -c 'cd kotlin && ./gradlew installDist -q'
+    mise exec java@21 gradle@9.4.0 -- sh -c 'cd bindings/uniffi/jvm && ./gradlew installDist -q'
     cd swift && mise exec swift@6.2.4 -- swift build -c release
     mise exec dotnet@9 -- dotnet build csharp/src/Chromahash.Cli -c Release --verbosity quiet
     cargo build --manifest-path tools/thumbhash-rs/Cargo.toml --release
@@ -107,7 +107,7 @@ benchmark: build-benchmark
 # since each benchmark wants the whole machine.
 
 # Run every BatchEncoder throughput benchmark (serial vs. batch + scaling sweep)
-bench-batch: bench-batch-rust bench-batch-go bench-batch-swift bench-batch-kotlin bench-batch-csharp bench-batch-python bench-batch-ts
+bench-batch: bench-batch-rust bench-batch-go bench-batch-swift bench-batch-jvm bench-batch-csharp bench-batch-python bench-batch-ts
 
 bench-batch-rust:
     cargo run --manifest-path rust/Cargo.toml --release --example batch_bench
@@ -115,8 +115,8 @@ bench-batch-rust:
 bench-batch-ts: ts-cbuild
     mise exec node@24 -- pnpm --prefix typescript run bench
 
-bench-batch-kotlin:
-    mise exec java@21 gradle@9.4.0 -- sh -c 'cd kotlin && ./gradlew bench -q'
+bench-batch-jvm:
+    mise exec java@21 gradle@9.4.0 -- sh -c 'cd bindings/uniffi/jvm && ./gradlew bench -q'
 
 bench-batch-swift: swift-cbuild
     cd swift && mise exec swift@6.2.4 -- swift run -c release ChromaHashBatchBench
@@ -346,26 +346,31 @@ test-ts: ts-cbuild
 build-ts: ts-cbuild
     mise exec node@24 -- pnpm --prefix typescript run build
 
-# ─── Kotlin ──────────────────────────────────────────────────────────────────
+# ─── JVM binding (chromahash-jvm) ─────────────────────────────────────────────
+# Desktop/server JAR over the shared chromahash-uniffi crate. format/lint run
+# ktlint on the hand-written Kotlin (CLI + tests); the generated bindings under
+# build/ are excluded. test/build run the full pipeline (cargo cdylib +
+# uniffi-bindgen + JNA-bundled native lib), so they need the Rust toolchain.
 
-format-kotlin:
-    mise exec java@21 gradle@9.4.0 -- sh -c 'cd kotlin && ./gradlew ktlintFormat'
+format-jvm:
+    mise exec java@21 gradle@9.4.0 -- sh -c 'cd bindings/uniffi/jvm && ./gradlew ktlintFormat'
 
-format-fix-kotlin: format-kotlin
+format-fix-jvm: format-jvm
 
-format-check-kotlin:
-    mise exec java@21 gradle@9.4.0 -- sh -c 'cd kotlin && ./gradlew ktlintCheck'
+format-check-jvm:
+    mise exec java@21 gradle@9.4.0 -- sh -c 'cd bindings/uniffi/jvm && ./gradlew ktlintCheck'
 
-lint-kotlin:
-    mise exec java@21 gradle@9.4.0 -- sh -c 'cd kotlin && ./gradlew ktlintCheck'
+lint-jvm:
+    mise exec java@21 gradle@9.4.0 -- sh -c 'cd bindings/uniffi/jvm && ./gradlew ktlintCheck'
 
-lint-fix-kotlin: format-kotlin
+lint-fix-jvm: format-jvm
 
-test-kotlin:
-    mise exec java@21 gradle@9.4.0 -- sh -c 'cd kotlin && ./gradlew test'
+# Runs the spec test vectors through the binding (the enforced correctness gate)
+test-jvm:
+    mise exec java@21 gradle@9.4.0 -- sh -c 'cd bindings/uniffi/jvm && ./gradlew test'
 
-build-kotlin:
-    mise exec java@21 gradle@9.4.0 -- sh -c 'cd kotlin && ./gradlew build'
+build-jvm:
+    mise exec java@21 gradle@9.4.0 -- sh -c 'cd bindings/uniffi/jvm && ./gradlew build'
 
 # ─── Swift ───────────────────────────────────────────────────────────────────
 

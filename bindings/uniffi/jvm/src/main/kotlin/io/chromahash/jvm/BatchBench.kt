@@ -1,9 +1,14 @@
-package chromahash
+package io.chromahash.jvm
+
+import io.chromahash.ffi.BatchEncoder
+import io.chromahash.ffi.ChromaHash
+import io.chromahash.ffi.Gamut
+import io.chromahash.ffi.ImageInput
 
 // Throughput benchmark: serial per-image encode vs. BatchEncoder.
 //
-// Zero dependencies — uses only System.nanoTime with an explicit JIT warmup.
-// Run with:
+// Backed by the UniFFI binding, so the BatchEncoder exercises the Rust core's
+// real worker pool (unlike the old pure-Kotlin serial port). Run with:
 //
 //   ./gradlew bench
 //
@@ -13,7 +18,7 @@ package chromahash
 private const val BENCH_N = 2000
 
 private fun benchImages(n: Int): List<ImageInput> {
-    val gamuts = listOf(Gamut.SRGB, Gamut.DISPLAY_P3, Gamut.ADOBE_RGB, Gamut.BT2020, Gamut.PROPHOTO_RGB)
+    val gamuts = listOf(Gamut.SRGB, Gamut.DISPLAY_P3, Gamut.ADOBE_RGB, Gamut.BT2020, Gamut.PRO_PHOTO_RGB)
     return (0 until n).map { i ->
         val w = 24 + i % 40
         val h = 24 + (i * 7) % 40
@@ -24,11 +29,18 @@ private fun benchImages(n: Int): List<ImageInput> {
             rgba[p * 4 + 2] = ((p * 7 + i * 3) % 256).toByte()
             rgba[p * 4 + 3] = if (i % 3 == 0) 200.toByte() else 255.toByte()
         }
-        ImageInput(w, h, rgba, gamuts[i % gamuts.size])
+        ImageInput(w.toUInt(), h.toUInt(), rgba, gamuts[i % gamuts.size])
     }
 }
 
-private fun encodeSerial(items: List<ImageInput>): List<ChromaHash> = items.map { ChromaHash.encode(it.w, it.h, it.rgba, it.gamut) }
+// UniFFI objects use reference equality, so compare on the 32-byte payloads.
+private fun encodeSerial(items: List<ImageInput>): List<List<Byte>> =
+    items.map { ChromaHash.encode(it.w, it.h, it.rgba, it.gamut).asBytes().toList() }
+
+private fun encodeBatch(
+    encoder: BatchEncoder,
+    items: List<ImageInput>,
+): List<List<Byte>> = encoder.encodeBatch(items).map { it.asBytes().toList() }
 
 private fun imagesPerSec(
     n: Int,
@@ -44,7 +56,7 @@ fun main() {
     // reflects optimized (compiled) code rather than interpreter/C1.
     repeat(5) {
         encodeSerial(items)
-        BatchEncoder().use { it.encodeBatch(items) }
+        BatchEncoder().use { encodeBatch(it, items) }
     }
 
     val serialStart = System.nanoTime()
@@ -54,9 +66,9 @@ fun main() {
     println("serial            : %8.4fs  %10.0f img/s  (1.00x)".format(serialSecs, imagesPerSec(BENCH_N, serialSecs)))
 
     BatchEncoder().use { encoder ->
-        encoder.encodeBatch(items) // warm the pool
+        encodeBatch(encoder, items) // warm the pool
         val start = System.nanoTime()
-        val batch = encoder.encodeBatch(items)
+        val batch = encodeBatch(encoder, items)
         val secs = (System.nanoTime() - start) / 1e9
         check(batch == serial) { "batch output must equal serial" }
         println(
@@ -71,10 +83,10 @@ fun main() {
     println("\nscaling sweep (batch):")
     val threadCounts = (listOf(1, 2, 4, 8) + cores).distinct()
     for (t in threadCounts) {
-        BatchEncoder(t).use { encoder ->
-            encoder.encodeBatch(items) // warm
+        BatchEncoder.withThreads(t.toUInt()).use { encoder ->
+            encodeBatch(encoder, items) // warm
             val start = System.nanoTime()
-            encoder.encodeBatch(items)
+            encodeBatch(encoder, items)
             val secs = (System.nanoTime() - start) / 1e9
             println(
                 "  threads=%-3d      : %8.4fs  %10.0f img/s  (%.2fx)".format(

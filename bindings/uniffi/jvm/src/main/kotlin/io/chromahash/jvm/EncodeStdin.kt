@@ -1,12 +1,22 @@
-package chromahash
+package io.chromahash.jvm
 
-fun parseGamut(s: String): Gamut =
+import io.chromahash.ffi.BatchEncoder
+import io.chromahash.ffi.ChromaHash
+import io.chromahash.ffi.Gamut
+import io.chromahash.ffi.ImageInput
+
+/**
+ * stdin/stdout CLI used by the cross-language comparison harness, mirroring the
+ * other languages' `encode-stdin`. Backed by the UniFFI binding (`io.chromahash.ffi`).
+ */
+
+private fun parseGamut(s: String): Gamut =
     when (s) {
         "srgb" -> Gamut.SRGB
         "displayp3" -> Gamut.DISPLAY_P3
         "adobergb" -> Gamut.ADOBE_RGB
         "bt2020" -> Gamut.BT2020
-        "prophoto" -> Gamut.PROPHOTO_RGB
+        "prophoto" -> Gamut.PRO_PHOTO_RGB
         else -> {
             System.err.println("unknown gamut: $s")
             System.exit(1)
@@ -42,8 +52,8 @@ fun main(args: Array<String>) {
                 System.exit(1)
             }
 
-            val hash = ChromaHash.encode(w, h, rgba, gamut)
-            System.out.write(hash.hash)
+            val hash = ChromaHash.encode(w.toUInt(), h.toUInt(), rgba, gamut)
+            System.out.write(hash.asBytes())
             System.out.flush()
         }
         "decode" -> {
@@ -52,8 +62,7 @@ fun main(args: Array<String>) {
                 System.err.println("expected 32 bytes, got ${hashBytes.size}")
                 System.exit(1)
             }
-            val ch = ChromaHash.fromBytes(hashBytes)
-            val result = ch.decode()
+            val result = ChromaHash.fromBytes(hashBytes).decode()
             System.out.write(result.rgba)
             System.out.flush()
         }
@@ -63,14 +72,15 @@ fun main(args: Array<String>) {
                 System.err.println("expected 32 bytes, got ${hashBytes.size}")
                 System.exit(1)
             }
-            val ch = ChromaHash.fromBytes(hashBytes)
-            val color = ch.averageColor()
-            System.out.write(byteArrayOf(color.r.toByte(), color.g.toByte(), color.b.toByte(), color.a.toByte()))
+            val color = ChromaHash.fromBytes(hashBytes).averageColor()
+            System.out.write(
+                byteArrayOf(color.r.toByte(), color.g.toByte(), color.b.toByte(), color.a.toByte()),
+            )
             System.out.flush()
         }
         "batch-encode" -> {
             // Read one image, encode it `count` times through the parallel
-            // BatchEncoder. Used to benchmark bulk throughput.
+            // BatchEncoder (backed by the Rust worker pool). Benchmarks throughput.
             if (args.size != 5) {
                 System.err.println("Usage: chromahash batch-encode <width> <height> <gamut> <count>")
                 System.exit(1)
@@ -81,10 +91,10 @@ fun main(args: Array<String>) {
             val count = args[4].toInt()
 
             val rgba = System.`in`.readNBytes(w * h * 4)
-            val items = List(count) { ImageInput(w, h, rgba, gamut) }
-            val hashes = BatchEncoder().use { it.encodeBatch(items) }
+            val items = List(count) { ImageInput(w.toUInt(), h.toUInt(), rgba, gamut) }
+            val firstByte = BatchEncoder().use { it.encodeBatch(items)[0].asBytes()[0] }
             // Write one result-derived byte so the work cannot be optimized away.
-            System.out.write(byteArrayOf(hashes[0].hash[0]))
+            System.out.write(byteArrayOf(firstByte))
             System.out.flush()
         }
         "batch-decode" -> {
