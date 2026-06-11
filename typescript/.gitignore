@@ -1,0 +1,20 @@
+# Node
+node_modules/
+dist/
+.env
+.env.local
+.env.*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/releases
+!.yarn/plugins
+!.yarn/sdks
+!.yarn/versions
+
+# wasm-pack glue (.wasm + JS + .d.ts) staged here by `just ts-cbuild`.
+wasm/

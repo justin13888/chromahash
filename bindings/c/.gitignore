@@ -1,0 +1,7 @@
+# Rust crate (chromahash-c)
+target/
+Cargo.lock
+*.rs.bk
+
+# NOTE: include/chromahash.h is a COMMITTED generated artifact (CI diffs it to
+# catch drift) — intentionally NOT ignored.
