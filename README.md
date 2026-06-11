@@ -15,36 +15,6 @@ ChromaHash is built for professional photo management at scale, where perceptual
 - **Fast decode with alpha.** Decoding runs in ~36µs native / ~182µs JS (well under 1ms), and transparent images are supported within the same fixed 32 bytes.
 - **One core, first-class everywhere.** A single zero-dependency Rust core is exposed to every other language through thin FFI bindings (C, WebAssembly, and UniFFI), so a spec change lands once and every language stays **bit-exact** against the shared [`spec/`](spec/) test vectors. See [Appendix A of the spec](spec/README.md#appendix-a-thumbhash-comparison--acknowledgment) for the full ThumbHash comparison.
 
-## Architecture
-
-The **Rust core** ([`rust/`](rust/)) is the reference implementation; the canonical
-format is defined in [`spec/`](spec/). Every other language is a thin binding over
-the core through one of three FFI surfaces (see [`bindings/`](bindings/)):
-
-| Surface | Crate | Serves |
-| ------- | ----- | ------ |
-| C ABI (`extern "C"` + cbindgen) | [`bindings/c/`] | **C** (first-class), **C#** (P/Invoke), **Go** (cgo) |
-| UniFFI | [`bindings/uniffi/`] | **Swift**, **Java/Kotlin** (JVM JAR + Android AAR), **Python** |
-| WebAssembly (`wasm-bindgen`) | [`bindings/wasm/`] | **TypeScript** (full encode+decode) |
-
-| Language   | Directory          | Runtime / Build     | Binds via | Status |
-| ---------- | ------------------ | ------------------- | --------- | ------ |
-| Rust       | [`rust/`]          | Cargo (stable)      | core      | WIP    |
-| C          | [`bindings/c/`]    | cc + cbindgen       | C ABI     | WIP    |
-| TypeScript | [`typescript/`]    | Node 24 + pnpm      | WASM¹     | WIP    |
-| Swift      | [`swift/`]         | SPM (Swift 6.2)     | UniFFI    | WIP    |
-| Go         | [`go/`]            | Go 1.24 (cgo)       | C ABI     | WIP    |
-| Python     | [`python/`]        | Python 3.13 + uv    | UniFFI    | WIP    |
-| C#         | [`csharp/`]        | .NET 9              | C ABI     | WIP    |
-| Java/Kotlin | [`bindings/uniffi/`] | Gradle 9.4 + JDK 21 | UniFFI  | WIP    |
-
-¹ TypeScript also ships a small hand-maintained pure-TS **decode-only** module
-(`@chromahash/typescript/decode`) for render-only consumers that skip the WASM init.
-
-The Java/Kotlin binding ships two artifacts from the same UniFFI crate: a
-desktop/server **JAR** (`chromahash-jvm`, [`bindings/uniffi/jvm/`]) and an Android
-**AAR** (`chromahash-android`, [`bindings/uniffi/android/`]).
-
 ## Guides
 
 - [Decoding on Android](docs/android.md) — how the [`bindings/uniffi/`] AAR wraps the native Rust core for fast, SIMD-ready placeholder decoding
