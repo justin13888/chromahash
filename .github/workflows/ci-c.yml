@@ -1,0 +1,55 @@
+name: CI (C)
+
+on:
+  push:
+    branches: [master]
+    paths: ["bindings/c/**", "rust/**", ".github/workflows/ci-c.yml"]
+  pull_request:
+    paths: ["bindings/c/**", "rust/**", ".github/workflows/ci-c.yml"]
+
+jobs:
+  # Format, lint, run the spec vectors through the C ABI, prove the generated
+  # header is up to date, and compile + link + run the C example against the cdylib.
+  check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: bindings/c
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            bindings/c/target
+          # Cargo.lock is gitignored repo-wide, so key off the manifest.
+          key: ${{ runner.os }}-cargo-c-${{ hashFiles('bindings/c/Cargo.toml') }}
+
+      - name: Format check
+        run: cargo fmt --check
+
+      - name: Lint
+        run: cargo clippy -- -D warnings
+
+      - name: Test (spec vectors through the C ABI)
+        run: cargo test
+
+      - name: Build cdylib + staticlib (regenerates include/chromahash.h)
+        run: cargo build
+
+      # The header is a committed artifact — fail if it drifted from the Rust ABI.
+      - name: C header is up to date
+        run: git diff --exit-code include/chromahash.h
+
+      - name: Compile + run the C example against the cdylib
+        run: |
+          cc examples/roundtrip.c -I include -L target/debug -lchromahash_c -o /tmp/roundtrip
+          LD_LIBRARY_PATH=target/debug /tmp/roundtrip

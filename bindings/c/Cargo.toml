@@ -1,0 +1,29 @@
+[package]
+name = "chromahash-c"
+version = "0.5.0"
+# Edition 2021 (the core is 2021-compatible too): hand-written `#[no_mangle]`
+# extern fns and cbindgen detection are simplest here, and nothing in this thin
+# wrapper needs 2024 features. The core crate stays on edition 2024.
+edition = "2021"
+description = "C ABI (cbindgen) exposing the ChromaHash core to C — and the FFI foundation the C# and Go bindings link against"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[lib]
+name = "chromahash_c"
+# "lib" lets the integration test link the crate and call the extern fns as Rust
+# fns; "staticlib" is the .a Go links via cgo; "cdylib" is the .so/.dylib/.dll
+# that C consumers and the C# P/Invoke layer load.
+crate-type = ["lib", "staticlib", "cdylib"]
+
+[dependencies]
+chromahash = { path = "../../rust" }
+
+[build-dependencies]
+# Generates include/chromahash.h from this crate's extern "C" surface on build.
+# Lives only here — the core crate stays dependency-free.
+cbindgen = "0.27"
+
+[dev-dependencies]
+# Test-only: parse the shared spec test vectors and drive them through the C ABI.
+serde_json = "1"
