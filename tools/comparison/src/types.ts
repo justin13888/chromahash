@@ -16,6 +16,12 @@ export interface ImageInput {
   fileBuffer: Buffer;
   /** Source gamut identifier (e.g. "srgb", "displayp3"). */
   gamut?: string;
+  /**
+   * Color-managed metric reference: smallRgba converted from its tagged gamut
+   * to sRGB appearance. Metrics for every format compare against this (not the
+   * raw gamut-encoded bytes). Equals smallRgba when gamut is sRGB.
+   */
+  metricReferenceRgba?: Uint8Array;
 }
 
 /**

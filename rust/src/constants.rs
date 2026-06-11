@@ -8,16 +8,140 @@ pub enum Gamut {
     ProPhotoRgb,
 }
 
-/// µ-law companding parameter (§7.3).
-pub const MU: f64 = 5.0;
+/// AC bit layout (v0.6): how the 208-bit AC block is split between channels.
+///
+/// L coefficients are written in selection order through up to two precision
+/// tiers (a tier with count 0 is unused). Chroma a/b each get `c_count`
+/// coefficients at `c_bits`. The `la_*`/`ca_*` fields are the alpha-mode
+/// equivalents (alpha mode additionally stores alpha DC 5b + scale 4b + 5×4b
+/// alpha AC). Remaining bits up to 256 are padding zeros.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AcLayout {
+    pub l_tiers: [(usize, u32); 2],
+    pub c_count: usize,
+    pub c_bits: u32,
+    pub la_tiers: [(usize, u32); 2],
+    pub ca_count: usize,
+    pub ca_bits: u32,
+}
 
-/// Scale factor maximums (§7.2, §12.1).
-pub const MAX_CHROMA_A: f64 = 0.45;
-pub const MAX_CHROMA_B: f64 = 0.45;
-pub const MAX_L_SCALE: f64 = 0.5;
-pub const MAX_A_SCALE: f64 = 0.5;
-pub const MAX_B_SCALE: f64 = 0.5;
-pub const MAX_A_ALPHA_SCALE: f64 = 0.5;
+/// Layout A: rebalance 15 bits from L to chroma (primary v0.6 candidate).
+pub const LAYOUT_A: AcLayout = AcLayout {
+    l_tiers: [(24, 5), (0, 5)],
+    c_count: 11,
+    c_bits: 4,
+    la_tiers: [(19, 5), (0, 5)],
+    ca_count: 10,
+    ca_bits: 4,
+};
+
+/// Layout B: v0.5 channel split (isolates structural v0.6 gains in sweeps).
+pub const LAYOUT_B: AcLayout = AcLayout {
+    l_tiers: [(27, 5), (0, 5)],
+    c_count: 9,
+    c_bits: 4,
+    la_tiers: [(7, 6), (13, 5)],
+    ca_count: 9,
+    ca_bits: 4,
+};
+
+/// Layout C: tiered L precision (6-bit low band) with widened chroma.
+pub const LAYOUT_C: AcLayout = AcLayout {
+    l_tiers: [(8, 6), (14, 5)],
+    c_count: 11,
+    c_bits: 4,
+    la_tiers: [(6, 6), (12, 5)],
+    ca_count: 10,
+    ca_bits: 4,
+};
+
+/// Layout D: fewer but finer (5-bit) chroma coefficients.
+pub const LAYOUT_D: AcLayout = AcLayout {
+    l_tiers: [(23, 5), (0, 5)],
+    c_count: 9,
+    c_bits: 5,
+    la_tiers: [(19, 5), (0, 5)],
+    ca_count: 8,
+    ca_bits: 5,
+};
+
+/// Number of alpha-channel AC coefficients (alpha mode only).
+pub const ALPHA_AC_COUNT: usize = 5;
+/// Bits per alpha AC coefficient.
+pub const ALPHA_AC_BITS: u32 = 4;
+
+/// All v0.6 format parameters. The shipped format uses [`Tunables::DEFAULT`];
+/// the comparison harness can override these (via the encode_stdin example)
+/// while sweeping the corpus to lock the final constants.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Tunables {
+    pub layout: AcLayout,
+    /// DC chroma quantization ranges. v0.6 shrinks these toward the sRGB
+    /// OKLab hull (|a| ≤ 0.277, b ∈ [−0.312, 0.199]) — chroma beyond the hull
+    /// is clamped at decode anyway, so range buys precision for free.
+    pub max_chroma_a: f64,
+    pub max_chroma_b: f64,
+    pub max_l_scale: f64,
+    pub max_a_scale: f64,
+    pub max_b_scale: f64,
+    pub max_alpha_scale: f64,
+    /// µ-law companding parameter per channel group.
+    pub mu_l: f64,
+    pub mu_c: f64,
+    pub mu_alpha: f64,
+    /// Decode-side synthesis window: w = w_min + (1−w_min)·hann(ρ)^w_exp.
+    /// w_min = 1.0 disables the window.
+    pub w_min_l: f64,
+    pub w_exp_l: u32,
+    pub w_min_c: f64,
+    pub w_exp_c: u32,
+    /// Gamut clamp v2: lightness blend toward mid-gray for the clamp anchor.
+    /// 0.0 reproduces constant-L chroma-only clamping.
+    pub gamut_l_blend: f64,
+    /// Encoder-only: search the ±1 neighborhood of the DC codes for the
+    /// triple minimizing post-clamp sRGB error (off only for ablation).
+    pub dc_search: bool,
+}
+
+impl Tunables {
+    /// v0.6 format constants, locked by the 2026-06 corpus sweep
+    /// (tools/comparison, 52 images; see spec §12.1 once regenerated).
+    ///
+    /// Sweep conclusions: layout B (the v0.5 channel split) beats chroma-
+    /// rebalanced layouts on natural images; chroma AC scale range 0.125
+    /// (v0.5: 0.5) is the single largest quality win (the corpus maximum
+    /// chroma scale is 0.113 — the old range wasted two bits); chroma DC
+    /// ranges sized to the sRGB OKLab hull; µ_C=8 exploits the finer chroma
+    /// scale near zero; gamut anchor blend 0.5 wins the Gamut category
+    /// outright; the synthesis window is DISABLED (w_min=1.0) — with fine
+    /// chroma scales it costs more detail than the banding it suppresses,
+    /// and v0.5's visible striping turned out to be chroma quantization
+    /// noise, not luma ringing.
+    pub const DEFAULT: Tunables = Tunables {
+        layout: LAYOUT_B,
+        max_chroma_a: 0.28,
+        max_chroma_b: 0.32,
+        max_l_scale: 0.5,
+        max_a_scale: 0.125,
+        max_b_scale: 0.125,
+        max_alpha_scale: 0.5,
+        mu_l: 5.0,
+        mu_c: 8.0,
+        mu_alpha: 5.0,
+        w_min_l: 1.0,
+        w_exp_l: 1,
+        w_min_c: 1.0,
+        w_exp_c: 1,
+        gamut_l_blend: 0.5,
+        dc_search: true,
+    };
+}
+
+impl Default for Tunables {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
 
 /// M2: LMS (cube-root) → OKLAB [L, a, b] (Ottosson).
 pub const M2: [[f64; 3]; 3] = [

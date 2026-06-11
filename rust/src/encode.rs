@@ -1,11 +1,11 @@
-use crate::aspect::{derive_grid, encode_aspect};
+use crate::aspect::encode_aspect;
 use crate::bitpack::write_bits;
-use crate::color::linear_rgb_to_oklab;
-use crate::constants::*;
-use crate::dct::{dct_encode_separable, precompute_cos_table, scan_order};
+use crate::color::{linear_rgb_to_oklab, oklab_to_linear_srgb, soft_gamut_clamp};
+use crate::constants::{ALPHA_AC_BITS, ALPHA_AC_COUNT, Gamut, Tunables};
+use crate::dct::{Selection, dct_encode_selected, precompute_cos_table, select_coefficients};
 use crate::math_utils::{clamp_neg1_1, clamp01, round_half_away_from_zero};
 use crate::mulaw::mu_law_quantize;
-use crate::transfer::{adobe_rgb_eotf, bt2020_pq_eotf, prophoto_rgb_eotf, srgb_eotf};
+use crate::transfer::{adobe_rgb_eotf, bt2020_pq_eotf, prophoto_rgb_eotf, srgb_eotf, srgb_gamma};
 
 /// Build a 256-entry EOTF lookup table for the given gamut. Per spec §5.2.
 fn build_eotf_lut(gamut: Gamut) -> [f64; 256] {
@@ -22,13 +22,107 @@ fn build_eotf_lut(gamut: Gamut) -> [f64; 256] {
     lut
 }
 
-/// Encode an image into a 32-byte ChromaHash. Per spec §10 (v0.2).
-pub fn encode(w: u32, h: u32, rgba: &[u8], gamut: Gamut) -> [u8; 32] {
+/// Simulate the decoder's DC-only path for a quantized (L, a, b) code triple:
+/// dequantize → clamp → soft gamut clamp → linear sRGB → gamma. Returns the
+/// gamma-encoded sRGB triple the decoder would render for a flat region.
+fn dc_decode_sim(l_q: u32, a_q: u32, b_q: u32, t: &Tunables) -> [f64; 3] {
+    let l = l_q as f64 / 127.0;
+    let a = (a_q as f64 - 64.0) / 63.0 * t.max_chroma_a;
+    let b = (b_q as f64 - 64.0) / 63.0 * t.max_chroma_b;
+    let lab = soft_gamut_clamp(clamp01(l), a, b, t.gamut_l_blend);
+    let rgb = oklab_to_linear_srgb(lab);
+    [
+        srgb_gamma(clamp01(rgb[0])),
+        srgb_gamma(clamp01(rgb[1])),
+        srgb_gamma(clamp01(rgb[2])),
+    ]
+}
+
+/// Decode-aware DC code selection. Per spec §10 (v0.6).
+///
+/// Plain rounding of the DC triple can land a near-gamut-boundary color just
+/// outside sRGB, where the decoder's gamut clamp then drags it far from the
+/// true average (v0.5's solid-blue failure: (0,0,255) decoded as (0,58,214)).
+/// Searching the ±1 neighborhood of the nominal codes — scoring each by the
+/// simulated decoded color against the clamp-mapped target — costs 27 DC
+/// simulations (~10 µs) and zero bits. Fixed iteration order and strict
+/// improvement (`<`) keep it deterministic; ties keep the nominal codes.
+fn select_dc_codes(l_mean: f64, a_mean: f64, b_mean: f64, t: &Tunables) -> (u32, u32, u32) {
+    let l0 = round_half_away_from_zero(127.0 * clamp01(l_mean)) as i64;
+    let a0 = round_half_away_from_zero(64.0 + 63.0 * clamp_neg1_1(a_mean / t.max_chroma_a)) as i64;
+    let b0 = round_half_away_from_zero(64.0 + 63.0 * clamp_neg1_1(b_mean / t.max_chroma_b)) as i64;
+
+    if !t.dc_search {
+        return (l0 as u32, a0 as u32, b0 as u32);
+    }
+
+    // Target = what the decoder could at best show for the true average color
+    // (out-of-gamut targets are first mapped by the same clamp).
+    let target_lab = soft_gamut_clamp(clamp01(l_mean), a_mean, b_mean, t.gamut_l_blend);
+    let target_rgb = oklab_to_linear_srgb(target_lab);
+    let target = [
+        srgb_gamma(clamp01(target_rgb[0])),
+        srgb_gamma(clamp01(target_rgb[1])),
+        srgb_gamma(clamp01(target_rgb[2])),
+    ];
+
+    let mut best = (l0 as u32, a0 as u32, b0 as u32);
+    let mut best_err = f64::INFINITY;
+    for dl in [0i64, -1, 1] {
+        for da in [0i64, -1, 1] {
+            for db in [0i64, -1, 1] {
+                let l_q = (l0 + dl).clamp(0, 127) as u32;
+                let a_q = (a0 + da).clamp(1, 127) as u32;
+                let b_q = (b0 + db).clamp(1, 127) as u32;
+                let cand = dc_decode_sim(l_q, a_q, b_q, t);
+                let dr = cand[0] - target[0];
+                let dg = cand[1] - target[1];
+                let db_ = cand[2] - target[2];
+                let err = dr * dr + dg * dg + db_ * db_;
+                if err < best_err {
+                    best_err = err;
+                    best = (l_q, a_q, b_q);
+                }
+            }
+        }
+    }
+    best
+}
+
+/// Total AC payload bits for layout/mode (excludes the 48-bit header).
+pub(crate) fn ac_payload_bits(t: &Tunables, has_alpha: bool) -> usize {
+    let lay = &t.layout;
+    if has_alpha {
+        let l_bits: usize = lay
+            .la_tiers
+            .iter()
+            .map(|&(n, b)| n * b as usize)
+            .sum::<usize>();
+        5 + 4
+            + l_bits
+            + 2 * lay.ca_count * lay.ca_bits as usize
+            + ALPHA_AC_COUNT * ALPHA_AC_BITS as usize
+    } else {
+        let l_bits: usize = lay
+            .l_tiers
+            .iter()
+            .map(|&(n, b)| n * b as usize)
+            .sum::<usize>();
+        l_bits + 2 * lay.c_count * lay.c_bits as usize
+    }
+}
+
+/// Encode an image into a 32-byte ChromaHash with explicit tunables. Per spec §10 (v0.6).
+pub fn encode_with(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables) -> [u8; 32] {
     assert!(w >= 1, "width must be >= 1");
     assert!(h >= 1, "height must be >= 1");
     assert!(
         rgba.len() == (w as usize) * (h as usize) * 4,
         "rgba length mismatch"
+    );
+    debug_assert!(
+        48 + ac_payload_bits(t, false) <= 256 && 48 + ac_payload_bits(t, true) <= 256,
+        "AC layout exceeds the 256-bit budget"
     );
 
     let w = w as usize;
@@ -83,76 +177,74 @@ pub fn encode(w: u32, h: u32, rgba: &[u8], gamut: Gamut) -> [u8; 32] {
         b_chan[i] = avg_b * (1.0 - alpha) + alpha * oklab_pixels[i][2];
     }
 
-    // 5. Derive adaptive grid dimensions
+    // 5. Select coefficients (top-K by isotropic per-pixel frequency, v0.6)
     let aspect = encode_aspect(w as u32, h as u32);
-    let (l_nx, l_ny) = if has_alpha {
-        derive_grid(aspect, 6)
+    let lay = &t.layout;
+    let (l_count, c_count) = if has_alpha {
+        (lay.la_tiers[0].0 + lay.la_tiers[1].0, lay.ca_count)
     } else {
-        derive_grid(aspect, 7)
+        (lay.l_tiers[0].0 + lay.l_tiers[1].0, lay.c_count)
     };
-    let (c_nx, c_ny) = derive_grid(aspect, 4);
-    let (alpha_nx, alpha_ny) = if has_alpha {
-        derive_grid(aspect, 3)
+    let l_sel: Selection = select_coefficients(aspect, l_count);
+    let c_sel: Selection = select_coefficients(aspect, c_count);
+    let alpha_sel = if has_alpha {
+        select_coefficients(aspect, ALPHA_AC_COUNT)
     } else {
-        (3, 3) // unused placeholder
-    };
-
-    // 6. Precompute cosine tables (alpha dims always <= L dims)
-    let max_cx = l_nx.max(c_nx);
-    let max_cy = l_ny.max(c_ny);
-    let cos_x = precompute_cos_table(w, max_cx);
-    let cos_y = precompute_cos_table(h, max_cy);
-
-    // 6b. Build per-channel scan orders (depend on aspect byte, not just grid dims)
-    let l_scan = scan_order(l_nx, l_ny, aspect);
-    let c_scan = scan_order(c_nx, c_ny, aspect);
-    let alpha_scan = if has_alpha {
-        scan_order(alpha_nx, alpha_ny, aspect)
-    } else {
-        vec![]
+        Selection {
+            coeffs: vec![],
+            priorities: vec![],
+            p_k: 1,
+        }
     };
 
-    // 7. DCT encode each channel
-    let (l_dc, mut l_ac, l_scale) = dct_encode_separable(&l_chan, w, h, &l_scan, &cos_x, &cos_y);
-    let (a_dc, mut a_ac, a_scale) = dct_encode_separable(&a_chan, w, h, &c_scan, &cos_x, &cos_y);
-    let (b_dc, mut b_ac, b_scale) = dct_encode_separable(&b_chan, w, h, &c_scan, &cos_x, &cos_y);
+    // 6. Precompute cosine tables over the source dims, covering every
+    // selected frequency (rows for frequencies ≥ source dims exist but are
+    // never read — dct_encode_selected clamps them to exact zero).
+    let max_cx = l_sel
+        .coeffs
+        .iter()
+        .chain(c_sel.coeffs.iter())
+        .chain(alpha_sel.coeffs.iter())
+        .map(|&(cx, _)| cx)
+        .max()
+        .unwrap_or(0);
+    let max_cy = l_sel
+        .coeffs
+        .iter()
+        .chain(c_sel.coeffs.iter())
+        .chain(alpha_sel.coeffs.iter())
+        .map(|&(_, cy)| cy)
+        .max()
+        .unwrap_or(0);
+    let cos_x = precompute_cos_table(w, (max_cx + 1).min(w.max(1)));
+    let cos_y = precompute_cos_table(h, (max_cy + 1).min(h.max(1)));
 
-    let (alpha_dc, mut alpha_ac, alpha_scale) = if has_alpha {
-        dct_encode_separable(&alpha_pixels, w, h, &alpha_scan, &cos_x, &cos_y)
+    // 7. DCT encode each channel (frequency clamp to source dims built in)
+    let (l_dc, l_ac, l_scale) = dct_encode_selected(&l_chan, w, h, &l_sel.coeffs, &cos_x, &cos_y);
+    let (a_dc, a_ac, a_scale) = dct_encode_selected(&a_chan, w, h, &c_sel.coeffs, &cos_x, &cos_y);
+    let (b_dc, b_ac, b_scale) = dct_encode_selected(&b_chan, w, h, &c_sel.coeffs, &cos_x, &cos_y);
+    let (alpha_dc, alpha_ac, alpha_scale) = if has_alpha {
+        dct_encode_selected(&alpha_pixels, w, h, &alpha_sel.coeffs, &cos_x, &cos_y)
     } else {
         (0.0, vec![], 0.0)
     };
 
-    // Cap to bit budget; zero-pad if under cap (only 4×8/8×4 alpha-mode L grids)
-    let l_cap = if has_alpha { 20 } else { 27 };
-    l_ac.truncate(l_cap);
-    while l_ac.len() < l_cap {
-        l_ac.push(0.0);
-    }
-    a_ac.truncate(9);
-    b_ac.truncate(9);
-    if has_alpha {
-        alpha_ac.truncate(5);
-    }
+    // 8. Quantize header values (decode-aware DC code search, v0.6)
+    let (l_dc_q, a_dc_q, b_dc_q) = select_dc_codes(l_dc, a_dc, b_dc, t);
+    let l_scl_q = round_half_away_from_zero(63.0 * clamp01(l_scale / t.max_l_scale)) as u64;
+    let a_scl_q = round_half_away_from_zero(63.0 * clamp01(a_scale / t.max_a_scale)) as u64;
+    let b_scl_q = round_half_away_from_zero(31.0 * clamp01(b_scale / t.max_b_scale)) as u64;
 
-    // 8. Quantize header values
-    let l_dc_q = round_half_away_from_zero(127.0 * clamp01(l_dc)) as u64;
-    let a_dc_q = round_half_away_from_zero(64.0 + 63.0 * clamp_neg1_1(a_dc / MAX_CHROMA_A)) as u64;
-    let b_dc_q = round_half_away_from_zero(64.0 + 63.0 * clamp_neg1_1(b_dc / MAX_CHROMA_B)) as u64;
-    let l_scl_q = round_half_away_from_zero(63.0 * clamp01(l_scale / MAX_L_SCALE)) as u64;
-    let a_scl_q = round_half_away_from_zero(63.0 * clamp01(a_scale / MAX_A_SCALE)) as u64;
-    let b_scl_q = round_half_away_from_zero(31.0 * clamp01(b_scale / MAX_B_SCALE)) as u64;
-
-    // 9. Pack header (48 bits = 6 bytes, little-endian); bit 47 = 1 for v0.2
-    let header: u64 = l_dc_q
-        | (a_dc_q << 7)
-        | (b_dc_q << 14)
+    // 9. Pack header (48 bits = 6 bytes, little-endian); bit 47 = 0 for v0.6
+    let header: u64 = (l_dc_q as u64)
+        | ((a_dc_q as u64) << 7)
+        | ((b_dc_q as u64) << 14)
         | (l_scl_q << 21)
         | (a_scl_q << 27)
         | (b_scl_q << 33)
         | ((aspect as u64) << 38)
-        | (if has_alpha { 1u64 } else { 0u64 } << 46)
-        | (1u64 << 47); // v0.2: version bit = 1
+        | (if has_alpha { 1u64 } else { 0u64 } << 46);
+    // bit 47 stays 0: v0.6 marker (v0.2–v0.5 hashes have it set to 1)
 
     let mut hash = [0u8; 32];
     for (i, byte) in hash.iter_mut().enumerate().take(6) {
@@ -162,72 +254,68 @@ pub fn encode(w: u32, h: u32, rgba: &[u8], gamut: Gamut) -> [u8; 32] {
     // 10. Pack AC coefficients with µ-law companding
     let mut bitpos = 48usize;
 
-    let quantize_ac = |value: f64, scale: f64, bits: u32| -> u32 {
+    let quantize_ac = |value: f64, scale: f64, bits: u32, mu: f64| -> u32 {
         if scale == 0.0 {
-            mu_law_quantize(0.0, bits)
+            mu_law_quantize(0.0, bits, mu)
         } else {
-            mu_law_quantize(value / scale, bits)
+            mu_law_quantize(value / scale, bits, mu)
         }
     };
 
     if has_alpha {
         let alpha_dc_q = round_half_away_from_zero(31.0 * clamp01(alpha_dc)) as u32;
         let alpha_scl_q =
-            round_half_away_from_zero(15.0 * clamp01(alpha_scale / MAX_A_ALPHA_SCALE)) as u32;
+            round_half_away_from_zero(15.0 * clamp01(alpha_scale / t.max_alpha_scale)) as u32;
         write_bits(&mut hash, bitpos, 5, alpha_dc_q);
         bitpos += 5;
         write_bits(&mut hash, bitpos, 4, alpha_scl_q);
         bitpos += 4;
+    }
 
-        // L AC: first 7 at 6 bits, remaining 13 at 5 bits
-        for ac_val in &l_ac[..7] {
-            let q = quantize_ac(*ac_val, l_scale, 6);
-            write_bits(&mut hash, bitpos, 6, q);
-            bitpos += 6;
-        }
-        for ac_val in &l_ac[7..20] {
-            let q = quantize_ac(*ac_val, l_scale, 5);
-            write_bits(&mut hash, bitpos, 5, q);
-            bitpos += 5;
-        }
+    // L AC in selection order across the precision tiers
+    let l_tiers = if has_alpha {
+        &lay.la_tiers
     } else {
-        // L AC: all 27 at 5 bits
-        for ac_val in &l_ac[..27] {
-            let q = quantize_ac(*ac_val, l_scale, 5);
-            write_bits(&mut hash, bitpos, 5, q);
-            bitpos += 5;
+        &lay.l_tiers
+    };
+    let mut l_idx = 0usize;
+    for &(count, bits) in l_tiers {
+        for _ in 0..count {
+            let q = quantize_ac(l_ac[l_idx], l_scale, bits, t.mu_l);
+            write_bits(&mut hash, bitpos, bits, q);
+            bitpos += bits as usize;
+            l_idx += 1;
         }
     }
 
-    // a AC: 9 at 4 bits
+    // Chroma AC
+    let c_bits = if has_alpha { lay.ca_bits } else { lay.c_bits };
     for ac_val in &a_ac {
-        let q = quantize_ac(*ac_val, a_scale, 4);
-        write_bits(&mut hash, bitpos, 4, q);
-        bitpos += 4;
+        let q = quantize_ac(*ac_val, a_scale, c_bits, t.mu_c);
+        write_bits(&mut hash, bitpos, c_bits, q);
+        bitpos += c_bits as usize;
     }
-
-    // b AC: 9 at 4 bits
     for ac_val in &b_ac {
-        let q = quantize_ac(*ac_val, b_scale, 4);
-        write_bits(&mut hash, bitpos, 4, q);
-        bitpos += 4;
+        let q = quantize_ac(*ac_val, b_scale, c_bits, t.mu_c);
+        write_bits(&mut hash, bitpos, c_bits, q);
+        bitpos += c_bits as usize;
     }
 
     if has_alpha {
-        // Alpha AC: 5 at 4 bits
         for ac_val in &alpha_ac {
-            let q = quantize_ac(*ac_val, alpha_scale, 4);
-            write_bits(&mut hash, bitpos, 4, q);
-            bitpos += 4;
+            let q = quantize_ac(*ac_val, alpha_scale, ALPHA_AC_BITS, t.mu_alpha);
+            write_bits(&mut hash, bitpos, ALPHA_AC_BITS, q);
+            bitpos += ALPHA_AC_BITS as usize;
         }
     }
 
-    // Verify exact bit budget: no-alpha ends at 255 (bit 255 = padding), alpha at 256
-    if has_alpha {
-        debug_assert_eq!(bitpos, 256);
-    } else {
-        debug_assert_eq!(bitpos, 255);
-    }
+    // Verify exact bit budget; remaining bits up to 256 are padding zeros.
+    debug_assert_eq!(bitpos, 48 + ac_payload_bits(t, has_alpha));
 
     hash
+}
+
+/// Encode an image into a 32-byte ChromaHash. Per spec §10 (v0.6).
+pub fn encode(w: u32, h: u32, rgba: &[u8], gamut: Gamut) -> [u8; 32] {
+    encode_with(w, h, rgba, gamut, &Tunables::DEFAULT)
 }

@@ -26,14 +26,28 @@ from constants import (
     D50_XY,
     D65_XY,
     GAMUT_PRIMARIES,
+    GAMUT_L_BLEND,
     MAX_A_ALPHA_SCALE,
     MAX_A_SCALE,
     MAX_B_SCALE,
     MAX_CHROMA_A,
     MAX_CHROMA_B,
     MAX_L_SCALE,
-    MU,
+    MU_ALPHA,
+    MU_C,
+    MU_L,
+    ALPHA_AC_BITS,
+    ALPHA_AC_COUNT,
+    C_AC_BITS,
+    C_AC_COUNT,
+    L_AC_BITS,
+    L_AC_COUNT,
+    LA_TIER1_BITS,
+    LA_TIER1_COUNT,
+    LA_TIER2_BITS,
+    LA_TIER2_COUNT,
 )
+from selection import FORMAT_KS, decode_output_size, select_coefficients
 
 # Mapping from gamut name → stored M1 matrix
 STORED_M1 = {
@@ -226,51 +240,45 @@ def validate_row_sums():
 
 
 def validate_oklab_bounds():
-    """Check MAX_CHROMA_A/B cover all gamut corners (except extreme ProPhoto)."""
-    print("\n5. OKLAB bounds and MAX_CHROMA coverage")
+    """Check MAX_CHROMA_A/B cover the sRGB OKLAB hull (the decode target).
 
-    max_a = 0.0
-    max_b = 0.0
-    practical_max_a = 0.0  # Excluding ProPhoto imaginary primaries
-    practical_max_b = 0.0  # Excluding ProPhoto imaginary primaries
+    v0.6 sizes the chroma DC ranges to the sRGB hull rather than the union of
+    source gamuts: the decoder always clamps to sRGB, so DC chroma beyond the
+    hull is unreachable and only wastes quantization precision. Wide-gamut DCs
+    outside the hull clip at encode; the decode-aware DC search (spec §10.3)
+    selects the codes minimizing the post-clamp error.
+    """
+    print("\n5. OKLAB bounds and MAX_CHROMA coverage (sRGB hull)")
 
-    for name, M1 in STORED_M1.items():
-        for r in [0.0, 1.0]:
-            for g in [0.0, 1.0]:
-                for b in [0.0, 1.0]:
-                    if r == 0 and g == 0 and b == 0:
-                        continue
-                    lms = matvec(M1, [r, g, b])
-                    lms_cbrt = [math.copysign(abs(x) ** (1/3), x) for x in lms]
-                    lab = matvec(M2, lms_cbrt)
+    srgb_max_a = 0.0
+    srgb_max_b = 0.0
 
-                    max_a = max(max_a, abs(lab[1]))
-                    max_b = max(max_b, abs(lab[2]))
+    for r in [0.0, 1.0]:
+        for g in [0.0, 1.0]:
+            for b in [0.0, 1.0]:
+                if r == 0 and g == 0 and b == 0:
+                    continue
+                lms = matvec(M1_SRGB, [r, g, b])
+                lms_cbrt = [math.copysign(abs(x) ** (1 / 3), x) for x in lms]
+                lab = matvec(M2, lms_cbrt)
+                srgb_max_a = max(srgb_max_a, abs(lab[1]))
+                srgb_max_b = max(srgb_max_b, abs(lab[2]))
 
-                    if name != "ProPhoto RGB":
-                        practical_max_a = max(practical_max_a, abs(lab[1]))
-                        practical_max_b = max(practical_max_b, abs(lab[2]))
-
-    check(MAX_CHROMA_A >= practical_max_a,
-          f"MAX_CHROMA_A={MAX_CHROMA_A} ≥ practical max |a|={practical_max_a:.4f}")
-    check(MAX_CHROMA_B >= practical_max_b,
-          f"MAX_CHROMA_B={MAX_CHROMA_B} ≥ practical max |b|={practical_max_b:.4f}")
-    check(MAX_CHROMA_B >= max_b,
-          f"MAX_CHROMA_B={MAX_CHROMA_B} ≥ all-gamut max |b|={max_b:.4f}")
-
-    # Check margin over BT.2020 (tightest practical constraint)
-    margin_a = MAX_CHROMA_A - practical_max_a
-    check(margin_a >= 0.03,
-          f"MAX_CHROMA_A margin over BT.2020: {margin_a:.4f} ≥ 0.03")
-
-    # Note ProPhoto blue exceeds MAX_CHROMA_A (expected, documented)
-    if max_a > MAX_CHROMA_A:
-        print(f"  ℹ ProPhoto RGB blue |a|={max_a:.4f} exceeds MAX_CHROMA_A={MAX_CHROMA_A} (expected, clips)")
+    check(MAX_CHROMA_A >= srgb_max_a,
+          f"MAX_CHROMA_A={MAX_CHROMA_A} ≥ sRGB hull max |a|={srgb_max_a:.4f}")
+    check(MAX_CHROMA_B >= srgb_max_b,
+          f"MAX_CHROMA_B={MAX_CHROMA_B} ≥ sRGB hull max |b|={srgb_max_b:.4f}")
+    # Ranges should be tight: more than ~10% slack re-wastes the precision
+    # the v0.6 retuning reclaimed.
+    check(MAX_CHROMA_A <= srgb_max_a * 1.1,
+          f"MAX_CHROMA_A={MAX_CHROMA_A} ≤ 1.1 × sRGB hull max |a| (tight range)")
+    check(MAX_CHROMA_B <= srgb_max_b * 1.1,
+          f"MAX_CHROMA_B={MAX_CHROMA_B} ≤ 1.1 × sRGB hull max |b| (tight range)")
 
 
 def validate_scale_constants():
-    """Check scale constants are positive and reasonable."""
-    print("\n6. Scale factor constants")
+    """Check scale and clamp constants are positive and reasonable."""
+    print("\n6. Scale factor and clamp constants")
 
     for name, val in [
         ("MAX_L_SCALE", MAX_L_SCALE),
@@ -281,10 +289,12 @@ def validate_scale_constants():
         check(val > 0, f"{name} = {val} > 0")
         check(val <= 1.0, f"{name} = {val} ≤ 1.0")
 
+    check(0.0 <= GAMUT_L_BLEND <= 1.0, f"GAMUT_L_BLEND = {GAMUT_L_BLEND} in [0, 1]")
+
 
 def validate_mu_law():
-    """Check µ-law round-trip properties."""
-    print("\n7. µ-law companding round-trip")
+    """Check µ-law round-trip and exact-zero properties for all format µ values."""
+    print("\n7. µ-law companding round-trip (v0.6 odd level count)")
 
     def mu_compress(v, mu):
         return math.copysign(1, v) * math.log(1 + mu * abs(v)) / math.log(1 + mu)
@@ -292,18 +302,30 @@ def validate_mu_law():
     def mu_expand(c, mu):
         return math.copysign(1, c) * ((1 + mu) ** abs(c) - 1) / mu
 
-    # Round-trip at extreme values
-    for v in [-1.0, -0.5, 0.0, 0.5, 1.0]:
-        c = mu_compress(v, MU)
-        rt = mu_expand(c, MU)
-        err = abs(rt - v)
-        check(err < 1e-12, f"µ-law round-trip at v={v:+.1f} (err={err:.2e})")
+    for mu_name, mu in [("MU_L", MU_L), ("MU_C", MU_C), ("MU_ALPHA", MU_ALPHA)]:
+        check(mu > 0, f"{mu_name} = {mu} > 0")
 
-    # Check compressed range is [-1, 1]
-    c_max = mu_compress(1.0, MU)
-    c_min = mu_compress(-1.0, MU)
-    check(abs(c_max - 1.0) < 1e-12, f"µ-law(1.0) = {c_max:.10f} ≈ 1.0")
-    check(abs(c_min + 1.0) < 1e-12, f"µ-law(-1.0) = {c_min:.10f} ≈ -1.0")
+        # Round-trip at extreme values
+        for v in [-1.0, -0.5, 0.0, 0.5, 1.0]:
+            c = mu_compress(v, mu)
+            rt = mu_expand(c, mu)
+            err = abs(rt - v)
+            check(err < 1e-12, f"{mu_name}: round-trip at v={v:+.1f} (err={err:.2e})")
+
+        # Check compressed range is [-1, 1]
+        c_max = mu_compress(1.0, mu)
+        c_min = mu_compress(-1.0, mu)
+        check(abs(c_max - 1.0) < 1e-12, f"{mu_name}: µ-law(1.0) ≈ 1.0")
+        check(abs(c_min + 1.0) < 1e-12, f"{mu_name}: µ-law(-1.0) ≈ -1.0")
+
+        # v0.6 exact-zero property: with 2^bits − 1 levels, the center index
+        # dequantizes to exactly 0.0 at every bit width the format uses.
+        for bits in [4, 5, 6]:
+            max_idx = (1 << bits) - 2
+            center = max_idx // 2
+            c = center / max_idx * 2 - 1
+            check(mu_expand(c, mu) == 0.0,
+                  f"{mu_name}: center code is exact zero at {bits} bits")
 
 
 def validate_aspect_ratio():
@@ -336,144 +358,95 @@ def validate_aspect_ratio():
         check(err < 1.1, f"Aspect {label}: error={err:.3f}% < 1.1%")
 
 
-def validate_derive_grid():
-    """Check deriveGrid() produces correct grids for all aspect bytes. Per spec §6.3 (v0.4)."""
-    print("\n9. Adaptive grid derivation (deriveGrid)")
+def validate_selection():
+    """Check top-K coefficient selection properties for all aspect bytes. Per spec §6.2 (v0.6)."""
+    print("\n9. Coefficient selection (top-K per-pixel frequency)")
 
-    def round_half_away_from_zero(x):
-        return math.floor(x + 0.5) if x >= 0 else math.ceil(x - 0.5)
-
-    def derive_grid(aspect_byte, base_n):
-        """v0.4: sqrt(scale) with nx_cap and product preservation."""
-        ratio = 2.0 ** (aspect_byte / 255.0 * 8.0 - 4.0)
-        nx_cap = 2 * base_n
-        if ratio >= 1.0:
-            scale = min(ratio, 16.0)
-            nx = min(round_half_away_from_zero(base_n * math.sqrt(scale)), nx_cap)
-            ny = round_half_away_from_zero(base_n * base_n / nx)
-        else:
-            scale = min(1.0 / ratio, 16.0)
-            ny = min(round_half_away_from_zero(base_n * math.sqrt(scale)), nx_cap)
-            nx = round_half_away_from_zero(base_n * base_n / ny)
-        return (max(int(nx), 3), max(int(ny), 3))
-
-    def tri_ac(nx, ny):
-        c = 0
-        for cy in range(ny):
-            cx = 1 if cy == 0 else 0
-            while cx * ny < nx * (ny - cy):
-                c += 1
-                cx += 1
-        return c
-
-    # Channel configs: (base_n, ac_cap, label)
-    channels = [
-        (7, 27, "L no-alpha"),
-        (4, 9, "chroma"),
-        (6, 20, "L alpha"),
-        (3, 5, "alpha"),
-    ]
-
-    for base_n, cap, label in channels:
-        min_ac = 999
-        all_ok = True
-        for b in range(256):
-            nx, ny = derive_grid(b, base_n)
-            ac = tri_ac(nx, ny)
-            min_ac = min(min_ac, ac)
-            if nx < 3 or ny < 3:
+    # Structural invariants over every aspect byte and every format K
+    all_ok = True
+    min_candidates = 1 << 30
+    for byte in range(256):
+        w, h = decode_output_size(byte)
+        min_candidates = min(min_candidates, w * h - 1)
+        for k in FORMAT_KS:
+            coeffs, p_k = select_coefficients(byte, k)
+            if len(coeffs) != k:
                 all_ok = False
+            if (0, 0) in coeffs:
+                all_ok = False
+            if any(cx >= w or cy >= h for cx, cy in coeffs):
+                all_ok = False
+            priorities = [(cx * h) ** 2 + (cy * w) ** 2 for cx, cy in coeffs]
+            if priorities != sorted(priorities):
+                all_ok = False
+            if p_k != priorities[-1] or p_k <= 0:
+                all_ok = False
+    check(all_ok, "All 256 bytes × all K: count, DC excluded, in-bounds, "
+                  "ascending priority, p_k consistent")
+    check(min_candidates >= max(FORMAT_KS),
+          f"Min candidate count {min_candidates} ≥ max K {max(FORMAT_KS)} "
+          "(selection always fully satisfied)")
 
-        check(all_ok, f"{label} (base_n={base_n}): all grids have nx,ny ≥ 3")
-        # v0.4: product preservation ensures min_ac >= cap for all channels
-        check(min_ac >= cap,
-              f"{label} (base_n={base_n}): min raw AC {min_ac} ≥ cap {cap}")
+    # Square at byte=128 (W=H=32): radial order, ℓ2 ball
+    coeffs_9, _ = select_coefficients(128, 9)
+    check(coeffs_9[0] == (0, 1) and coeffs_9[1] == (1, 0),
+          "Square K=9: first two slots are (0,1),(1,0) — tied priority, lex tiebreak")
+    check(coeffs_9[2] == (1, 1), "Square K=9: third slot is (1,1)")
 
-    # Spot-check known grid values (extreme bytes unchanged from v0.3; moderates new)
-    spot_checks = [
-        # (aspect_byte, base_n, expected_nx, expected_ny)
-        (0, 7, 4, 14),     # L extreme portrait (unchanged at cap)
-        (128, 7, 7, 7),    # L square
-        (255, 7, 14, 4),   # L extreme landscape (unchanged at cap)
-        (154, 7, 9, 5),    # L ~16:9 landscape (v0.4 improvement: was 8×6)
-        (146, 7, 9, 5),    # L ~3:2 landscape (v0.4 improvement: was 8×6 or 9×5)
-        (0, 4, 3, 8),      # chroma extreme portrait
-        (128, 4, 4, 4),    # chroma square
-        (255, 4, 8, 3),    # chroma extreme landscape
-        (0, 6, 3, 12),     # alpha-L extreme portrait
-        (128, 6, 6, 6),    # alpha-L square
-        (255, 6, 12, 3),   # alpha-L extreme landscape
-        (0, 3, 3, 6),      # alpha extreme portrait
-        (128, 3, 3, 3),    # alpha square
-        (255, 3, 6, 3),    # alpha extreme landscape
-    ]
-    for ab, bn, exp_nx, exp_ny in spot_checks:
-        nx, ny = derive_grid(ab, bn)
-        check(nx == exp_nx and ny == exp_ny,
-              f"deriveGrid({ab}, {bn}) = ({nx},{ny}), expected ({exp_nx},{exp_ny})")
+    coeffs_27, _ = select_coefficients(128, 27)
+    check((3, 4) in coeffs_27 and (4, 3) in coeffs_27,
+          "Square K=27: ℓ2 ball includes diagonals (3,4)/(4,3)")
+    check((6, 0) not in coeffs_27 and (0, 6) not in coeffs_27,
+          "Square K=27: ℓ2 ball excludes axis extremes (6,0)/(0,6)")
 
-    # Verify portrait/landscape symmetry: grid at byte b mirrors grid at byte (255-b)
+    # Extreme landscape at byte=255 (W=32, H=2): long axis dominates
+    coeffs_land, _ = select_coefficients(255, 27)
+    cy0 = sum(1 for _, cy in coeffs_land if cy == 0)
+    check(cy0 >= 15, f"16:1 landscape K=27: {cy0} ≥ 15 slots on the long axis")
+    check(all(cy < 2 for _, cy in coeffs_land),
+          "16:1 landscape: no cy ≥ H=2 frequency ever selected")
+
+    # Portrait/landscape symmetry: byte b and byte (255−b) have mirrored
+    # (W, H), so the selected priority multisets are identical. The exact
+    # coefficient sets may differ within an equal-priority tie group cut at
+    # the K boundary (the (priority, cx, cy) tiebreak is not swap-invariant);
+    # this is benign and affects 5 of 512 (byte, K) mirror pairs.
     sym_ok = True
-    for base_n in [7, 4, 6, 3]:
-        for b in range(128):
-            nx_lo, ny_lo = derive_grid(b, base_n)
-            nx_hi, ny_hi = derive_grid(255 - b, base_n)
-            if not (nx_lo == ny_hi and ny_lo == nx_hi):
+    for b in range(128):
+        w_lo, h_lo = decode_output_size(b)
+        w_hi, h_hi = decode_output_size(255 - b)
+        if (w_lo, h_lo) != (h_hi, w_hi):
+            sym_ok = False
+        for k in FORMAT_KS:
+            lo, pk_lo = select_coefficients(b, k)
+            hi, pk_hi = select_coefficients(255 - b, k)
+            pri_lo = sorted((cx * h_lo) ** 2 + (cy * w_lo) ** 2 for cx, cy in lo)
+            pri_hi = sorted((cx * h_hi) ** 2 + (cy * w_hi) ** 2 for cx, cy in hi)
+            if pri_lo != pri_hi or pk_lo != pk_hi:
                 sym_ok = False
-    check(sym_ok, "Portrait/landscape grid symmetry across all channels")
+    check(sym_ok, "Portrait/landscape symmetry: mirrored dims, equal priority "
+                  "multisets and p_k across all K")
 
 
-def validate_scan_order():
-    """Check per-pixel priority scan order for representative grids. Per spec §6.2 (v0.4)."""
-    print("\n10. Scan order (per-pixel frequency priority)")
+def validate_bit_budget():
+    """Check the AC layout fits the 208-bit block exactly. Per spec §3.2 (v0.6)."""
+    print("\n10. AC bit budget")
 
-    def decode_output_size(aspect_byte):
-        ratio = 2.0 ** (aspect_byte / 255.0 * 8.0 - 4.0)
-        if ratio >= 1.0:
-            h = max(round(32.0 / ratio + 0.5 if 32.0 / ratio % 1 >= 0.5 else round(32.0 / ratio)), 1)
-            # use math.floor(x + 0.5)
-            h = max(math.floor(32.0 / ratio + 0.5), 1)
-            return (32, h)
-        else:
-            w = max(math.floor(32.0 * ratio + 0.5), 1)
-            return (w, 32)
+    no_alpha = L_AC_COUNT * L_AC_BITS + 2 * C_AC_COUNT * C_AC_BITS
+    check(no_alpha <= 208, f"No-alpha AC payload {no_alpha} ≤ 208 bits")
+    check(208 - no_alpha == 1, f"No-alpha padding = {208 - no_alpha} bit (spec §2.6)")
 
-    def scan_order(nx, ny, aspect_byte):
-        w, h = decode_output_size(aspect_byte)
-        members = []
-        for cy in range(ny):
-            cx = 1 if cy == 0 else 0
-            while cx * ny < nx * (ny - cy):
-                members.append((cx, cy))
-                cx += 1
-        members.sort(key=lambda p: ((p[0] * h) ** 2 + (p[1] * w) ** 2, p[0], p[1]))
-        return members
+    alpha = (
+        5 + 4  # alpha DC + alpha scale
+        + LA_TIER1_COUNT * LA_TIER1_BITS
+        + LA_TIER2_COUNT * LA_TIER2_BITS
+        + 2 * C_AC_COUNT * C_AC_BITS
+        + ALPHA_AC_COUNT * ALPHA_AC_BITS
+    )
+    check(alpha == 208, f"Alpha-mode AC payload {alpha} = 208 bits (no padding)")
 
-    # Square 4×4 at byte=128 (w=h=32): expect radial order, first two (0,1)/(1,0)
-    order_4x4 = scan_order(4, 4, 128)
-    check(len(order_4x4) == 9, "4×4 square: 9 AC coefficients")
-    check(order_4x4[0] == (0, 1) and order_4x4[1] == (1, 0),
-          "4×4 square: first two slots are (0,1),(1,0) — tied radial priority, cx tiebreak")
-    check(order_4x4[2] == (1, 1), "4×4 square: third slot is (1,1)")
-    check(order_4x4[-1] == (3, 0), "4×4 square: last slot is (3,0) — highest row frequency")
-
-    # Square 3×3 at byte=128: expect [(0,1),(1,0),(1,1),(0,2),(2,0)]
-    order_3x3 = scan_order(3, 3, 128)
-    expected_3x3 = [(0, 1), (1, 0), (1, 1), (0, 2), (2, 0)]
-    check(order_3x3 == expected_3x3, f"3×3 square: {order_3x3} == {expected_3x3}")
-
-    # Extreme landscape 14×4 at byte=255 (w=32, h=2): all cy=0 before cy>0 (row-major preserved)
-    order_14x4 = scan_order(14, 4, 255)
-    check(len(order_14x4) == 35, "14×4 landscape: 35 AC coefficients")
-    first_nonzero = next(i for i, (_, cy) in enumerate(order_14x4) if cy > 0)
-    last_zero = max(i for i, (_, cy) in enumerate(order_14x4) if cy == 0)
-    check(first_nonzero > last_zero,
-          "14×4 extreme landscape: cy=0 row precedes cy>0 rows (row-major degeneracy)")
-
-    # Square grid: verify DC (0,0) is absent
-    for (nx, ny, byte) in [(3, 3, 128), (4, 4, 128), (6, 6, 128), (7, 7, 128)]:
-        order = scan_order(nx, ny, byte)
-        check((0, 0) not in order, f"{nx}×{ny}: DC (0,0) excluded from scan order")
+    check(LA_TIER1_COUNT + LA_TIER2_COUNT == 20,
+          "Alpha-mode L coefficient count = 20")
 
 
 # =========================================================================
@@ -492,8 +465,8 @@ if __name__ == "__main__":
     validate_scale_constants()
     validate_mu_law()
     validate_aspect_ratio()
-    validate_derive_grid()
-    validate_scan_order()
+    validate_selection()
+    validate_bit_budget()
 
     print(f"\n{'=' * 60}")
     print(f"Results: {passed} passed, {failed} failed")

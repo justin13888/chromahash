@@ -25,6 +25,7 @@ import {
 import type { ReportMeta } from "./report.ts";
 import { generateFixtures } from "./generate-fixtures.ts";
 import { ensureNaturalImages } from "./natural-images.ts";
+import { gamutToSrgbReference } from "./gamut.ts";
 import type {
   ComparisonImageJson,
   ComparisonJson,
@@ -45,6 +46,7 @@ const { values } = parseArgs({
     "skip-harnesses": { type: "boolean", default: false },
     "generate-fixtures": { type: "boolean", default: true },
     "skip-natural": { type: "boolean", default: false },
+    formats: { type: "string" },
     commit: { type: "string" },
   },
 });
@@ -55,6 +57,10 @@ const iterations = Number.parseInt(values.iterations ?? "10", 10);
 const skipHarnesses = values["skip-harnesses"] ?? false;
 const shouldGenerateFixtures = values["generate-fixtures"] ?? true;
 const skipNatural = values["skip-natural"] ?? false;
+/** Optional comma-separated format filter (case-insensitive), e.g. --formats ChromaHash,ThumbHash. */
+const formatFilter = values.formats
+  ? values.formats.split(",").map((f) => f.trim().toLowerCase())
+  : null;
 
 /** Derive the JSON output path from the HTML output path by swapping the extension. */
 function deriveJsonPath(htmlPath: string): string {
@@ -150,13 +156,28 @@ async function main(): Promise<void> {
   }
 
   // Initialize adapters
-  const adapters: FormatAdapter[] = [
+  let adapters: FormatAdapter[] = [
     new ChromaHashAdapter(),
     new ThumbHashAdapter(),
     new BlurHashAdapter(),
     new LqipModernAdapter(),
     new UnpicAdapter(),
   ];
+  if (formatFilter) {
+    adapters = adapters.filter((a) =>
+      formatFilter.includes(a.name.toLowerCase()),
+    );
+    if (adapters.length === 0) {
+      console.error(`--formats matched no adapters: ${values.formats}`);
+      process.exit(1);
+    }
+    console.log(
+      `Format filter active: ${adapters.map((a) => a.name).join(", ")}`,
+    );
+  }
+  const activeFormatNames = FORMAT_NAMES.filter((n) =>
+    adapters.some((a) => a.name === n),
+  );
 
   const entries: Array<{
     name: string;
@@ -190,6 +211,9 @@ async function main(): Promise<void> {
     };
     const gamut = gamutMap[name] ?? "srgb";
     input.gamut = gamut;
+    // Color-managed metric reference: all formats are scored against the
+    // image's true sRGB appearance, not the raw gamut-encoded bytes.
+    input.metricReferenceRgba = gamutToSrgbReference(input.smallRgba, gamut);
 
     const originalDataUri = await fileBufferToDisplayDataUri(input.fileBuffer);
     const loResDataUri = await rgbaToDataUri(
@@ -331,10 +355,10 @@ async function main(): Promise<void> {
   }
 
   // Summary stats are reused by both the JSON output and the console summary.
-  const naturalStats = computeFormatStats(entries, FORMAT_NAMES, (e) =>
+  const naturalStats = computeFormatStats(entries, activeFormatNames, (e) =>
     (["Natural", "Realistic"] as ImageCategory[]).includes(e.category),
   );
-  const allStats = computeFormatStats(entries, FORMAT_NAMES);
+  const allStats = computeFormatStats(entries, activeFormatNames);
 
   const harnessesSkipped = entries.every((e) => e.harnessResults.length === 0);
   const crossLanguage = LANGUAGES.map((language) => {
@@ -351,7 +375,7 @@ async function main(): Promise<void> {
     generatedAt: meta.generatedAt,
     commit: meta.commit,
     repoUrl: meta.repoUrl,
-    formats: FORMAT_NAMES,
+    formats: activeFormatNames,
     languages: LANGUAGES,
     summary: { naturalAndRealistic: naturalStats, all: allStats },
     crossLanguage,
