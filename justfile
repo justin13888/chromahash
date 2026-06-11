@@ -124,7 +124,7 @@ bench-batch-swift: swift-cbuild
 bench-batch-go: go-cbuild
     cd go && CGO_ENABLED=1 go test -bench=Encode -benchmem -run='^$' ./...
 
-bench-batch-python:
+bench-batch-python: python-cbuild
     cd python && uv run python benchmarks/batch_bench.py
 
 bench-batch-csharp: csharp-cbuild
@@ -447,10 +447,26 @@ lint-python:
 lint-fix-python:
     cd python && uv run ruff check --fix .
 
-test-python:
+# Build the UniFFI static lib, generate the ctypes bindings, and stage them + the
+# native lib into the package (chromahash/_uniffi.py + libchromahash_uniffi.*).
+python-cbuild:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "$(uname)" in
+      Darwin) lib=libchromahash_uniffi.dylib ;;
+      *)      lib=libchromahash_uniffi.so ;;
+    esac
+    cargo build --release --manifest-path bindings/uniffi/Cargo.toml
+    gen="$(mktemp -d)"
+    ( cd bindings/uniffi && cargo run --release --quiet --bin uniffi-bindgen -- \
+        generate --library "target/release/$lib" --language python --out-dir "$gen" )
+    cp "$gen/chromahash_uniffi.py" python/chromahash/_uniffi.py
+    cp "bindings/uniffi/target/release/$lib" python/chromahash/
+
+test-python: python-cbuild
     cd python && uv run pytest tests/ -v
 
-build-python:
+build-python: python-cbuild
     cd python && uv build
 
 # ─── C# ──────────────────────────────────────────────────────────────────────

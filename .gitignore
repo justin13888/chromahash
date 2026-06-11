@@ -87,6 +87,9 @@ __pycache__/
 python/.venv/
 python/*.egg-info/
 python/dist/
+# Generated UniFFI bindings + native lib staged by `just python-cbuild`.
+python/chromahash/_uniffi.py
+python/chromahash/libchromahash_uniffi.*
 
 # === C# / .NET ===
 csharp/**/bin/
