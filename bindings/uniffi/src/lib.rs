@@ -12,9 +12,11 @@
 //!   - Integer record fields are signed (`i32` → Kotlin `Int`), matching the
 //!     pure-Kotlin `DecodeResult`/`RgbaColor` types and Android's `Bitmap`/ARGB APIs.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-use chromahash::{ChromaHash as CoreHash, Gamut as CoreGamut};
+use chromahash::{
+    BatchEncoder as CoreBatch, ChromaHash as CoreHash, Gamut as CoreGamut, ImageInput as CoreInput,
+};
 
 uniffi::setup_scaffolding!();
 
@@ -142,5 +144,72 @@ impl ChromaHash {
     /// The raw 32-byte hash data.
     pub fn as_bytes(&self) -> Vec<u8> {
         self.inner.as_bytes().to_vec()
+    }
+
+    /// Whether this hash uses the v0.6 bitstream this library implements. Decoding
+    /// an unsupported (legacy v0.2–v0.5) hash produces garbage, not an error —
+    /// check this first for hashes of unknown provenance. Per spec §2.5.
+    pub fn is_version_supported(&self) -> bool {
+        self.inner.is_version_supported()
+    }
+}
+
+/// One image to encode in a batch. `rgba` is RGBA, 4 bytes/pixel
+/// (length == `w * h * 4`). Mirrors [`chromahash::ImageInput`].
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct ImageInput {
+    pub w: u32,
+    pub h: u32,
+    pub rgba: Vec<u8>,
+    pub gamut: Gamut,
+}
+
+/// A stateful batch encoder backed by a persistent worker pool. Output is
+/// byte-identical to calling [`ChromaHash::encode`] on each image individually.
+///
+/// The core encoder is `!Sync` (it holds an `mpsc::Sender`), so it is wrapped in a
+/// `Mutex` here to satisfy UniFFI's `Send + Sync` requirement for objects:
+/// concurrent `encode_batch` calls on the same encoder serialize, but each call
+/// still saturates the worker pool internally.
+#[derive(uniffi::Object)]
+pub struct BatchEncoder {
+    inner: Mutex<CoreBatch>,
+}
+
+#[uniffi::export]
+impl BatchEncoder {
+    /// Create an encoder with a worker pool sized to the available parallelism.
+    #[uniffi::constructor]
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            inner: Mutex::new(CoreBatch::new()),
+        })
+    }
+
+    /// Create an encoder with an explicit worker count (clamped to ≥ 1).
+    #[uniffi::constructor]
+    pub fn with_threads(threads: u32) -> Arc<Self> {
+        Arc::new(Self {
+            inner: Mutex::new(CoreBatch::with_threads(threads as usize)),
+        })
+    }
+
+    /// Encode every item, returning hashes in the same order as `items`.
+    pub fn encode_batch(&self, items: Vec<ImageInput>) -> Vec<Arc<ChromaHash>> {
+        let inputs: Vec<CoreInput> = items
+            .into_iter()
+            .map(|it| CoreInput {
+                w: it.w,
+                h: it.h,
+                rgba: Arc::from(it.rgba),
+                gamut: it.gamut.into(),
+            })
+            .collect();
+        let guard = self.inner.lock().expect("batch encoder mutex poisoned");
+        guard
+            .encode_batch(&inputs)
+            .into_iter()
+            .map(|inner| Arc::new(ChromaHash { inner }))
+            .collect()
     }
 }

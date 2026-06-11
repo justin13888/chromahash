@@ -4,7 +4,7 @@
 //! exercises the Gamut conversion, record packing, the i32 casts, and the fallible
 //! `from_bytes` — without needing the Android NDK/SDK, so it runs in plain `cargo test`.
 
-use chromahash_uniffi::{ChromaHash, Gamut};
+use chromahash_uniffi::{BatchEncoder, ChromaHash, Gamut, ImageInput};
 use serde_json::Value;
 
 const ENCODE_VECTORS: &str = include_str!(concat!(
@@ -68,6 +68,44 @@ fn integration_encode_vectors() {
                 "{name}: average_color mismatch"
             );
         }
+
+        assert!(
+            hash.is_version_supported(),
+            "{name}: freshly encoded hash must report v0.6 supported"
+        );
+    }
+}
+
+#[test]
+fn batch_encode_matches_single_encode() {
+    // Drive the encode vectors through the BatchEncoder and compare each result to
+    // the single-encode path — byte-identical per the core's contract.
+    let cases: Value = serde_json::from_str(ENCODE_VECTORS).expect("parse encode vectors");
+    let cases = cases.as_array().expect("encode vectors should be an array");
+
+    let items: Vec<ImageInput> = cases
+        .iter()
+        .map(|case| {
+            let input = &case["input"];
+            ImageInput {
+                w: input["width"].as_u64().expect("width") as u32,
+                h: input["height"].as_u64().expect("height") as u32,
+                rgba: bytes(&input["rgba"]),
+                gamut: gamut_from_str(input["gamut"].as_str().expect("gamut")),
+            }
+        })
+        .collect();
+
+    let hashes = BatchEncoder::new().encode_batch(items.clone());
+    assert_eq!(hashes.len(), items.len(), "batch returned wrong count");
+
+    for (i, (item, batched)) in items.iter().zip(hashes.iter()).enumerate() {
+        let single = ChromaHash::encode(item.w, item.h, item.rgba.clone(), item.gamut);
+        assert_eq!(
+            batched.as_bytes(),
+            single.as_bytes(),
+            "batch item {i} diverges from single encode"
+        );
     }
 }
 
