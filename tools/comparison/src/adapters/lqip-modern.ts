@@ -40,7 +40,15 @@ export class LqipModernAdapter implements FormatAdapter {
     // Decode timing: negligible since it's just displaying a tiny image
     const decodeTimeMs = 0;
 
-    const metrics = await computeAllMetrics(rgba, w, h, decodedRgba, dw, dh);
+    const reference = input.metricReferenceRgba ?? rgba;
+    const metrics = await computeAllMetrics(
+      reference,
+      w,
+      h,
+      decodedRgba,
+      dw,
+      dh,
+    );
 
     return {
       formatName: this.name,

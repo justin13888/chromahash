@@ -30,8 +30,9 @@ export class BlurHashAdapter implements FormatAdapter {
     const decodedRgba = new Uint8Array(decodedPixels);
 
     const dataUri = await rgbaToDataUri(decodedRgba, decodeW, decodeH);
+    const reference = input.metricReferenceRgba ?? rgba;
     const metrics = await computeAllMetrics(
-      rgba,
+      reference,
       w,
       h,
       decodedRgba,
