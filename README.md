@@ -33,11 +33,11 @@ The canonical format is defined in [`spec/`](spec/).
 
 | Target  | Directory             | What it is                                                               |
 | ------- | --------------------- | ------------------------------------------------------------------------ |
-| Android | [`bindings/android/`] | UniFFI binding crate + Gradle library module — the Rust core as a Kotlin AAR over JNI, for fast placeholder decoding on-device |
+| Android | [`bindings/uniffi/`] | UniFFI binding crate + Gradle library module — the Rust core as a Kotlin AAR over JNI, for fast placeholder decoding on-device |
 
 ## Guides
 
-- [Decoding on Android](docs/android.md) — how the [`bindings/android/`] AAR wraps the native Rust core for fast, SIMD-ready placeholder decoding
+- [Decoding on Android](docs/android.md) — how the [`bindings/uniffi/`] AAR wraps the native Rust core for fast, SIMD-ready placeholder decoding
 
 ## Setup
 
@@ -150,7 +150,7 @@ GitHub Actions runs a separate workflow per language, triggered only when files 
 | [ci-go](.github/workflows/ci-go.yml)                 | `go/**`             |
 | [ci-python](.github/workflows/ci-python.yml)         | `python/**`         |
 | [ci-csharp](.github/workflows/ci-csharp.yml)         | `csharp/**`         |
-| [ci-android](.github/workflows/ci-android.yml)       | `bindings/android/**` |
+| [ci-android](.github/workflows/ci-android.yml)       | `bindings/uniffi/**` |
 
 Each per-language workflow runs format check, lint, and tests. `ci-android` additionally cross-compiles the native ABIs and assembles the AAR.
 
@@ -165,7 +165,7 @@ chromahash/
 ├── go/                 # Go implementation (standard library only)
 ├── python/             # Python implementation (uv + Ruff)
 ├── csharp/             # C# implementation (.NET 9)
-├── bindings/android/   # Android binding: UniFFI crate + Gradle library module (AAR)
+├── bindings/uniffi/   # Android binding: UniFFI crate + Gradle library module (AAR)
 ├── spec/               # Format specification and test vectors
 ├── docs/               # Integration guides (e.g. Android via Rust/JNI)
 ├── tools/              # Shared developer tooling (comparison, benchmarks)

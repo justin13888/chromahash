@@ -1,9 +1,9 @@
 # Decoding ChromaHash on Android (Rust core via JNI)
 
-ChromaHash ships an Android binding under [`bindings/android/`](../bindings/android/): the
+ChromaHash ships an Android binding under [`bindings/uniffi/`](../bindings/uniffi/): the
 dependency-free **Rust** core called natively across the JNI boundary and packaged as an AAR,
 rather than the pure-JVM Kotlin implementation. This guide explains the design and how to build,
-test, and consume it; [`bindings/android/README.md`](../bindings/android/README.md) is the
+test, and consume it; [`bindings/uniffi/README.md`](../bindings/uniffi/README.md) is the
 hands-on reference for the build/publish commands.
 
 ## 1. Why not just use the Kotlin implementation?
@@ -36,11 +36,11 @@ chromahash (rust/)                       # core, zero deps — unchanged
         ▲
         │ path dependency
         │
-chromahash-uniffi (bindings/android/)    # crate-type = ["lib", "cdylib", "staticlib"]; depends on uniffi
+chromahash-uniffi (bindings/uniffi/)    # crate-type = ["lib", "cdylib", "staticlib"]; depends on uniffi
         │
         │ cargo-ndk → one .so per Android ABI   +   uniffi-bindgen → io/chromahash/ffi/*.kt
         ▼
-Android library module (bindings/android/android/)   # AAR: jniLibs/<abi>/*.so + generated Kotlin + JNA
+Android library module (bindings/uniffi/android/)   # AAR: jniLibs/<abi>/*.so + generated Kotlin + JNA
         ▼
 Your Android app                         # io.chromahash.ffi.ChromaHash
 ```
@@ -49,7 +49,7 @@ The core crate's zero-dependency property (`rust/Cargo.toml`) is preserved — `
 the binding crate. The `lib` crate-type (beyond the doc-era `cdylib`/`staticlib`) lets the
 spec-vector integration tests link the crate ([§9](#9-validate-correctness)).
 
-## 3. The API ([`bindings/android/src/lib.rs`](../bindings/android/src/lib.rs))
+## 3. The API ([`bindings/uniffi/src/lib.rs`](../bindings/uniffi/src/lib.rs))
 
 UniFFI's **proc-macro (UDL-less)** mode is used: Rust is annotated directly, no `.udl` file. A
 `ChromaHash` *object* mirrors the pure-Kotlin
@@ -74,7 +74,7 @@ Two deliberate differences from a naïve 1:1 mapping, both at the FFI boundary:
 ## 4. Build, test, and publish
 
 All commands live in the root `justfile`; full details in
-[`bindings/android/README.md`](../bindings/android/README.md).
+[`bindings/uniffi/README.md`](../bindings/uniffi/README.md).
 
 **Host-only (no Android toolchain) — the enforced correctness gate:**
 
@@ -103,7 +103,7 @@ plugin to **Maven Central** and **GitHub Packages** as `io.github.justin13888:ch
 (plus `publishToMavenLocal` for local dev); a `vX.Y.Z` tag publishes both channels via the
 [`release-android`](../.github/workflows/release-android.yml) workflow. See
 [RELEASING.md](../RELEASING.md#publishing-the-android-aar) and the
-[binding README](../bindings/android/README.md#publish).
+[binding README](../bindings/uniffi/README.md#publish).
 
 ## 5. Use it from an app
 
@@ -157,7 +157,7 @@ Swapping the import (`chromahash.ChromaHash` → `io.chromahash.ffi.ChromaHash`)
 ## 7. Validate correctness
 
 The binding is bit-exact with every other implementation. The enforced gate is a Rust integration
-test, [`bindings/android/tests/spec_vectors.rs`](../bindings/android/tests/spec_vectors.rs), which
+test, [`bindings/uniffi/tests/spec_vectors.rs`](../bindings/uniffi/tests/spec_vectors.rs), which
 runs the spec test vectors in [`spec/test-vectors/`](../spec/test-vectors/) through the **binding
 wrappers** and asserts exact output — no NDK/SDK required, so it runs in `just test` (lefthook
 pre-push) and the `ci-android` `check` job:
@@ -171,7 +171,7 @@ decode algorithm in [§11](../spec/README.md#11-decoding-algorithm), average col
 [§8.2](../spec/README.md#82-decode-output-size). Because the binding just forwards to the core
 crate, correctness reduces to the core crate's own test suite plus this marshalling check. An
 optional host-JVM end-to-end check through the generated Kotlin is described in the
-[binding README](../bindings/android/README.md#optional-end-to-end-check-through-the-generated-kotlin).
+[binding README](../bindings/uniffi/README.md#optional-end-to-end-check-through-the-generated-kotlin).
 
 ## 8. Performance & trade-offs
 
@@ -192,7 +192,7 @@ optional host-JVM end-to-end check through the generated Kotlin is described in 
 ## 9. CI
 
 [`.github/workflows/ci-android.yml`](../.github/workflows/ci-android.yml) (triggered on
-`bindings/android/**`) has two jobs:
+`bindings/uniffi/**`) has two jobs:
 
 - **`check`** — `cargo fmt --check`, `clippy -D warnings`, and `cargo test` against the binding
   crate. No NDK; this is the required correctness gate.

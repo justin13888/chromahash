@@ -8,7 +8,7 @@ for the rationale and trade-offs vs. the pure-Kotlin implementation.
 ## Layout
 
 ```
-bindings/android/
+bindings/uniffi/
 ├── Cargo.toml            # chromahash-uniffi crate (cdylib + staticlib + lib)
 ├── src/lib.rs            # UniFFI wrappers around the core API
 ├── uniffi-bindgen.rs     # the uniffi-bindgen CLI entry point

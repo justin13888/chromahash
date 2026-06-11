@@ -8,31 +8,31 @@ default:
 
 # Format all implementations
 [parallel]
-format: format-rust format-ts format-kotlin format-swift format-go format-python format-csharp format-android format-compare format-thumbhash
+format: format-rust format-c format-wasm format-ts format-kotlin format-swift format-go format-python format-csharp format-android format-compare format-thumbhash
 
 # Lint all implementations
 [parallel]
-lint: lint-rust lint-ts lint-kotlin lint-swift lint-go lint-python lint-csharp lint-android lint-compare lint-thumbhash
+lint: lint-rust lint-c lint-wasm lint-ts lint-kotlin lint-swift lint-go lint-python lint-csharp lint-android lint-compare lint-thumbhash
 
 # Auto-fix formatting in all implementations
 [parallel]
-format-fix: format-fix-rust format-fix-ts format-fix-kotlin format-fix-swift format-fix-go format-fix-python format-fix-csharp format-fix-android format-fix-compare format-fix-thumbhash
+format-fix: format-fix-rust format-fix-c format-fix-wasm format-fix-ts format-fix-kotlin format-fix-swift format-fix-go format-fix-python format-fix-csharp format-fix-android format-fix-compare format-fix-thumbhash
 
 # Auto-fix linting in all implementations
 [parallel]
-lint-fix: lint-fix-rust lint-fix-ts lint-fix-kotlin lint-fix-swift lint-fix-go lint-fix-python lint-fix-csharp lint-fix-android lint-fix-compare lint-fix-thumbhash
+lint-fix: lint-fix-rust lint-fix-c lint-fix-wasm lint-fix-ts lint-fix-kotlin lint-fix-swift lint-fix-go lint-fix-python lint-fix-csharp lint-fix-android lint-fix-compare lint-fix-thumbhash
 
 # Run all tests
 [parallel]
-test: test-rust test-ts test-kotlin test-swift test-go test-python test-csharp test-android
+test: test-rust test-c test-wasm test-ts test-kotlin test-swift test-go test-python test-csharp test-android
 
 # Build all implementations
 [parallel]
-build: build-rust build-ts build-kotlin build-swift build-go build-python build-csharp build-android-crate
+build: build-rust build-c build-wasm build-ts build-kotlin build-swift build-go build-python build-csharp build-android-crate
 
 # Check formatting (no writes) across all implementations
 [parallel]
-format-check: format-check-rust format-check-ts format-check-kotlin format-check-swift format-check-go format-check-python format-check-csharp format-check-android format-check-compare format-check-thumbhash
+format-check: format-check-rust format-check-c format-check-wasm format-check-ts format-check-kotlin format-check-swift format-check-go format-check-python format-check-csharp format-check-android format-check-compare format-check-thumbhash
 
 # ─── Comparison tool ────────────────────────────────────────────────────────
 
@@ -153,40 +153,110 @@ test-rust:
 build-rust:
     cargo build --manifest-path rust/Cargo.toml
 
+# ─── C binding (chromahash-c) ─────────────────────────────────────────────────
+# Hand-written extern "C" surface + cbindgen header. The header is regenerated on
+# every build (build.rs) into bindings/c/include/chromahash.h (a committed artifact).
+
+format-c:
+    cargo fmt --manifest-path bindings/c/Cargo.toml
+
+format-fix-c: format-c
+
+format-check-c:
+    cargo fmt --manifest-path bindings/c/Cargo.toml --check
+
+lint-c:
+    cargo clippy --manifest-path bindings/c/Cargo.toml -- -D warnings
+
+lint-fix-c:
+    cargo clippy --manifest-path bindings/c/Cargo.toml --fix --allow-staged --allow-dirty
+    cargo clippy --manifest-path bindings/c/Cargo.toml -- -D warnings
+
+# Build the staticlib + cdylib (also regenerates include/chromahash.h via build.rs)
+build-c:
+    cargo build --manifest-path bindings/c/Cargo.toml
+
+# Explicit alias: regenerate include/chromahash.h (build.rs runs cbindgen on build)
+gen-c-header: build-c
+
+# Compile + link + run the C example against the freshly built cdylib (proves linkage)
+test-c-example: build-c
+    #!/usr/bin/env bash
+    set -euo pipefail
+    lib="bindings/c/target/debug"
+    out="$(mktemp -d)/roundtrip"
+    cc bindings/c/examples/roundtrip.c -I bindings/c/include -L "$lib" -lchromahash_c -o "$out"
+    case "$(uname)" in
+      Darwin) DYLD_LIBRARY_PATH="$lib" "$out" ;;
+      *)      LD_LIBRARY_PATH="$lib" "$out" ;;
+    esac
+
+# Runs the spec vectors through the C ABI (the parity gate) + the C linkage smoke test
+test-c: build-c test-c-example
+    cargo test --manifest-path bindings/c/Cargo.toml
+
+# ─── WASM binding (chromahash-wasm) ───────────────────────────────────────────
+# wasm-bindgen wrapper for the TypeScript web package. Built with wasm-pack
+# (mise-managed). clippy/build target the wasm32-unknown-unknown triple.
+
+format-wasm:
+    cargo fmt --manifest-path bindings/wasm/Cargo.toml
+
+format-fix-wasm: format-wasm
+
+format-check-wasm:
+    cargo fmt --manifest-path bindings/wasm/Cargo.toml --check
+
+lint-wasm:
+    cargo clippy --manifest-path bindings/wasm/Cargo.toml --target wasm32-unknown-unknown -- -D warnings
+
+lint-fix-wasm:
+    cargo clippy --manifest-path bindings/wasm/Cargo.toml --target wasm32-unknown-unknown --fix --allow-staged --allow-dirty
+    cargo clippy --manifest-path bindings/wasm/Cargo.toml --target wasm32-unknown-unknown -- -D warnings
+
+# Build the web + nodejs packages (.wasm + JS glue + .d.ts) under bindings/wasm/pkg*
+build-wasm:
+    mise exec -- wasm-pack build --target web bindings/wasm --out-dir pkg
+    mise exec -- wasm-pack build --target nodejs bindings/wasm --out-dir pkg-node
+
+# Runs the spec vectors through the wasm-bindgen surface, compiled to wasm + run in Node
+test-wasm:
+    mise exec node@24 -- wasm-pack test --node bindings/wasm
+
 # ─── Android binding (chromahash-uniffi) ──────────────────────────────────────
 # Host-only recipes (no Android NDK/SDK required) — wired into the aggregates so
 # the lefthook gates stay green. The AAR build (`build-android-aar`) needs the NDK
 # + SDK and is intentionally kept OUT of the aggregates.
 
 format-android:
-    cargo fmt --manifest-path bindings/android/Cargo.toml
+    cargo fmt --manifest-path bindings/uniffi/Cargo.toml
 
 format-fix-android: format-android
 
 format-check-android:
-    cargo fmt --manifest-path bindings/android/Cargo.toml --check
+    cargo fmt --manifest-path bindings/uniffi/Cargo.toml --check
 
 lint-android:
-    cargo clippy --manifest-path bindings/android/Cargo.toml -- -D warnings
+    cargo clippy --manifest-path bindings/uniffi/Cargo.toml -- -D warnings
 
 lint-fix-android:
-    cargo clippy --manifest-path bindings/android/Cargo.toml --fix --allow-staged --allow-dirty
-    cargo clippy --manifest-path bindings/android/Cargo.toml -- -D warnings
+    cargo clippy --manifest-path bindings/uniffi/Cargo.toml --fix --allow-staged --allow-dirty
+    cargo clippy --manifest-path bindings/uniffi/Cargo.toml -- -D warnings
 
 # Runs the spec test vectors through the binding (the enforced correctness gate)
 test-android:
-    cargo test --manifest-path bindings/android/Cargo.toml
+    cargo test --manifest-path bindings/uniffi/Cargo.toml
 
 # Host build of the binding crate (lib + cdylib + bindgen bin); no cross-compile
 build-android-crate:
-    cargo build --manifest-path bindings/android/Cargo.toml
+    cargo build --manifest-path bindings/uniffi/Cargo.toml
 
 # Cross-compile every ABI + generate Kotlin + assemble the AAR.
 # Requires the Android NDK (ANDROID_NDK_HOME / ANDROID_NDK_LATEST_HOME) + SDK and
 # the android rustup targets. cargo-ndk is mise-managed (`cargo:cargo-ndk`).
 # Not part of `just build`.
 build-android-aar:
-    mise exec java@21 gradle@9.4.0 -- sh -c 'cd bindings/android/android && ./gradlew assembleRelease'
+    mise exec java@21 gradle@9.4.0 -- sh -c 'cd bindings/uniffi/android && ./gradlew assembleRelease'
 
 # ─── Android publishing bootstrap (issue #17) ─────────────────────────────────
 # One-time helpers for Maven Central. Full walkthrough in RELEASING.md →

@@ -71,8 +71,8 @@ manually add any `Removed` entries.
    | `kotlin/build.gradle.kts` | `version = "X.Y.Z"` |
    | `python/pyproject.toml` | `version = "X.Y.Z"` |
    | `csharp/src/Chromahash/Chromahash.csproj` | `<Version>X.Y.Z</Version>` |
-   | `bindings/android/Cargo.toml` | `version = "X.Y.Z"` |
-   | `bindings/android/android/build.gradle.kts` | `version = "X.Y.Z"` |
+   | `bindings/uniffi/Cargo.toml` | `version = "X.Y.Z"` |
+   | `bindings/uniffi/android/build.gradle.kts` | `version = "X.Y.Z"` |
    | `tools/benchmark/pyproject.toml` | `version = "X.Y.Z"` |
    | `tools/comparison/package.json` | `"version": "X.Y.Z"` |
 
@@ -127,7 +127,7 @@ The coordinate is `io.github.justin13888:chromahash-android:X.Y.Z`. The `io.gith
 namespace is GitHub-verified on Sonatype Central (no domain needed); the Kotlin package stays
 `io.chromahash.ffi` and is independent of the Maven group. Publishing uses the
 [vanniktech maven-publish](https://vanniktech.github.io/gradle-maven-publish-plugin/) plugin
-(see `bindings/android/android/build.gradle.kts`).
+(see `bindings/uniffi/android/build.gradle.kts`).
 
 The workflow is idempotent against Maven Central: a version already on `repo1.maven.org` is
 skipped, so re-pushing a tag is safe. **Caveat:** Central propagation to `repo1`/search lags the
@@ -160,7 +160,7 @@ automate everything except the two browser steps):
    Portal before releasing, instead of relying on the workflow's auto-release:
 
    ```bash
-   cd bindings/android/android
+   cd bindings/uniffi/android
    ORG_GRADLE_PROJECT_mavenCentralUsername=<tokenUser> \
    ORG_GRADLE_PROJECT_mavenCentralPassword=<tokenPass> \
    ORG_GRADLE_PROJECT_signingInMemoryKey="$(cat ../../../signing-key.asc)" \
