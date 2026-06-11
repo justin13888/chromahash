@@ -41,4 +41,11 @@ jobs:
 
       - name: Test
         working-directory: swift
-        run: swift test
+        # Run serially. BatchEncoder.encodeBatch blocks the calling thread on an
+        # OperationQueue (waitUntilFinished: true). Swift Testing's default
+        # parallel executor runs the synchronous tests on the Swift-concurrency
+        # cooperative pool (width == core count), so several batch tests blocking
+        # at once starve libdispatch's worker threads on low-core CI runners and
+        # deadlock the whole run. One test at a time leaves headroom — and the
+        # suite finishes in ~0.05s regardless.
+        run: swift test --no-parallel

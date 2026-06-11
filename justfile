@@ -408,8 +408,11 @@ swift-cbuild:
         -library bindings/uniffi/target/release/libchromahash_uniffi.a \
         -headers "$hdr" -output swift/ChromaHashFFI.xcframework
 
+# Run the Swift spec-vector tests. --no-parallel: the blocking OperationQueue in
+# BatchEncoder deadlocks Swift Testing's parallel pool on low-core machines (see
+# ci-swift.yml); the suite runs in ~0.05s, so serial costs nothing.
 test-swift: swift-cbuild
-    cd swift && mise exec swift@6.2.4 -- swift test
+    cd swift && mise exec swift@6.2.4 -- swift test --no-parallel
 
 build-swift: swift-cbuild
     cd swift && mise exec swift@6.2.4 -- swift build

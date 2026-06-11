@@ -2,6 +2,13 @@ import Testing
 
 @testable import ChromaHash
 
+// NOTE: these tests drive BatchEncoder, whose encodeBatch blocks the calling
+// thread on an OperationQueue (waitUntilFinished: true). Under Swift Testing's
+// default parallel executor, several blocking batch tests can saturate the
+// Swift-concurrency cooperative pool on low-core machines and deadlock, so the
+// suite is run with `swift test --no-parallel` (in ci-swift.yml and the
+// `test-swift` just recipe). Keep that flag if you add more batch tests.
+
 // MARK: - Batch helpers
 
 private func solidImage(_ w: Int, _ h: Int, _ r: UInt8, _ g: UInt8, _ b: UInt8, _ a: UInt8)
