@@ -13,27 +13,37 @@ ChromaHash is built for professional photo management at scale, where perceptual
 - **Precise layout.** An 8-bit log₂ aspect ratio keeps placeholder dimensions within ~1.09% of the original across ratios up to 16:1 (vs ThumbHash's 3-bit ~7% and ~7:1). The DCT grid adaptively reshapes to the aspect ratio, so no coefficients are wasted on non-square images.
 - **Fixed 32 bytes.** Every hash is exactly 32 bytes — memory-aligned, cache-friendly, and a zero-overhead database column or cache key with no length framing to parse.
 - **Fast decode with alpha.** Decoding runs in ~36µs native / ~182µs JS (well under 1ms), and transparent images are supported within the same fixed 32 bytes.
-- **First-class cross-language implementations.** Rust, TypeScript, Kotlin, Swift, Go, Python, and C# (plus an Android AAR binding), all validated **bit-exact** against the shared [`spec/`](spec/) test vectors. See [Appendix A of the spec](spec/README.md#appendix-a-thumbhash-comparison--acknowledgment) for the full ThumbHash comparison.
+- **One core, first-class everywhere.** A single zero-dependency Rust core is exposed to every other language through thin FFI bindings (C, WebAssembly, and UniFFI), so a spec change lands once and every language stays **bit-exact** against the shared [`spec/`](spec/) test vectors. See [Appendix A of the spec](spec/README.md#appendix-a-thumbhash-comparison--acknowledgment) for the full ThumbHash comparison.
 
-## Implementations
+## Architecture
 
-| Language   | Directory        | Runtime / Build     | Status |
-| ---------- | ---------------- | ------------------- | ------ |
-| Rust       | [`rust/`]        | Cargo (stable)      | WIP    |
-| TypeScript | [`typescript/`]  | Node 24 + pnpm      | WIP    |
-| Kotlin     | [`kotlin/`]      | Gradle 9.4 + JDK 21 | WIP    |
-| Swift      | [`swift/`]       | SPM (Swift 6.2)     | WIP    |
-| Go         | [`go/`]          | Go 1.24             | WIP    |
-| Python     | [`python/`]      | Python 3.13 + uv    | WIP    |
-| C#         | [`csharp/`]      | .NET 9              | WIP    |
+The **Rust core** ([`rust/`](rust/)) is the reference implementation; the canonical
+format is defined in [`spec/`](spec/). Every other language is a thin binding over
+the core through one of three FFI surfaces (see [`bindings/`](bindings/)):
 
-The canonical format is defined in [`spec/`](spec/).
+| Surface | Crate | Serves |
+| ------- | ----- | ------ |
+| C ABI (`extern "C"` + cbindgen) | [`bindings/c/`] | **C** (first-class), **C#** (P/Invoke), **Go** (cgo) |
+| UniFFI | [`bindings/uniffi/`] | **Swift**, **Java/Kotlin** (JVM JAR + Android AAR), **Python** |
+| WebAssembly (`wasm-bindgen`) | [`bindings/wasm/`] | **TypeScript** (full encode+decode) |
 
-## Bindings
+| Language   | Directory          | Runtime / Build     | Binds via | Status |
+| ---------- | ------------------ | ------------------- | --------- | ------ |
+| Rust       | [`rust/`]          | Cargo (stable)      | core      | WIP    |
+| C          | [`bindings/c/`]    | cc + cbindgen       | C ABI     | WIP    |
+| TypeScript | [`typescript/`]    | Node 24 + pnpm      | WASM¹     | WIP    |
+| Swift      | [`swift/`]         | SPM (Swift 6.2)     | UniFFI    | WIP    |
+| Go         | [`go/`]            | Go 1.24 (cgo)       | C ABI     | WIP    |
+| Python     | [`python/`]        | Python 3.13 + uv    | UniFFI    | WIP    |
+| C#         | [`csharp/`]        | .NET 9              | C ABI     | WIP    |
+| Java/Kotlin | [`bindings/uniffi/`] | Gradle 9.4 + JDK 21 | UniFFI  | WIP    |
 
-| Target  | Directory             | What it is                                                               |
-| ------- | --------------------- | ------------------------------------------------------------------------ |
-| Android | [`bindings/uniffi/`] | UniFFI binding crate + Gradle library module — the Rust core as a Kotlin AAR over JNI, for fast placeholder decoding on-device |
+¹ TypeScript also ships a small hand-maintained pure-TS **decode-only** module
+(`@chromahash/typescript/decode`) for render-only consumers that skip the WASM init.
+
+The Java/Kotlin binding ships two artifacts from the same UniFFI crate: a
+desktop/server **JAR** (`chromahash-jvm`, [`bindings/uniffi/jvm/`]) and an Android
+**AAR** (`chromahash-android`, [`bindings/uniffi/android/`]).
 
 ## Guides
 
@@ -59,8 +69,8 @@ Then install per-language dependencies:
 # TypeScript
 cd typescript && pnpm install
 
-# Kotlin (pre-cache Gradle dependencies)
-cd kotlin && ./gradlew dependencies
+# Java/Kotlin JVM (pre-cache Gradle dependencies)
+cd bindings/uniffi/jvm && ./gradlew dependencies
 
 # Python
 cd python && uv sync
@@ -116,8 +126,10 @@ just release X.Y.Z # cut a release section in the CHANGELOG (see RELEASING.md)
 
 ```bash
 just format-check-rust   / just format-fix-rust   / just lint-rust   / just test-rust   / just build-rust
+just format-check-c      / just format-fix-c      / just lint-c      / just test-c      / just build-c
 just format-check-ts     / just format-fix-ts     / just lint-ts     / just test-ts     / just build-ts
-just format-check-kotlin / just format-fix-kotlin / just lint-kotlin / just test-kotlin / just build-kotlin
+just format-check-wasm   / just format-fix-wasm   / just lint-wasm   / just test-wasm   / just build-wasm
+just format-check-jvm    / just format-fix-jvm    / just lint-jvm    / just test-jvm    / just build-jvm
 just format-check-swift  / just format-fix-swift  / just lint-swift  / just test-swift  / just build-swift
 just format-check-go     / just format-fix-go     / just lint-go     / just test-go     / just build-go
 just format-check-python / just format-fix-python / just lint-python / just test-python / just build-python
@@ -129,8 +141,9 @@ just format-check-csharp / just format-fix-csharp / just lint-csharp / just test
 | Language   | Formatter      | Linter                    |
 | ---------- | -------------- | ------------------------- |
 | Rust       | rustfmt        | Clippy                    |
+| C / WASM   | rustfmt        | Clippy                    |
 | TypeScript | Biome          | Biome                     |
-| Kotlin     | ktlint         | ktlint                    |
+| Java/Kotlin | ktlint        | ktlint                    |
 | Swift      | swift-format   | swift-format              |
 | Go         | gofmt          | go vet                    |
 | Python     | Ruff           | Ruff                      |
@@ -140,32 +153,38 @@ just format-check-csharp / just format-fix-csharp / just lint-csharp / just test
 
 GitHub Actions runs a separate workflow per language, triggered only when files in that implementation's directory change. One repo-wide workflow, [ci-commits](.github/workflows/ci-commits.yml), runs on every PR and validates that each commit (and the PR title, for squash merges) is a conventional commit.
 
-| Workflow                                             | Trigger path        |
-| ---------------------------------------------------- | ------------------- |
-| [ci-commits](.github/workflows/ci-commits.yml)       | all PRs             |
-| [ci-rust](.github/workflows/ci-rust.yml)             | `rust/**`           |
-| [ci-typescript](.github/workflows/ci-typescript.yml) | `typescript/**`     |
-| [ci-kotlin](.github/workflows/ci-kotlin.yml)         | `kotlin/**`         |
-| [ci-swift](.github/workflows/ci-swift.yml)           | `swift/**`          |
-| [ci-go](.github/workflows/ci-go.yml)                 | `go/**`             |
-| [ci-python](.github/workflows/ci-python.yml)         | `python/**`         |
-| [ci-csharp](.github/workflows/ci-csharp.yml)         | `csharp/**`         |
-| [ci-android](.github/workflows/ci-android.yml)       | `bindings/uniffi/**` |
+| Workflow                                             | Trigger path                          |
+| ---------------------------------------------------- | ------------------------------------- |
+| [ci-commits](.github/workflows/ci-commits.yml)       | all PRs                               |
+| [ci-rust](.github/workflows/ci-rust.yml)             | `rust/**`                            |
+| [ci-c](.github/workflows/ci-c.yml)                   | `bindings/c/**`, `rust/**`           |
+| [ci-wasm](.github/workflows/ci-wasm.yml)             | `bindings/wasm/**`, `rust/**`        |
+| [ci-typescript](.github/workflows/ci-typescript.yml) | `typescript/**`, `bindings/wasm/**`, `rust/**` |
+| [ci-jvm](.github/workflows/ci-jvm.yml)               | `bindings/uniffi/**`, `rust/**`      |
+| [ci-swift](.github/workflows/ci-swift.yml)           | `swift/**`, `bindings/uniffi/**`, `rust/**` |
+| [ci-go](.github/workflows/ci-go.yml)                 | `go/**`, `bindings/c/**`, `rust/**`  |
+| [ci-python](.github/workflows/ci-python.yml)         | `python/**`, `bindings/uniffi/**`, `rust/**` |
+| [ci-csharp](.github/workflows/ci-csharp.yml)         | `csharp/**`, `bindings/c/**`, `rust/**` |
+| [ci-android](.github/workflows/ci-android.yml)       | `bindings/uniffi/**`                 |
 
-Each per-language workflow runs format check, lint, and tests. `ci-android` additionally cross-compiles the native ABIs and assembles the AAR.
+Each per-language workflow builds the binding it depends on (the C ABI, WASM, or
+UniFFI lib over the Rust core) and then runs that language's format check, lint,
+and tests. `ci-android` additionally cross-compiles the native ABIs and assembles the AAR.
 
 ## Project structure
 
 ```
 chromahash/
-├── rust/               # Rust implementation (Cargo library crate)
-├── typescript/         # TypeScript implementation (pnpm + Biome)
-├── kotlin/             # Kotlin implementation (Gradle + ktlint)
-├── swift/              # Swift implementation (SPM)
-├── go/                 # Go implementation (standard library only)
-├── python/             # Python implementation (uv + Ruff)
-├── csharp/             # C# implementation (.NET 9)
-├── bindings/uniffi/   # Android binding: UniFFI crate + Gradle library module (AAR)
+├── rust/               # Rust core — the reference implementation (Cargo crate)
+├── bindings/
+│   ├── c/              # C ABI binding (extern "C" + cbindgen) — serves C, C#, Go
+│   ├── uniffi/         # UniFFI binding — serves Swift, Java/Kotlin (jvm/ JAR + android/ AAR), Python
+│   └── wasm/           # WebAssembly binding (wasm-bindgen) — serves TypeScript
+├── typescript/         # TypeScript binding (WASM facade + pure-TS decode; pnpm + Biome)
+├── swift/              # Swift binding (UniFFI facade; SPM)
+├── go/                 # Go binding (cgo over the C ABI)
+├── python/             # Python binding (UniFFI/ctypes; uv + Ruff)
+├── csharp/             # C# binding (P/Invoke over the C ABI; .NET 9)
 ├── spec/               # Format specification and test vectors
 ├── docs/               # Integration guides (e.g. Android via Rust/JNI)
 ├── tools/              # Shared developer tooling (comparison, benchmarks)

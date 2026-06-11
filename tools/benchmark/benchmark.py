@@ -65,7 +65,7 @@ HARNESSES: dict[str, dict] = {
         "cmd": "uv run python -m chromahash.encode_stdin",
         "cwd": str(ROOT / "python"),
     },
-    "Kotlin": {"cmd": str(ROOT / "kotlin/build/install/chromahash/bin/chromahash")},
+    "Kotlin": {"cmd": str(ROOT / "bindings/uniffi/jvm/build/install/chromahash-jvm/bin/chromahash-jvm")},
     "Swift": {"cmd": str(ROOT / "swift/.build/release/ChromaHashCLI")},
     "C#": {
         "cmd": f"dotnet exec {ROOT / 'csharp/src/Chromahash.Cli/bin/Release/net9.0/Chromahash.Cli.dll'}",
@@ -111,7 +111,7 @@ def build_harnesses() -> None:
         ),
         ("TypeScript", ["pnpm", "--prefix", str(ROOT / "typescript"), "run", "build"], str(ROOT)),
         ("Go", ["go", "build", "-o", str(ROOT / "go/encode-stdin"), "./cmd/encode-stdin"], str(ROOT / "go")),
-        ("Kotlin", ["./gradlew", "installDist", "-q"], str(ROOT / "kotlin")),
+        ("Kotlin", ["./gradlew", "installDist", "-q"], str(ROOT / "bindings/uniffi/jvm")),
         ("Swift", ["swift", "build", "-c", "release"], str(ROOT / "swift")),
         (
             "C#",

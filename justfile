@@ -81,13 +81,15 @@ install-iqa:
 # Run the visual comparison. Emits output/report.html, output/report.json, and
 # standalone images under output/images/ (the HTML and JSON both reference them).
 # Requires iqa-cli on PATH for quality metrics — run `just install-iqa` once first.
-compare: build-compare
+# The harnesses are now binding-backed, so stage each language's native lib
+# first (the C + JVM harnesses self-build inside the comparison tool).
+compare: build-compare go-cbuild swift-cbuild ts-cbuild python-cbuild csharp-cbuild
     mise exec -- pnpm --prefix tools/comparison run compare
 
 # ─── Benchmark ──────────────────────────────────────────────────────────────
 
 # Build benchmark harnesses (release mode), incl. both ThumbHash baselines (native Rust + JS)
-build-benchmark: go-cbuild swift-cbuild ts-cbuild
+build-benchmark: go-cbuild swift-cbuild ts-cbuild python-cbuild csharp-cbuild
     cargo build --manifest-path rust/Cargo.toml --release --example encode_stdin
     mise exec node@24 -- pnpm --prefix typescript run build
     cd go && CGO_ENABLED=1 go build -o encode-stdin ./cmd/encode-stdin

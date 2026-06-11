@@ -23,8 +23,8 @@ hook and in CI by the `ci-commits` workflow (both use [convco](https://convco.gi
 Types that appear in the changelog: `feat` → **Added**, `perf`/`refactor` →
 **Changed**, `fix` → **Fixed**, `docs` → **Documentation**. `chore`, `ci`, `build`,
 `test`, and `style` are intentionally excluded. Scopes are language/area names:
-`rust`, `ts`, `kotlin`, `swift`, `go`, `py`, `csharp`, `android`, `spec`, `tools`,
-`comparison`.
+`rust`, `c`, `ts`, `wasm`, `jvm`, `swift`, `go`, `py`, `csharp`, `android`, `uniffi`,
+`spec`, `tools`, `comparison`.
 
 ## Keeping the changelog current
 
@@ -67,11 +67,13 @@ manually add any `Removed` entries.
    | File | |
    | ---- | --- |
    | `rust/Cargo.toml` | `version = "X.Y.Z"` |
+   | `bindings/c/Cargo.toml` | `version = "X.Y.Z"` |
+   | `bindings/wasm/Cargo.toml` | `version = "X.Y.Z"` |
    | `typescript/package.json` | `"version": "X.Y.Z"` |
-   | `kotlin/build.gradle.kts` | `version = "X.Y.Z"` |
    | `python/pyproject.toml` | `version = "X.Y.Z"` |
    | `csharp/src/Chromahash/Chromahash.csproj` | `<Version>X.Y.Z</Version>` |
    | `bindings/uniffi/Cargo.toml` | `version = "X.Y.Z"` |
+   | `bindings/uniffi/jvm/build.gradle.kts` | `version = "X.Y.Z"` |
    | `bindings/uniffi/android/build.gradle.kts` | `version = "X.Y.Z"` |
    | `tools/benchmark/pyproject.toml` | `version = "X.Y.Z"` |
    | `tools/comparison/package.json` | `"version": "X.Y.Z"` |
