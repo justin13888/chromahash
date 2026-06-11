@@ -87,10 +87,10 @@ compare: build-compare
 # ─── Benchmark ──────────────────────────────────────────────────────────────
 
 # Build benchmark harnesses (release mode), incl. both ThumbHash baselines (native Rust + JS)
-build-benchmark:
+build-benchmark: go-cbuild
     cargo build --manifest-path rust/Cargo.toml --release --example encode_stdin
     mise exec node@24 -- pnpm --prefix typescript run build
-    cd go && go build -o encode-stdin ./cmd/encode-stdin
+    cd go && CGO_ENABLED=1 go build -o encode-stdin ./cmd/encode-stdin
     mise exec java@21 gradle@9.4.0 -- sh -c 'cd kotlin && ./gradlew installDist -q'
     cd swift && mise exec swift@6.2.4 -- swift build -c release
     mise exec dotnet@9 -- dotnet build csharp/src/Chromahash.Cli -c Release --verbosity quiet
@@ -121,8 +121,8 @@ bench-batch-kotlin:
 bench-batch-swift:
     cd swift && mise exec swift@6.2.4 -- swift run -c release ChromaHashBatchBench
 
-bench-batch-go:
-    cd go && go test -bench=Encode -benchmem -run='^$' ./...
+bench-batch-go: go-cbuild
+    cd go && CGO_ENABLED=1 go test -bench=Encode -benchmem -run='^$' ./...
 
 bench-batch-python:
     cd python && uv run python benchmarks/batch_bench.py
@@ -391,16 +391,25 @@ format-fix-go: format-go
 format-check-go:
     cd go && test -z "$(gofmt -l .)"
 
-lint-go:
-    cd go && go vet ./...
+# Build the chromahash-c static library + header and stage them for the cgo build
+# (go/lib, go/include — both gitignored). The Go package is a cgo wrapper, so a
+# bare `go build`/`go test` requires these to be present first.
+go-cbuild:
+    cargo build --manifest-path bindings/c/Cargo.toml --release
+    mkdir -p go/lib go/include
+    cp bindings/c/target/release/libchromahash_c.a go/lib/
+    cp bindings/c/include/chromahash.h go/include/
+
+lint-go: go-cbuild
+    cd go && CGO_ENABLED=1 go vet ./...
 
 lint-fix-go: lint-go
 
-test-go:
-    cd go && go test ./... -v
+test-go: go-cbuild
+    cd go && CGO_ENABLED=1 go test ./... -v
 
-build-go:
-    cd go && go build ./...
+build-go: go-cbuild
+    cd go && CGO_ENABLED=1 go build ./...
 
 # ─── Python ──────────────────────────────────────────────────────────────────
 

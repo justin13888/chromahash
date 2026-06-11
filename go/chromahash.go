@@ -1,6 +1,25 @@
 // Package chromahash implements the ChromaHash LQIP (Low Quality Image
 // Placeholder) format — a fixed 32-byte representation of an image.
+//
+// This package is a thin cgo wrapper over the chromahash-c C ABI, which exposes
+// the zero-dependency Rust core. Output is byte-identical to every other
+// ChromaHash implementation. Because it uses cgo, builds require a C toolchain
+// (CGO_ENABLED=1) and the prebuilt static library under go/lib — run
+// `just build-go` (which builds + stages it) rather than a bare `go build`.
 package chromahash
+
+/*
+#cgo CFLAGS: -I${SRCDIR}/include
+#cgo LDFLAGS: -L${SRCDIR}/lib -lchromahash_c
+#cgo linux LDFLAGS: -lm -ldl -lpthread
+#include "chromahash.h"
+*/
+import "C"
+
+import (
+	"runtime"
+	"unsafe"
+)
 
 // ChromaHash is a 32-byte LQIP representation of an image.
 type ChromaHash struct {
@@ -25,205 +44,26 @@ func Encode(w, h int, rgba []byte, gamut Gamut) ChromaHash {
 		panic("chromahash: rgba length mismatch")
 	}
 
-	pixelCount := w * h
-
-	// 1-2. Convert all pixels to OKLAB, accumulate alpha-weighted average.
-	oklabPixels := make([][3]float64, pixelCount)
-	alphaPixels := make([]float64, pixelCount)
-	avgL, avgA, avgB, avgAlpha := 0.0, 0.0, 0.0, 0.0
-
-	for i := 0; i < pixelCount; i++ {
-		r := float64(rgba[i*4]) / 255.0
-		g := float64(rgba[i*4+1]) / 255.0
-		b := float64(rgba[i*4+2]) / 255.0
-		a := float64(rgba[i*4+3]) / 255.0
-
-		lab := gammaRgbToOklab(r, g, b, gamut)
-
-		avgL += a * lab[0]
-		avgA += a * lab[1]
-		avgB += a * lab[2]
-		avgAlpha += a
-
-		oklabPixels[i] = lab
-		alphaPixels[i] = a
+	var handle *C.ChromaHash
+	status := C.chromahash_encode(
+		C.uint32_t(w),
+		C.uint32_t(h),
+		(*C.uint8_t)(unsafe.Pointer(&rgba[0])),
+		C.size_t(len(rgba)),
+		C.ChromaHashGamut(gamut),
+		&handle,
+	)
+	runtime.KeepAlive(rgba)
+	if status != C.CHROMA_HASH_STATUS_OK || handle == nil {
+		panic("chromahash: encode failed")
 	}
+	defer C.chromahash_free(handle)
 
-	// 3. Compute alpha-weighted average color.
-	if avgAlpha > 0.0 {
-		avgL /= avgAlpha
-		avgA /= avgAlpha
-		avgB /= avgAlpha
+	var out ChromaHash
+	if C.chromahash_as_bytes(handle, (*C.uint8_t)(unsafe.Pointer(&out.Hash[0])), C.size_t(len(out.Hash))) != C.CHROMA_HASH_STATUS_OK {
+		panic("chromahash: as_bytes failed")
 	}
-
-	// 4. Composite transparent pixels over average.
-	hasAlpha := avgAlpha < float64(pixelCount)
-	lChan := make([]float64, pixelCount)
-	aChan := make([]float64, pixelCount)
-	bChan := make([]float64, pixelCount)
-
-	for i := 0; i < pixelCount; i++ {
-		alpha := alphaPixels[i]
-		lChan[i] = avgL*(1.0-alpha) + alpha*oklabPixels[i][0]
-		aChan[i] = avgA*(1.0-alpha) + alpha*oklabPixels[i][1]
-		bChan[i] = avgB*(1.0-alpha) + alpha*oklabPixels[i][2]
-	}
-
-	// 5. Derive adaptive grid dimensions (v0.4).
-	aspectByte := encodeAspect(w, h)
-	lBaseN := 7
-	if hasAlpha {
-		lBaseN = 6
-	}
-	lNx, lNy := deriveGrid(aspectByte, lBaseN)
-	cNx, cNy := deriveGrid(aspectByte, 4)
-	alphaNx, alphaNy := 3, 3
-	if hasAlpha {
-		alphaNx, alphaNy = deriveGrid(aspectByte, 3)
-	}
-
-	// 5b. Build per-channel scan orders (v0.4: depends on aspect byte).
-	lScan := scanOrder(lNx, lNy, aspectByte)
-	cScan := scanOrder(cNx, cNy, aspectByte)
-	var alphaScanEnc [][2]int
-	if hasAlpha {
-		alphaScanEnc = scanOrder(alphaNx, alphaNy, aspectByte)
-	}
-
-	// 5c. Precompute cosine tables once (L grid dominates chroma/alpha).
-	maxCx := lNx
-	if cNx > maxCx {
-		maxCx = cNx
-	}
-	maxCy := lNy
-	if cNy > maxCy {
-		maxCy = cNy
-	}
-	cosX := precomputeCosTable(w, maxCx)
-	cosY := precomputeCosTable(h, maxCy)
-
-	// 6. DCT encode each channel (AC emitted in scan order).
-	lDC, lACRaw, lScale := dctEncodeSeparable(lChan, w, h, lScan, cosX, cosY)
-	aDC, aACRaw, aScale := dctEncodeSeparable(aChan, w, h, cScan, cosX, cosY)
-	bDC, bACRaw, bScale := dctEncodeSeparable(bChan, w, h, cScan, cosX, cosY)
-
-	var alphaDC, alphaScale float64
-	var alphaACRaw []float64
-	if hasAlpha {
-		alphaDC, alphaACRaw, alphaScale = dctEncodeSeparable(alphaPixels, w, h, alphaScanEnc, cosX, cosY)
-	}
-
-	// Cap to bit budget and zero-pad (per spec §10).
-	lCap := 27
-	if hasAlpha {
-		lCap = 20
-	}
-	lAC := make([]float64, lCap)
-	copy(lAC, lACRaw)
-	aAC := make([]float64, 9)
-	copy(aAC, aACRaw)
-	bAC := make([]float64, 9)
-	copy(bAC, bACRaw)
-	var alphaAC []float64
-	if hasAlpha {
-		alphaAC = make([]float64, 5)
-		copy(alphaAC, alphaACRaw)
-	}
-
-	// 7. Quantize header values.
-	lDCQ := uint64(roundHalfAwayFromZero(127.0 * clamp01(lDC)))
-	aDCQ := uint64(roundHalfAwayFromZero(64.0 + 63.0*clampNeg1To1(aDC/maxChromaA)))
-	bDCQ := uint64(roundHalfAwayFromZero(64.0 + 63.0*clampNeg1To1(bDC/maxChromaB)))
-	lSclQ := uint64(roundHalfAwayFromZero(63.0 * clamp01(lScale/maxLScale)))
-	aSclQ := uint64(roundHalfAwayFromZero(63.0 * clamp01(aScale/maxAScale)))
-	bSclQ := uint64(roundHalfAwayFromZero(31.0 * clamp01(bScale/maxBScale)))
-
-	// Aspect byte already computed above.
-	aspect := uint64(aspectByte)
-
-	// 8. Pack header (48 bits = 6 bytes), little-endian.
-	hasAlphaFlag := uint64(0)
-	if hasAlpha {
-		hasAlphaFlag = 1
-	}
-	header := lDCQ |
-		(aDCQ << 7) |
-		(bDCQ << 14) |
-		(lSclQ << 21) |
-		(aSclQ << 27) |
-		(bSclQ << 33) |
-		(aspect << 38) |
-		(hasAlphaFlag << 46) |
-		(1 << 47) // version bit = 1 (v0.2+)
-
-	var hash [32]byte
-	for i := 0; i < 6; i++ {
-		hash[i] = byte((header >> (i * 8)) & 0xFF)
-	}
-
-	// 9. Pack AC coefficients with µ-law companding.
-	bitpos := 48
-
-	quantizeAC := func(value, scale float64, bits uint) int {
-		if scale == 0.0 {
-			return muLawQuantize(0.0, bits)
-		}
-		return muLawQuantize(value/scale, bits)
-	}
-
-	if hasAlpha {
-		alphaDCQ := int(roundHalfAwayFromZero(31.0 * clamp01(alphaDC)))
-		alphaSclQ := int(roundHalfAwayFromZero(15.0 * clamp01(alphaScale/maxAAlphaScale)))
-		writeBits(hash[:], bitpos, 5, alphaDCQ)
-		bitpos += 5
-		writeBits(hash[:], bitpos, 4, alphaSclQ)
-		bitpos += 4
-
-		// L AC: first 7 at 6 bits, remaining 13 at 5 bits
-		for _, v := range lAC[:7] {
-			q := quantizeAC(v, lScale, 6)
-			writeBits(hash[:], bitpos, 6, q)
-			bitpos += 6
-		}
-		for _, v := range lAC[7:20] {
-			q := quantizeAC(v, lScale, 5)
-			writeBits(hash[:], bitpos, 5, q)
-			bitpos += 5
-		}
-	} else {
-		// L AC: all 27 at 5 bits
-		for _, v := range lAC[:27] {
-			q := quantizeAC(v, lScale, 5)
-			writeBits(hash[:], bitpos, 5, q)
-			bitpos += 5
-		}
-	}
-
-	// a AC: 9 at 4 bits
-	for _, v := range aAC {
-		q := quantizeAC(v, aScale, 4)
-		writeBits(hash[:], bitpos, 4, q)
-		bitpos += 4
-	}
-
-	// b AC: 9 at 4 bits
-	for _, v := range bAC {
-		q := quantizeAC(v, bScale, 4)
-		writeBits(hash[:], bitpos, 4, q)
-		bitpos += 4
-	}
-
-	if hasAlpha {
-		// Alpha AC: 5 at 4 bits
-		for _, v := range alphaAC {
-			q := quantizeAC(v, alphaScale, 4)
-			writeBits(hash[:], bitpos, 4, q)
-			bitpos += 4
-		}
-	}
-
-	_ = bitpos
-	return ChromaHash{Hash: hash}
+	return out
 }
 
 // FromBytes creates a ChromaHash directly from a raw 32-byte array.
@@ -231,212 +71,73 @@ func FromBytes(b [32]byte) ChromaHash {
 	return ChromaHash{Hash: b}
 }
 
+// handle reconstructs an opaque C handle from the 32-byte hash. The caller must
+// free it with C.chromahash_free.
+func (ch *ChromaHash) handle() *C.ChromaHash {
+	var handle *C.ChromaHash
+	status := C.chromahash_from_bytes(
+		(*C.uint8_t)(unsafe.Pointer(&ch.Hash[0])),
+		C.size_t(len(ch.Hash)),
+		&handle,
+	)
+	if status != C.CHROMA_HASH_STATUS_OK || handle == nil {
+		panic("chromahash: from_bytes failed")
+	}
+	return handle
+}
+
 // Decode decodes the ChromaHash into an RGBA image.
 // Returns width, height, and RGBA pixel data (row-major, 4 bytes per pixel).
 func (ch ChromaHash) Decode() (int, int, []byte) {
-	hash := ch.Hash[:]
-
-	// 1. Unpack header (48 bits).
-	var header uint64
-	for i := 0; i < 6; i++ {
-		header |= uint64(hash[i]) << (i * 8)
+	handle := ch.handle()
+	defer C.chromahash_free(handle)
+	var img C.ChromaHashImage
+	if C.chromahash_decode(handle, &img) != C.CHROMA_HASH_STATUS_OK {
+		panic("chromahash: decode failed")
 	}
-
-	lDCQ := int(header & 0x7F)
-	aDCQ := int((header >> 7) & 0x7F)
-	bDCQ := int((header >> 14) & 0x7F)
-	lSclQ := int((header >> 21) & 0x3F)
-	aSclQ := int((header >> 27) & 0x3F)
-	bSclQ := int((header >> 33) & 0x1F)
-	aspect := int((header >> 38) & 0xFF)
-	hasAlpha := ((header >> 46) & 1) == 1
-
-	// 2. Decode DC values and scale factors.
-	lDC := float64(lDCQ) / 127.0
-	aDC := (float64(aDCQ) - 64.0) / 63.0 * maxChromaA
-	bDC := (float64(bDCQ) - 64.0) / 63.0 * maxChromaB
-	lScale := float64(lSclQ) / 63.0 * maxLScale
-	aScale := float64(aSclQ) / 63.0 * maxAScale
-	bScale := float64(bSclQ) / 31.0 * maxBScale
-
-	// 3-4. Decode aspect ratio and compute output size.
-	w, h := decodeOutputSize(aspect)
-
-	// 5. Dequantize AC coefficients.
-	bitpos := 48
-
-	alphaDCVal := 1.0
-	alphaScaleVal := 0.0
-	if hasAlpha {
-		alphaDCVal = float64(readBits(hash, bitpos, 5)) / 31.0
-		bitpos += 5
-		alphaScaleVal = float64(readBits(hash, bitpos, 4)) / 15.0 * maxAAlphaScale
-		bitpos += 4
-	}
-
-	var lAC []float64
-	if hasAlpha {
-		lAC = make([]float64, 0, 20)
-		for i := 0; i < 7; i++ {
-			q := readBits(hash, bitpos, 6)
-			bitpos += 6
-			lAC = append(lAC, muLawDequantize(q, 6)*lScale)
-		}
-		for i := 7; i < 20; i++ {
-			q := readBits(hash, bitpos, 5)
-			bitpos += 5
-			lAC = append(lAC, muLawDequantize(q, 5)*lScale)
-		}
-	} else {
-		lAC = make([]float64, 0, 27)
-		for i := 0; i < 27; i++ {
-			q := readBits(hash, bitpos, 5)
-			bitpos += 5
-			lAC = append(lAC, muLawDequantize(q, 5)*lScale)
-		}
-	}
-
-	aAC := make([]float64, 0, 9)
-	for i := 0; i < 9; i++ {
-		q := readBits(hash, bitpos, 4)
-		bitpos += 4
-		aAC = append(aAC, muLawDequantize(q, 4)*aScale)
-	}
-
-	bAC := make([]float64, 0, 9)
-	for i := 0; i < 9; i++ {
-		q := readBits(hash, bitpos, 4)
-		bitpos += 4
-		bAC = append(bAC, muLawDequantize(q, 4)*bScale)
-	}
-
-	var alphaAC []float64
-	if hasAlpha {
-		alphaAC = make([]float64, 0, 5)
-		for i := 0; i < 5; i++ {
-			q := readBits(hash, bitpos, 4)
-			bitpos += 4
-			alphaAC = append(alphaAC, muLawDequantize(q, 4)*alphaScaleVal)
-		}
-	}
-
-	// Derive adaptive grid and compute usable scan orders (v0.4).
-	lDecCap := 27
-	if hasAlpha {
-		lDecCap = 20
-	}
-	lBaseN := 7
-	if hasAlpha {
-		lBaseN = 6
-	}
-	lNx, lNy := deriveGrid(aspect, lBaseN)
-	cNx, cNy := deriveGrid(aspect, 4)
-
-	lScanFull := scanOrder(lNx, lNy, aspect)
-	lUsable := lDecCap
-	if len(lScanFull) < lUsable {
-		lUsable = len(lScanFull)
-	}
-	lScan := lScanFull[:lUsable]
-	lACUsed := lAC[:lUsable]
-
-	chromaScanFull := scanOrder(cNx, cNy, aspect)
-	cUsable := 9
-	if len(chromaScanFull) < cUsable {
-		cUsable = len(chromaScanFull)
-	}
-	chromaScan := chromaScanFull[:cUsable]
-	aACUsed := aAC[:cUsable]
-	bACUsed := bAC[:cUsable]
-
-	var alphaScan [][2]int
-	var alphaACUsed []float64
-	if hasAlpha {
-		aNx, aNy := deriveGrid(aspect, 3)
-		alphaScanFull := scanOrder(aNx, aNy, aspect)
-		aUsable := 5
-		if len(alphaScanFull) < aUsable {
-			aUsable = len(alphaScanFull)
-		}
-		alphaScan = alphaScanFull[:aUsable]
-		alphaACUsed = alphaAC[:aUsable]
-	}
-
-	// 5d. Precompute cosine tables once (L grid dominates chroma/alpha).
-	maxCx := lNx
-	if cNx > maxCx {
-		maxCx = cNx
-	}
-	maxCy := lNy
-	if cNy > maxCy {
-		maxCy = cNy
-	}
-	cosX := precomputeCosTable(w, maxCx)
-	cosY := precomputeCosTable(h, maxCy)
-
-	// 6. Render output image.
-	rgba := make([]byte, w*h*4)
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
-			l := dctDecodePixelSeparable(lDC, lACUsed, lScan, x, y, cosX, cosY)
-			a := dctDecodePixelSeparable(aDC, aACUsed, chromaScan, x, y, cosX, cosY)
-			b := dctDecodePixelSeparable(bDC, bACUsed, chromaScan, x, y, cosX, cosY)
-			var alpha float64
-			if hasAlpha {
-				alpha = dctDecodePixelSeparable(alphaDCVal, alphaACUsed, alphaScan, x, y, cosX, cosY)
-			} else {
-				alpha = 1.0
-			}
-
-			// Clamp L from DCT ringing, soft gamut clamp (v0.2).
-			lClamped := clamp01(l)
-			clamped := softGamutClamp(lClamped, a, b)
-			rgbLin := oklabToLinearSrgb(clamped)
-			idx := (y*w + x) * 4
-			rgba[idx] = linearToSrgb8(clamp01(rgbLin[0]))
-			rgba[idx+1] = linearToSrgb8(clamp01(rgbLin[1]))
-			rgba[idx+2] = linearToSrgb8(clamp01(rgbLin[2]))
-			rgba[idx+3] = byte(int(roundHalfAwayFromZero(255.0 * clamp01(alpha))))
-		}
-	}
-
-	return w, h, rgba
+	return readImage(&img)
 }
 
-// AverageColor extracts the average color from the ChromaHash without a full decode.
-// Returns r, g, b, a as uint8 values. Per spec §11.2.
+// DecodeCapped decodes into an RGBA image, capped at the given maximum
+// dimensions. Returns width, height, and RGBA pixel data.
+func (ch ChromaHash) DecodeCapped(maxW, maxH int) (int, int, []byte) {
+	handle := ch.handle()
+	defer C.chromahash_free(handle)
+	var img C.ChromaHashImage
+	if C.chromahash_decode_capped(handle, C.uint32_t(maxW), C.uint32_t(maxH), &img) != C.CHROMA_HASH_STATUS_OK {
+		panic("chromahash: decode_capped failed")
+	}
+	return readImage(&img)
+}
+
+// readImage copies a library-owned ChromaHashImage into Go memory and frees it.
+func readImage(img *C.ChromaHashImage) (int, int, []byte) {
+	defer C.chromahash_image_free(img)
+	n := C.int(img.rgba_len)
+	var rgba []byte
+	if n > 0 {
+		rgba = C.GoBytes(unsafe.Pointer(img.rgba), n)
+	}
+	return int(img.width), int(img.height), rgba
+}
+
+// AverageColor extracts the average color from the ChromaHash without a full
+// decode. Returns r, g, b, a as uint8 values. Per spec §11.2.
 func (ch ChromaHash) AverageColor() (r, g, b, a uint8) {
-	hash := ch.Hash[:]
-
-	var header uint64
-	for i := 0; i < 6; i++ {
-		header |= uint64(hash[i]) << (i * 8)
+	handle := ch.handle()
+	defer C.chromahash_free(handle)
+	var color C.ChromaHashColor
+	if C.chromahash_average_color(handle, &color) != C.CHROMA_HASH_STATUS_OK {
+		panic("chromahash: average_color failed")
 	}
+	return uint8(color.r), uint8(color.g), uint8(color.b), uint8(color.a)
+}
 
-	lDCQ := int(header & 0x7F)
-	aDCQ := int((header >> 7) & 0x7F)
-	bDCQ := int((header >> 14) & 0x7F)
-	hasAlpha := ((header >> 46) & 1) == 1
-
-	lDC := float64(lDCQ) / 127.0
-	aDC := (float64(aDCQ) - 64.0) / 63.0 * maxChromaA
-	bDC := (float64(bDCQ) - 64.0) / 63.0 * maxChromaB
-
-	// Apply soft gamut clamp to DC values (v0.2).
-	lClamped := clamp01(lDC)
-	clamped := softGamutClamp(lClamped, aDC, bDC)
-	rgbLin := oklabToLinearSrgb(clamped)
-
-	var alphaF float64
-	if hasAlpha {
-		alphaF = float64(readBits(hash, 48, 5)) / 31.0
-	} else {
-		alphaF = 1.0
-	}
-
-	r = linearToSrgb8(clamp01(rgbLin[0]))
-	g = linearToSrgb8(clamp01(rgbLin[1]))
-	b = linearToSrgb8(clamp01(rgbLin[2]))
-	a = byte(int(roundHalfAwayFromZero(255.0 * clamp01(alphaF))))
-	return
+// IsVersionSupported reports whether this hash uses the v0.6 bitstream this
+// library implements. Decoding an unsupported (legacy) hash produces garbage,
+// not an error — check this first for hashes of unknown provenance.
+func (ch ChromaHash) IsVersionSupported() bool {
+	handle := ch.handle()
+	defer C.chromahash_free(handle)
+	return bool(C.chromahash_is_version_supported(handle))
 }

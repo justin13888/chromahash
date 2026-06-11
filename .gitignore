@@ -125,3 +125,6 @@ bindings/uniffi/android/src/main/kotlin/
 *.iml
 .todos/
 go/encode-stdin
+# Go cgo build inputs staged from chromahash-c by `just go-cbuild`.
+go/lib/
+go/include/
