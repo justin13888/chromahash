@@ -3,72 +3,81 @@ use std::f64::consts::PI;
 use crate::aspect::decode_output_size;
 use crate::math_utils::portable_cos;
 
-/// Compute the AC coefficient scan order for an nx×ny grid keyed on aspect_byte.
-/// Per spec §6.2 (v0.4): coefficients are sorted ascending by per-pixel frequency priority
-/// `(cx*h)² + (cy*w)²` where (w,h) = decodeOutputSize(aspect_byte). Ties broken by (cx, cy).
-/// Excludes DC at (0,0).
-pub fn scan_order(nx: usize, ny: usize, aspect_byte: u8) -> Vec<(usize, usize)> {
-    let (w, h) = decode_output_size(aspect_byte);
-    let w = w as u64;
-    let h = h as u64;
+/// The AC coefficients selected for one channel, in transmission order.
+/// Per spec §6 (v0.6).
+pub struct Selection {
+    /// Selected (cx, cy) frequency pairs, ascending by priority.
+    pub coeffs: Vec<(usize, usize)>,
+    /// Integer priority of each selected pair: (cx·H)² + (cy·W)².
+    pub priorities: Vec<u64>,
+    /// Priority of the last (highest-frequency) selected pair.
+    pub p_k: u64,
+}
 
-    let mut entries: Vec<(u64, usize, usize)> = Vec::new();
-    for cy in 0..ny {
-        let cx_start = if cy == 0 { 1 } else { 0 };
-        let mut cx = cx_start;
-        while cx * ny < nx * (ny - cy) {
-            let priority = (cx as u64 * h) * (cx as u64 * h) + (cy as u64 * w) * (cy as u64 * w);
-            entries.push((priority, cx, cy));
-            cx += 1;
+/// Select the K lowest-spatial-frequency AC coefficients for an aspect byte.
+/// Per spec §6.1 (v0.6).
+///
+/// Candidates are all (cx, cy) in [0, W) × [0, H) except DC, where (W, H) =
+/// decodeOutputSize(aspect_byte) — exactly the frequencies representable at
+/// the natural render, which makes selecting an unrepresentable (aliasing)
+/// frequency structurally impossible. Priority (cx·H)² + (cy·W)² is the
+/// squared isotropic per-pixel frequency scaled by (W·H)²; ties break by
+/// (cx, cy) ascending. Pure integer ordering ⇒ bit-exact across languages.
+///
+/// The candidate count is ≥ 2·32 − 1 = 63 for every aspect byte, so any
+/// K ≤ 63 is always fully satisfied.
+pub fn select_coefficients(aspect_byte: u8, k: usize) -> Selection {
+    let (w, h) = decode_output_size(aspect_byte);
+    let (w, h) = (w as usize, h as usize);
+
+    let mut entries: Vec<(u64, usize, usize)> = Vec::with_capacity(w * h - 1);
+    for cy in 0..h {
+        for cx in 0..w {
+            if cx == 0 && cy == 0 {
+                continue;
+            }
+            let px = (cx * h) as u64;
+            let py = (cy * w) as u64;
+            entries.push((px * px + py * py, cx, cy));
         }
     }
     entries.sort_unstable_by_key(|&(p, cx, cy)| (p, cx, cy));
-    entries.into_iter().map(|(_, cx, cy)| (cx, cy)).collect()
+    entries.truncate(k);
+
+    let p_k = entries.last().map(|&(p, _, _)| p).unwrap_or(1);
+    Selection {
+        coeffs: entries.iter().map(|&(_, cx, cy)| (cx, cy)).collect(),
+        priorities: entries.iter().map(|&(p, _, _)| p).collect(),
+        p_k,
+    }
 }
 
-/// Forward DCT encode for a channel. Per spec §12.6 dctEncode (v0.4).
-/// Returns (dc, ac_coefficients, scale). AC values are emitted in `scan` order.
-/// Superseded by dct_encode_separable for production use; retained for test verification.
-#[allow(dead_code)]
-pub fn dct_encode(
-    channel: &[f64],
-    w: usize,
-    h: usize,
-    scan: &[(usize, usize)],
-) -> (f64, Vec<f64>, f64) {
-    let wh = (w * h) as f64;
-
-    // DC = mean (cos(0) = 1 for all positions)
-    let dc: f64 = channel.iter().sum::<f64>() / wh;
-
-    let mut ac = Vec::with_capacity(scan.len());
-    let mut scale = 0.0_f64;
-
-    for &(cx, cy) in scan {
-        let mut f = 0.0;
-        for y in 0..h {
-            let fy = portable_cos(PI / h as f64 * cy as f64 * (y as f64 + 0.5));
-            for x in 0..w {
-                f += channel[x + y * w]
-                    * portable_cos(PI / w as f64 * cx as f64 * (x as f64 + 0.5))
-                    * fy;
+/// Decode-side synthesis window weights for a selection. Per spec §11 (v0.6).
+///
+/// w_j = w_min + (1 − w_min) · ((1 + cos(π·ρ_j)) / 2)^w_exp with
+/// ρ_j = sqrt(priority_j / P_K) ∈ (0, 1]. Tapering high-frequency amplitudes
+/// suppresses the Gibbs ringing/banding that sparse unwindowed cosines
+/// produce — and because it is applied after dequantization, it attenuates
+/// quantization noise by the same factor. w_min = 1.0 disables the window.
+/// Portable: integer priorities, IEEE-correctly-rounded sqrt, portable_cos,
+/// and an integer exponent evaluated as repeated multiplication.
+pub fn window_weights(selection: &Selection, w_min: f64, w_exp: u32) -> Vec<f64> {
+    selection
+        .priorities
+        .iter()
+        .map(|&p| {
+            if w_min >= 1.0 {
+                return 1.0;
             }
-        }
-        f /= wh;
-        ac.push(f);
-        scale = scale.max(f.abs());
-    }
-
-    // Floor near-zero scale to exactly zero. When the channel is (near-)constant,
-    // floating-point noise in cosine sums produces tiny AC values. Without this
-    // threshold, dividing AC/scale amplifies platform-specific ULP differences
-    // (e.g. different cbrt implementations) into divergent quantized codes.
-    if scale < 1e-10 {
-        ac.fill(0.0);
-        scale = 0.0;
-    }
-
-    (dc, ac, scale)
+            let rho = (p as f64 / selection.p_k as f64).sqrt();
+            let hann = (1.0 + portable_cos(PI * rho)) / 2.0;
+            let mut powed = 1.0;
+            for _ in 0..w_exp {
+                powed *= hann;
+            }
+            w_min + (1.0 - w_min) * powed
+        })
+        .collect()
 }
 
 /// Precompute cosine table for DCT: table[freq][pos] = cos(π/dim · freq · (pos+0.5)).
@@ -87,14 +96,19 @@ pub fn precompute_cos_table(dim: usize, max_freq: usize) -> Vec<Vec<f64>> {
     table
 }
 
-/// Forward DCT encode using precomputed cosine tables. Per spec §12.6 (v0.4).
-/// Semantically identical to dct_encode but avoids redundant cosine evaluations.
-/// AC values are emitted in `scan` order; cos_x/cos_y must have entries for all (cx,cy) in scan.
-pub fn dct_encode_separable(
+/// Forward DCT over the selected coefficients. Per spec §10 (v0.6).
+/// Returns (dc, ac_in_selection_order, scale).
+///
+/// Frequency clamp: a selected (cx, cy) with cx ≥ w or cy ≥ h cannot be
+/// represented by the w×h source samples — the basis is not orthogonal there
+/// and the projection degenerates (e.g. F(2, cy) ≈ −DC on a 1-px-wide image,
+/// the v0.5 dim-1xN catastrophe). Such coefficients are emitted as exact 0
+/// and excluded from the scale max.
+pub fn dct_encode_selected(
     channel: &[f64],
     w: usize,
     h: usize,
-    scan: &[(usize, usize)],
+    coeffs: &[(usize, usize)],
     cos_x: &[Vec<f64>],
     cos_y: &[Vec<f64>],
 ) -> (f64, Vec<f64>, f64) {
@@ -103,10 +117,14 @@ pub fn dct_encode_separable(
     // DC = mean (cos_x[0] and cos_y[0] are all-ones by construction)
     let dc: f64 = channel.iter().sum::<f64>() / wh;
 
-    let mut ac = Vec::with_capacity(scan.len());
+    let mut ac = Vec::with_capacity(coeffs.len());
     let mut scale = 0.0_f64;
 
-    for &(cx, cy) in scan {
+    for &(cx, cy) in coeffs {
+        if cx >= w || cy >= h {
+            ac.push(0.0);
+            continue;
+        }
         let cy_row = &cos_y[cy];
         let cx_row = &cos_x[cx];
         let mut f = 0.0;
@@ -121,6 +139,10 @@ pub fn dct_encode_separable(
         scale = scale.max(f.abs());
     }
 
+    // Floor near-zero scale to exactly zero. When the channel is (near-)constant,
+    // floating-point noise in cosine sums produces tiny AC values. Without this
+    // threshold, dividing AC/scale amplifies platform-specific ULP differences
+    // into divergent quantized codes.
     if scale < 1e-10 {
         ac.fill(0.0);
         scale = 0.0;
@@ -129,45 +151,20 @@ pub fn dct_encode_separable(
     (dc, ac, scale)
 }
 
-/// Inverse DCT at a single pixel (x, y) for a channel.
-/// Superseded by dct_decode_pixel_separable for production use; retained for test verification.
-#[allow(dead_code)]
-pub fn dct_decode_pixel(
-    dc: f64,
-    ac: &[f64],
-    scan_order: &[(usize, usize)],
-    x: usize,
-    y: usize,
-    w: usize,
-    h: usize,
-) -> f64 {
-    let mut value = dc;
-    for (j, &(cx, cy)) in scan_order.iter().enumerate() {
-        let cx_factor = if cx > 0 { 2.0 } else { 1.0 };
-        let cy_factor = if cy > 0 { 2.0 } else { 1.0 };
-        let fx = portable_cos(PI / w as f64 * cx as f64 * (x as f64 + 0.5));
-        let fy = portable_cos(PI / h as f64 * cy as f64 * (y as f64 + 0.5));
-        value += ac[j] * fx * fy * cx_factor * cy_factor;
-    }
-    value
-}
-
 /// Inverse DCT at a single pixel using precomputed cosine tables. Per spec §12.6.
-/// Semantically identical to dct_decode_pixel but reads cos_x[cx][x] / cos_y[cy][y]
-/// instead of evaluating portable_cos in the inner loop. cos_x/cos_y must cover all
-/// (cx, cy) in scan_order. The cx/cy factors stay as separate multiplies to preserve
-/// the exact floating-point operation order.
+/// The cx/cy factors stay as separate multiplies to preserve the exact
+/// floating-point operation order. cos_x/cos_y must cover all (cx, cy) in scan.
 pub fn dct_decode_pixel_separable(
     dc: f64,
     ac: &[f64],
-    scan_order: &[(usize, usize)],
+    scan: &[(usize, usize)],
     x: usize,
     y: usize,
     cos_x: &[Vec<f64>],
     cos_y: &[Vec<f64>],
 ) -> f64 {
     let mut value = dc;
-    for (j, &(cx, cy)) in scan_order.iter().enumerate() {
+    for (j, &(cx, cy)) in scan.iter().enumerate() {
         let cx_factor = if cx > 0 { 2.0 } else { 1.0 };
         let cy_factor = if cy > 0 { 2.0 } else { 1.0 };
         let fx = cos_x[cx][x];
@@ -182,66 +179,99 @@ mod tests {
     use super::*;
 
     #[test]
-    fn scan_order_counts() {
-        // AC count depends only on (nx, ny), not on aspect_byte. Use byte=128 (square).
-        assert_eq!(scan_order(3, 3, 128).len(), 5);
-        assert_eq!(scan_order(4, 4, 128).len(), 9);
-        assert_eq!(scan_order(6, 6, 128).len(), 20);
-        assert_eq!(scan_order(7, 7, 128).len(), 27);
+    fn selection_counts() {
+        for byte in [0u8, 64, 128, 191, 255] {
+            for k in [5usize, 9, 11, 24, 27] {
+                let sel = select_coefficients(byte, k);
+                assert_eq!(sel.coeffs.len(), k, "byte={byte} k={k}");
+                assert_eq!(sel.priorities.len(), k);
+            }
+        }
     }
 
     #[test]
-    fn scan_order_4x4_square_is_radial() {
-        // aspect_byte=128 → w=32, h=32 (square). Priorities ∝ cx²+cy².
-        // Tied priorities broken by cx first.
-        let order = scan_order(4, 4, 128);
+    fn selection_square_is_radial_l2_ball() {
+        // byte=128 → (W,H) = (32,32); priority ∝ cx² + cy².
+        let sel = select_coefficients(128, 9);
         let expected = vec![
-            (0, 1), // priority 1024
-            (1, 0), // priority 1024
-            (1, 1), // priority 2048
-            (0, 2), // priority 4096
-            (2, 0), // priority 4096
-            (1, 2), // priority 5120
-            (2, 1), // priority 5120
-            (0, 3), // priority 9216
-            (3, 0), // priority 9216
+            (0, 1), // 1
+            (1, 0), // 1 (tie broken by cx? no: (0,1) has cx=0 < 1)
+            (1, 1), // 2
+            (0, 2), // 4
+            (2, 0), // 4
+            (1, 2), // 5
+            (2, 1), // 5
+            (2, 2), // 8
+            (0, 3), // 9
         ];
-        assert_eq!(
-            order, expected,
-            "4×4 square should produce radial scan order"
-        );
+        assert_eq!(sel.coeffs, expected);
     }
 
     #[test]
-    fn scan_order_3x3_square_is_radial() {
-        let order = scan_order(3, 3, 128);
-        let expected = vec![
-            (0, 1), // priority 1024
-            (1, 0), // priority 1024
-            (1, 1), // priority 2048
-            (0, 2), // priority 4096
-            (2, 0), // priority 4096
-        ];
-        assert_eq!(
-            order, expected,
-            "3×3 square should produce radial scan order"
-        );
+    fn selection_square_27_includes_diagonals_over_axis_extremes() {
+        // The ℓ2 ball (v0.6) should include (3,4)/(4,3) (priority 25) and
+        // exclude (6,0)/(0,6) (priority 36) at K=27 — the opposite of the
+        // v0.5 ℓ1 triangle.
+        let sel = select_coefficients(128, 27);
+        assert!(sel.coeffs.contains(&(3, 4)));
+        assert!(sel.coeffs.contains(&(4, 3)));
+        assert!(!sel.coeffs.contains(&(6, 0)));
+        assert!(!sel.coeffs.contains(&(0, 6)));
     }
 
     #[test]
-    fn scan_order_extreme_landscape_is_rowmajor() {
-        // byte=255 → ratio=16 → w=32, h=2 for decode_output_size.
-        // 14×4 grid: priority = (cx*2)² + (cy*32)² = 4cx² + 1024cy².
-        // All cy=0 entries (max 4*13²=676) < all cy=1 entries (min 1024). Row-major preserved.
-        let order = scan_order(14, 4, 255);
-        assert_eq!(order.len(), 35, "14×4 should have 35 AC coefficients");
-        // Verify all cy=0 entries appear before any cy>=1 entry
-        let first_nonzero_cy = order.iter().position(|&(_, cy)| cy > 0).unwrap();
-        let last_zero_cy = order.iter().rposition(|&(_, cy)| cy == 0).unwrap();
-        assert!(
-            first_nonzero_cy > last_zero_cy,
-            "all cy=0 entries should precede cy>0 entries for extreme landscape"
-        );
+    fn selection_priorities_ascending() {
+        for byte in [0u8, 100, 128, 200, 255] {
+            let sel = select_coefficients(byte, 24);
+            for pair in sel.priorities.windows(2) {
+                assert!(pair[0] <= pair[1], "priorities must be ascending");
+            }
+            assert_eq!(*sel.priorities.last().unwrap(), sel.p_k);
+        }
+    }
+
+    #[test]
+    fn selection_bounded_by_output_size() {
+        // No selected frequency may equal or exceed the natural render dims.
+        for byte in 0u8..=255 {
+            let (w, h) = decode_output_size(byte);
+            let sel = select_coefficients(byte, 27);
+            for &(cx, cy) in &sel.coeffs {
+                assert!(cx < w as usize, "cx={cx} ≥ W={w} for byte={byte}");
+                assert!(cy < h as usize, "cy={cy} ≥ H={h} for byte={byte}");
+            }
+        }
+    }
+
+    #[test]
+    fn selection_extreme_landscape_prefers_long_axis() {
+        // byte=255 → (W,H)=(32,2): cy is twice as expensive as 16·cx,
+        // so the selection should be dominated by (cx, 0) terms.
+        let sel = select_coefficients(255, 24);
+        let cy0 = sel.coeffs.iter().filter(|&&(_, cy)| cy == 0).count();
+        assert!(cy0 >= 15, "expected mostly cy=0 terms, got {cy0}");
+    }
+
+    #[test]
+    fn window_weights_disabled_at_one() {
+        let sel = select_coefficients(128, 24);
+        let w = window_weights(&sel, 1.0, 1);
+        assert!(w.iter().all(|&x| x == 1.0));
+    }
+
+    #[test]
+    fn window_weights_monotone_and_bounded() {
+        let sel = select_coefficients(128, 24);
+        let w = window_weights(&sel, 0.3, 1);
+        for pair in w.windows(2) {
+            assert!(
+                pair[0] >= pair[1] - 1e-12,
+                "weights should be non-increasing in priority"
+            );
+        }
+        // Boundary coefficient gets exactly w_min (ρ=1 → hann=0).
+        assert!((w.last().unwrap() - 0.3).abs() < 1e-12);
+        assert!(w.iter().all(|&x| (0.3..=1.0).contains(&x)));
     }
 
     #[test]
@@ -250,8 +280,10 @@ mod tests {
         let h = 4;
         let val = 0.7;
         let channel = vec![val; w * h];
-        let scan = scan_order(4, 4, 128);
-        let (dc, _, _) = dct_encode(&channel, w, h, &scan);
+        let sel = select_coefficients(128, 9);
+        let cos_x = precompute_cos_table(w, 8);
+        let cos_y = precompute_cos_table(h, 8);
+        let (dc, _, _) = dct_encode_selected(&channel, w, h, &sel.coeffs, &cos_x, &cos_y);
         assert!(
             (dc - val).abs() < 1e-12,
             "DC of constant channel should = {val}, got {dc}"
@@ -263,87 +295,59 @@ mod tests {
         let w = 4;
         let h = 4;
         let channel = vec![0.5; w * h];
-        let scan = scan_order(4, 4, 128);
-        let (_, ac, scale) = dct_encode(&channel, w, h, &scan);
-        assert!(scale < 1e-12, "AC of constant channel should be 0");
-        for (i, &v) in ac.iter().enumerate() {
-            assert!(v.abs() < 1e-12, "AC[{i}] should be 0, got {v}");
+        let sel = select_coefficients(128, 9);
+        let cos_x = precompute_cos_table(w, 8);
+        let cos_y = precompute_cos_table(h, 8);
+        let (_, ac, scale) = dct_encode_selected(&channel, w, h, &sel.coeffs, &cos_x, &cos_y);
+        assert_eq!(scale, 0.0, "AC scale of constant channel should be 0");
+        assert!(ac.iter().all(|&v| v == 0.0));
+    }
+
+    #[test]
+    fn frequency_clamp_zeroes_unrepresentable() {
+        // 1-px-wide source: every cx ≥ 1 coefficient must be exactly 0 and
+        // must not contaminate the scale (the v0.5 dim-1xN catastrophe).
+        let w = 1;
+        let h = 16;
+        let channel: Vec<f64> = (0..h).map(|y| y as f64 / 15.0).collect();
+        let sel = select_coefficients(0, 24); // byte 0 → (W,H)=(2,32)
+        let cos_x = precompute_cos_table(w, 2);
+        let cos_y = precompute_cos_table(h, 32);
+        let (_, ac, scale) = dct_encode_selected(&channel, w, h, &sel.coeffs, &cos_x, &cos_y);
+        for (j, &(cx, _)) in sel.coeffs.iter().enumerate() {
+            if cx >= w {
+                assert_eq!(ac[j], 0.0, "clamped coefficient {j} must be 0");
+            }
         }
+        // The vertical gradient has strong (0,1) energy; scale must reflect
+        // it rather than a degenerate ±DC junk value.
+        assert!(scale > 0.05 && scale < 0.5, "scale={scale}");
     }
 
     #[test]
     fn encode_decode_roundtrip_constant() {
-        // Constant channel: perfectly reconstructed by DC alone
         let w = 8;
         let h = 8;
         let val = 0.42;
         let channel = vec![val; w * h];
-        let scan = scan_order(4, 4, 128);
-        let (dc, ac, _) = dct_encode(&channel, w, h, &scan);
+        let sel = select_coefficients(128, 9);
+        let cos_x = precompute_cos_table(w, 8);
+        let cos_y = precompute_cos_table(h, 8);
+        let (dc, ac, _) = dct_encode_selected(&channel, w, h, &sel.coeffs, &cos_x, &cos_y);
 
         for y in 0..h {
             for x in 0..w {
-                let reconstructed = dct_decode_pixel(dc, &ac, &scan, x, y, w, h);
+                let r = dct_decode_pixel_separable(dc, &ac, &sel.coeffs, x, y, &cos_x, &cos_y);
                 assert!(
-                    (reconstructed - val).abs() < 1e-10,
-                    "constant roundtrip failed at ({x},{y}): got {reconstructed}"
+                    (r - val).abs() < 1e-10,
+                    "constant roundtrip failed at ({x},{y}): got {r}"
                 );
             }
         }
     }
 
     #[test]
-    fn separable_matches_dct_encode() {
-        // dct_encode_separable must produce bit-identical output to dct_encode
-        let w = 8;
-        let h = 6;
-        let mut channel = vec![0.0; w * h];
-        for y in 0..h {
-            for x in 0..w {
-                channel[x + y * w] = (x as f64 * 0.13 + y as f64 * 0.07).sin();
-            }
-        }
-        let nx = 5;
-        let ny = 4;
-        let scan = scan_order(nx, ny, 128);
-        let cos_x = precompute_cos_table(w, nx);
-        let cos_y = precompute_cos_table(h, ny);
-        let (dc1, ac1, s1) = dct_encode(&channel, w, h, &scan);
-        let (dc2, ac2, s2) = dct_encode_separable(&channel, w, h, &scan, &cos_x, &cos_y);
-        assert_eq!(dc1, dc2, "DC must be bit-identical");
-        assert_eq!(s1, s2, "scale must be bit-identical");
-        assert_eq!(ac1.len(), ac2.len(), "AC count must match");
-        for (i, (v1, v2)) in ac1.iter().zip(ac2.iter()).enumerate() {
-            assert_eq!(v1, v2, "AC[{i}] must be bit-identical");
-        }
-    }
-
-    #[test]
-    fn separable_decode_matches_dct_decode_pixel() {
-        // dct_decode_pixel_separable must produce bit-identical output to dct_decode_pixel
-        let w = 8;
-        let h = 6;
-        let nx = 5;
-        let ny = 4;
-        let scan = scan_order(nx, ny, 128);
-        let cos_x = precompute_cos_table(w, nx);
-        let cos_y = precompute_cos_table(h, ny);
-        let dc = 0.37;
-        let ac: Vec<f64> = (0..scan.len())
-            .map(|j| (j as f64 * 0.123).sin() * 0.4)
-            .collect();
-        for y in 0..h {
-            for x in 0..w {
-                let naive = dct_decode_pixel(dc, &ac, &scan, x, y, w, h);
-                let sep = dct_decode_pixel_separable(dc, &ac, &scan, x, y, &cos_x, &cos_y);
-                assert_eq!(naive, sep, "decode must be bit-identical at ({x},{y})");
-            }
-        }
-    }
-
-    #[test]
     fn encode_decode_gradient_reasonable() {
-        // Gradient: triangular DCT is lossy, but should be close
         let w = 8;
         let h = 8;
         let mut channel = vec![0.0; w * h];
@@ -352,18 +356,18 @@ mod tests {
                 channel[x + y * w] = (x as f64 / w as f64 + y as f64 / h as f64) / 2.0;
             }
         }
-        let scan = scan_order(7, 7, 128);
-        let (dc, ac, _) = dct_encode(&channel, w, h, &scan);
+        let sel = select_coefficients(128, 27);
+        let cos_x = precompute_cos_table(w, 32);
+        let cos_y = precompute_cos_table(h, 32);
+        let (dc, ac, _) = dct_encode_selected(&channel, w, h, &sel.coeffs, &cos_x, &cos_y);
 
         let mut max_err = 0.0_f64;
         for y in 0..h {
             for x in 0..w {
-                let reconstructed = dct_decode_pixel(dc, &ac, &scan, x, y, w, h);
-                let original = channel[x + y * w];
-                max_err = max_err.max((reconstructed - original).abs());
+                let r = dct_decode_pixel_separable(dc, &ac, &sel.coeffs, x, y, &cos_x, &cos_y);
+                max_err = max_err.max((r - channel[x + y * w]).abs());
             }
         }
-        // Triangular DCT is lossy but should be close for smooth gradients
         assert!(
             max_err < 0.02,
             "gradient reconstruction max error too large: {max_err}"

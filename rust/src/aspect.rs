@@ -1,28 +1,5 @@
 use crate::math_utils::{portable_ln, portable_pow, round_half_away_from_zero};
 
-/// Derive adaptive DCT grid (nx, ny) from aspect byte and base_n. Per spec §6.3 (v0.4).
-/// Uses sqrt(scale) with nx_cap = 2*base_n and product preservation (ny = round(base_n²/nx)).
-/// sqrt uses IEEE 754 correctly-rounded f64::sqrt for cross-language determinism.
-pub fn derive_grid(aspect_byte: u8, base_n: u32) -> (usize, usize) {
-    let ratio = portable_pow(2.0, aspect_byte as f64 / 255.0 * 8.0 - 4.0);
-    let base = base_n as f64;
-    let nx_cap = (2 * base_n) as i64;
-
-    let (nx, ny) = if ratio >= 1.0 {
-        let scale = ratio.min(16.0);
-        let nx = (round_half_away_from_zero(base * scale.sqrt()) as i64).min(nx_cap);
-        let ny = round_half_away_from_zero(base * base / nx as f64) as i64;
-        (nx, ny)
-    } else {
-        let scale = (1.0 / ratio).min(16.0);
-        let ny = (round_half_away_from_zero(base * scale.sqrt()) as i64).min(nx_cap);
-        let nx = round_half_away_from_zero(base * base / ny as f64) as i64;
-        (nx, ny)
-    };
-
-    (nx.max(3) as usize, ny.max(3) as usize)
-}
-
 /// Encode aspect ratio as a single byte. Per spec §8.1 (v0.3).
 pub fn encode_aspect(w: u32, h: u32) -> u8 {
     let ratio = w as f64 / h as f64;
@@ -112,75 +89,13 @@ mod tests {
     }
 
     #[test]
-    fn derive_grid_square() {
-        // byte=128 ≈ 1:1 ratio → (7,7) for base_n=7
-        let (nx, ny) = derive_grid(128, 7);
-        assert_eq!((nx, ny), (7, 7), "square should give (7,7) for base_n=7");
-    }
-
-    #[test]
-    fn derive_grid_portrait_extreme() {
-        // byte=0 → ratio=1/16 (1:16) → scale=16, s=2 → (4,14) for base_n=7
-        let (nx, ny) = derive_grid(0, 7);
-        assert_eq!((nx, ny), (4, 14), "byte=0 base_n=7 should give (4,14)");
-    }
-
-    #[test]
-    fn derive_grid_landscape_extreme() {
-        // byte=255 → ratio=16 (16:1) → scale=16, s=2 → (14,4) for base_n=7
-        let (nx, ny) = derive_grid(255, 7);
-        assert_eq!((nx, ny), (14, 4), "byte=255 base_n=7 should give (14,4)");
-    }
-
-    #[test]
-    fn derive_grid_chroma_base4() {
-        // byte=128 ≈ 1:1 → (4,4) for base_n=4
-        let (nx, ny) = derive_grid(128, 4);
-        assert_eq!((nx, ny), (4, 4), "square should give (4,4) for base_n=4");
-        // byte=0 → ratio=1/16, scale=16, sqrt(16)=4, ny=min(round(4*4)=16, cap=8)=8, nx=round(16/8)=2→3 → (3,8)
-        let (nx, ny) = derive_grid(0, 4);
-        assert_eq!((nx, ny), (3, 8), "byte=0 base_n=4 should give (3,8)");
-        // byte=255 → ratio=16, scale=16, sqrt(16)=4, nx=min(round(4*4)=16, cap=8)=8, ny=round(16/8)=2→3 → (8,3)
-        let (nx, ny) = derive_grid(255, 4);
-        assert_eq!((nx, ny), (8, 3), "byte=255 base_n=4 should give (8,3)");
-    }
-
-    #[test]
-    fn derive_grid_alpha_base6() {
-        // byte=0 → ratio=1/16, scale=16, sqrt(16)=4, ny=min(round(6*4)=24, cap=12)=12, nx=round(36/12)=3 → (3,12)
-        let (nx, ny) = derive_grid(0, 6);
-        assert_eq!((nx, ny), (3, 12), "byte=0 base_n=6 should give (3,12)");
-        // byte=255 → ratio=16, scale=16, sqrt(16)=4, nx=min(round(6*4)=24, cap=12)=12, ny=round(36/12)=3 → (12,3)
-        let (nx, ny) = derive_grid(255, 6);
-        assert_eq!((nx, ny), (12, 3), "byte=255 base_n=6 should give (12,3)");
-    }
-
-    #[test]
-    fn derive_grid_moderate_16_9() {
-        // 16:9 aspect: v0.4 gives (9,5) for base_n=7, vs (8,6) in v0.3.
-        // sqrt(1.778)=1.333, round(7*1.333)=9, round(49/9)=5 → (9,5).
-        let byte = encode_aspect(16, 9);
-        let (nx, ny) = derive_grid(byte, 7);
-        assert_eq!((nx, ny), (9, 5), "16:9 base_n=7 should give (9,5) in v0.4");
-    }
-
-    #[test]
-    fn derive_grid_moderate_3_2() {
-        // 3:2 aspect: sqrt(1.5)=1.225, round(7*1.225)=9, round(49/9)=5 → (9,5)
-        let byte = encode_aspect(3, 2);
-        let (nx, ny) = derive_grid(byte, 7);
-        assert_eq!((nx, ny), (9, 5), "3:2 base_n=7 should give (9,5) in v0.4");
-    }
-
-    #[test]
-    fn derive_grid_min_floor() {
-        // All results should be >= 3
+    fn decode_output_size_min_dims() {
+        // The short side never collapses below 2 px — the selection domain
+        // (v0.6 §6.1) relies on (W, H) ≥ (2, 2) to offer ≥ 63 candidates.
         for byte in 0u8..=255 {
-            for &base_n in &[3u32, 4, 6, 7] {
-                let (nx, ny) = derive_grid(byte, base_n);
-                assert!(nx >= 3, "nx={nx} < 3 for byte={byte} base_n={base_n}");
-                assert!(ny >= 3, "ny={ny} < 3 for byte={byte} base_n={base_n}");
-            }
+            let (w, h) = decode_output_size(byte);
+            assert!(w >= 2 && h >= 2, "byte={byte} gave {w}x{h}");
+            assert!(w.max(h) == 32, "long side must be 32 for byte={byte}");
         }
     }
 

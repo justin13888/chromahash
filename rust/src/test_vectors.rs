@@ -3,13 +3,13 @@
 #[cfg(test)]
 mod tests {
     use crate::ChromaHash;
-    use crate::aspect::{decode_aspect, decode_output_size, derive_grid, encode_aspect};
+    use crate::aspect::{decode_aspect, decode_output_size, encode_aspect};
     use crate::bitpack::{read_bits, write_bits};
     use crate::color::{
         gamma_rgb_to_oklab, linear_rgb_to_oklab, oklab_to_linear_srgb, soft_gamut_clamp,
     };
-    use crate::constants::Gamut;
-    use crate::dct::scan_order;
+    use crate::constants::{Gamut, Tunables};
+    use crate::dct::select_coefficients;
     use crate::math_utils::{cbrt_halley, cbrt_signed};
     use crate::mulaw::{mu_compress, mu_expand, mu_law_dequantize, mu_law_quantize};
 
@@ -37,6 +37,21 @@ mod tests {
                 rgba[idx + 2] = ((1.0 - ty) * 255.0) as u8;
                 rgba[idx + 3] = 255;
             }
+        }
+        rgba
+    }
+
+    /// Red→blue gradient along the long axis of a 1-px-wide/tall strip.
+    /// Mirrors the comparison corpus dim-1x100/dim-100x1 fixtures that
+    /// exposed the v0.5 degenerate-dimension aliasing bug.
+    fn strip_gradient(w: u32, h: u32) -> Vec<u8> {
+        let n = (w * h) as usize;
+        let mut rgba = vec![0u8; n * 4];
+        for i in 0..n {
+            let t = i as f64 / (n - 1).max(1) as f64;
+            rgba[i * 4] = (255.0 * (1.0 - t)) as u8;
+            rgba[i * 4 + 2] = (255.0 * t) as u8;
+            rgba[i * 4 + 3] = 255;
         }
         rgba
     }
@@ -121,20 +136,39 @@ mod tests {
             std::fs::write(spec_dir.join("unit-color.json"), json).unwrap();
         }
 
-        // --- unit-mulaw.json ---
+        // --- unit-mulaw.json (v0.6: odd level count, per-channel µ) ---
+        // Covers both µ values the format uses (MU_L/MU_ALPHA = 5, MU_C = 8)
+        // at every bit width, including near-zero values that exercise the
+        // exact-zero center code and its first neighbors.
         {
             let mut cases = Vec::new();
-            for &v in &[-1.0, -0.75, -0.5, -0.25, 0.0, 0.25, 0.5, 0.75, 1.0] {
-                let c = mu_compress(v);
-                let e = mu_expand(c);
+            for &mu in &[Tunables::DEFAULT.mu_l, Tunables::DEFAULT.mu_c] {
+                for &v in &[
+                    -1.0, -0.75, -0.5, -0.25, -0.05, -0.01, 0.0, 0.01, 0.05, 0.25, 0.5, 0.75, 1.0,
+                ] {
+                    let c = mu_compress(v, mu);
+                    let e = mu_expand(c, mu);
+                    for bits in [4u32, 5, 6] {
+                        let q = mu_law_quantize(v, bits, mu);
+                        let dq = mu_law_dequantize(q, bits, mu);
+                        cases.push(format!(
+                            r#"  {{
+    "name": "mu={mu}_v={v}_bits={bits}",
+    "input": {{ "value": {v}, "bits": {bits}, "mu": {mu} }},
+    "expected": {{ "compressed": {c}, "expanded": {e}, "quantized": {q}, "dequantized": {dq} }}
+  }}"#,
+                        ));
+                    }
+                }
+                // The never-written top code must clamp down on dequantize.
                 for bits in [4u32, 5, 6] {
-                    let q = mu_law_quantize(v, bits);
-                    let dq = mu_law_dequantize(q, bits);
+                    let top = (1u32 << bits) - 1;
+                    let dq = mu_law_dequantize(top, bits, mu);
                     cases.push(format!(
                         r#"  {{
-    "name": "v={v}_bits={bits}",
-    "input": {{ "value": {v}, "bits": {bits} }},
-    "expected": {{ "compressed": {c}, "expanded": {e}, "quantized": {q}, "dequantized": {dq} }}
+    "name": "mu={mu}_topcode_bits={bits}",
+    "input": {{ "index": {top}, "bits": {bits}, "mu": {mu} }},
+    "expected": {{ "dequantized": {dq} }}
   }}"#,
                     ));
                 }
@@ -143,38 +177,50 @@ mod tests {
             std::fs::write(spec_dir.join("unit-mulaw.json"), json).unwrap();
         }
 
-        // --- unit-dct.json ---
-        // Enumerate all unique (nx, ny, w, h) tuples from deriveGrid across all 256 aspect bytes × 4 base_n values.
-        // Scan order depends on (nx, ny, w, h) — same grid shape can have multiple orders for different aspect bytes.
+        // --- unit-selection.json (v0.6: replaces deriveGrid + scan order) ---
+        // Enumerate unique (W, H, K) selections across all 256 aspect bytes for
+        // every K the format uses, derived from the shipped layout so the list
+        // cannot drift: chroma (9), alpha (5), L alpha-mode (20), L (27).
         {
+            let lay = Tunables::DEFAULT.layout;
+            let mut ks: Vec<usize> = vec![
+                crate::constants::ALPHA_AC_COUNT,
+                lay.c_count,
+                lay.ca_count,
+                lay.la_tiers[0].0 + lay.la_tiers[1].0,
+                lay.l_tiers[0].0 + lay.l_tiers[1].0,
+            ];
+            ks.sort_unstable();
+            ks.dedup();
+
             let mut cases = Vec::new();
             let mut seen = std::collections::BTreeSet::new();
 
             for byte in 0u8..=255 {
-                for &base_n in &[3u32, 4, 6, 7] {
-                    let (nx, ny) = derive_grid(byte, base_n);
-                    let (dw, dh) = decode_output_size(byte);
-                    let key = (nx, ny, dw, dh);
+                let (dw, dh) = decode_output_size(byte);
+                for &k in &ks {
+                    let key = (dw, dh, k);
                     if seen.insert(key) {
-                        let order = scan_order(nx, ny, byte);
-                        let pairs: Vec<String> = order
+                        let sel = select_coefficients(byte, k);
+                        let pairs: Vec<String> = sel
+                            .coeffs
                             .iter()
                             .map(|&(cx, cy)| format!("[{cx},{cy}]"))
                             .collect();
                         cases.push(format!(
                             r#"  {{
-    "name": "scan_order_{nx}x{ny}_w{dw}h{dh}",
-    "input": {{ "nx": {nx}, "ny": {ny}, "w": {dw}, "h": {dh} }},
-    "expected": {{ "ac_count": {}, "scan_order": [{}] }}
+    "name": "selection_w{dw}h{dh}_k{k}",
+    "input": {{ "aspect_byte": {byte}, "k": {k} }},
+    "expected": {{ "coeffs": [{}], "p_k": {} }}
   }}"#,
-                            order.len(),
                             pairs.join(","),
+                            sel.p_k,
                         ));
                     }
                 }
             }
             let json = format!("[\n{}\n]\n", cases.join(",\n"));
-            std::fs::write(spec_dir.join("unit-dct.json"), json).unwrap();
+            std::fs::write(spec_dir.join("unit-selection.json"), json).unwrap();
         }
 
         // --- unit-aspect.json ---
@@ -194,11 +240,6 @@ mod tests {
                 let byte = encode_aspect(w, h);
                 let decoded_ratio = decode_aspect(byte);
                 let (dw, dh) = decode_output_size(byte);
-                // Add derive_grid results for all base_n values
-                let (g7nx, g7ny) = derive_grid(byte, 7);
-                let (g6nx, g6ny) = derive_grid(byte, 6);
-                let (g4nx, g4ny) = derive_grid(byte, 4);
-                let (g3nx, g3ny) = derive_grid(byte, 3);
                 cases.push(format!(
                     r#"  {{
     "name": "aspect_{label}",
@@ -207,13 +248,7 @@ mod tests {
       "byte": {byte},
       "decoded_ratio": {decoded_ratio},
       "output_width": {dw},
-      "output_height": {dh},
-      "derive_grid": {{
-        "base_n_7": [{g7nx}, {g7ny}],
-        "base_n_6": [{g6nx}, {g6ny}],
-        "base_n_4": [{g4nx}, {g4ny}],
-        "base_n_3": [{g3nx}, {g3ny}]
-      }}
+      "output_height": {dh}
     }}
   }}"#,
                 ));
@@ -275,16 +310,23 @@ mod tests {
                 ("saturated_yellow", 0.8, -0.05, 0.3),
                 ("very_saturated", 0.5, 0.45, 0.0),
                 ("very_saturated_2", 0.5, 0.0, 0.45),
+                // Above the sRGB red cusp (L≈0.63): exercises the v0.6
+                // lightness-blended anchor (constant-L clamping here collapses
+                // to near-gray; the blend must retain most of the chroma)
+                ("above_red_cusp", 0.70, 0.25, 0.12),
+                // Just outside the sRGB blue corner: the solid-blue DC case
+                ("near_blue_corner", 0.4488, -0.0357, -0.3143),
                 // Edge: achromatic
                 ("achromatic_low", 0.1, 0.0, 0.0),
                 ("achromatic_high", 0.9, 0.0, 0.0),
             ];
+            let blend = Tunables::DEFAULT.gamut_l_blend;
             for &(name, l, a, b) in test_inputs {
-                let [lo, ao, bo] = soft_gamut_clamp(l, a, b);
+                let [lo, ao, bo] = soft_gamut_clamp(l, a, b, blend);
                 cases.push(format!(
                     r#"  {{
     "name": "{name}",
-    "input": {{ "L": {l}, "a": {a}, "b": {b} }},
+    "input": {{ "L": {l}, "a": {a}, "b": {b}, "l_blend": {blend} }},
     "expected": {{ "L": {lo}, "a": {ao}, "b": {bo} }}
   }}"#,
                 ));
@@ -410,6 +452,15 @@ mod tests {
                     solid_image(4, 4, 200, 100, 50, 255),
                     Gamut::DisplayP3,
                 ),
+                // v0.6: far outside sRGB — exercises the DC search against the
+                // lightness-blended gamut clamp (the ProPhoto-red→pink fix)
+                (
+                    "solid_prophoto_4x4",
+                    4,
+                    4,
+                    solid_image(4, 4, 220, 50, 30, 255),
+                    Gamut::ProPhotoRgb,
+                ),
                 // v0.2: large images (full-resolution encoding)
                 (
                     "gradient_200x150",
@@ -424,6 +475,19 @@ mod tests {
                     200,
                     50,
                     gradient_image(200, 50),
+                    Gamut::Srgb,
+                ),
+                // v0.6: degenerate dimensions — single-sample axes used to
+                // produce aliased junk coefficients (the dim-1xN catastrophe);
+                // the encoder frequency clamp must zero every cx ≥ 1 (or cy ≥ 1)
+                ("strip_1x100", 1, 100, strip_gradient(1, 100), Gamut::Srgb),
+                ("strip_100x1", 100, 1, strip_gradient(100, 1), Gamut::Srgb),
+                // v0.6: 16:1 panorama at the aspect clamp boundary
+                (
+                    "gradient_320x20",
+                    320,
+                    20,
+                    gradient_image(320, 20),
                     Gamut::Srgb,
                 ),
             ];
@@ -499,6 +563,23 @@ mod tests {
                     gradient_image(200, 50),
                     Gamut::Srgb,
                 ),
+                // v0.6: solid corner color — DC search + exact-zero quantizer
+                // must reproduce it almost exactly (v0.5 decoded (0,58,214))
+                (
+                    "solid_blue_4x4_decode",
+                    4,
+                    4,
+                    solid_image(4, 4, 0, 0, 255, 255),
+                    Gamut::Srgb,
+                ),
+                // v0.6: 1-px-wide strip decodes as a clean vertical profile
+                (
+                    "strip_1x100_decode",
+                    1,
+                    100,
+                    strip_gradient(1, 100),
+                    Gamut::Srgb,
+                ),
             ];
 
             for (name, w, h, rgba, gamut) in &test_hashes {
@@ -518,6 +599,90 @@ mod tests {
             }
             let json = format!("[\n{}\n]\n", cases.join(",\n"));
             std::fs::write(spec_dir.join("integration-decode.json"), json).unwrap();
+        }
+
+        // --- integration-decode-capped.json (v0.6) ---
+        // decode_capped renders below the natural size by skipping frequencies
+        // the coarser raster cannot represent (spec §11.4). The 1×N cases are
+        // the regression guard for the v0.5 all-white aliasing bug.
+        {
+            let mut cases = Vec::new();
+
+            let capped_cases: Vec<(&str, u32, u32, Vec<u8>, Gamut, u32, u32)> = vec![
+                (
+                    "strip_1x100_capped_1x100",
+                    1,
+                    100,
+                    strip_gradient(1, 100),
+                    Gamut::Srgb,
+                    1,
+                    100,
+                ),
+                (
+                    "strip_100x1_capped_100x1",
+                    100,
+                    1,
+                    strip_gradient(100, 1),
+                    Gamut::Srgb,
+                    100,
+                    1,
+                ),
+                (
+                    "solid_1x1_capped_1x1",
+                    1,
+                    1,
+                    solid_image(1, 1, 200, 100, 50, 255),
+                    Gamut::Srgb,
+                    1,
+                    1,
+                ),
+                (
+                    "gradient_16x16_capped_8x8",
+                    16,
+                    16,
+                    gradient_image(16, 16),
+                    Gamut::Srgb,
+                    8,
+                    8,
+                ),
+                (
+                    "gradient_200x50_capped_16x4",
+                    200,
+                    50,
+                    gradient_image(200, 50),
+                    Gamut::Srgb,
+                    16,
+                    4,
+                ),
+                // Caps larger than natural must decode at natural size.
+                (
+                    "gradient_16x16_capped_64x64",
+                    16,
+                    16,
+                    gradient_image(16, 16),
+                    Gamut::Srgb,
+                    64,
+                    64,
+                ),
+            ];
+
+            for (name, w, h, rgba, gamut, max_w, max_h) in &capped_cases {
+                let hash = ChromaHash::encode(*w, *h, rgba, *gamut);
+                let (dw, dh, decoded_rgba) = hash.decode_capped(*max_w, *max_h);
+                let bytes: Vec<String> = hash.as_bytes().iter().map(|b| b.to_string()).collect();
+                let decoded_str: Vec<String> = decoded_rgba.iter().map(|b| b.to_string()).collect();
+                cases.push(format!(
+                    r#"  {{
+    "name": "{name}",
+    "input": {{ "hash": [{hash_list}], "max_width": {max_w}, "max_height": {max_h} }},
+    "expected": {{ "width": {dw}, "height": {dh}, "rgba": [{rgba_list}] }}
+  }}"#,
+                    hash_list = bytes.join(","),
+                    rgba_list = decoded_str.join(","),
+                ));
+            }
+            let json = format!("[\n{}\n]\n", cases.join(",\n"));
+            std::fs::write(spec_dir.join("integration-decode-capped.json"), json).unwrap();
         }
 
         eprintln!("Test vectors generated in {:?}", spec_dir);

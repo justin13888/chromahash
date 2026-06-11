@@ -14,6 +14,13 @@ mod transfer;
 pub use batch::{BatchEncoder, ImageInput};
 pub use constants::Gamut;
 
+// Tuning interface for the comparison harness: not part of the public API.
+// `Tunables::DEFAULT` is the v0.6 format; overrides exist solely so the
+// corpus sweep (tools/comparison) can explore constants before they are
+// locked into the spec.
+#[doc(hidden)]
+pub use constants::{AcLayout, LAYOUT_A, LAYOUT_B, LAYOUT_C, LAYOUT_D, Tunables};
+
 /// ChromaHash: a 32-byte LQIP (Low Quality Image Placeholder).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChromaHash {
@@ -54,6 +61,36 @@ impl ChromaHash {
     /// Create a ChromaHash from raw 32-byte data.
     pub fn from_bytes(bytes: [u8; 32]) -> Self {
         Self { hash: bytes }
+    }
+
+    /// Whether this hash uses the v0.6 bitstream this library implements.
+    ///
+    /// Header bit 47 is 0 for v0.6 and 1 for the legacy v0.2–v0.5 bitstreams
+    /// (which used a different coefficient selection, quantizer, and layout).
+    /// Decoding an unsupported hash produces garbage, not an error — callers
+    /// holding hashes of unknown provenance should check this first. Per spec §2.5.
+    pub fn is_version_supported(&self) -> bool {
+        (self.hash[5] >> 7) & 1 == 0
+    }
+
+    /// Encode with explicit tunables (comparison-harness sweep interface).
+    #[doc(hidden)]
+    pub fn encode_tuned(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables) -> Self {
+        Self {
+            hash: encode::encode_with(w, h, rgba, gamut, t),
+        }
+    }
+
+    /// Decode with explicit tunables (comparison-harness sweep interface).
+    #[doc(hidden)]
+    pub fn decode_tuned(&self, t: &Tunables) -> (u32, u32, Vec<u8>) {
+        decode::decode_with(&self.hash, t)
+    }
+
+    /// Capped decode with explicit tunables (comparison-harness sweep interface).
+    #[doc(hidden)]
+    pub fn decode_capped_tuned(&self, max_w: u32, max_h: u32, t: &Tunables) -> (u32, u32, Vec<u8>) {
+        decode::decode_capped_with(&self.hash, max_w, max_h, t)
     }
 
     /// Get the raw 32-byte hash data.
@@ -192,32 +229,121 @@ mod tests {
     }
 
     #[test]
-    fn decode_solid_color_pixels_uniform() {
+    fn decode_solid_color_pixels_exactly_uniform() {
+        // v0.6's exact-zero quantizer means a solid color stores all-zero AC,
+        // so every decoded pixel must be bit-identical — not just close.
         let rgba = solid_image(4, 4, 128, 128, 128, 255);
         let hash = ChromaHash::encode(4, 4, &rgba, Gamut::Srgb);
         let (w, h, pixels) = hash.decode();
 
-        // All decoded pixels should be similar for a solid color
-        let r0 = pixels[0];
-        let g0 = pixels[1];
-        let b0 = pixels[2];
+        let first = &pixels[0..4];
         for i in 0..(w * h) as usize {
-            let r = pixels[i * 4];
-            let g = pixels[i * 4 + 1];
-            let b = pixels[i * 4 + 2];
-            assert!(
-                (r as i32 - r0 as i32).unsigned_abs() <= 2,
-                "pixel {i} R diverges: {r} vs {r0}"
-            );
-            assert!(
-                (g as i32 - g0 as i32).unsigned_abs() <= 2,
-                "pixel {i} G diverges: {g} vs {g0}"
-            );
-            assert!(
-                (b as i32 - b0 as i32).unsigned_abs() <= 2,
-                "pixel {i} B diverges: {b} vs {b0}"
+            assert_eq!(
+                &pixels[i * 4..i * 4 + 4],
+                first,
+                "pixel {i} diverges from pixel 0"
             );
         }
+    }
+
+    #[test]
+    fn solid_corner_colors_roundtrip_closely() {
+        // The decode-aware DC search must keep saturated gamut-corner solids
+        // near-exact. v0.5 decoded solid blue as (0, 58, 214) — ΔE00 7.75.
+        for &(r, g, b) in &[
+            (0u8, 0u8, 255u8),
+            (255, 0, 0),
+            (0, 255, 0),
+            (255, 255, 0),
+            (255, 0, 255),
+            (0, 255, 255),
+        ] {
+            let rgba = solid_image(8, 8, r, g, b, 255);
+            let hash = ChromaHash::encode(8, 8, &rgba, Gamut::Srgb);
+            let avg = hash.average_color();
+            let err = (avg[0] as i32 - r as i32)
+                .abs()
+                .max((avg[1] as i32 - g as i32).abs())
+                .max((avg[2] as i32 - b as i32).abs());
+            // 8/255 per channel at a gamut corner is well under 1 ΔE00 in the
+            // insensitive regions (green) and ~1 in the sensitive ones (blue);
+            // v0.5's failure mode was 58/255 on the blue corner.
+            assert!(
+                err <= 8,
+                "solid ({r},{g},{b}) decoded as ({},{},{}) — max channel err {err}",
+                avg[0],
+                avg[1],
+                avg[2]
+            );
+        }
+    }
+
+    #[test]
+    fn strip_capped_decode_is_not_blank() {
+        // v0.5 regression: a 1×100 red→blue strip decoded at max dims (1, 100)
+        // rendered solid white (aliased cx=2 basis at a 1-px raster).
+        let h = 100u32;
+        let mut rgba = vec![0u8; (h * 4) as usize];
+        for y in 0..h as usize {
+            let t = y as f64 / 99.0;
+            rgba[y * 4] = (255.0 * (1.0 - t)) as u8;
+            rgba[y * 4 + 2] = (255.0 * t) as u8;
+            rgba[y * 4 + 3] = 255;
+        }
+        let hash = ChromaHash::encode(1, h, &rgba, Gamut::Srgb);
+        let (dw, dh, pixels) = hash.decode_capped(1, h);
+        assert_eq!(dw, 1);
+        assert!(dh > 1);
+
+        // Red must dominate at the top and blue at the bottom.
+        let top = &pixels[0..4];
+        let bottom = &pixels[(dh as usize - 1) * 4..];
+        assert!(
+            top[0] > top[2] + 50,
+            "top pixel should be red-dominant: {top:?}"
+        );
+        assert!(
+            bottom[2] > bottom[0] + 50,
+            "bottom pixel should be blue-dominant: {bottom:?}"
+        );
+    }
+
+    #[test]
+    fn all_layouts_fit_bit_budget_for_all_aspects() {
+        // encode_with debug_asserts the exact AC payload bit position; running
+        // every layout over opaque and transparent images across extreme
+        // dimensions exercises those asserts for both alpha modes.
+        for layout in [LAYOUT_A, LAYOUT_B, LAYOUT_C, LAYOUT_D] {
+            let t = Tunables {
+                layout,
+                ..Tunables::DEFAULT
+            };
+            for &(w, h) in &[(1u32, 1u32), (1, 100), (100, 1), (16, 9), (9, 16), (32, 2)] {
+                let opaque = solid_image(w, h, 200, 100, 50, 255);
+                let translucent = solid_image(w, h, 200, 100, 50, 128);
+                let h1 = ChromaHash::encode_tuned(w, h, &opaque, Gamut::Srgb, &t);
+                let h2 = ChromaHash::encode_tuned(w, h, &translucent, Gamut::Srgb, &t);
+                let (dw, dh, px) = h1.decode_tuned(&t);
+                assert_eq!(px.len(), (dw * dh * 4) as usize);
+                let (dw2, dh2, px2) = h2.decode_tuned(&t);
+                assert_eq!(px2.len(), (dw2 * dh2 * 4) as usize);
+            }
+        }
+    }
+
+    #[test]
+    fn version_support_check() {
+        let rgba = solid_image(4, 4, 128, 128, 128, 255);
+        let hash = ChromaHash::encode(4, 4, &rgba, Gamut::Srgb);
+        assert!(hash.is_version_supported(), "v0.6 hash must be supported");
+
+        // Flip bit 47 to simulate a legacy v0.2–v0.5 hash.
+        let mut legacy = *hash.as_bytes();
+        legacy[5] |= 0x80;
+        assert!(
+            !ChromaHash::from_bytes(legacy).is_version_supported(),
+            "bit 47 = 1 must be reported as unsupported"
+        );
     }
 
     #[test]
@@ -263,15 +389,16 @@ mod tests {
     }
 
     #[test]
-    fn version_bit_set() {
-        // v0.2: bit 47 of header must be 1
+    fn version_bit_clear() {
+        // v0.6: bit 47 of the header is 0 (v0.2–v0.5 hashes have it set to 1),
+        // making v0.6 hashes distinguishable in-band from all prior versions.
         let rgba = solid_image(4, 4, 128, 128, 128, 255);
         let hash = ChromaHash::encode(4, 4, &rgba, Gamut::Srgb);
         let header: u64 = (0..6).fold(0u64, |acc, i| {
             acc | ((hash.as_bytes()[i] as u64) << (i * 8))
         });
         let version = (header >> 47) & 1;
-        assert_eq!(version, 1, "v0.2 must set bit 47 to 1");
+        assert_eq!(version, 0, "v0.6 must clear bit 47");
     }
 
     #[test]

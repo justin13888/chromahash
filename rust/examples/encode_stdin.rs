@@ -1,4 +1,4 @@
-use chromahash::{BatchEncoder, ChromaHash, Gamut, ImageInput};
+use chromahash::{BatchEncoder, ChromaHash, Gamut, ImageInput, Tunables};
 use std::io::{self, Read, Write};
 use std::sync::Arc;
 
@@ -9,7 +9,73 @@ fn usage() -> ! {
     eprintln!("  encode_stdin average-color");
     eprintln!("  encode_stdin batch-encode <width> <height> <gamut> <count>");
     eprintln!("  encode_stdin batch-decode <count>");
+    eprintln!();
+    eprintln!("Sweep interface: set CHROMAHASH_TUNE to space-separated key=value");
+    eprintln!("pairs to override v0.6 format constants, e.g.");
+    eprintln!("  CHROMAHASH_TUNE=\"layout=B w_min_l=1.0 gamut_l_blend=0\"");
     std::process::exit(1);
+}
+
+/// Parse CHROMAHASH_TUNE overrides on top of the v0.6 defaults.
+/// Unknown keys or malformed values abort loudly — a silently ignored knob
+/// would corrupt a whole sweep.
+fn tunables_from_env() -> Tunables {
+    let mut t = Tunables::DEFAULT;
+    let Ok(spec) = std::env::var("CHROMAHASH_TUNE") else {
+        return t;
+    };
+    for pair in spec.split_whitespace() {
+        let Some((key, value)) = pair.split_once('=') else {
+            eprintln!("CHROMAHASH_TUNE: malformed pair '{pair}'");
+            std::process::exit(1);
+        };
+        let parse_f64 = || -> f64 {
+            value.parse().unwrap_or_else(|_| {
+                eprintln!("CHROMAHASH_TUNE: invalid number for {key}: '{value}'");
+                std::process::exit(1);
+            })
+        };
+        let parse_u32 = || -> u32 {
+            value.parse().unwrap_or_else(|_| {
+                eprintln!("CHROMAHASH_TUNE: invalid integer for {key}: '{value}'");
+                std::process::exit(1);
+            })
+        };
+        match key {
+            "layout" => {
+                t.layout = match value {
+                    "A" => chromahash::LAYOUT_A,
+                    "B" => chromahash::LAYOUT_B,
+                    "C" => chromahash::LAYOUT_C,
+                    "D" => chromahash::LAYOUT_D,
+                    _ => {
+                        eprintln!("CHROMAHASH_TUNE: unknown layout '{value}'");
+                        std::process::exit(1);
+                    }
+                }
+            }
+            "max_chroma_a" => t.max_chroma_a = parse_f64(),
+            "max_chroma_b" => t.max_chroma_b = parse_f64(),
+            "max_l_scale" => t.max_l_scale = parse_f64(),
+            "max_a_scale" => t.max_a_scale = parse_f64(),
+            "max_b_scale" => t.max_b_scale = parse_f64(),
+            "max_alpha_scale" => t.max_alpha_scale = parse_f64(),
+            "mu_l" => t.mu_l = parse_f64(),
+            "mu_c" => t.mu_c = parse_f64(),
+            "mu_alpha" => t.mu_alpha = parse_f64(),
+            "w_min_l" => t.w_min_l = parse_f64(),
+            "w_exp_l" => t.w_exp_l = parse_u32(),
+            "w_min_c" => t.w_min_c = parse_f64(),
+            "w_exp_c" => t.w_exp_c = parse_u32(),
+            "gamut_l_blend" => t.gamut_l_blend = parse_f64(),
+            "dc_search" => t.dc_search = value == "1" || value == "true",
+            _ => {
+                eprintln!("CHROMAHASH_TUNE: unknown key '{key}'");
+                std::process::exit(1);
+            }
+        }
+    }
+    t
 }
 
 fn parse_gamut(s: &str) -> Gamut {
@@ -48,7 +114,7 @@ fn main() {
                 .read_exact(&mut rgba)
                 .expect("failed to read RGBA from stdin");
 
-            let hash = ChromaHash::encode(w, h, &rgba, gamut);
+            let hash = ChromaHash::encode_tuned(w, h, &rgba, gamut, &tunables_from_env());
             io::stdout()
                 .write_all(hash.as_bytes())
                 .expect("failed to write hash");
@@ -63,12 +129,13 @@ fn main() {
                 .read_exact(&mut hash)
                 .expect("failed to read hash from stdin");
             let ch = ChromaHash::from_bytes(hash);
+            let t = tunables_from_env();
             let (w, h, rgba) = if args.len() == 4 {
                 let max_w: u32 = args[2].parse().expect("invalid max_width");
                 let max_h: u32 = args[3].parse().expect("invalid max_height");
-                ch.decode_capped(max_w, max_h)
+                ch.decode_capped_tuned(max_w, max_h, &t)
             } else {
-                ch.decode()
+                ch.decode_tuned(&t)
             };
             let header = format!("{w} {h}\n");
             io::stdout()
