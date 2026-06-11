@@ -1,8 +1,8 @@
 # ChromaHash Format Specification
 
-**Version:** 0.4.0
+**Version:** 0.6.0
 **Status:** Draft
-**Date:** 2026-04-10
+**Date:** 2026-06-10
 
 > ChromaHash is a fixed-size, 32-byte Low Quality Image Placeholder (LQIP) format
 > designed for professional photo management at scale. It encodes a perceptually
@@ -25,8 +25,9 @@
 10. [Encoding Algorithm](#10-encoding-algorithm)
 11. [Decoding Algorithm](#11-decoding-algorithm)
 12. [Constants & Matrices](#12-constants--matrices)
-13. [Trade-offs & Limitations](#13-trade-offs--limitations)
-14. [Appendix A: ThumbHash Comparison](#appendix-a-thumbhash-comparison--acknowledgment)
+13. [Changes from v0.4/v0.5 to v0.6](#13-changes-from-v04v05-to-v06)
+14. [Trade-offs & Limitations](#14-trade-offs--limitations)
+15. [Appendix A: ThumbHash Comparison](#appendix-a-thumbhash-comparison--acknowledgment)
 
 ---
 
@@ -40,10 +41,11 @@ layout precision, and wide-gamut support matter more than minimizing byte count.
 | Fixed 32 bytes | Memory-aligned, cache-friendly, predictable storage. Zero-overhead database column or cache key. |
 | OKLAB color space | Perceptually uniform — quantization levels are maximally efficient. |
 | 8-bit log₂ aspect ratio | ~1.09% max error for all photographic ratios. Covers 1:16 to 16:1. |
-| Adaptive grid geometry | DCT grid dimensions adapt to aspect ratio, eliminating coefficient waste on non-square images. |
-| Higher chroma resolution | Base 4×4 triangular grid (9 AC) per chroma channel with adaptive reshaping for complex color transitions. |
-| 5-bit luminance AC | 32 levels for the most perceptually important channel. |
-| µ-law companding (µ=5) | Non-linear quantization matching natural image DCT coefficient distributions. |
+| Top-K coefficient selection | The K lowest spatial frequencies for the image's aspect ratio — a single deterministic rule, no grid machinery, no aliasing. |
+| Quantization ranges sized to signal | Chroma DC spans the sRGB OKLAB hull; AC scale ranges match measured coefficient distributions. Every code level does work. |
+| 5-bit luminance AC | 31 levels for the most perceptually important channel. |
+| µ-law companding with exact zero | Non-linear quantization matching natural image DCT coefficient distributions; zero coefficients decode exactly. |
+| Decode-aware DC selection | The encoder picks the DC codes whose *decoded* color is closest to the true average — gamut-corner solids round-trip nearly exactly. |
 | Multi-gamut encode | Accepts sRGB, Display P3, Adobe RGB, BT.2020, or ProPhoto RGB sources. |
 | Single decode target | Always sRGB output. One set of matrices, zero ambiguity. |
 | Alpha support | Transparent images supported within the fixed 32-byte size. |
@@ -104,24 +106,30 @@ Bit 47 in the header serves as a version discriminator:
 
 | Version | Bit 47 | Notes |
 |---------|--------|-------|
-| v0.1    | 0      | Original spec — fixed grids, MAX_CHROMA=0.5, hard gamut clamp |
-| v0.2+   | 1      | Adaptive grids, MAX_CHROMA=0.45, soft gamut clamp, full-res encoding |
-| v0.4    | 1      | Same bit value; v0.4 changes scan order and deriveGrid (bitstream-incompatible with v0.3) |
+| v0.1 | 0 | Original spec — never publicly released |
+| v0.2–v0.5 | 1 | Adaptive grids (`deriveGrid`), triangular selection, even-level µ-law, constant-L gamut clamp |
+| **v0.6** | **0** | **This spec.** Top-K selection, exact-zero µ-law, decode-aware DC, gamut clamp v2 |
 
-Encoders MUST set bit 47 to 1. Decoders MAY check bit 47. Since v0.1 was never publicly
-released, all valid hashes have bit 47 = 1.
+Encoders MUST set bit 47 to 0. Because v0.1 was never released, bit 47 = 0 unambiguously
+identifies a v0.6 hash, and bit 47 = 1 identifies a legacy v0.2–v0.5 hash — the first
+version break that is detectable from the hash bytes alone.
 
-> **Pre-1.0 compatibility note:** ChromaHash is a Draft format. v0.2, v0.3, and v0.4 all
-> share `bit 47 = 1`. A v0.3 decoder applied to a v0.4 hash will silently produce garbled
-> output (and vice-versa), because the scan order and grid dimensions change. There are no
-> spare header bits to add a finer version discriminator without sacrificing aspect precision
-> or DC precision. Applications that need to distinguish versions MUST track the format
-> version via producer-side metadata (e.g. a database column or file-format tag). This is
-> expected for a pre-1.0 Draft specification where format evolution is anticipated.
+Decoders MUST treat bit 47 = 1 as an **unsupported version**: the legacy bitstreams use a
+different coefficient selection, quantizer, and (in alpha mode) layout, so decoding them
+with v0.6 logic produces garbage, not a degraded image. Where the API has an error path
+(e.g. a fallible constructor or a `try_decode`), the hash SHOULD be rejected; otherwise
+implementations MUST expose a version check (e.g. `is_version_supported()`) and document
+that decode output for unsupported hashes is unspecified.
+
+> **Pre-1.0 compatibility note:** v0.6 consumes the last in-band version value. Any
+> post-v0.6 bitstream break would again require out-of-band version tracking (e.g. a
+> database column or file-format tag). The v0.6 bitstream is intended to be carried
+> forward to 1.0.
 
 ### 2.6 Padding Bits
 
 In no-alpha mode, bit 255 is padding. Encoders MUST set it to 0; decoders MUST ignore it.
+Alpha mode has no padding.
 
 ### 2.7 Authoritative Constants
 
@@ -146,14 +154,14 @@ header48 = hash[0] | (hash[1] << 8) | (hash[2] << 16) | (hash[3] << 24) | (hash[
 | Bits | Field | Width | Range | Description |
 |------|-------|-------|-------|-------------|
 | 0–6 | `L_dc` | 7 | 0–127 | OKLAB L (lightness) |
-| 7–13 | `a_dc` | 7 | 0–127 | OKLAB a (green–red), centered |
-| 14–20 | `b_dc` | 7 | 0–127 | OKLAB b (blue–yellow), centered |
+| 7–13 | `a_dc` | 7 | 1–127 | OKLAB a (green–red), centered |
+| 14–20 | `b_dc` | 7 | 1–127 | OKLAB b (blue–yellow), centered |
 | 21–26 | `L_scale` | 6 | 0–63 | Luminance AC max amplitude |
 | 27–32 | `a_scale` | 6 | 0–63 | Chroma-a AC max amplitude |
 | 33–37 | `b_scale` | 5 | 0–31 | Chroma-b AC max amplitude |
 | 38–45 | `aspect` | 8 | 0–255 | Log₂ aspect ratio (see §8) |
 | 46 | `hasAlpha` | 1 | 0/1 | Alpha channel present |
-| 47 | `version` | 1 | 1 | Version bit (0=v0.1, 1=v0.2+) |
+| 47 | `version` | 1 | 0 | Version bit (0 = v0.6; 1 = legacy v0.2–v0.5, unsupported) |
 
 ### 3.2 AC Block (26 bytes = 208 bits)
 
@@ -188,6 +196,9 @@ A AC (alpha)    5              4             20
 ```
 
 Both modes: 48 + 208 = **256 bits = 32 bytes**. ✓
+
+Coefficients are written in **selection order** (§6.2): the j-th value in each channel's
+field corresponds to the j-th selected `(cx, cy)` frequency pair.
 
 ### 3.3 Layout Diagram
 
@@ -267,7 +278,13 @@ Source RGB → Linearize (source EOTF) → LMS (M1[source_gamut]) → OKLAB (M2)
 
 The resulting OKLAB values are **absolute** — the same physical color produces the same
 (L, a, b) regardless of source gamut. No gamut flag is stored; no decode-time branching.
-Wide-gamut colors are preserved at their true OKLAB coordinates.
+
+> **Note (v0.6):** DC chroma quantization ranges are sized to the sRGB OKLAB hull (§7.1).
+> Wide-gamut colors outside the hull clip at encode — intentionally, because the decoder
+> clamps to sRGB anyway, so chroma range beyond the hull is unreachable and only wastes
+> precision. The decode-aware DC selection (§10.3) chooses the codes whose decoded sRGB
+> color is closest to the (gamut-clamped) true average, so clipping costs no decoded
+> accuracy. AC coefficients are differences around the DC and are unaffected.
 
 ### 5.2 Decoding Pipeline
 
@@ -275,8 +292,7 @@ Wide-gamut colors are preserved at their true OKLAB coordinates.
 OKLAB → LMS_cbrt (M2_inv) → LMS (cube) → sRGB linear (M1_inv[sRGB]) → sRGB gamma → clamp → 8-bit RGBA
 ```
 
-Decode target is always sRGB. At placeholder resolution with DCT blurring, the DC of real
-photographs almost never clips when converted to sRGB.
+Decode target is always sRGB.
 
 ### 5.3 Transfer Functions
 
@@ -310,16 +326,17 @@ specific tone-mapping algorithm is implementation-defined.
 
 ### 6.1 Transform
 
-**Forward transform** for a channel with grid dimensions `nx × ny`:
+**Forward transform** over the source image (`w × h` pixels) for a selected frequency
+pair `(cx, cy)`:
 
 ```
 F(cx, cy) = (1 / (w × h)) × Σ_y Σ_x  channel[x + y×w] × cos(π/w × cx × (x + 0.5))
                                                          × cos(π/h × cy × (y + 0.5))
 ```
 
-where `w` and `h` are the source image dimensions.
+DC is `F(0, 0)` = the channel mean.
 
-**Inverse transform** (decode):
+**Inverse transform** (decode, at render dimensions `w × h`):
 
 ```
 value = DC + Σ_j  AC[j] × cos(π/w × cx_j × (x + 0.5)) × cos(π/h × cy_j × (y + 0.5)) × C(cx_j, cy_j)
@@ -327,182 +344,89 @@ value = DC + Σ_j  AC[j] × cos(π/w × cx_j × (x + 0.5)) × cos(π/h × cy_j �
 
 Normalization factor: `C(cx, cy) = (cx > 0 ? 2 : 1) × (cy > 0 ? 2 : 1)`
 
-### 6.2 Triangular Coefficient Selection and Scan Order
+### 6.2 Top-K Coefficient Selection
 
-The **set** of selected `(cx, cy)` AC pairs (excluding DC at `(0, 0)`) satisfies:
-
-```
-cx × ny < nx × (ny − cy)
-```
-
-This selects coefficients below the diagonal in frequency space (unchanged from v0.3).
-Example membership for a 4×4 grid (9 AC coefficients):
+Which K frequency pairs each channel transmits is derived deterministically from the
+aspect byte — no grid machinery, no mode flags:
 
 ```
-cy\cx  0    1    2    3
-  0   [DC]  ✓    ✓    ✓
-  1    ✓    ✓    ✓
-  2    ✓    ✓
-  3    ✓
-```
-
-**Scan order (v0.4):** Coefficients are sorted by **per-pixel frequency priority**:
-
-```
-function scanOrder(nx, ny, aspect_byte):
-    (w, h) = decodeOutputSize(aspect_byte)        // §8.2
+function selectCoefficients(aspect_byte, K):
+    (W, H) = decodeOutputSize(aspect_byte)         // §8.2; long side 32, short side ≥ 2
     entries = []
-    for cy in 0 .. ny-1:
-        cx_start = (cy == 0) ? 1 : 0
-        for cx in cx_start .. while cx×ny < nx×(ny−cy):
-            priority = (cx × h)² + (cy × w)²     // integer, u64-safe
+    for cy in 0 .. H−1:
+        for cx in 0 .. W−1:
+            if cx == 0 and cy == 0: continue       // DC is stored separately
+            priority = (cx × H)² + (cy × W)²       // integer, fits in uint32
             entries.append((priority, cx, cy))
-    sort entries ascending by (priority, cx, cy) // lex tiebreak for determinism
-    return [(cx, cy) for (_, cx, cy) in entries]
+    sort entries ascending by (priority, cx, cy)   // lex tiebreak for determinism
+    truncate entries to first K
+    p_k = priority of the last (K-th) entry
+    return ([(cx, cy) for (_, cx, cy) in entries], p_k)
 ```
 
-**Important:** Scan order depends on `(nx, ny, w, h)`, not on `(nx, ny)` alone.
-The same grid shape produced for different `aspect_byte` values may yield different
-scan orders because `decodeOutputSize(aspect_byte)` returns different `(w, h)`.
+**Candidate domain.** Candidates are exactly the frequencies representable at the
+natural decode raster `[0, W) × [0, H)`. `cos(π/W × cx × (x+0.5))` with `cx = W`
+evaluates to zero at every sample, and `cx > W` aliases to a lower frequency — the
+bound makes selecting an unrepresentable frequency structurally impossible. The
+candidate count is at least `2×32 − 1 = 63` for every aspect byte (short side ≥ 2),
+so every K the format uses is always fully satisfied.
 
-**Priority formula properties:**
-- `priority = (cx×h)² + (cy×w)²` is the squared Euclidean distance to DC in pixel
-  space. Sorting ascending places perceptually most important coefficients first.
-- **Square grids** (w=h=32): priority ∝ `cx²+cy²`, giving isotropic radial order.
-  First two slots: `(0,1)` and `(1,0)` (tied; cx tiebreak), then `(1,1)`, etc.
-- **Extreme landscape** (e.g. 14×4 at ratio=16, w=32, h=2):
-  `priority = 4cx² + 1024cy²`. All cy=0 entries precede cy=1 (row-major preserved
-  where aspect warrants it).
-- All arithmetic is integer; `w, h ≤ 32`, so `(cx×h)² + (cy×w)² ≤ 2×(14×32)² ≈ 4×10⁵`,
-  fits in a u32.
+**Priority.** `(cx·H)² + (cy·W)²` is the squared isotropic per-pixel spatial frequency
+scaled by `(W·H)²`: sorting ascending takes the K lowest spatial frequencies — an ℓ2
+ball in frequency space, the ideal low-pass set for the radially decaying spectra of
+natural images. Properties:
 
-**sqrt is correctly rounded:** Implementations MUST use IEEE 754 correctly-rounded
-`sqrt` (required by IEEE 754-2008 §5.4.1, satisfied by all compliant runtimes).
-This ensures bit-exact cross-language results without a portable wrapper.
+- **Square** (W = H = 32): priority ∝ `cx² + cy²` — radial order. First slots:
+  `(0,1), (1,0)` (tied; lex tiebreak), then `(1,1)`, `(0,2)`, `(2,0)`, … At K = 27 the
+  ball includes diagonals like `(3,4)/(4,3)` and excludes axis extremes like
+  `(6,0)/(0,6)` — the opposite of v0.4's ℓ1 triangle, and the reason v0.6 does not
+  produce v0.4's sparse high-frequency striping.
+- **Extreme landscape** (byte 255: W = 32, H = 2): one `cy` step costs `(1×32)² = 1024`
+  while one `cx` step costs `(1×2)² = 4` — the selection fills the long axis first, and
+  no `cy ≥ 2` frequency can ever be selected.
+- All arithmetic is integer (`priority ≤ 2×(31×32)² < 2³¹`); the sort is total via the
+  `(priority, cx, cy)` key. Bit-exact across languages by construction.
+- **Mirror symmetry caveat:** byte `b` and byte `255−b` have mirrored `(W, H)` and
+  identical priority multisets, but when K cuts an equal-priority tie group the lex
+  tiebreak may choose non-mirrored members (5 of 512 (byte, K) pairs). This is benign
+  and pinned by the test vectors.
 
-Run `spec/scan_order.py --json` for all unique scan orders.
+`p_k` (the K-th priority) is deterministic from the selection and is reserved for
+frequency-normalized decoder extensions; it is pinned by the test vectors.
 
-### 6.3 Adaptive Grid Geometry
+**K per channel:**
 
-DCT grid dimensions (nx, ny) are **derived deterministically from the aspect byte**. No
-mode flag or extra storage — grid geometry is self-describing.
-
-```
-function deriveGrid(aspect_byte, base_n):
-    ratio  = 2^(aspect_byte / 255 × 8 − 4)
-    nx_cap = 2 × base_n
-
-    if ratio >= 1.0:
-        scale = min(ratio, 16.0)
-        nx    = min(round(base_n × sqrt(scale)), nx_cap)
-        ny    = round(base_n² / nx)
-    else:
-        scale = min(1.0 / ratio, 16.0)
-        ny    = min(round(base_n × sqrt(scale)), nx_cap)
-        nx    = round(base_n² / ny)
-
-    return (max(nx, 3), max(ny, 3))
-```
-
-All `round()` calls use round half away from zero (§2.2). `sqrt` MUST be IEEE 754
-correctly-rounded (§2.3). Results are converted to integer before the floor clamping.
-
-**Design rationale (v0.4):**
-- `sqrt(scale)` instead of `scale^0.25` bends the grid to match moderate aspect ratios
-  (3:2, 4:3, 16:9) more closely, reducing DCT anisotropy.
-- `nx_cap = 2×base_n` prevents over-stretching at extreme ratios (>~4:1); cap degenerates
-  to approximately v0.3 behaviour for anamorphic content.
-- **Product preservation:** `ny = round(base_n²/nx)` keeps the product nx×ny close to
-  `base_n²`, so total coefficient count is stable across aspect ratios.
-
-**Worked examples (base_n=7):**
-
-| Input ratio | aspect_byte | scale | nx | ny | Notes |
-|---|---|---|---|---|---|
-| 1:1   | 128 | 1.01 | 7  | 7  | square |
-| 3:2   | 146 | 1.49 | 9  | 5  | v0.4: wider grid (v0.3 gave 8×6) |
-| 16:9  | 154 | 1.78 | 9  | 5  | v0.4: 1.8:1 grid (v0.3 gave 8×6 ≈ 1.3:1) |
-| 4:1   | 191 | 4.00 | 14 | 4  | cap hit: nx_cap=14 |
-| 16:1  | 255 | 16.0 | 14 | 4  | fully at cap |
-
-| Channel | Mode | base_n | AC cap | Bit budget |
-|---|---|---|---|---|
-| L luminance | no-alpha | 7 | 27 | 27×5 = 135 bits |
-| L luminance | alpha | 6 | 20 | 7×6 + 13×5 = 107 bits |
-| a chroma | both | 4 | 9 | 9×4 = 36 bits |
-| b chroma | both | 4 | 9 | 9×4 = 36 bits |
-| Alpha | alpha | 3 | 5 | 5×4 = 20 bits |
-
-### 6.4 Capping and Zero-Padding
-
-The **bit budget per channel is fixed** regardless of grid shape — the bitstream layout
-never changes, only the mapping from positions to frequency coordinates.
-
-**Encode (capping):** When the scan order produces more AC positions than the cap, store
-only the first `cap` in scan order. Higher-frequency coefficients are dropped.
-
-**Encode (zero-padding):** When the scan order produces fewer positions than the cap,
-pad with zeros. In v0.4, product preservation guarantees raw AC ≥ cap for all grids,
-so zero-padding is never required in practice; the encoder MUST still be prepared to
-zero-pad for forward compatibility.
-
-**Decode:** Read exactly `cap` AC values from the bitstream. Map the first
-`min(cap, len(scan))` to scan positions. Extra scan positions beyond cap have implicit
-zero coefficients. Extra bitstream values beyond `len(scan)` are discarded.
-
-### 6.5 Exhaustive Grid Tables
-
-All unique (nx, ny) pairs produced by `deriveGrid` across all 256 aspect byte values.
-Portrait grids mirror landscape grids (portrait bytes = 255 − landscape bytes, with nx/ny swapped).
-
-**L no-alpha (base_n=7, cap=27) — 15 shapes, all raw AC ≥ 27:**
-
-| Bytes | nx | ny | Raw AC | | Bytes | nx | ny | Raw AC |
-|---|---|---|---|---|---|---|---|---|
-| 0–67   | 4  | 14 | 35 | | 122–133 | 7  | 7  | 27 |
-| 68–74  | 4  | 13 | 33 | | 134–145 | 8  | 6  | 29 |
-| 75–81  | 4  | 12 | 29 | | 146–155 | 9  | 5  | 28 |
-| 82–90  | 4  | 11 | 28 | | 156–164 | 10 | 5  | 29 |
-| 91–99  | 5  | 10 | 29 | | 165–173 | 11 | 4  | 28 |
-| 100–109| 5  | 9  | 28 | | 174–180 | 12 | 4  | 29 |
-| 110–121| 6  | 8  | 29 | | 181–187 | 13 | 4  | 33 |
-|        |    |    |    | | 188–255 | 14 | 4  | 35 |
-
-**Chroma a/b (base_n=4, cap=9) — 9 shapes, all raw AC ≥ 9:**
-
-| Bytes | nx | ny | Raw AC | | Bytes | nx | ny | Raw AC |
-|---|---|---|---|---|---|---|---|---|
-| 0–69   | 3 | 8 | 16 | | 139–156 | 5 | 3 | 10 |
-| 70–82  | 3 | 7 | 14 | | 157–172 | 6 | 3 | 11 |
-| 83–98  | 3 | 6 | 11 | | 173–185 | 7 | 3 | 14 |
-| 99–116 | 3 | 5 | 10 | | 186–255 | 8 | 3 | 16 |
-| 117–138| 4 | 4 | 9  | |         |   |   |    |
-
-**Alpha-mode L (base_n=6, cap=20) — 13 shapes, all raw AC ≥ 20:**
-
-| Bytes | nx | ny | Raw AC | | Bytes | nx | ny | Raw AC |
-|---|---|---|---|---|---|---|---|---|
-| 0–67   | 3  | 12 | 23 | | 121–134 | 6  | 6  | 20 |
-| 68–76  | 3  | 11 | 22 | | 135–148 | 7  | 5  | 22 |
-| 77–85  | 4  | 10 | 25 | | 149–159 | 8  | 5  | 25 |
-| 86–95  | 4  | 9  | 23 | | 160–169 | 9  | 4  | 23 |
-| 96–106 | 5  | 8  | 25 | | 170–178 | 10 | 4  | 25 |
-| 107–120| 5  | 7  | 22 | | 179–187 | 11 | 3  | 22 |
-|        |    |    |    | | 188–255 | 12 | 3  | 23 |
-
-Zero-padding never required in v0.4 (product preservation ensures raw AC ≥ cap).
-
-**Alpha channel (base_n=3, cap=5) — 7 shapes, all raw AC ≥ 5:**
-
-| Bytes | nx | ny | Raw AC |
+| Channel | Mode | K | Bits |
 |---|---|---|---|
-| 0–71   | 3 | 6 | 11 |
-| 72–90  | 3 | 5 | 10 |
-| 91–113 | 3 | 4 | 8  |
-| 114–141| 3 | 3 | 5  |
-| 142–164| 4 | 3 | 8  |
-| 165–183| 5 | 3 | 10 |
-| 184–255| 6 | 3 | 11 |
+| L luminance | no-alpha | 27 | 5 each |
+| L luminance | alpha | 20 | first 7 × 6, remaining 13 × 5 |
+| a chroma | both | 9 | 4 each |
+| b chroma | both | 9 | 4 each |
+| Alpha | alpha | 5 | 4 each |
+
+Run `python3 spec/selection.py --json` for all unique selections (one per `(W, H, K)`).
+
+### 6.3 Encoder Frequency Clamp (Source Dimensions)
+
+A selected pair `(cx, cy)` with `cx ≥ src_w` or `cy ≥ src_h` cannot be represented by
+the source samples: the DCT basis is not orthogonal there and the projection
+degenerates (e.g. `F(2, cy)` on a 1-pixel-wide image equals `−F(0, cy)` — a copy of
+the DC masquerading as detail). Encoders MUST emit such coefficients as **exact zero**
+and MUST exclude them from the scale computation (§7.2).
+
+This is the guard for degenerate inputs (1×N strips, 1×1 images): without it, the junk
+coefficient inflates the channel scale, crushes the real coefficients' precision, and
+renders catastrophically at capped decode sizes.
+
+### 6.4 Decoder Frequency Filter (Render Dimensions)
+
+When rendering at dimensions `(w, h)` — natural or capped (§11.3) — decoders MUST skip
+any coefficient with `cx ≥ w` or `cy ≥ h`. The remaining sum is the band-limited
+reconstruction at the coarser raster: a 1×N render of a portrait hash is the exact
+column profile rather than an aliased pattern.
+
+At the natural render size the filter never excludes anything (the selection domain is
+the natural raster); it only takes effect for sub-natural renders.
 
 ---
 
@@ -517,13 +441,22 @@ Zero-padding never required in v0.4 (product preservation ensures raw AC ≥ cap
 | b | 7 | `round(64 + 63 × clamp(b_dc/MAX_CHROMA_B, -1, 1))` | `(raw - 64) / 63.0 × MAX_CHROMA_B` |
 | Alpha | 5 | `round(31 × clamp(A_dc, 0, 1))` | `raw / 31.0` |
 
+The nominal codes above are the starting point for the decode-aware DC search (§10.3),
+which may shift each of L/a/b by ±1 code.
+
+`MAX_CHROMA_A = 0.28` and `MAX_CHROMA_B = 0.32` cover the sRGB OKLAB hull
+(max |a| = 0.2746 at the magenta corner, max |b| = 0.3115 at the blue corner). Chroma
+beyond the hull is unreachable after the decoder's gamut clamp, so the range stops
+there — 1.4–1.6× finer DC steps than a range sized to wide-gamut sources.
+
 > **Note:** The a/b DC encode formula `round(64 + 63×x)` produces indices in [1, 127],
-> never 0. Decoding raw=0 gives `(0 − 64) / 63 × MAX_CHROMA = −1.016 × MAX_CHROMA`, which
-> is outside the valid ±MAX_CHROMA range. Conforming encoders MUST NOT produce raw=0 for
-> a/b DC. Decoders encountering raw=0 will reconstruct a slightly out-of-range chroma
-> value; this is handled by the downstream soft gamut clamp.
+> never 0. Conforming encoders MUST NOT produce raw=0 for a/b DC (the DC search clamps
+> its candidates to [1, 127]). Decoders encountering raw=0 will reconstruct a slightly
+> out-of-range chroma value; this is handled by the downstream soft gamut clamp.
 
 ### 7.2 Scale Factor Quantization
+
+Each channel's scale is the maximum |AC| over its **non-clamped** coefficients (§6.3).
 
 | Channel | Bits | Encode | Decode |
 |---------|------|--------|--------|
@@ -532,24 +465,50 @@ Zero-padding never required in v0.4 (product preservation ensures raw AC ≥ cap
 | b scale | 5 | `round(31 × clamp(b_scale/MAX_B_SCALE, 0, 1))` | `raw / 31.0 × MAX_B_SCALE` |
 | Alpha scale | 4 | `round(15 × clamp(A_scale/MAX_A_ALPHA_SCALE, 0, 1))` | `raw / 15.0 × MAX_A_ALPHA_SCALE` |
 
-### 7.3 AC Coefficient Quantization: µ-law Companding
+`MAX_A_SCALE = MAX_B_SCALE = 0.125`: across the reference corpus the chroma AC scale
+never exceeds 0.113. v0.5's 0.5 range wasted two bits of every chroma coefficient and
+was the dominant cause of chroma banding and visible desaturation. `MAX_L_SCALE = 0.5`
+is retained — luminance scales genuinely span the full range on synthetic content.
 
-All AC coefficients use **µ-law companding** with **µ = 5**. This allocates finer steps
-near zero (where most DCT coefficients cluster) and coarser steps in the tails.
+### 7.3 AC Coefficient Quantization: µ-law Companding (v0.6)
+
+All AC coefficients use **µ-law companding** with a per-channel-group µ:
+
+| Channel group | µ |
+|---|---|
+| L AC | `MU_L` = 5 |
+| a/b AC | `MU_C` = 8 |
+| Alpha AC | `MU_ALPHA` = 5 |
+
+Chroma uses a higher µ because its tight scale range (§7.2) concentrates most
+coefficients very near zero.
 
 **Compress:** `compressed = sign(v) × log(1 + µ × |v|) / log(1 + µ)`
 
-**Quantize:** `index = clamp(round((compressed + 1) / 2 × (2^bits − 1)), 0, 2^bits − 1)`
+**Quantize (odd level count):**
 
-**Dequantize:** `compressed = index / (2^bits − 1) × 2 − 1`
+```
+max_idx = 2^bits − 2
+index   = clamp(round((compressed + 1) / 2 × max_idx), 0, max_idx)
+```
+
+**Dequantize:**
+
+```
+index      = min(index, 2^bits − 2)        // top code is never written; clamp down
+compressed = index / (2^bits − 2) × 2 − 1
+```
 
 **Expand:** `v = sign(compressed) × ((1 + µ)^|compressed| − 1) / µ`
 
-> **Note:** The zero-point has a small positive quantization bias. A zero AC input
-> encodes to the index above the midpoint (5-bit: 16/31, 4-bit: 8/15, 6-bit: 32/63),
-> which dequantizes to a small positive value before expansion: ≈ +0.012 (5-bit),
-> ≈ +0.025 (4-bit), ≈ +0.006 (6-bit) in normalized units. After scale multiplication,
-> the absolute bias is proportionally small and has no practical effect on decoded images.
+v0.6 uses `2^bits − 1` levels (indices `0 ..= 2^bits − 2`) so the center index
+(`2^(bits−1) − 1`) represents **exactly 0.0**. This removes v0.5's systematic zero bias
+(+0.012·scale at 5 bits): solid colors, frequency-clamped slots (§6.3), and genuinely
+zero coefficients decode exactly. The top code `2^bits − 1` is never produced by
+encoders; decoders MUST clamp it down to `2^bits − 2` for robustness.
+
+When a channel's scale is 0 (solid color), encoders write the center (zero) code for
+every coefficient.
 
 ### 7.4 AC Bit Depths
 
@@ -561,7 +520,7 @@ near zero (where most DCT coefficients cluster) and coarser steps in the tails.
 | Alpha AC | — | 4 bits (all 5) |
 
 In alpha mode, the first 7 L AC coefficients (lowest frequencies, highest perceptual
-impact) are promoted to 6 bits to partially compensate for the reduced grid.
+impact) are promoted to 6 bits to partially compensate for the reduced K.
 
 ---
 
@@ -587,12 +546,14 @@ The longer side is 32 pixels by convention:
 
 ```
 if ratio > 1:
-    w = 32; h = round(32 / ratio)
+    w = 32; h = max(round(32 / ratio), 1)
 else:
-    w = round(32 × ratio); h = 32
+    w = max(round(32 × ratio), 1); h = 32
 ```
 
-Implementations MAY allow the caller to specify a different target size.
+Over the byte range this yields a short side of at least 2 pixels (byte 0 → 2×32;
+byte 255 → 32×2), which the selection domain (§6.2) relies on. Implementations MAY
+render at other sizes; see §6.4 and §11.3.
 
 ---
 
@@ -620,9 +581,9 @@ separately.
 
 ### 9.3 Alpha Channel Encoding
 
-When `hasAlpha = 1`: DC (5 bits), scale (4 bits), 5 AC coefficients (adaptive grid with
-base_n=3, capped at 5, 4 bits each, µ-law companded). The luminance grid shrinks from
-base_n=7 to base_n=6, with freed bits accommodating the alpha channel (29 bits total).
+When `hasAlpha = 1`: DC (5 bits), scale (4 bits), 5 AC coefficients (selection with
+K = 5, 4 bits each, µ-law companded with `MU_ALPHA`). The luminance K shrinks from 27
+to 20, with freed bits accommodating the alpha channel (29 bits total).
 
 ---
 
@@ -672,78 +633,60 @@ function encode(W, H, rgba, gamut) -> byte[32]:
         a_chan[i] = avg_a*(1-a) + a*oklab[i*3+1]
         b_chan[i] = avg_b*(1-a) + a*oklab[i*3+2]
 
-    // 5. Derive adaptive grid dimensions
+    // 5. Select coefficients (§6.2)
     aspect_byte = clamp(round((log2(W/H) + 4) / 8 * 255), 0, 255)
+    L_K = 20 if hasAlpha else 27
+    (L_sel, _) = selectCoefficients(aspect_byte, L_K)
+    (C_sel, _) = selectCoefficients(aspect_byte, 9)
+    if hasAlpha: (A_sel, _) = selectCoefficients(aspect_byte, 5)
+
+    // 6. Precompute cosine tables over the source dims, covering every selected
+    //    frequency. Rows for frequencies ≥ source dims exist but are never read
+    //    (the frequency clamp in dctEncode skips them).
+    max_cx = max over all selections of cx; max_cy = max over all selections of cy
+    cos_x = precompute_cos_table(W, min(max_cx + 1, W))
+    cos_y = precompute_cos_table(H, min(max_cy + 1, H))
+
+    // 7. DCT encode each channel (frequency clamp built in, §6.3)
+    (L_dc, L_ac, L_scale) = dctEncode(L_chan, W, H, L_sel, cos_x, cos_y)
+    (a_dc, a_ac, a_scale) = dctEncode(a_chan, W, H, C_sel, cos_x, cos_y)
+    (b_dc, b_ac, b_scale) = dctEncode(b_chan, W, H, C_sel, cos_x, cos_y)
     if hasAlpha:
-        (L_nx, L_ny) = deriveGrid(aspect_byte, 6)
-        (A_nx, A_ny) = deriveGrid(aspect_byte, 3)
-    else:
-        (L_nx, L_ny) = deriveGrid(aspect_byte, 7)
-    (C_nx, C_ny) = deriveGrid(aspect_byte, 4)
+        (A_dc, A_ac, A_scale) = dctEncode(alphas, W, H, A_sel, cos_x, cos_y)
 
-    // 6. Precompute cosine tables
-    max_cx = max(L_nx, C_nx); max_cy = max(L_ny, C_ny)
-    // Alpha grid dims (base_n=3) are always <= L grid dims (base_n=6 in alpha mode),
-    // so L dims subsume alpha; no separate alpha cosine table needed.
-    cos_x = precompute_cos_table(W, max_cx)
-    cos_y = precompute_cos_table(H, max_cy)
-
-    // 7. Build per-channel scan orders (v0.4: depends on aspect_byte, not just grid dims)
-    L_scan = scanOrder(L_nx, L_ny, aspect_byte)   // §6.2
-    C_scan = scanOrder(C_nx, C_ny, aspect_byte)
-    if hasAlpha: A_scan = scanOrder(A_nx, A_ny, aspect_byte)
-
-    // 8. DCT encode each channel (AC emitted in scan order)
-    (L_dc, L_ac, L_scale) = dctEncode(L_chan, W, H, L_scan, cos_x, cos_y)
-    (a_dc, a_ac, a_scale) = dctEncode(a_chan, W, H, C_scan, cos_x, cos_y)
-    (b_dc, b_ac, b_scale) = dctEncode(b_chan, W, H, C_scan, cos_x, cos_y)
-    if hasAlpha:
-        (A_dc, A_ac, A_scale) = dctEncode(alphas, W, H, A_scan, cos_x, cos_y)
-
-    // 9. Cap/zero-pad AC to fixed bit budget
-    // v0.4: product preservation guarantees raw AC >= cap; zero-padding never required.
-    L_cap = 20 if hasAlpha else 27
-    L_ac = L_ac[0 .. min(L_cap, len(L_ac)) - 1]; while len(L_ac) < L_cap: L_ac.append(0)
-    a_ac = a_ac[0 .. min(9, len(a_ac)) - 1]; b_ac = b_ac[0 .. min(9, len(b_ac)) - 1]
-    if hasAlpha: A_ac = A_ac[0 .. min(5, len(A_ac)) - 1]
-
-    // 10. Quantize header
-    L_dc_q  = round(127 * clamp(L_dc, 0, 1))
-    a_dc_q  = round(64 + 63 * clamp(a_dc / MAX_CHROMA_A, -1, 1))
-    b_dc_q  = round(64 + 63 * clamp(b_dc / MAX_CHROMA_B, -1, 1))
+    // 8. Quantize header (decode-aware DC selection, §10.3)
+    (L_dc_q, a_dc_q, b_dc_q) = selectDcCodes(L_dc, a_dc, b_dc)
     L_scl_q = round(63 * clamp(L_scale / MAX_L_SCALE, 0, 1))
     a_scl_q = round(63 * clamp(a_scale / MAX_A_SCALE, 0, 1))
     b_scl_q = round(31 * clamp(b_scale / MAX_B_SCALE, 0, 1))
 
-    // 11. Pack header (48 bits, little-endian)
+    // 9. Pack header (48 bits, little-endian); bit 47 stays 0 (v0.6)
     header = L_dc_q | (a_dc_q << 7) | (b_dc_q << 14)
            | (L_scl_q << 21) | (a_scl_q << 27) | (b_scl_q << 33)
            | (aspect_byte << 38)
            | ((1 if hasAlpha else 0) << 46)
-           | (1 << 47)                            // version bit
     hash = new byte[32]
     for i in 0..5: hash[i] = (header >> (i*8)) & 0xFF
 
-    // 12. Pack AC with µ-law companding
-    //     When scale=0 (solid color), write the µ-law midpoint for zero.
-    function qAC(value, scale, mu, bits):
-        if scale == 0: return muLawQuantize(0, mu, bits)
-        return muLawQuantize(value / scale, mu, bits)
+    // 10. Pack AC with µ-law companding (§7.3)
+    function qAC(value, scale, bits, mu):
+        if scale == 0: return muLawQuantize(0, bits, mu)
+        return muLawQuantize(value / scale, bits, mu)
 
     bitpos = 48
     if hasAlpha:
         writeBits(hash, bitpos, 5, round(31*clamp(A_dc,0,1))); bitpos += 5
         writeBits(hash, bitpos, 4, round(15*clamp(A_scale/MAX_A_ALPHA_SCALE,0,1))); bitpos += 4
-        for i in 0..6:  writeBits(hash, bitpos, 6, qAC(L_ac[i],L_scale,5,6)); bitpos += 6
-        for i in 7..19: writeBits(hash, bitpos, 5, qAC(L_ac[i],L_scale,5,5)); bitpos += 5
+        for i in 0..6:  writeBits(hash, bitpos, 6, qAC(L_ac[i],L_scale,6,MU_L)); bitpos += 6
+        for i in 7..19: writeBits(hash, bitpos, 5, qAC(L_ac[i],L_scale,5,MU_L)); bitpos += 5
     else:
-        for i in 0..26: writeBits(hash, bitpos, 5, qAC(L_ac[i],L_scale,5,5)); bitpos += 5
+        for i in 0..26: writeBits(hash, bitpos, 5, qAC(L_ac[i],L_scale,5,MU_L)); bitpos += 5
 
-    for i in 0..8: writeBits(hash, bitpos, 4, qAC(a_ac[i],a_scale,5,4)); bitpos += 4
-    for i in 0..8: writeBits(hash, bitpos, 4, qAC(b_ac[i],b_scale,5,4)); bitpos += 4
+    for i in 0..8: writeBits(hash, bitpos, 4, qAC(a_ac[i],a_scale,4,MU_C)); bitpos += 4
+    for i in 0..8: writeBits(hash, bitpos, 4, qAC(b_ac[i],b_scale,4,MU_C)); bitpos += 4
 
     if hasAlpha:
-        for i in 0..4: writeBits(hash, bitpos, 4, qAC(A_ac[i],A_scale,5,4)); bitpos += 4
+        for i in 0..4: writeBits(hash, bitpos, 4, qAC(A_ac[i],A_scale,4,MU_ALPHA)); bitpos += 4
 
     if not hasAlpha:
         assert bitpos == 255    // bit 255 is padding (§2.6), implicit zero
@@ -751,6 +694,55 @@ function encode(W, H, rgba, gamut) -> byte[32]:
         assert bitpos == 256
     return hash
 ```
+
+### 10.3 Decode-Aware DC Selection
+
+Plain rounding of the DC triple can land a near-gamut-boundary color just outside sRGB,
+where the decoder's gamut clamp then drags it far from the true average (v0.5 decoded
+solid blue `(0,0,255)` as `(0,58,214)`). The encoder therefore simulates the decoder's
+DC path and searches the ±1 neighborhood of the nominal codes:
+
+```
+function dcDecodeSim(L_q, a_q, b_q) -> (r, g, b):    // gamma-encoded sRGB floats
+    L = L_q / 127.0
+    a = (a_q - 64) / 63.0 * MAX_CHROMA_A
+    b = (b_q - 64) / 63.0 * MAX_CHROMA_B
+    (L, a, b) = softGamutClamp(clamp(L, 0, 1), a, b)  // §12.6
+    rgb_lin = oklabToLinearRgb(L, a, b)
+    return (srgbGamma(clamp(rgb_lin[0],0,1)), srgbGamma(clamp(rgb_lin[1],0,1)),
+            srgbGamma(clamp(rgb_lin[2],0,1)))
+
+function selectDcCodes(L_mean, a_mean, b_mean) -> (L_q, a_q, b_q):
+    L0 = round(127 * clamp(L_mean, 0, 1))
+    a0 = round(64 + 63 * clamp(a_mean / MAX_CHROMA_A, -1, 1))
+    b0 = round(64 + 63 * clamp(b_mean / MAX_CHROMA_B, -1, 1))
+
+    // Target = the best color the decoder could show for the true average
+    // (out-of-gamut targets are first mapped by the same clamp)
+    (tL, ta, tb) = softGamutClamp(clamp(L_mean, 0, 1), a_mean, b_mean)
+    rgb_lin = oklabToLinearRgb(tL, ta, tb)
+    target = (srgbGamma(clamp(rgb_lin[0],0,1)), srgbGamma(clamp(rgb_lin[1],0,1)),
+              srgbGamma(clamp(rgb_lin[2],0,1)))
+
+    best = (L0, a0, b0); best_err = +infinity
+    for dL in [0, -1, +1]:                       // fixed order — deterministic
+      for da in [0, -1, +1]:
+        for db in [0, -1, +1]:
+            L_q = clamp(L0 + dL, 0, 127)
+            a_q = clamp(a0 + da, 1, 127)
+            b_q = clamp(b0 + db, 1, 127)
+            cand = dcDecodeSim(L_q, a_q, b_q)
+            err  = (cand.r - target.r)² + (cand.g - target.g)² + (cand.b - target.b)²
+            if err < best_err:                   // strict < keeps the nominal codes on ties
+                best_err = err; best = (L_q, a_q, b_q)
+    return best
+```
+
+27 candidates × one DC simulation each (~10 µs total) — negligible next to the DCT.
+The fixed iteration order and strict-improvement comparison make the result
+deterministic and bit-exact across implementations. For solid images (scale = 0, all
+AC exactly zero per §7.3) the decoded color equals the simulation, so gamut-corner
+solids round-trip nearly exactly.
 
 ---
 
@@ -773,7 +765,8 @@ function decode(hash) -> (w, h, rgba):
     aspect  = (header >> 38) & 0xFF
     hasAlpha = (header >> 46) & 1
     version  = (header >> 47) & 1
-    // Decoders MAY check version; since v0.1 was never released, valid hashes have version=1 (§2.5)
+    // version MUST be 0 for v0.6; 1 identifies a legacy v0.2–v0.5 hash (§2.5).
+    // Reject where the API allows; otherwise output is unspecified.
 
     // 2. Decode DC and scale factors
     L_dc    = L_dc_q / 127.0
@@ -783,83 +776,67 @@ function decode(hash) -> (w, h, rgba):
     a_scale = a_scl_q / 63.0 * MAX_A_SCALE
     b_scale = b_scl_q / 31.0 * MAX_B_SCALE
 
-    // 3. Derive adaptive grids and scan orders
-    if hasAlpha:
-        (L_nx, L_ny) = deriveGrid(aspect, 6)
-        (A_nx, A_ny) = deriveGrid(aspect, 3)
-    else:
-        (L_nx, L_ny) = deriveGrid(aspect, 7)
-    (C_nx, C_ny) = deriveGrid(aspect, 4)
+    // 3. Coefficient selection (mirrors the encoder exactly, §6.2)
+    L_K = 20 if hasAlpha else 27
+    (L_sel, _) = selectCoefficients(aspect, L_K)
+    (C_sel, _) = selectCoefficients(aspect, 9)
 
-    L_scan = scanOrder(L_nx, L_ny, aspect)
-    C_scan = scanOrder(C_nx, C_ny, aspect)
-    L_cap = 20 if hasAlpha else 27; C_cap = 9
-
-    // 4. Decode aspect ratio and output size
+    // 4. Decode output size (§8.2)
     ratio = 2^(aspect / 255.0 * 8 - 4)
-    if ratio > 1: w = 32; h = round(32 / ratio)
-    else: w = round(32 * ratio); h = 32
+    if ratio > 1: w = 32; h = max(round(32 / ratio), 1)
+    else: w = max(round(32 * ratio), 1); h = 32
 
-    // 5. Dequantize AC from bitstream (read exactly cap values per channel)
+    // 5. Dequantize AC from bitstream (read exactly K values per channel)
     bitpos = 48
     if hasAlpha:
         A_dc    = readBits(hash, bitpos, 5) / 31.0; bitpos += 5
         A_scale = readBits(hash, bitpos, 4) / 15.0 * MAX_A_ALPHA_SCALE; bitpos += 4
-        A_scan  = scanOrder(A_nx, A_ny, aspect); A_cap = 5
+        (A_sel, _) = selectCoefficients(aspect, 5)
 
         L_ac = []
-        for i in 0..6:  L_ac.append(muLawDequantize(readBits(hash,bitpos,6),5,6)*L_scale); bitpos += 6
-        for i in 7..19: L_ac.append(muLawDequantize(readBits(hash,bitpos,5),5,5)*L_scale); bitpos += 5
+        for i in 0..6:  L_ac.append(muLawDequantize(readBits(hash,bitpos,6),6,MU_L)*L_scale); bitpos += 6
+        for i in 7..19: L_ac.append(muLawDequantize(readBits(hash,bitpos,5),5,MU_L)*L_scale); bitpos += 5
     else:
         L_ac = []
-        for i in 0..26: L_ac.append(muLawDequantize(readBits(hash,bitpos,5),5,5)*L_scale); bitpos += 5
+        for i in 0..26: L_ac.append(muLawDequantize(readBits(hash,bitpos,5),5,MU_L)*L_scale); bitpos += 5
 
-    a_ac = []; for i in 0..8: a_ac.append(muLawDequantize(readBits(hash,bitpos,4),5,4)*a_scale); bitpos += 4
-    b_ac = []; for i in 0..8: b_ac.append(muLawDequantize(readBits(hash,bitpos,4),5,4)*b_scale); bitpos += 4
+    a_ac = []; for i in 0..8: a_ac.append(muLawDequantize(readBits(hash,bitpos,4),4,MU_C)*a_scale); bitpos += 4
+    b_ac = []; for i in 0..8: b_ac.append(muLawDequantize(readBits(hash,bitpos,4),4,MU_C)*b_scale); bitpos += 4
     if hasAlpha:
-        A_ac = []; for i in 0..4: A_ac.append(muLawDequantize(readBits(hash,bitpos,4),5,4)*A_scale); bitpos += 4
+        A_ac = []; for i in 0..4: A_ac.append(muLawDequantize(readBits(hash,bitpos,4),4,MU_ALPHA)*A_scale); bitpos += 4
 
-    // 6. Map bitstream values to coefficient grids
-    L_coeff = grid initialized to 0.0
-    L_usable = min(L_cap, len(L_scan))
-    for j in 0..L_usable-1: L_coeff[L_scan[j]] = L_ac[j]
+    // 6. Frequency filter for the render raster (§6.4). At the natural size
+    //    this removes nothing; for capped renders it removes frequencies the
+    //    coarser raster cannot represent.
+    (L_vals, L_scan) = filter (L_ac[j], L_sel[j]) where L_sel[j].cx < w and L_sel[j].cy < h
+    (a_vals, C_scan) = filter likewise over C_sel; (b_vals, _) = likewise
+    if hasAlpha: (A_vals, A_scan) = likewise over A_sel
 
-    C_usable = min(C_cap, len(C_scan))
-    C_coeff_a = grid init 0.0; C_coeff_b = grid init 0.0
-    for j in 0..C_usable-1: C_coeff_a[C_scan[j]] = a_ac[j]; C_coeff_b[C_scan[j]] = b_ac[j]
-
-    if hasAlpha:
-        A_usable = min(A_cap, len(A_scan))
-        A_coeff = grid init 0.0
-        for j in 0..A_usable-1: A_coeff[A_scan[j]] = A_ac[j]
-
-    // 7. Build sRGB gamma LUT and render output
+    // 7. Build sRGB gamma LUT and render
     gamma_lut = buildGammaLut()
     rgba = new byte[w * h * 4]
 
     for y in 0..h-1:
         for x in 0..w-1:
-            // Inverse DCT for L channel (adaptive grid)
+            // Inverse DCT per channel over the filtered coefficients
             L = L_dc
-            for (cx, cy) in L_scan[0..L_usable-1]:
-                L += L_coeff[cx,cy] * cos(π/w*cx*(x+0.5)) * cos(π/h*cy*(y+0.5))
-                                    * ((cx>0?2:1) * (cy>0?2:1))
+            for j, (cx, cy) in L_scan:
+                L += L_vals[j] * cos(π/w*cx*(x+0.5)) * cos(π/h*cy*(y+0.5))
+                               * ((cx>0?2:1) * (cy>0?2:1))
 
-            // Inverse DCT for a, b channels (adaptive grid)
             a = a_dc; b = b_dc
-            for (cx, cy) in C_scan[0..C_usable-1]:
+            for j, (cx, cy) in C_scan:
                 fx = cos(π/w*cx*(x+0.5)) * cos(π/h*cy*(y+0.5)) * ((cx>0?2:1) * (cy>0?2:1))
-                a += C_coeff_a[cx,cy] * fx
-                b += C_coeff_b[cx,cy] * fx
+                a += a_vals[j] * fx
+                b += b_vals[j] * fx
 
-            // Inverse DCT for alpha channel
             alpha = hasAlpha ? A_dc : 1.0
             if hasAlpha:
-                for (cx, cy) in A_scan[0..A_usable-1]:
-                    alpha += A_coeff[cx,cy] * cos(π/w*cx*(x+0.5)) * cos(π/h*cy*(y+0.5))
-                                            * ((cx>0?2:1) * (cy>0?2:1))
+                for j, (cx, cy) in A_scan:
+                    alpha += A_vals[j] * cos(π/w*cx*(x+0.5)) * cos(π/h*cy*(y+0.5))
+                                       * ((cx>0?2:1) * (cy>0?2:1))
 
-            // Soft gamut clamp (preserves hue, reduces chroma)
+            // Soft gamut clamp v2 (preserves hue; blends L toward mid-gray, §12.6)
             L = clamp(L, 0.0, 1.0)
             (L, a, b) = softGamutClamp(L, a, b)
 
@@ -893,6 +870,17 @@ function averageColor(hash) -> (r, g, b, a):
     return (round(255×r), round(255×g), round(255×b), round(255×a))
 ```
 
+### 11.3 Capped Decode
+
+Implementations SHOULD provide a capped decode that renders at
+`(min(natural_w, max_w), min(natural_h, max_h))` — useful when the caller's display
+target is smaller than the natural 32-px render. Rendering below the natural size MUST
+apply the frequency filter of §6.4; the result is the band-limited reconstruction at
+the coarser raster. Caps larger than the natural size MUST NOT upscale.
+
+The capped path is pinned by `spec/test-vectors/integration-decode-capped.json`,
+including 1×N renders of degenerate-aspect hashes (the v0.5 aliasing regression).
+
 ---
 
 ## 12. Constants & Matrices
@@ -902,17 +890,21 @@ All constants are authoritatively defined in `spec/constants.py`.
 ### 12.1 Scalar Constants
 
 ```
-MAX_CHROMA_A       = 0.45    # Max absolute OKLAB 'a' DC value (covers BT.2020 |a|=0.416)
-MAX_CHROMA_B       = 0.45    # Max absolute OKLAB 'b' DC value (covers ProPhoto |b|=0.427)
+MAX_CHROMA_A       = 0.28    # Max absolute OKLAB 'a' DC (sRGB hull max |a| = 0.2746)
+MAX_CHROMA_B       = 0.32    # Max absolute OKLAB 'b' DC (sRGB hull max |b| = 0.3115)
 MAX_L_SCALE        = 0.5     # Max luminance AC amplitude
-MAX_A_SCALE        = 0.5     # Max chroma-a AC amplitude
-MAX_B_SCALE        = 0.5     # Max chroma-b AC amplitude
+MAX_A_SCALE        = 0.125   # Max chroma-a AC amplitude (corpus max: 0.111)
+MAX_B_SCALE        = 0.125   # Max chroma-b AC amplitude (corpus max: 0.113)
 MAX_A_ALPHA_SCALE  = 0.5     # Max alpha AC amplitude
-µ                  = 5       # µ-law companding parameter
+MU_L               = 5       # µ-law parameter, luminance AC
+MU_C               = 8       # µ-law parameter, chroma AC
+MU_ALPHA           = 5       # µ-law parameter, alpha AC
+GAMUT_L_BLEND      = 0.5     # Gamut clamp v2 anchor lightness blend (§12.6)
 ```
 
-> **Note:** Scale constants are preliminary and may be tightened after empirical
-> tuning against a reference image corpus. See `constants.py` for details.
+These values were locked by a coordinate-descent sweep against the reference comparison
+corpus (52 images: natural photographs plus synthetic dimension/alpha/color/gamut
+fixtures), optimizing mean CIEDE2000 with SSIMULACRA2/Butteraugli/DSSIM as guards.
 
 ### 12.2 M2 — LMS (cube-root) → OKLAB
 
@@ -1006,26 +998,37 @@ cbrt(x):
 Max error ≤ 2 ULP. The seed division MUST use **signed int64** arithmetic — unsigned
 wraps for inputs < 1.0.
 
-**Soft gamut clamp** (Oklch bisection, 16 iterations):
+**Soft gamut clamp v2** (segment bisection toward a lightness-blended anchor):
 
 ```
 softGamutClamp(L, a, b):
     rgb = oklabToLinearRgb(L, a, b)
     if inGamut(rgb): return (L, a, b)
-    C = sqrt(a*a + b*b)
-    if C < 1e-10: return (L, 0.0, 0.0)
-    h_cos = a / C; h_sin = b / C
-    lo = 0.0; hi = C
-    for i in 0..15:                          // fixed 16 iterations, no early exit
+
+    anchor_L = L + GAMUT_L_BLEND * (0.5 - L)     // achromatic anchor, L blended toward mid-gray
+    lo = 0.0; hi = 1.0
+    for i in 0..15:                              // fixed 16 iterations, no early exit
         mid = (lo + hi) / 2.0
-        rgb = oklabToLinearRgb(L, mid * h_cos, mid * h_sin)
-        if inGamut(rgb): lo = mid
-        else: hi = mid
-    return (L, lo * h_cos, lo * h_sin)
+        L_t = L + (anchor_L - L) * mid
+        a_t = a * (1.0 - mid)
+        b_t = b * (1.0 - mid)
+        if inGamut(oklabToLinearRgb(L_t, a_t, b_t)): hi = mid
+        else: lo = mid
+    return (L + (anchor_L - L) * hi, a * (1.0 - hi), b * (1.0 - hi))
 ```
 
-Precondition: L must be in [0, 1] (caller clamps before calling). Preserves lightness
-and hue; only reduces chroma. Precision: C / 2^16 < 1.5e-5.
+Precondition: L must be in [0, 1] (caller clamps before calling). Hue is preserved
+(a and b shrink by the same factor); lightness drifts toward 0.5 proportionally to how
+far out of gamut the color sits. The anchor is always in gamut (the OKLAB gray axis maps
+to `rgb = (L³, L³, L³)`), so the bisection brackets the gamut surface; `hi` is the
+in-gamut side of the final bracket (its initial value 1.0 is in gamut and every
+assignment follows a successful in-gamut test).
+
+> **Why blend lightness:** a constant-L clamp (v0.2–v0.5) has almost no chroma headroom
+> for colors whose L sits above a gamut cusp — e.g. ProPhoto red (L ≈ 0.70) above the
+> sRGB red cusp (L ≈ 0.63) collapsed to pale pink. Trading a small lightness shift for
+> chroma retains far more of the perceived color. `GAMUT_L_BLEND = 0` reproduces the old
+> constant-L behavior (modulo bisection parametrization).
 
 ```
 oklabToLinearRgb(L, a, b):
@@ -1065,7 +1068,7 @@ precompute_eotf_lut(gamut):
 
 The EOTF LUT applies to RGB channels only. Alpha is linearly normalized: `alpha = rgba[i*4+3] / 255.0`.
 
-**Cosine precomputation** (encode):
+**Cosine precomputation:**
 
 ```
 precompute_cos_table(dim, max_freq):
@@ -1083,7 +1086,7 @@ srgbGamma(x) = x ≤ 0.0031308 ? 12.92 × x : 1.055 × x^(1/2.4) − 0.055
 srgbEOTF(x)  = x ≤ 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055)^2.4
 ```
 
-**DCT encode:**
+**DCT encode** (with the §6.3 frequency clamp):
 
 If the maximum AC magnitude after the main loop is below 1e-10, implementations MUST zero
 all AC values and set scale to 0. This prevents amplification of floating-point noise for
@@ -1091,11 +1094,14 @@ near-constant channels (e.g., solid colors): dividing by a near-zero scale ampli
 platform-specific ULP differences into divergent quantized codes across implementations.
 
 ```
-dctEncode(channel, w, h, scan, cos_x, cos_y):
+dctEncode(channel, w, h, selection, cos_x, cos_y):
     // DC: cx=0, cy=0 — cos(0)=1 everywhere, so DC = mean(channel)
     dc = sum(channel) / (w * h)
     ac = []; scale = 0
-    for (cx, cy) in scan:
+    for (cx, cy) in selection:
+        if cx >= w or cy >= h:        // frequency clamp (§6.3): unrepresentable
+            ac.append(0.0)            //   → exact zero, excluded from scale
+            continue
         f = 0
         for y in 0..h-1:
             for x in 0..w-1:
@@ -1126,53 +1132,98 @@ readBits(hash, bitpos, count):
 
 ---
 
-## 13. Changes from v0.3 to v0.4
+## 13. Changes from v0.4/v0.5 to v0.6
 
-v0.3 and v0.4 share header bit 47 = 1. There is no new discriminator bit — a v0.3
-decoder will silently produce garbled output on v0.4 hashes. This is acceptable for a
-pre-1.0 Draft format. Producers wishing to reject v0.4 hashes should track the version
-via out-of-band metadata (e.g. a database column), not the hash bytes.
+v0.6 is bitstream-incompatible with v0.4/v0.5 (which shared a bitstream). Header bit 47
+flips from 1 to 0, so the break is detectable in-band (§2.5) — unlike the v0.3 → v0.4
+break. The redesign fixed four diagnosed quality failures, measured on the reference
+comparison corpus (52 images, color-managed metrics):
 
-### Change 1 — Per-pixel frequency priority scan order (§6.2)
+| Mean ΔE00 (lower = better) | v0.6 | v0.5 | ThumbHash |
+|---|---|---|---|
+| All images | **4.62** | 8.38 | 7.56 |
+| Natural photographs | **8.75** | 9.52 | 10.60 |
+| Degenerate dimensions | **1.81** | 18.10 | 10.09 |
+| Wide-gamut fixtures | **2.67** | 4.71 | 5.23 |
 
-**Problem.** The old row-major enumeration `for cy { for cx }` biased the first AC slots
-— and therefore the highest-precision bits — toward horizontal frequencies. For a 6×6
-grid the first seven slots were `(1,0),(2,0),(3,0),(4,0),(5,0),(0,1),(1,1)` (five pure
-horizontals). A human eye weighs vertical and diagonal midband content equally.
+### Change 1 — Top-K coefficient selection (§6.2) replaces deriveGrid + triangle + scan order
 
-**Fix.** AC coefficients are now sorted by per-pixel spatial frequency priority
-`(cx·h)² + (cy·w)²`, where `(w, h) = decodeOutputSize(aspect_byte)`. This is a pure
-integer sort, bit-exact across all platforms (values fit in u32). Ties are broken
-lexicographically by `(cx, cy)`. For square images the order becomes isotropic: `(0,1)`
-and `(1,0)` are tied (both priority 1), `(1,1)` next (priority 2), etc. For extreme
-aspect ratios the sort degenerates back to row-major, which is correct there.
+**Problem.** v0.4 derived a grid shape from the aspect byte, masked it with an ℓ1
+triangle, sorted by priority, then truncated to the bit budget — four mechanisms whose
+composition could select frequencies that don't exist (a 4×14 grid for a 1-pixel-wide
+source) while spending slots on sparse axis-aligned high frequencies (`cx` up to 8 at
+3:2) that reconstruct as visible striping.
 
-The *set* of selected coefficients is unchanged — the triangle condition
-`cx·ny < nx·(ny-cy)` and AC counts per `(nx, ny)` are identical to v0.3.
+**Fix.** One mechanism: take the K lowest isotropic per-pixel spatial frequencies over
+the natural-decode domain `[0, W) × [0, H)`. The domain bound makes unrepresentable
+frequencies unselectable; the ℓ2 ball matches natural-image spectra; `deriveGrid`, the
+triangle test, and the separate scan-order sort are deleted. The priority formula and
+lex tiebreak are unchanged from v0.4 — only the candidate set differs.
 
-**Scan order depends on `(w, h)`, not just `(nx, ny)`.** Multiple `aspect_byte` values
-can produce the same grid shape but different decode output dimensions (e.g. a 14×4
-grid appears for ratios ~3.7:1 through 16:1, during which `h` steps through 9, 8, …, 2).
-Each `(h, w)` pair yields a distinct ordering. The full table of 272 unique
-`(nx, ny, w, h)` tuples can be generated with `python3 spec/scan_order.py --json`.
+### Change 2 — Encoder frequency clamp to source dimensions (§6.3)
 
-### Change 2 — `deriveGrid` uses `sqrt(scale)` with long-axis cap (§6.3)
+**Problem.** Encoding a 1×N image computed `F(cx, cy)` for `cx ≥ 1` over a single
+column: the basis is degenerate there and `F(2, cy) = −F(0, cy)` — a junk copy of the
+DC that inflated the channel scale ~5×, crushed every real coefficient's precision, and
+rendered as solid white at capped decode sizes (where `cos(π·2·0.5) = −1`).
 
-**Problem.** v0.3 used `scale^0.25` which barely bent the DCT grid away from square for
-common aspect ratios. 16:9 (ratio ≈ 1.78) produced an 8×6 grid (aspect 1.33:1),
-wasting horizontal resolution.
+**Fix.** Selected pairs with `cx ≥ src_w` or `cy ≥ src_h` are written as exact zeros and
+excluded from the scale max. The dim-1x100 corpus fixture improves from ΔE00 54.5 to 0.78.
 
-**Fix.** The new formula bends with `sqrt(scale)` instead of `scale^0.25`, capped at
-`2·base_n` on the long axis, with the short axis derived by product preservation
-(`ny = round(base_n² / nx)`). 16:9 now produces a 9×5 grid (aspect 1.8:1). Past ~4:1
-the cap kicks in and behaviour matches v0.3 for anamorphic content.
+### Change 3 — Decoder frequency filter for sub-natural renders (§6.4, §11.3)
 
-`sqrt` (unlike `pow`) is a required correctly-rounded IEEE 754-2008 §5.4.1 operation,
-bit-exact across all mainstream platforms, so no portable wrapper is needed.
+Capped decodes now skip coefficients the render raster cannot represent, yielding the
+band-limited reconstruction instead of aliasing. Pinned by the new
+`integration-decode-capped.json` vectors.
 
-**Product preservation** keeps `nx·ny` close to `base_n²` across all aspects. This
-guarantees that the raw AC coefficient count always meets or exceeds the per-channel cap,
-so zero-padding is never required in v0.4.
+### Change 4 — Exact-zero µ-law with per-channel µ (§7.3)
+
+**Problem.** v0.5's `2^bits` levels had no zero code: a zero coefficient decoded to
++0.012·scale (5-bit) / +0.025·scale (4-bit), a systematic bias across every empty slot.
+
+**Fix.** Odd level count (`2^bits − 1`) with an exact-zero center code; the never-written
+top code clamps down on read. Solid colors decode exactly uniform. µ splits per channel
+group (`MU_L = 5`, `MU_C = 8`, `MU_ALPHA = 5`) — chroma's tight scale range concentrates
+coefficients near zero, where a higher µ buys resolution.
+
+### Change 5 — Quantization ranges sized to signal (§7.1, §7.2)
+
+**Problem.** Chroma DC ranges (±0.45) were sized to wide-gamut source extremes the sRGB
+decoder can never display, and chroma AC scale ranges (0.5) exceeded the measured corpus
+maximum (0.113) by 4.4× — together wasting roughly two bits of every chroma field. The
+result was visible chroma banding and desaturation.
+
+**Fix.** `MAX_CHROMA_A/B` sized to the sRGB OKLAB hull (0.28/0.32); `MAX_A/B_SCALE`
+to 0.125. This was the single largest quality win of the revision.
+
+### Change 6 — Decode-aware DC code selection (§10.3)
+
+**Problem.** Rounding the DC triple independently could land just outside the sRGB
+gamut, where the decoder's clamp dragged it far away: solid blue `(0,0,255)` decoded
+as `(0,58,214)` (ΔE00 7.75).
+
+**Fix.** The encoder simulates the decoder's DC path for the 27 code triples in the ±1
+neighborhood and keeps the one minimizing gamma-sRGB error against the clamp-mapped
+target. Deterministic (fixed order, strict improvement, ties keep nominal). Solid blue
+now decodes at ΔE00 0.36.
+
+### Change 7 — Gamut clamp v2: lightness-blended anchor (§12.6)
+
+**Problem.** The constant-L chroma-only clamp collapsed colors above a gamut cusp to
+near-gray (ProPhoto red → pale pink).
+
+**Fix.** Out-of-gamut colors project along the segment toward
+`(L + GAMUT_L_BLEND·(0.5 − L), 0, 0)`: hue-preserving, with a lightness give that
+retains most of the saturation near cusps.
+
+### Evaluated and rejected
+
+A decode-side raised-cosine synthesis window (tapering high-frequency AC by normalized
+priority `ρ = sqrt(priority / p_k)`) was implemented and swept. With the v0.6 chroma
+ranges in place it cost more detail than the residual ringing it suppressed — v0.5's
+visible banding turned out to be chroma quantization noise (Change 5), not luma Gibbs
+ringing. The `p_k` value remains defined (§6.2) should a future revision revisit
+frequency-normalized decoding.
 
 ---
 
@@ -1181,11 +1232,12 @@ so zero-padding is never required in v0.4.
 | Trade-off | Details |
 |-----------|---------|
 | **Larger size** | Always 32 bytes vs 5–25 for variable-length formats. At 1B photos: 32 GB vs ~17 GB. Fixed size enables memory alignment and cache-friendly access. |
-| **Encode cost** | Full-resolution encoding: ~400ms for 12MP in Rust (single-threaded) with all portable optimizations. |
+| **Encode cost** | Full-resolution encoding: ~400ms for 12MP in Rust (single-threaded). The v0.6 DC search adds ~10 µs (27 DC simulations) — negligible. |
 | **Decode cost** | ~36µs native / ~182µs JS. OKLAB is 18× costlier per pixel than linear color, but both are <1ms. |
 | **Solid images** | 26 bytes of zero AC coefficients wasted. Irrelevant for photographs. |
 | **Extreme ratios** | Ratios beyond 16:1 clamp to 16:1. Rare in photography. |
-| **Gamut clamp** | Out-of-sRGB OKLAB values are soft-clamped via Oklch bisection (hue-preserving). Almost always imperceptible at placeholder resolution. |
+| **Wide-gamut DC clipping** | DC chroma beyond the sRGB hull clips at encode (§5.1). Invisible at decode (the decoder clamps to sRGB regardless); a future P3-decode profile would be a format break. |
+| **Gamut clamp** | Out-of-sRGB OKLAB values are soft-clamped with a small lightness give (§12.6). Almost always imperceptible at placeholder resolution. |
 | **No progressive decode** | All 32 bytes must be received first. Never a practical bottleneck. |
 
 ---
@@ -1193,23 +1245,28 @@ so zero-padding is never required in v0.4.
 ## Appendix A: ThumbHash Comparison & Acknowledgment
 
 ChromaHash is directly inspired by [ThumbHash](https://evanw.github.io/thumbhash/) by
-Evan Wallace. Key inherited ideas: DCT with triangular coefficient selection, alpha
-compositing over average color, and average color extraction from header.
+Evan Wallace. Key inherited ideas: DCT-based placeholder encoding, alpha compositing
+over average color, and average color extraction from the header.
 
-| Feature | ThumbHash | ChromaHash |
+| Feature | ThumbHash | ChromaHash v0.6 |
 |---------|-----------|------------|
 | **Size** | 5–25 bytes (variable) | 32 bytes (fixed) |
 | **Color space** | LPQA (gamma sRGB) | OKLAB (perceptually uniform) |
 | **L DC / Chroma DC** | 6 / 6 bits | 7 / 7 bits |
-| **L AC grid** | 3×3 to 7×7 (adaptive) | Adaptive via `deriveGrid` (up to 14×4) |
-| **Chroma AC grid** | 3×3 (5 coeff) | 4×4 (9 coeff) |
-| **L AC quantization** | 4-bit linear | 5-bit µ-law |
+| **Coefficient selection** | ℓ1 triangle over adaptive grid | Top-K ℓ2 ball over the decode raster |
+| **L AC budget** | up to 27 coeff, 4-bit linear | 27 coeff, 5-bit µ-law (exact zero) |
+| **Chroma AC budget** | 5 coeff × 4-bit each | 9 coeff × 4-bit µ-law (µ=8) each |
+| **DC fidelity** | rounded | decode-aware search (gamut-corner solids near-exact) |
 | **Aspect ratio** | 3-bit (~7% error) | 8-bit log₂ (~1.1% error) |
 | **Aspect range** | up to ~7:1 | up to 16:1 |
 | **Source gamuts** | sRGB only | sRGB, P3, Adobe RGB, BT.2020, ProPhoto |
-| **Gamut clamping** | Hard per-channel | Soft Oklch bisection (hue-preserving) |
+| **Gamut clamping** | Hard per-channel | Soft segment bisection (hue-preserving, L-blended) |
 | **Input dimensions** | Any (library resizes) | Any (full-resolution DCT) |
 | **Memory alignment** | No (variable length) | 32-byte aligned |
+
+On the reference corpus (52 images, identical color-managed metrics), ChromaHash v0.6
+leads ThumbHash on every metric — mean ΔE00 4.62 vs 7.56, SSIMULACRA2 56.6 vs 47.6,
+Butteraugli 9.78 vs 14.90 — in exchange for the larger fixed size.
 
 ---
 

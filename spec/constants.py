@@ -11,25 +11,55 @@ from M1[sRGB] and the sRGB XYZ matrix. Run validate.py to verify.
 """
 
 # =========================================================================
-# Scalar Parameters
+# Scalar Parameters (v0.6 — locked by the 2026-06 comparison-corpus sweep)
 # =========================================================================
 
-# µ-law companding parameter (§7.3)
-MU = 5
+# µ-law companding parameters, per channel group (§7.3). Chroma uses a higher
+# µ because its scale range is tight (MAX_A/B_SCALE = 0.125), concentrating
+# resolution where chroma coefficients actually live.
+MU_L = 5         # Luminance AC
+MU_C = 8         # Chroma a/b AC
+MU_ALPHA = 5     # Alpha AC
 
 # =========================================================================
-# Scale Factor Maximums (§7.2, §12.1)
+# Quantization Range Maximums (§7.1, §7.2, §12.1)
 # =========================================================================
-# These define quantization range bounds. Values exceeding these are clamped.
-# Preliminary values — may be tightened in a future revision after empirical
-# tuning against a reference image corpus.
+# Values exceeding these are clamped at encode. v0.6 sizes the chroma DC
+# ranges to the sRGB OKLAB hull (decode always clamps to sRGB, so range
+# beyond the hull is unreachable and only wastes precision):
+#   sRGB hull: a ∈ [−0.2339, +0.2746], b ∈ [−0.3115, +0.1986]
+# The AC scale maximums are sized to measured signal: across the reference
+# corpus the chroma AC scale never exceeds 0.113 (v0.5's 0.5 range wasted
+# two bits of precision and caused the characteristic chroma banding and
+# desaturation).
 
-MAX_CHROMA_A = 0.45        # Max absolute OKLAB 'a' DC value (covers BT.2020 max |a|=0.416)
-MAX_CHROMA_B = 0.45        # Max absolute OKLAB 'b' DC value (covers ProPhoto max |b|=0.427)
+MAX_CHROMA_A = 0.28        # Max absolute OKLAB 'a' DC value (sRGB hull max |a| = 0.2746)
+MAX_CHROMA_B = 0.32        # Max absolute OKLAB 'b' DC value (sRGB hull max |b| = 0.3115)
 MAX_L_SCALE = 0.5          # Max luminance AC amplitude
-MAX_A_SCALE = 0.5          # Max chroma-a AC amplitude
-MAX_B_SCALE = 0.5          # Max chroma-b AC amplitude
+MAX_A_SCALE = 0.125        # Max chroma-a AC amplitude
+MAX_B_SCALE = 0.125        # Max chroma-b AC amplitude
 MAX_A_ALPHA_SCALE = 0.5    # Max alpha AC amplitude
+
+# Gamut clamp v2 anchor blend (§12.6): out-of-gamut colors are projected
+# toward the achromatic anchor (L + GAMUT_L_BLEND·(0.5 − L), 0, 0).
+GAMUT_L_BLEND = 0.5
+
+# =========================================================================
+# AC Layout (§3.2, §6.4)
+# =========================================================================
+# Coefficient counts (K per channel) and bit depths. The selection of WHICH
+# K coefficients is defined in §6 (see selection.py).
+
+L_AC_COUNT = 27            # No-alpha mode: L AC coefficients × 5 bits
+L_AC_BITS = 5
+C_AC_COUNT = 9             # Chroma a/b AC coefficients each (both modes)
+C_AC_BITS = 4
+LA_TIER1_COUNT = 7         # Alpha mode: first 7 L AC at 6 bits
+LA_TIER1_BITS = 6
+LA_TIER2_COUNT = 13        # Alpha mode: remaining 13 L AC at 5 bits
+LA_TIER2_BITS = 5
+ALPHA_AC_COUNT = 5         # Alpha mode: alpha AC coefficients × 4 bits
+ALPHA_AC_BITS = 4
 
 # =========================================================================
 # OKLAB Core Matrices (Björn Ottosson)
