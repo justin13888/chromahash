@@ -14,7 +14,7 @@ Language tooling is mostly managed by `mise` and common commands are run via `ju
 - Use strict TypeScript — no `any` types
 - Rust: `#![deny(warnings)]` on public crates once stable
 - Kotlin: Kotlin DSL only (`.gradle.kts`), target JVM 21
-- Swift: Swift 6 concurrency model, no `@unchecked Sendable` hacks
+- Swift: a thin facade over UniFFI-generated bindings (no native algorithm); Swift 6 concurrency, no `@unchecked Sendable` hacks. `just swift-cbuild` assembles the `ChromaHashFFI.xcframework` + generated bindings (build outputs). macOS via xcframework; Linux `systemLibrary` support is a follow-up
 - Write tests for all public API surface and ensure they are consistent across languages and validates the specification in `spec/` completely
 - Go: a thin **cgo** wrapper over `bindings/c` (no native algorithm). go.mod stays dependency-free, but builds need a C toolchain (`CGO_ENABLED=1`) and the static lib staged into `go/lib` — run `just go-cbuild` (done automatically by `just build-go`/`test-go`)
 - Use conventional commits: `type(scope): description` — scope = `rust`, `c`, `ts`, `wasm`, `kotlin`, `jvm`, `swift`, `go`, `py`, `csharp`, `android`, `uniffi`, `spec`, `tools`, or `comparison`. Enforced by the `commit-msg` lefthook hook and the `ci-commits` workflow (convco) — non-conventional messages are rejected. (`convco` checks the conventional-commit *format* only; the scope list above is convention, not machine-enforced.)

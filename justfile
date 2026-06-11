@@ -87,7 +87,7 @@ compare: build-compare
 # ─── Benchmark ──────────────────────────────────────────────────────────────
 
 # Build benchmark harnesses (release mode), incl. both ThumbHash baselines (native Rust + JS)
-build-benchmark: go-cbuild
+build-benchmark: go-cbuild swift-cbuild
     cargo build --manifest-path rust/Cargo.toml --release --example encode_stdin
     mise exec node@24 -- pnpm --prefix typescript run build
     cd go && CGO_ENABLED=1 go build -o encode-stdin ./cmd/encode-stdin
@@ -118,7 +118,7 @@ bench-batch-ts:
 bench-batch-kotlin:
     mise exec java@21 gradle@9.4.0 -- sh -c 'cd kotlin && ./gradlew bench -q'
 
-bench-batch-swift:
+bench-batch-swift: swift-cbuild
     cd swift && mise exec swift@6.2.4 -- swift run -c release ChromaHashBatchBench
 
 bench-batch-go: go-cbuild
@@ -375,10 +375,30 @@ lint-swift: format-check-swift
 
 lint-fix-swift: format-swift
 
-test-swift:
+# Build the UniFFI static lib, generate Swift bindings, and assemble the
+# ChromaHashFFI.xcframework the Swift package consumes. macOS-only (xcframework).
+swift-cbuild:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build --release --manifest-path bindings/uniffi/Cargo.toml
+    gen="$(mktemp -d)"
+    ( cd bindings/uniffi && cargo run --release --quiet --bin uniffi-bindgen -- \
+        generate --library target/release/libchromahash_uniffi.dylib \
+        --language swift --out-dir "$gen" )
+    mkdir -p swift/Sources/ChromaHashBindings
+    cp "$gen/chromahash_uniffi.swift" swift/Sources/ChromaHashBindings/
+    hdr="$(mktemp -d)"
+    cp "$gen/chromahash_uniffiFFI.h" "$hdr/"
+    cp "$gen/chromahash_uniffiFFI.modulemap" "$hdr/module.modulemap"
+    rm -rf swift/ChromaHashFFI.xcframework
+    xcodebuild -create-xcframework \
+        -library bindings/uniffi/target/release/libchromahash_uniffi.a \
+        -headers "$hdr" -output swift/ChromaHashFFI.xcframework
+
+test-swift: swift-cbuild
     cd swift && mise exec swift@6.2.4 -- swift test
 
-build-swift:
+build-swift: swift-cbuild
     cd swift && mise exec swift@6.2.4 -- swift build
 
 # ─── Go ──────────────────────────────────────────────────────────────────────
