@@ -3,26 +3,49 @@ name: CI (Swift)
 on:
   push:
     branches: [master]
-    paths: ["swift/**", ".github/workflows/ci-swift.yml"]
+    paths: ["swift/**", "bindings/uniffi/**", "rust/**", ".github/workflows/ci-swift.yml"]
   pull_request:
-    paths: ["swift/**", ".github/workflows/ci-swift.yml"]
+    paths: ["swift/**", "bindings/uniffi/**", "rust/**", ".github/workflows/ci-swift.yml"]
 
 jobs:
   ci:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: swift
+    # macOS: the Swift binding consumes a UniFFI xcframework assembled with
+    # xcodebuild. (Linux support via a systemLibrary modulemap is a follow-up.)
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Swift
-        uses: SwiftyLab/setup-swift@latest
-        with:
-          swift-version: "6.2.4"
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build UniFFI static lib + generate Swift bindings + assemble xcframework
+        run: |
+          cargo build --release --manifest-path bindings/uniffi/Cargo.toml
+          gen="$(mktemp -d)"
+          ( cd bindings/uniffi && cargo run --release --quiet --bin uniffi-bindgen -- \
+              generate --library target/release/libchromahash_uniffi.dylib \
+              --language swift --out-dir "$gen" )
+          mkdir -p swift/Sources/ChromaHashBindings
+          cp "$gen/chromahash_uniffi.swift" swift/Sources/ChromaHashBindings/
+          hdr="$(mktemp -d)"
+          cp "$gen/chromahash_uniffiFFI.h" "$hdr/"
+          cp "$gen/chromahash_uniffiFFI.modulemap" "$hdr/module.modulemap"
+          rm -rf swift/ChromaHashFFI.xcframework
+          xcodebuild -create-xcframework \
+            -library bindings/uniffi/target/release/libchromahash_uniffi.a \
+            -headers "$hdr" -output swift/ChromaHashFFI.xcframework
 
       - name: Build
+        working-directory: swift
         run: swift build
 
       - name: Test
-        run: swift test
+        working-directory: swift
+        # Run serially. BatchEncoder.encodeBatch blocks the calling thread on an
+        # OperationQueue (waitUntilFinished: true). Swift Testing's default
+        # parallel executor runs the synchronous tests on the Swift-concurrency
+        # cooperative pool (width == core count), so several batch tests blocking
+        # at once starve libdispatch's worker threads on low-core CI runners and
+        # deadlock the whole run. One test at a time leaves headroom — and the
+        # suite finishes in ~0.05s regardless.
+        run: swift test --no-parallel

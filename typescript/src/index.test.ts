@@ -3,269 +3,28 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { ChromaHash } from "./index.ts";
+import { ChromaHash, init } from "./index.ts";
 import type { Gamut } from "./index.ts";
-import {
-  decodeAspect,
-  decodeOutputSize,
-  encodeAspect,
-  gammaRgbToOklab,
-  linearRgbToOklab,
-  muCompress,
-  muExpand,
-  muLawDequantize,
-  muLawQuantize,
-  roundHalfAwayFromZero,
-  scanOrder,
-} from "./internals.ts";
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const specDir = resolve(currentDir, "../../spec/test-vectors");
+const wasmPath = resolve(currentDir, "../wasm/chromahash_wasm_bg.wasm");
+
+// The full path is WASM-backed; instantiate it once before any test runs.
+await init(readFileSync(wasmPath));
 
 function loadVectors<T>(name: string): T {
   return JSON.parse(readFileSync(resolve(specDir, name), "utf-8")) as T;
 }
 
 // ---------------------------------------------------------------------------
-// Unit tests: rounding
-// ---------------------------------------------------------------------------
-
-describe("roundHalfAwayFromZero", () => {
-  it("rounds positive halves up", () => {
-    assert.equal(roundHalfAwayFromZero(0.5), 1);
-    assert.equal(roundHalfAwayFromZero(1.5), 2);
-    assert.equal(roundHalfAwayFromZero(2.5), 3);
-  });
-
-  it("rounds negative halves away from zero", () => {
-    assert.equal(roundHalfAwayFromZero(-0.5), -1);
-    assert.equal(roundHalfAwayFromZero(-1.5), -2);
-    assert.equal(roundHalfAwayFromZero(-2.5), -3);
-  });
-
-  it("handles standard cases", () => {
-    assert.equal(roundHalfAwayFromZero(0), 0);
-    assert.equal(roundHalfAwayFromZero(0.3), 0);
-    assert.equal(roundHalfAwayFromZero(0.7), 1);
-    // -0.3 rounds to -0 via ceil, which is === 0 in JS
-    assert.ok(roundHalfAwayFromZero(-0.3) === 0);
-    assert.equal(roundHalfAwayFromZero(-0.7), -1);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Unit tests: color conversion
-// ---------------------------------------------------------------------------
-
-interface ColorVector {
-  name: string;
-  input: {
-    linear_rgb?: [number, number, number];
-    gamma_rgb?: [number, number, number];
-    gamut: Gamut;
-  };
-  expected: {
-    oklab: [number, number, number];
-    roundtrip_srgb?: [number, number, number];
-  };
-}
-
-describe("color conversion", () => {
-  const vectors = loadVectors<ColorVector[]>("unit-color.json");
-
-  for (const vec of vectors) {
-    it(vec.name, () => {
-      let oklab: [number, number, number];
-      if (vec.input.linear_rgb) {
-        oklab = linearRgbToOklab(vec.input.linear_rgb, vec.input.gamut);
-      } else if (vec.input.gamma_rgb) {
-        oklab = gammaRgbToOklab(
-          vec.input.gamma_rgb[0],
-          vec.input.gamma_rgb[1],
-          vec.input.gamma_rgb[2],
-          vec.input.gamut,
-        );
-      } else {
-        throw new Error("No input RGB");
-      }
-
-      assert.ok(
-        Math.abs(oklab[0] - vec.expected.oklab[0]) < 1e-10,
-        `${vec.name} oklab[0]: expected ${vec.expected.oklab[0]}, got ${oklab[0]}`,
-      );
-      assert.ok(
-        Math.abs(oklab[1] - vec.expected.oklab[1]) < 1e-10,
-        `${vec.name} oklab[1]: expected ${vec.expected.oklab[1]}, got ${oklab[1]}`,
-      );
-      assert.ok(
-        Math.abs(oklab[2] - vec.expected.oklab[2]) < 1e-10,
-        `${vec.name} oklab[2]: expected ${vec.expected.oklab[2]}, got ${oklab[2]}`,
-      );
-    });
-  }
-});
-
-// ---------------------------------------------------------------------------
-// Unit tests: mu-law
-// ---------------------------------------------------------------------------
-
-interface MulawVector {
-  name: string;
-  input: { value: number; bits: number };
-  expected: {
-    compressed: number;
-    expanded: number;
-    quantized: number;
-    dequantized: number;
-  };
-}
-
-describe("mu-law", () => {
-  const vectors = loadVectors<MulawVector[]>("unit-mulaw.json");
-
-  for (const vec of vectors) {
-    it(`compress ${vec.name}`, () => {
-      const compressed = muCompress(vec.input.value);
-      assert.ok(
-        Math.abs(compressed - vec.expected.compressed) < 1e-12,
-        `compress: expected ${vec.expected.compressed}, got ${compressed}`,
-      );
-    });
-
-    it(`expand ${vec.name}`, () => {
-      const expanded = muExpand(vec.expected.compressed);
-      assert.ok(
-        Math.abs(expanded - vec.expected.expanded) < 1e-12,
-        `expand: expected ${vec.expected.expanded}, got ${expanded}`,
-      );
-    });
-
-    it(`quantize ${vec.name}`, () => {
-      const q = muLawQuantize(vec.input.value, vec.input.bits);
-      assert.equal(
-        q,
-        vec.expected.quantized,
-        `quantize: expected ${vec.expected.quantized}, got ${q}`,
-      );
-    });
-
-    it(`dequantize ${vec.name}`, () => {
-      const dq = muLawDequantize(vec.expected.quantized, vec.input.bits);
-      assert.ok(
-        Math.abs(dq - vec.expected.dequantized) < 1e-12,
-        `dequantize: expected ${vec.expected.dequantized}, got ${dq}`,
-      );
-    });
-  }
-});
-
-// ---------------------------------------------------------------------------
-// Unit tests: DCT scan order
-// ---------------------------------------------------------------------------
-
-interface DctVector {
-  name: string;
-  input: { nx: number; ny: number; w: number; h: number };
-  expected: { ac_count: number; scan_order: [number, number][] };
-}
-
-describe("DCT scan order", () => {
-  const vectors = loadVectors<DctVector[]>("unit-dct.json");
-
-  for (const vec of vectors) {
-    it(vec.name, () => {
-      // Find an aspect byte that produces (w, h); scan_order is keyed on aspect byte.
-      let aspectByte: number | null = null;
-      for (let byte = 0; byte < 256; byte++) {
-        const [bw, bh] = decodeOutputSize(byte);
-        if (bw === vec.input.w && bh === vec.input.h) {
-          aspectByte = byte;
-          break;
-        }
-      }
-      assert.ok(
-        aspectByte !== null,
-        `no aspect byte for (w=${vec.input.w}, h=${vec.input.h})`,
-      );
-      const order = scanOrder(vec.input.nx, vec.input.ny, aspectByte);
-      assert.equal(
-        order.length,
-        vec.expected.ac_count,
-        `ac_count: expected ${vec.expected.ac_count}, got ${order.length}`,
-      );
-      assert.deepStrictEqual(order, vec.expected.scan_order);
-    });
-  }
-});
-
-// ---------------------------------------------------------------------------
-// Unit tests: aspect ratio
-// ---------------------------------------------------------------------------
-
-interface AspectVector {
-  name: string;
-  input: { width: number; height: number };
-  expected: {
-    byte: number;
-    decoded_ratio: number;
-    output_width: number;
-    output_height: number;
-  };
-}
-
-describe("aspect ratio", () => {
-  const vectors = loadVectors<AspectVector[]>("unit-aspect.json");
-
-  for (const vec of vectors) {
-    it(`encode ${vec.name}`, () => {
-      const byte = encodeAspect(vec.input.width, vec.input.height);
-      assert.equal(
-        byte,
-        vec.expected.byte,
-        `byte: expected ${vec.expected.byte}, got ${byte}`,
-      );
-    });
-
-    it(`decode ${vec.name}`, () => {
-      const ratio = decodeAspect(vec.expected.byte);
-      assert.ok(
-        Math.abs(ratio - vec.expected.decoded_ratio) < 1e-10,
-        `ratio: expected ${vec.expected.decoded_ratio}, got ${ratio}`,
-      );
-    });
-
-    it(`output size ${vec.name}`, () => {
-      const [w, h] = decodeOutputSize(vec.expected.byte);
-      assert.equal(
-        w,
-        vec.expected.output_width,
-        `width: expected ${vec.expected.output_width}, got ${w}`,
-      );
-      assert.equal(
-        h,
-        vec.expected.output_height,
-        `height: expected ${vec.expected.output_height}, got ${h}`,
-      );
-    });
-  }
-});
-
-// ---------------------------------------------------------------------------
-// Integration tests: encode
+// Integration: encode (hash + average color, byte-exact vs. the reference)
 // ---------------------------------------------------------------------------
 
 interface EncodeVector {
   name: string;
-  input: {
-    width: number;
-    height: number;
-    gamut: Gamut;
-    rgba: number[];
-  };
-  expected: {
-    hash: number[];
-    average_color: [number, number, number, number];
-  };
+  input: { width: number; height: number; gamut: Gamut; rgba: number[] };
+  expected: { hash: number[]; average_color: [number, number, number, number] };
 }
 
 describe("integration encode", () => {
@@ -280,10 +39,9 @@ describe("integration encode", () => {
         rgba,
         vec.input.gamut,
       );
-      const expected = new Uint8Array(vec.expected.hash);
       assert.deepStrictEqual(
         ch.hash,
-        expected,
+        new Uint8Array(vec.expected.hash),
         `hash mismatch for ${vec.name}`,
       );
     });
@@ -306,7 +64,7 @@ describe("integration encode", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Integration tests: decode
+// Integration: decode
 // ---------------------------------------------------------------------------
 
 interface DecodeVector {
@@ -320,35 +78,22 @@ describe("integration decode", () => {
 
   for (const vec of vectors) {
     it(`decode ${vec.name}`, () => {
-      const hashBytes = new Uint8Array(vec.input.hash);
-      const ch = ChromaHash.fromBytes(hashBytes);
+      const ch = ChromaHash.fromBytes(new Uint8Array(vec.input.hash));
       const decoded = ch.decode();
 
-      assert.equal(
-        decoded.w,
-        vec.expected.width,
-        `width: expected ${vec.expected.width}, got ${decoded.w}`,
-      );
-      assert.equal(
-        decoded.h,
-        vec.expected.height,
-        `height: expected ${vec.expected.height}, got ${decoded.h}`,
-      );
-
-      const expectedRgba = vec.expected.rgba;
+      assert.equal(decoded.w, vec.expected.width, "width mismatch");
+      assert.equal(decoded.h, vec.expected.height, "height mismatch");
       assert.equal(
         decoded.rgba.length,
-        expectedRgba.length,
+        vec.expected.rgba.length,
         "rgba length mismatch",
       );
-
-      for (let i = 0; i < expectedRgba.length; i++) {
+      for (let i = 0; i < vec.expected.rgba.length; i++) {
         const actual = decoded.rgba[i] as number;
-        const expected = expectedRgba[i] as number;
-        const diff = Math.abs(actual - expected);
+        const expected = vec.expected.rgba[i] as number;
         assert.ok(
-          diff <= 1,
-          `pixel byte ${i}: expected ${expected}, got ${actual} (diff=${diff})`,
+          Math.abs(actual - expected) <= 1,
+          `pixel byte ${i}: expected ${expected}, got ${actual}`,
         );
       }
     });
@@ -356,7 +101,49 @@ describe("integration decode", () => {
 });
 
 // ---------------------------------------------------------------------------
-// fromBytes validation
+// Integration: capped decode
+// ---------------------------------------------------------------------------
+
+interface DecodeCappedVector {
+  name: string;
+  input: { hash: number[]; max_width: number; max_height: number };
+  expected: { width: number; height: number; rgba: number[] };
+}
+
+describe("integration decode capped", () => {
+  const vectors = loadVectors<DecodeCappedVector[]>(
+    "integration-decode-capped.json",
+  );
+
+  for (const vec of vectors) {
+    it(`decode capped ${vec.name}`, () => {
+      const ch = ChromaHash.fromBytes(new Uint8Array(vec.input.hash));
+      const decoded = ch.decodeCapped(
+        vec.input.max_width,
+        vec.input.max_height,
+      );
+
+      assert.equal(decoded.w, vec.expected.width, "width mismatch");
+      assert.equal(decoded.h, vec.expected.height, "height mismatch");
+      assert.equal(
+        decoded.rgba.length,
+        vec.expected.rgba.length,
+        "rgba length mismatch",
+      );
+      for (let i = 0; i < vec.expected.rgba.length; i++) {
+        const actual = decoded.rgba[i] as number;
+        const expected = vec.expected.rgba[i] as number;
+        assert.ok(
+          Math.abs(actual - expected) <= 1,
+          `pixel byte ${i}: expected ${expected}, got ${actual}`,
+        );
+      }
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// API surface
 // ---------------------------------------------------------------------------
 
 describe("fromBytes", () => {
@@ -376,5 +163,20 @@ describe("fromBytes", () => {
     const ch1 = ChromaHash.encode(4, 4, rgba, "sRGB");
     const ch2 = ChromaHash.fromBytes(new Uint8Array(ch1.hash));
     assert.deepStrictEqual(ch1.hash, ch2.hash);
+  });
+});
+
+describe("isVersionSupported", () => {
+  it("reports v0.6 hashes as supported", () => {
+    const rgba = new Uint8Array(4 * 4 * 4).fill(128);
+    const ch = ChromaHash.encode(4, 4, rgba, "sRGB");
+    assert.ok(ch.isVersionSupported());
+  });
+
+  it("reports a legacy (bit 47 set) hash as unsupported", () => {
+    const rgba = new Uint8Array(4 * 4 * 4).fill(128);
+    const bytes = new Uint8Array(ChromaHash.encode(4, 4, rgba, "sRGB").hash);
+    bytes[5] = (bytes[5] ?? 0) | 0x80;
+    assert.ok(!ChromaHash.fromBytes(bytes).isVersionSupported());
   });
 });

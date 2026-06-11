@@ -3,16 +3,15 @@ name: CI (Python)
 on:
   push:
     branches: [master]
-    paths: ["python/**", ".github/workflows/ci-python.yml"]
+    paths: ["python/**", "bindings/uniffi/**", "rust/**", ".github/workflows/ci-python.yml"]
   pull_request:
-    paths: ["python/**", ".github/workflows/ci-python.yml"]
+    paths: ["python/**", "bindings/uniffi/**", "rust/**", ".github/workflows/ci-python.yml"]
 
 jobs:
   ci:
+    # The Python package is a UniFFI (ctypes) binding, so the native lib + generated
+    # module must be staged into the package before importing it.
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: python
     steps:
       - uses: actions/checkout@v4
 
@@ -24,14 +23,30 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v5
 
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build UniFFI lib + generate bindings
+        run: |
+          cargo build --release --manifest-path bindings/uniffi/Cargo.toml
+          gen="$(mktemp -d)"
+          ( cd bindings/uniffi && cargo run --release --quiet --bin uniffi-bindgen -- \
+              generate --library target/release/libchromahash_uniffi.so --language python --out-dir "$gen" )
+          cp "$gen/chromahash_uniffi.py" python/chromahash/_uniffi.py
+          cp bindings/uniffi/target/release/libchromahash_uniffi.so python/chromahash/
+
       - name: Install dependencies
+        working-directory: python
         run: uv sync
 
       - name: Format check
+        working-directory: python
         run: uv run ruff format --check .
 
       - name: Lint
+        working-directory: python
         run: uv run ruff check .
 
       - name: Test
+        working-directory: python
         run: uv run pytest tests/

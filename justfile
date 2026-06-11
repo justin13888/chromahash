@@ -8,31 +8,31 @@ default:
 
 # Format all implementations
 [parallel]
-format: format-rust format-ts format-kotlin format-swift format-go format-python format-csharp format-android format-compare format-thumbhash
+format: format-rust format-c format-wasm format-ts format-jvm format-swift format-go format-python format-csharp format-android format-compare format-thumbhash
 
 # Lint all implementations
 [parallel]
-lint: lint-rust lint-ts lint-kotlin lint-swift lint-go lint-python lint-csharp lint-android lint-compare lint-thumbhash
+lint: lint-rust lint-c lint-wasm lint-ts lint-jvm lint-swift lint-go lint-python lint-csharp lint-android lint-compare lint-thumbhash
 
 # Auto-fix formatting in all implementations
 [parallel]
-format-fix: format-fix-rust format-fix-ts format-fix-kotlin format-fix-swift format-fix-go format-fix-python format-fix-csharp format-fix-android format-fix-compare format-fix-thumbhash
+format-fix: format-fix-rust format-fix-c format-fix-wasm format-fix-ts format-fix-jvm format-fix-swift format-fix-go format-fix-python format-fix-csharp format-fix-android format-fix-compare format-fix-thumbhash
 
 # Auto-fix linting in all implementations
 [parallel]
-lint-fix: lint-fix-rust lint-fix-ts lint-fix-kotlin lint-fix-swift lint-fix-go lint-fix-python lint-fix-csharp lint-fix-android lint-fix-compare lint-fix-thumbhash
+lint-fix: lint-fix-rust lint-fix-c lint-fix-wasm lint-fix-ts lint-fix-jvm lint-fix-swift lint-fix-go lint-fix-python lint-fix-csharp lint-fix-android lint-fix-compare lint-fix-thumbhash
 
 # Run all tests
 [parallel]
-test: test-rust test-ts test-kotlin test-swift test-go test-python test-csharp test-android
+test: test-rust test-c test-wasm test-ts test-jvm test-swift test-go test-python test-csharp test-android
 
 # Build all implementations
 [parallel]
-build: build-rust build-ts build-kotlin build-swift build-go build-python build-csharp build-android-crate
+build: build-rust build-c build-wasm build-ts build-jvm build-swift build-go build-python build-csharp build-android-crate
 
 # Check formatting (no writes) across all implementations
 [parallel]
-format-check: format-check-rust format-check-ts format-check-kotlin format-check-swift format-check-go format-check-python format-check-csharp format-check-android format-check-compare format-check-thumbhash
+format-check: format-check-rust format-check-c format-check-wasm format-check-ts format-check-jvm format-check-swift format-check-go format-check-python format-check-csharp format-check-android format-check-compare format-check-thumbhash
 
 # ─── Comparison tool ────────────────────────────────────────────────────────
 
@@ -81,17 +81,19 @@ install-iqa:
 # Run the visual comparison. Emits output/report.html, output/report.json, and
 # standalone images under output/images/ (the HTML and JSON both reference them).
 # Requires iqa-cli on PATH for quality metrics — run `just install-iqa` once first.
-compare: build-compare
+# The harnesses are now binding-backed, so stage each language's native lib
+# first (the C + JVM harnesses self-build inside the comparison tool).
+compare: build-compare go-cbuild swift-cbuild ts-cbuild python-cbuild csharp-cbuild
     mise exec -- pnpm --prefix tools/comparison run compare
 
 # ─── Benchmark ──────────────────────────────────────────────────────────────
 
 # Build benchmark harnesses (release mode), incl. both ThumbHash baselines (native Rust + JS)
-build-benchmark:
+build-benchmark: go-cbuild swift-cbuild ts-cbuild python-cbuild csharp-cbuild
     cargo build --manifest-path rust/Cargo.toml --release --example encode_stdin
     mise exec node@24 -- pnpm --prefix typescript run build
-    cd go && go build -o encode-stdin ./cmd/encode-stdin
-    mise exec java@21 gradle@9.4.0 -- sh -c 'cd kotlin && ./gradlew installDist -q'
+    cd go && CGO_ENABLED=1 go build -o encode-stdin ./cmd/encode-stdin
+    mise exec java@21 gradle@9.4.0 -- sh -c 'cd bindings/uniffi/jvm && ./gradlew installDist -q'
     cd swift && mise exec swift@6.2.4 -- swift build -c release
     mise exec dotnet@9 -- dotnet build csharp/src/Chromahash.Cli -c Release --verbosity quiet
     cargo build --manifest-path tools/thumbhash-rs/Cargo.toml --release
@@ -107,27 +109,27 @@ benchmark: build-benchmark
 # since each benchmark wants the whole machine.
 
 # Run every BatchEncoder throughput benchmark (serial vs. batch + scaling sweep)
-bench-batch: bench-batch-rust bench-batch-go bench-batch-swift bench-batch-kotlin bench-batch-csharp bench-batch-python bench-batch-ts
+bench-batch: bench-batch-rust bench-batch-go bench-batch-swift bench-batch-jvm bench-batch-csharp bench-batch-python bench-batch-ts
 
 bench-batch-rust:
     cargo run --manifest-path rust/Cargo.toml --release --example batch_bench
 
-bench-batch-ts:
+bench-batch-ts: ts-cbuild
     mise exec node@24 -- pnpm --prefix typescript run bench
 
-bench-batch-kotlin:
-    mise exec java@21 gradle@9.4.0 -- sh -c 'cd kotlin && ./gradlew bench -q'
+bench-batch-jvm:
+    mise exec java@21 gradle@9.4.0 -- sh -c 'cd bindings/uniffi/jvm && ./gradlew bench -q'
 
-bench-batch-swift:
+bench-batch-swift: swift-cbuild
     cd swift && mise exec swift@6.2.4 -- swift run -c release ChromaHashBatchBench
 
-bench-batch-go:
-    cd go && go test -bench=Encode -benchmem -run='^$' ./...
+bench-batch-go: go-cbuild
+    cd go && CGO_ENABLED=1 go test -bench=Encode -benchmem -run='^$' ./...
 
-bench-batch-python:
+bench-batch-python: python-cbuild
     cd python && uv run python benchmarks/batch_bench.py
 
-bench-batch-csharp:
+bench-batch-csharp: csharp-cbuild
     mise exec dotnet@9 -- dotnet run -c Release --project csharp/benchmarks/Chromahash.Bench
 
 # ─── Rust ────────────────────────────────────────────────────────────────────
@@ -153,40 +155,110 @@ test-rust:
 build-rust:
     cargo build --manifest-path rust/Cargo.toml
 
+# ─── C binding (chromahash-c) ─────────────────────────────────────────────────
+# Hand-written extern "C" surface + cbindgen header. The header is regenerated on
+# every build (build.rs) into bindings/c/include/chromahash.h (a committed artifact).
+
+format-c:
+    cargo fmt --manifest-path bindings/c/Cargo.toml
+
+format-fix-c: format-c
+
+format-check-c:
+    cargo fmt --manifest-path bindings/c/Cargo.toml --check
+
+lint-c:
+    cargo clippy --manifest-path bindings/c/Cargo.toml -- -D warnings
+
+lint-fix-c:
+    cargo clippy --manifest-path bindings/c/Cargo.toml --fix --allow-staged --allow-dirty
+    cargo clippy --manifest-path bindings/c/Cargo.toml -- -D warnings
+
+# Build the staticlib + cdylib (also regenerates include/chromahash.h via build.rs)
+build-c:
+    cargo build --manifest-path bindings/c/Cargo.toml
+
+# Explicit alias: regenerate include/chromahash.h (build.rs runs cbindgen on build)
+gen-c-header: build-c
+
+# Compile + link + run the C example against the freshly built cdylib (proves linkage)
+test-c-example: build-c
+    #!/usr/bin/env bash
+    set -euo pipefail
+    lib="bindings/c/target/debug"
+    out="$(mktemp -d)/roundtrip"
+    cc bindings/c/examples/roundtrip.c -I bindings/c/include -L "$lib" -lchromahash_c -o "$out"
+    case "$(uname)" in
+      Darwin) DYLD_LIBRARY_PATH="$lib" "$out" ;;
+      *)      LD_LIBRARY_PATH="$lib" "$out" ;;
+    esac
+
+# Runs the spec vectors through the C ABI (the parity gate) + the C linkage smoke test
+test-c: build-c test-c-example
+    cargo test --manifest-path bindings/c/Cargo.toml
+
+# ─── WASM binding (chromahash-wasm) ───────────────────────────────────────────
+# wasm-bindgen wrapper for the TypeScript web package. Built with wasm-pack
+# (mise-managed). clippy/build target the wasm32-unknown-unknown triple.
+
+format-wasm:
+    cargo fmt --manifest-path bindings/wasm/Cargo.toml
+
+format-fix-wasm: format-wasm
+
+format-check-wasm:
+    cargo fmt --manifest-path bindings/wasm/Cargo.toml --check
+
+lint-wasm:
+    cargo clippy --manifest-path bindings/wasm/Cargo.toml --target wasm32-unknown-unknown -- -D warnings
+
+lint-fix-wasm:
+    cargo clippy --manifest-path bindings/wasm/Cargo.toml --target wasm32-unknown-unknown --fix --allow-staged --allow-dirty
+    cargo clippy --manifest-path bindings/wasm/Cargo.toml --target wasm32-unknown-unknown -- -D warnings
+
+# Build the web + nodejs packages (.wasm + JS glue + .d.ts) under bindings/wasm/pkg*
+build-wasm:
+    mise exec -- wasm-pack build --target web bindings/wasm --out-dir pkg
+    mise exec -- wasm-pack build --target nodejs bindings/wasm --out-dir pkg-node
+
+# Runs the spec vectors through the wasm-bindgen surface, compiled to wasm + run in Node
+test-wasm:
+    mise exec node@24 -- wasm-pack test --node bindings/wasm
+
 # ─── Android binding (chromahash-uniffi) ──────────────────────────────────────
 # Host-only recipes (no Android NDK/SDK required) — wired into the aggregates so
 # the lefthook gates stay green. The AAR build (`build-android-aar`) needs the NDK
 # + SDK and is intentionally kept OUT of the aggregates.
 
 format-android:
-    cargo fmt --manifest-path bindings/android/Cargo.toml
+    cargo fmt --manifest-path bindings/uniffi/Cargo.toml
 
 format-fix-android: format-android
 
 format-check-android:
-    cargo fmt --manifest-path bindings/android/Cargo.toml --check
+    cargo fmt --manifest-path bindings/uniffi/Cargo.toml --check
 
 lint-android:
-    cargo clippy --manifest-path bindings/android/Cargo.toml -- -D warnings
+    cargo clippy --manifest-path bindings/uniffi/Cargo.toml -- -D warnings
 
 lint-fix-android:
-    cargo clippy --manifest-path bindings/android/Cargo.toml --fix --allow-staged --allow-dirty
-    cargo clippy --manifest-path bindings/android/Cargo.toml -- -D warnings
+    cargo clippy --manifest-path bindings/uniffi/Cargo.toml --fix --allow-staged --allow-dirty
+    cargo clippy --manifest-path bindings/uniffi/Cargo.toml -- -D warnings
 
 # Runs the spec test vectors through the binding (the enforced correctness gate)
 test-android:
-    cargo test --manifest-path bindings/android/Cargo.toml
+    cargo test --manifest-path bindings/uniffi/Cargo.toml
 
 # Host build of the binding crate (lib + cdylib + bindgen bin); no cross-compile
 build-android-crate:
-    cargo build --manifest-path bindings/android/Cargo.toml
+    cargo build --manifest-path bindings/uniffi/Cargo.toml
 
 # Cross-compile every ABI + generate Kotlin + assemble the AAR.
 # Requires the Android NDK (ANDROID_NDK_HOME / ANDROID_NDK_LATEST_HOME) + SDK and
 # the android rustup targets. cargo-ndk is mise-managed (`cargo:cargo-ndk`).
 # Not part of `just build`.
 build-android-aar:
-    mise exec java@21 gradle@9.4.0 -- sh -c 'cd bindings/android/android && ./gradlew assembleRelease'
+    mise exec java@21 gradle@9.4.0 -- sh -c 'cd bindings/uniffi/android && ./gradlew assembleRelease'
 
 # ─── Android publishing bootstrap (issue #17) ─────────────────────────────────
 # One-time helpers for Maven Central. Full walkthrough in RELEASING.md →
@@ -249,6 +321,12 @@ android-set-secrets:
     echo "Now delete the local key files: rm signing-key.asc signing-password.txt"
 
 # ─── TypeScript ──────────────────────────────────────────────────────────────
+# The package wraps the wasm-pack glue (full encode+decode path) plus a synced
+# pure-TS decode-only module. `ts-cbuild` stages the glue into typescript/wasm/
+# (gitignored build output); tsc + the test runner consume it from there.
+
+ts-cbuild:
+    mise exec -- wasm-pack build --target web bindings/wasm --out-dir ../../typescript/wasm
 
 format-ts:
     mise exec node@24 -- pnpm --prefix typescript run format
@@ -264,32 +342,37 @@ lint-ts:
 lint-fix-ts:
     mise exec node@24 -- pnpm --prefix typescript run lint:fix
 
-test-ts:
+test-ts: ts-cbuild
     mise exec node@24 -- pnpm --prefix typescript run test
 
-build-ts:
+build-ts: ts-cbuild
     mise exec node@24 -- pnpm --prefix typescript run build
 
-# ─── Kotlin ──────────────────────────────────────────────────────────────────
+# ─── JVM binding (chromahash-jvm) ─────────────────────────────────────────────
+# Desktop/server JAR over the shared chromahash-uniffi crate. format/lint run
+# ktlint on the hand-written Kotlin (CLI + tests); the generated bindings under
+# build/ are excluded. test/build run the full pipeline (cargo cdylib +
+# uniffi-bindgen + JNA-bundled native lib), so they need the Rust toolchain.
 
-format-kotlin:
-    mise exec java@21 gradle@9.4.0 -- sh -c 'cd kotlin && ./gradlew ktlintFormat'
+format-jvm:
+    mise exec java@21 gradle@9.4.0 -- sh -c 'cd bindings/uniffi/jvm && ./gradlew ktlintFormat'
 
-format-fix-kotlin: format-kotlin
+format-fix-jvm: format-jvm
 
-format-check-kotlin:
-    mise exec java@21 gradle@9.4.0 -- sh -c 'cd kotlin && ./gradlew ktlintCheck'
+format-check-jvm:
+    mise exec java@21 gradle@9.4.0 -- sh -c 'cd bindings/uniffi/jvm && ./gradlew ktlintCheck'
 
-lint-kotlin:
-    mise exec java@21 gradle@9.4.0 -- sh -c 'cd kotlin && ./gradlew ktlintCheck'
+lint-jvm:
+    mise exec java@21 gradle@9.4.0 -- sh -c 'cd bindings/uniffi/jvm && ./gradlew ktlintCheck'
 
-lint-fix-kotlin: format-kotlin
+lint-fix-jvm: format-jvm
 
-test-kotlin:
-    mise exec java@21 gradle@9.4.0 -- sh -c 'cd kotlin && ./gradlew test'
+# Runs the spec test vectors through the binding (the enforced correctness gate)
+test-jvm:
+    mise exec java@21 gradle@9.4.0 -- sh -c 'cd bindings/uniffi/jvm && ./gradlew test'
 
-build-kotlin:
-    mise exec java@21 gradle@9.4.0 -- sh -c 'cd kotlin && ./gradlew build'
+build-jvm:
+    mise exec java@21 gradle@9.4.0 -- sh -c 'cd bindings/uniffi/jvm && ./gradlew build'
 
 # ─── Swift ───────────────────────────────────────────────────────────────────
 
@@ -305,10 +388,33 @@ lint-swift: format-check-swift
 
 lint-fix-swift: format-swift
 
-test-swift:
-    cd swift && mise exec swift@6.2.4 -- swift test
+# Build the UniFFI static lib, generate Swift bindings, and assemble the
+# ChromaHashFFI.xcframework the Swift package consumes. macOS-only (xcframework).
+swift-cbuild:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build --release --manifest-path bindings/uniffi/Cargo.toml
+    gen="$(mktemp -d)"
+    ( cd bindings/uniffi && cargo run --release --quiet --bin uniffi-bindgen -- \
+        generate --library target/release/libchromahash_uniffi.dylib \
+        --language swift --out-dir "$gen" )
+    mkdir -p swift/Sources/ChromaHashBindings
+    cp "$gen/chromahash_uniffi.swift" swift/Sources/ChromaHashBindings/
+    hdr="$(mktemp -d)"
+    cp "$gen/chromahash_uniffiFFI.h" "$hdr/"
+    cp "$gen/chromahash_uniffiFFI.modulemap" "$hdr/module.modulemap"
+    rm -rf swift/ChromaHashFFI.xcframework
+    xcodebuild -create-xcframework \
+        -library bindings/uniffi/target/release/libchromahash_uniffi.a \
+        -headers "$hdr" -output swift/ChromaHashFFI.xcframework
 
-build-swift:
+# Run the Swift spec-vector tests. --no-parallel: the blocking OperationQueue in
+# BatchEncoder deadlocks Swift Testing's parallel pool on low-core machines (see
+# ci-swift.yml); the suite runs in ~0.05s, so serial costs nothing.
+test-swift: swift-cbuild
+    cd swift && mise exec swift@6.2.4 -- swift test --no-parallel
+
+build-swift: swift-cbuild
     cd swift && mise exec swift@6.2.4 -- swift build
 
 # ─── Go ──────────────────────────────────────────────────────────────────────
@@ -321,16 +427,25 @@ format-fix-go: format-go
 format-check-go:
     cd go && test -z "$(gofmt -l .)"
 
-lint-go:
-    cd go && go vet ./...
+# Build the chromahash-c static library + header and stage them for the cgo build
+# (go/lib, go/include — both gitignored). The Go package is a cgo wrapper, so a
+# bare `go build`/`go test` requires these to be present first.
+go-cbuild:
+    cargo build --manifest-path bindings/c/Cargo.toml --release
+    mkdir -p go/lib go/include
+    cp bindings/c/target/release/libchromahash_c.a go/lib/
+    cp bindings/c/include/chromahash.h go/include/
+
+lint-go: go-cbuild
+    cd go && CGO_ENABLED=1 go vet ./...
 
 lint-fix-go: lint-go
 
-test-go:
-    cd go && go test ./... -v
+test-go: go-cbuild
+    cd go && CGO_ENABLED=1 go test ./... -v
 
-build-go:
-    cd go && go build ./...
+build-go: go-cbuild
+    cd go && CGO_ENABLED=1 go build ./...
 
 # ─── Python ──────────────────────────────────────────────────────────────────
 
@@ -348,10 +463,26 @@ lint-python:
 lint-fix-python:
     cd python && uv run ruff check --fix .
 
-test-python:
+# Build the UniFFI static lib, generate the ctypes bindings, and stage them + the
+# native lib into the package (chromahash/_uniffi.py + libchromahash_uniffi.*).
+python-cbuild:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "$(uname)" in
+      Darwin) lib=libchromahash_uniffi.dylib ;;
+      *)      lib=libchromahash_uniffi.so ;;
+    esac
+    cargo build --release --manifest-path bindings/uniffi/Cargo.toml
+    gen="$(mktemp -d)"
+    ( cd bindings/uniffi && cargo run --release --quiet --bin uniffi-bindgen -- \
+        generate --library "target/release/$lib" --language python --out-dir "$gen" )
+    cp "$gen/chromahash_uniffi.py" python/chromahash/_uniffi.py
+    cp "bindings/uniffi/target/release/$lib" python/chromahash/
+
+test-python: python-cbuild
     cd python && uv run pytest tests/ -v
 
-build-python:
+build-python: python-cbuild
     cd python && uv build
 
 # ─── C# ──────────────────────────────────────────────────────────────────────
@@ -364,15 +495,20 @@ format-fix-csharp: format-csharp
 format-check-csharp:
     mise exec dotnet@9 -- dotnet format csharp/Chromahash.sln --verify-no-changes --verbosity quiet
 
+# Build the chromahash-c cdylib (release); the lib csproj copies it next to the
+# managed assembly so P/Invoke resolves it at runtime.
+csharp-cbuild:
+    cargo build --manifest-path bindings/c/Cargo.toml --release
+
 lint-csharp:
     mise exec dotnet@9 -- dotnet build csharp/Chromahash.sln -warnaserror --verbosity quiet
 
 lint-fix-csharp: lint-csharp
 
-test-csharp:
+test-csharp: csharp-cbuild
     mise exec dotnet@9 -- dotnet test csharp/Chromahash.sln --verbosity quiet
 
-build-csharp:
+build-csharp: csharp-cbuild
     mise exec dotnet@9 -- dotnet build csharp/Chromahash.sln --verbosity quiet
 
 # ─── Changelog / Release ─────────────────────────────────────────────────────

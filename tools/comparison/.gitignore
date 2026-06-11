@@ -1,0 +1,13 @@
+# Node
+node_modules/
+dist/
+.env
+.env.local
+.env.*.local
+npm-debug.log*
+pnpm-debug.log*
+
+# Generated report + downloaded comparison fixtures.
+output/
+fixtures/synthetic/
+fixtures/natural/

@@ -23,8 +23,8 @@ hook and in CI by the `ci-commits` workflow (both use [convco](https://convco.gi
 Types that appear in the changelog: `feat` → **Added**, `perf`/`refactor` →
 **Changed**, `fix` → **Fixed**, `docs` → **Documentation**. `chore`, `ci`, `build`,
 `test`, and `style` are intentionally excluded. Scopes are language/area names:
-`rust`, `ts`, `kotlin`, `swift`, `go`, `py`, `csharp`, `android`, `spec`, `tools`,
-`comparison`.
+`rust`, `c`, `ts`, `wasm`, `jvm`, `swift`, `go`, `py`, `csharp`, `android`, `uniffi`,
+`spec`, `tools`, `comparison`.
 
 ## Keeping the changelog current
 
@@ -67,12 +67,14 @@ manually add any `Removed` entries.
    | File | |
    | ---- | --- |
    | `rust/Cargo.toml` | `version = "X.Y.Z"` |
+   | `bindings/c/Cargo.toml` | `version = "X.Y.Z"` |
+   | `bindings/wasm/Cargo.toml` | `version = "X.Y.Z"` |
    | `typescript/package.json` | `"version": "X.Y.Z"` |
-   | `kotlin/build.gradle.kts` | `version = "X.Y.Z"` |
    | `python/pyproject.toml` | `version = "X.Y.Z"` |
    | `csharp/src/Chromahash/Chromahash.csproj` | `<Version>X.Y.Z</Version>` |
-   | `bindings/android/Cargo.toml` | `version = "X.Y.Z"` |
-   | `bindings/android/android/build.gradle.kts` | `version = "X.Y.Z"` |
+   | `bindings/uniffi/Cargo.toml` | `version = "X.Y.Z"` |
+   | `bindings/uniffi/jvm/build.gradle.kts` | `version = "X.Y.Z"` |
+   | `bindings/uniffi/android/build.gradle.kts` | `version = "X.Y.Z"` |
    | `tools/benchmark/pyproject.toml` | `version = "X.Y.Z"` |
    | `tools/comparison/package.json` | `"version": "X.Y.Z"` |
 
@@ -127,7 +129,7 @@ The coordinate is `io.github.justin13888:chromahash-android:X.Y.Z`. The `io.gith
 namespace is GitHub-verified on Sonatype Central (no domain needed); the Kotlin package stays
 `io.chromahash.ffi` and is independent of the Maven group. Publishing uses the
 [vanniktech maven-publish](https://vanniktech.github.io/gradle-maven-publish-plugin/) plugin
-(see `bindings/android/android/build.gradle.kts`).
+(see `bindings/uniffi/android/build.gradle.kts`).
 
 The workflow is idempotent against Maven Central: a version already on `repo1.maven.org` is
 skipped, so re-pushing a tag is safe. **Caveat:** Central propagation to `repo1`/search lags the
@@ -160,7 +162,7 @@ automate everything except the two browser steps):
    Portal before releasing, instead of relying on the workflow's auto-release:
 
    ```bash
-   cd bindings/android/android
+   cd bindings/uniffi/android
    ORG_GRADLE_PROJECT_mavenCentralUsername=<tokenUser> \
    ORG_GRADLE_PROJECT_mavenCentralPassword=<tokenPass> \
    ORG_GRADLE_PROJECT_signingInMemoryKey="$(cat ../../../signing-key.asc)" \

@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+*.egg-info/
+dist/
+.pytest_cache/
+.ruff_cache/
+
+# Generated UniFFI bindings + native lib staged by `just python-cbuild`.
+chromahash/_uniffi.py
+chromahash/libchromahash_uniffi.*

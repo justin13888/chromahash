@@ -146,6 +146,7 @@ export const FORMAT_NAMES = [
 /** Canonical language order, shared by the HTML report and the JSON output. */
 export const LANGUAGES = [
   "Rust",
+  "C",
   "TypeScript",
   "Kotlin",
   "Swift",

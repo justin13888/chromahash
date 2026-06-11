@@ -1,0 +1,47 @@
+name: CI (JVM)
+
+on:
+  push:
+    branches: [master]
+    paths: ["bindings/uniffi/**", "rust/**", ".github/workflows/ci-jvm.yml"]
+  pull_request:
+    paths: ["bindings/uniffi/**", "rust/**", ".github/workflows/ci-jvm.yml"]
+
+jobs:
+  ci:
+    # The desktop/server JAR wraps the chromahash-uniffi crate over JNA. The
+    # Gradle build cross-calls cargo to produce the host cdylib + generate the
+    # Kotlin bindings, so a Rust toolchain is required alongside the JDK.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: bindings/uniffi/jvm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            bindings/uniffi/target
+          key: ${{ runner.os }}-cargo-jvm-${{ hashFiles('bindings/uniffi/Cargo.toml') }}
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Lint (ktlint)
+        run: ./gradlew ktlintCheck
+
+      - name: Test (spec vectors through the binding)
+        run: ./gradlew test

@@ -5,6 +5,9 @@ import { rgbaToDataUri } from "./image-loader.ts";
 
 const ROOT = path.resolve(import.meta.dirname, "../../..");
 const RUST_CLI = path.join(ROOT, "rust/target/debug/examples/encode_stdin");
+// The C harness links the chromahash-c cdylib, which must be on the loader path.
+const C_LIB_DIR = path.join(ROOT, "bindings/c/target/debug");
+const C_HARNESS = path.join(ROOT, "bindings/c/target/encode_stdin");
 
 function decodeViaRust(hash: Uint8Array): {
   w: number;
@@ -30,6 +33,7 @@ interface HarnessConfig {
   command: string;
   args: string[];
   cwd: string;
+  env?: Record<string, string>;
 }
 
 function getHarnesses(): HarnessConfig[] {
@@ -41,6 +45,14 @@ function getHarnesses(): HarnessConfig[] {
       cwd: ROOT,
     },
     {
+      language: "C",
+      command: C_HARNESS,
+      args: [],
+      cwd: ROOT,
+      // macOS reads DYLD_LIBRARY_PATH, Linux LD_LIBRARY_PATH; set both.
+      env: { DYLD_LIBRARY_PATH: C_LIB_DIR, LD_LIBRARY_PATH: C_LIB_DIR },
+    },
+    {
       language: "TypeScript",
       command: "node",
       args: [path.join(ROOT, "typescript/dist/encode-stdin.js")],
@@ -50,10 +62,10 @@ function getHarnesses(): HarnessConfig[] {
       language: "Kotlin",
       command: path.join(
         ROOT,
-        "kotlin/build/install/chromahash/bin/chromahash",
+        "bindings/uniffi/jvm/build/install/chromahash-jvm/bin/chromahash-jvm",
       ),
       args: [],
-      cwd: path.join(ROOT, "kotlin"),
+      cwd: path.join(ROOT, "bindings/uniffi/jvm"),
     },
     {
       language: "Swift",
@@ -120,10 +132,35 @@ export function buildHarnesses(): void {
       cwd: ROOT,
     },
     {
+      label: "C (lib)",
+      command: "cargo",
+      args: [
+        "build",
+        "--manifest-path",
+        path.join(ROOT, "bindings/c/Cargo.toml"),
+      ],
+      cwd: ROOT,
+    },
+    {
+      label: "C (harness)",
+      command: "cc",
+      args: [
+        path.join(ROOT, "bindings/c/examples/encode_stdin.c"),
+        "-I",
+        path.join(ROOT, "bindings/c/include"),
+        "-L",
+        C_LIB_DIR,
+        "-lchromahash_c",
+        "-o",
+        C_HARNESS,
+      ],
+      cwd: ROOT,
+    },
+    {
       label: "Kotlin",
-      command: path.join(ROOT, "kotlin/gradlew"),
-      args: ["-p", path.join(ROOT, "kotlin"), "installDist", "-q"],
-      cwd: path.join(ROOT, "kotlin"),
+      command: path.join(ROOT, "bindings/uniffi/jvm/gradlew"),
+      args: ["-p", path.join(ROOT, "bindings/uniffi/jvm"), "installDist", "-q"],
+      cwd: path.join(ROOT, "bindings/uniffi/jvm"),
     },
     {
       label: "Go",
@@ -183,6 +220,7 @@ function runHarness(
         encoding: "buffer",
         maxBuffer: 1024 * 1024,
         timeout: 30_000,
+        env: config.env ? { ...process.env, ...config.env } : process.env,
       },
       (error, stdout, stderr) => {
         if (error) {
@@ -209,7 +247,7 @@ function runHarness(
 }
 
 /**
- * Run all 7 language harnesses for a given image and compare hashes.
+ * Run all language harnesses for a given image and compare hashes.
  * The Rust implementation is used as the reference.
  */
 export async function runAllHarnesses(

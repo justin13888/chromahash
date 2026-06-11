@@ -31,6 +31,28 @@ jobs:
             typescript/pnpm-lock.yaml
             tools/comparison/pnpm-lock.yaml
 
+      # The TS package wraps the wasm-pack glue (full encode+decode), so the WASM
+      # build must be staged into typescript/wasm/ before tsc can consume it.
+      - name: Install Rust toolchain + wasm target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: command -v wasm-pack >/dev/null 2>&1 || cargo install wasm-pack --locked
+
+      - name: Cache Cargo (wasm)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            bindings/wasm/target
+          key: ${{ runner.os }}-cargo-wasm-${{ hashFiles('bindings/wasm/Cargo.toml') }}
+
+      - name: Build WASM glue (staged into typescript/wasm/)
+        run: wasm-pack build --target web bindings/wasm --out-dir ../../typescript/wasm
+
       # Build the TypeScript library dependency first
       - name: Install TypeScript lib dependencies
         run: pnpm --prefix typescript install --frozen-lockfile
@@ -51,8 +73,8 @@ jobs:
       - name: Build
         run: pnpm --prefix tools/comparison run build
 
-      # Build CLI harnesses (verify they compile)
-      - uses: dtolnay/rust-toolchain@stable
+      # Build CLI harnesses (verify they compile) — the Rust toolchain is already
+      # installed above for the WASM glue build.
 
       # Cache the installed iqa-cli binary so the vendored C++ (ssimulacra2 /
       # butteraugli / libjxl) isn't rebuilt on every run. Keyed by version.
@@ -73,9 +95,20 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.24"
-          cache-dependency-path: go/go.sum
+          cache-dependency-path: go/go.mod
+
+      # The Go harness is a cgo wrapper over chromahash-c, so stage the static
+      # lib + header into go/lib + go/include before building (see ci-go.yml).
+      - name: Build + stage the chromahash-c static library
+        run: |
+          cargo build --manifest-path bindings/c/Cargo.toml --release
+          mkdir -p go/lib go/include
+          cp bindings/c/target/release/libchromahash_c.a go/lib/
+          cp bindings/c/include/chromahash.h go/include/
 
       - name: Build Go harness
+        env:
+          CGO_ENABLED: "1"
         run: cd go && go build ./cmd/encode-stdin
 
       - uses: actions/setup-python@v5

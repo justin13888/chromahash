@@ -1,0 +1,50 @@
+name: CI (WASM)
+
+on:
+  push:
+    branches: [master]
+    paths: ["bindings/wasm/**", "rust/**", ".github/workflows/ci-wasm.yml"]
+  pull_request:
+    paths: ["bindings/wasm/**", "rust/**", ".github/workflows/ci-wasm.yml"]
+
+jobs:
+  # Format, lint (wasm32 target), run the spec vectors through the wasm-bindgen
+  # surface in Node, and verify the wasm-pack web package builds.
+  check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: bindings/wasm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain + wasm target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: command -v wasm-pack >/dev/null 2>&1 || cargo install wasm-pack --locked
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            bindings/wasm/target
+          # Cargo.lock is gitignored repo-wide, so key off the manifest.
+          key: ${{ runner.os }}-cargo-wasm-${{ hashFiles('bindings/wasm/Cargo.toml') }}
+
+      - name: Format check
+        run: cargo fmt --check
+
+      - name: Lint
+        run: cargo clippy --target wasm32-unknown-unknown -- -D warnings
+
+      - name: Test (spec vectors through wasm, in Node)
+        run: wasm-pack test --node .
+
+      - name: Build web package
+        run: wasm-pack build --target web . --out-dir pkg

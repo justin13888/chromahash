@@ -1,0 +1,6 @@
+# Build output (the cgo encode-stdin harness binary).
+/encode-stdin
+
+# cgo build inputs staged from chromahash-c by `just go-cbuild`.
+lib/
+include/

@@ -49,18 +49,18 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            bindings/android/target
+            bindings/uniffi/target
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: ${{ runner.os }}-release-android-${{ hashFiles('bindings/android/Cargo.toml', 'bindings/android/android/**/*.gradle*') }}
+          key: ${{ runner.os }}-release-android-${{ hashFiles('bindings/uniffi/Cargo.toml', 'bindings/uniffi/android/**/*.gradle*') }}
 
       - name: Verify tag matches build.gradle.kts version
         run: |
           tag="${GITHUB_REF_NAME#v}"
-          gradle_ver="$(grep -oE '^version = "[^"]+"' bindings/android/android/build.gradle.kts \
+          gradle_ver="$(grep -oE '^version = "[^"]+"' bindings/uniffi/android/build.gradle.kts \
             | head -1 | sed -E 's/version = "(.*)"/\1/')"
           if [ "$tag" != "$gradle_ver" ]; then
-            echo "Tag v$tag does not match bindings/android/android/build.gradle.kts version $gradle_ver" >&2
+            echo "Tag v$tag does not match bindings/uniffi/android/build.gradle.kts version $gradle_ver" >&2
             exit 1
           fi
 
@@ -83,7 +83,7 @@ jobs:
       # vanniktech reads credentials/signing from ORG_GRADLE_PROJECT_* env vars.
       - name: Publish to Maven Central + GitHub Packages
         if: steps.check.outputs.published == 'false'
-        working-directory: bindings/android/android
+        working-directory: bindings/uniffi/android
         env:
           ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
           ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}

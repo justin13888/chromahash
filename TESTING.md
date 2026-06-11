@@ -12,7 +12,7 @@ See [README.md](README.md) for setup and prerequisites (mise, lefthook, per-lang
 just test
 ```
 
-This runs all seven language test suites sequentially: Rust, TypeScript, Kotlin, Swift, Go, Python, C#. If this passes, the implementations agree on all golden test vectors.
+This runs every language's test suite sequentially: the Rust core, the C/WASM/UniFFI bindings, and the TypeScript, JVM (Java/Kotlin), Swift, Go, Python, and C# bindings over them. If this passes, every language agrees on all golden test vectors.
 
 ---
 
@@ -256,7 +256,7 @@ Encode→decode round-trips do not recover the exact original pixels (lossy form
 |-------|---------------|
 | Encode determinism | Same input → same 32 bytes, across multiple calls |
 | Decode determinism | Same hash → same pixel array, across multiple calls |
-| Cross-implementation | Rust hash == TypeScript hash == Kotlin hash == Swift hash == Go hash == Python hash == C# hash for the same input |
+| Cross-implementation | Rust hash == C == TypeScript == JVM == Swift == Go == Python == C# hash for the same input |
 | Decode output dimensions | Decoder output w/h are derived from aspect byte, not stored exactly — verify they match the spec formula |
 
 ### Current Coverage Gaps
@@ -328,12 +328,15 @@ Each language has an independent CI workflow triggered only when its directory c
 | Workflow | Trigger path | Steps |
 |----------|-------------|-------|
 | `ci-rust.yml` | `rust/**` | fmt check, clippy, test |
-| `ci-typescript.yml` | `typescript/**` | fmt check, lint, build, test |
-| `ci-kotlin.yml` | `kotlin/**` | ktlint check, test, build |
-| `ci-swift.yml` | `swift/**` | build, test |
-| `ci-go.yml` | `go/**` | fmt check, vet, test |
-| `ci-python.yml` | `python/**` | fmt check, lint, test |
-| `ci-csharp.yml` | `csharp/**` | fmt check, build (lint), test |
+| `ci-c.yml` | `bindings/c/**`, `rust/**` | fmt check, clippy, header drift, test, C example |
+| `ci-wasm.yml` | `bindings/wasm/**`, `rust/**` | fmt check, clippy, test (wasm in Node) |
+| `ci-typescript.yml` | `typescript/**`, `bindings/wasm/**`, `rust/**` | build WASM, fmt check, lint, build, test |
+| `ci-jvm.yml` | `bindings/uniffi/**`, `rust/**` | ktlint check, test (spec vectors through the binding) |
+| `ci-swift.yml` | `swift/**`, `bindings/uniffi/**`, `rust/**` | build, test |
+| `ci-go.yml` | `go/**`, `bindings/c/**`, `rust/**` | fmt check, vet, test |
+| `ci-python.yml` | `python/**`, `bindings/uniffi/**`, `rust/**` | fmt check, lint, test |
+| `ci-csharp.yml` | `csharp/**`, `bindings/c/**`, `rust/**` | fmt check, build (lint), test |
+| `ci-android.yml` | `bindings/uniffi/**` | spec-vector test; AAR cross-compile + assemble |
 
 CI mirrors the local `just` commands. If local checks pass, CI should pass.
 

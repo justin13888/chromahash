@@ -1,7 +1,16 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { describe, it } from "node:test";
-import { BatchEncoder, ChromaHash } from "./index.ts";
+import { fileURLToPath } from "node:url";
+import { BatchEncoder, ChromaHash, init } from "./index.ts";
 import type { Gamut, ImageInput } from "./index.ts";
+
+const wasmPath = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../wasm/chromahash_wasm_bg.wasm",
+);
+await init(readFileSync(wasmPath));
 
 function solidImage(
   w: number,

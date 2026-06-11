@@ -3,9 +3,9 @@ name: CI (Android)
 on:
   push:
     branches: [master]
-    paths: ["bindings/android/**", ".github/workflows/ci-android.yml"]
+    paths: ["bindings/uniffi/**", ".github/workflows/ci-android.yml"]
   pull_request:
-    paths: ["bindings/android/**", ".github/workflows/ci-android.yml"]
+    paths: ["bindings/uniffi/**", ".github/workflows/ci-android.yml"]
 
 jobs:
   # Enforced correctness gate — runs the spec vectors through the binding.
@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: bindings/android
+        working-directory: bindings/uniffi
     steps:
       - uses: actions/checkout@v4
 
@@ -29,9 +29,9 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            bindings/android/target
+            bindings/uniffi/target
           # Cargo.lock is gitignored repo-wide, so key off the manifest.
-          key: ${{ runner.os }}-cargo-android-${{ hashFiles('bindings/android/Cargo.toml') }}
+          key: ${{ runner.os }}-cargo-android-${{ hashFiles('bindings/uniffi/Cargo.toml') }}
 
       - name: Format check
         run: cargo fmt --check
@@ -66,8 +66,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             ~/.cargo/bin/cargo-ndk
-            bindings/android/target
-          key: ${{ runner.os }}-cargo-androidaar-${{ hashFiles('bindings/android/Cargo.toml') }}
+            bindings/uniffi/target
+          key: ${{ runner.os }}-cargo-androidaar-${{ hashFiles('bindings/uniffi/Cargo.toml') }}
 
       - name: Install cargo-ndk
         run: command -v cargo-ndk >/dev/null 2>&1 || cargo install cargo-ndk --locked
@@ -78,12 +78,12 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('bindings/android/android/**/*.gradle*', 'bindings/android/android/**/gradle-wrapper.properties') }}
+          key: ${{ runner.os }}-gradle-${{ hashFiles('bindings/uniffi/android/**/*.gradle*', 'bindings/uniffi/android/**/gradle-wrapper.properties') }}
 
       # `assembleRelease`'s preBuild depends on the cargo-ndk + uniffi-bindgen tasks,
       # so this single step exercises the exact build path that ships.
       - name: Assemble AAR
-        working-directory: bindings/android/android
+        working-directory: bindings/uniffi/android
         run: |
           export ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-$ANDROID_NDK_LATEST_HOME}"
           echo "Using NDK at: $ANDROID_NDK_HOME"
@@ -93,5 +93,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: chromahash-android-aar
-          path: bindings/android/android/build/outputs/aar/*.aar
+          path: bindings/uniffi/android/build/outputs/aar/*.aar
           if-no-files-found: error

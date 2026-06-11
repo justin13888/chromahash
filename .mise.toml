@@ -9,6 +9,7 @@ dotnet = "9"
 "aqua:orhun/git-cliff" = "2.13.1"
 "cargo:convco" = "0.6.4"
 "cargo:cargo-ndk" = "4.1.2" # cross-compile the Android binding's cdylib per ABI
+"cargo:wasm-pack" = "0.15.0" # build the WASM binding (chromahash-wasm) for the web
 "aqua:cli/cli" = "2.93.0"   # gh — used by the Android publishing bootstrap recipes
 
 [settings]
