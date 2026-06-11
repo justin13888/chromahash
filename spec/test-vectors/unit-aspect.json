@@ -6,13 +6,7 @@
       "byte": 128,
       "decoded_ratio": 1.0109322217097114,
       "output_width": 32,
-      "output_height": 32,
-      "derive_grid": {
-        "base_n_7": [7, 7],
-        "base_n_6": [6, 6],
-        "base_n_4": [4, 4],
-        "base_n_3": [3, 3]
-      }
+      "output_height": 32
     }
   },
   {
@@ -22,13 +16,7 @@
       "byte": 146,
       "decoded_ratio": 1.4952556374111303,
       "output_width": 32,
-      "output_height": 21,
-      "derive_grid": {
-        "base_n_7": [9, 5],
-        "base_n_6": [7, 5],
-        "base_n_4": [5, 3],
-        "base_n_3": [4, 3]
-      }
+      "output_height": 21
     }
   },
   {
@@ -38,13 +26,7 @@
       "byte": 141,
       "decoded_ratio": 1.3412046701188132,
       "output_width": 32,
-      "output_height": 24,
-      "derive_grid": {
-        "base_n_7": [8, 6],
-        "base_n_6": [7, 5],
-        "base_n_4": [5, 3],
-        "base_n_3": [3, 3]
-      }
+      "output_height": 24
     }
   },
   {
@@ -54,13 +36,7 @@
       "byte": 154,
       "decoded_ratio": 1.7793774187020084,
       "output_width": 32,
-      "output_height": 18,
-      "derive_grid": {
-        "base_n_7": [9, 5],
-        "base_n_6": [8, 5],
-        "base_n_4": [5, 3],
-        "base_n_3": [4, 3]
-      }
+      "output_height": 18
     }
   },
   {
@@ -70,13 +46,7 @@
       "byte": 191,
       "decoded_ratio": 3.9783132090734914,
       "output_width": 32,
-      "output_height": 8,
-      "derive_grid": {
-        "base_n_7": [14, 4],
-        "base_n_6": [12, 3],
-        "base_n_4": [8, 3],
-        "base_n_3": [6, 3]
-      }
+      "output_height": 8
     }
   },
   {
@@ -86,13 +56,7 @@
       "byte": 64,
       "decoded_ratio": 0.2513628131941099,
       "output_width": 8,
-      "output_height": 32,
-      "derive_grid": {
-        "base_n_7": [4, 14],
-        "base_n_6": [3, 12],
-        "base_n_4": [3, 8],
-        "base_n_3": [3, 6]
-      }
+      "output_height": 32
     }
   },
   {
@@ -102,13 +66,7 @@
       "byte": 159,
       "decoded_ratio": 1.9837569728716709,
       "output_width": 32,
-      "output_height": 16,
-      "derive_grid": {
-        "base_n_7": [10, 5],
-        "base_n_6": [8, 5],
-        "base_n_4": [6, 3],
-        "base_n_3": [4, 3]
-      }
+      "output_height": 16
     }
   },
   {
@@ -118,13 +76,7 @@
       "byte": 96,
       "decoded_ratio": 0.5040940063098596,
       "output_width": 16,
-      "output_height": 32,
-      "derive_grid": {
-        "base_n_7": [5, 10],
-        "base_n_6": [5, 8],
-        "base_n_4": [3, 6],
-        "base_n_3": [3, 4]
-      }
+      "output_height": 32
     }
   },
   {
@@ -134,13 +86,7 @@
       "byte": 191,
       "decoded_ratio": 3.9783132090734914,
       "output_width": 32,
-      "output_height": 8,
-      "derive_grid": {
-        "base_n_7": [14, 4],
-        "base_n_6": [12, 3],
-        "base_n_4": [8, 3],
-        "base_n_3": [6, 3]
-      }
+      "output_height": 8
     }
   }
 ]
