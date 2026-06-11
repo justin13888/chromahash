@@ -95,9 +95,20 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.24"
-          cache-dependency-path: go/go.sum
+          cache-dependency-path: go/go.mod
+
+      # The Go harness is a cgo wrapper over chromahash-c, so stage the static
+      # lib + header into go/lib + go/include before building (see ci-go.yml).
+      - name: Build + stage the chromahash-c static library
+        run: |
+          cargo build --manifest-path bindings/c/Cargo.toml --release
+          mkdir -p go/lib go/include
+          cp bindings/c/target/release/libchromahash_c.a go/lib/
+          cp bindings/c/include/chromahash.h go/include/
 
       - name: Build Go harness
+        env:
+          CGO_ENABLED: "1"
         run: cd go && go build ./cmd/encode-stdin
 
       - uses: actions/setup-python@v5
