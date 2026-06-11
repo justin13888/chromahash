@@ -10,10 +10,20 @@
  * that honestly and mirrors the other languages' benchmarks.
  */
 
+import { readFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
+import { dirname, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
-import { BatchEncoder, ChromaHash } from "./index.ts";
+import { fileURLToPath } from "node:url";
+import { BatchEncoder, ChromaHash, init } from "./index.ts";
 import type { Gamut, ImageInput } from "./index.ts";
+
+// Node has no `fetch` of `file://`, so feed the WASM module its bytes directly.
+const wasmPath = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../wasm/chromahash_wasm_bg.wasm",
+);
+await init(readFileSync(wasmPath));
 
 const N = 500;
 const GAMUTS: Gamut[] = [

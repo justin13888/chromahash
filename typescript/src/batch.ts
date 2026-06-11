@@ -3,7 +3,7 @@
  */
 
 import { ChromaHash } from "./index.ts";
-import type { Gamut } from "./internals.ts";
+import type { Gamut } from "./index.ts";
 
 /** One image to encode in a batch. */
 export interface ImageInput {
@@ -21,9 +21,13 @@ export interface ImageInput {
  * Stateful batch encoder.
  *
  * Shares the API shape of the parallel-language implementations, but executes
- * serially: JavaScript is single-threaded, so the value here is API parity and
- * a single call site for bulk jobs. Output is identical to calling
+ * serially: WebAssembly cannot use the core's worker pool without
+ * `SharedArrayBuffer` + COOP/COEP, so the value here is API parity and a single
+ * call site for bulk jobs. Output is identical to calling
  * {@link ChromaHash.encode} on each image individually.
+ *
+ * Like {@link ChromaHash.encode}, this requires the WASM module to be ready —
+ * `await init()` once before encoding.
  */
 export class BatchEncoder {
   /**

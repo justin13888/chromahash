@@ -6,9 +6,24 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./decode": {
+      "types": "./dist/decode.d.ts",
+      "default": "./dist/decode.js"
+    },
+    "./wasm": {
+      "types": "./wasm/chromahash_wasm.d.ts",
+      "default": "./wasm/chromahash_wasm.js"
+    }
+  },
+  "files": ["dist", "wasm"],
   "scripts": {
     "build": "tsc",
-    "test": "node --test",
+    "test": "node --test \"src/**/*.test.ts\"",
     "bench": "node src/batch-bench.ts",
     "format": "biome format --write .",
     "format:check": "biome format .",

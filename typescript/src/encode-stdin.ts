@@ -1,6 +1,8 @@
-import { BatchEncoder, ChromaHash } from "./index.ts";
-import type { ImageInput } from "./index.ts";
-import type { Gamut } from "./internals.ts";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { BatchEncoder, ChromaHash, init } from "./index.ts";
+import type { Gamut, ImageInput } from "./index.ts";
 
 const gamutMap: Record<string, Gamut> = {
   srgb: "sRGB",
@@ -24,6 +26,11 @@ function readStdin(): Promise<Buffer> {
     process.stdin.on("end", () => resolve(Buffer.concat(chunks)));
   });
 }
+
+// Node has no `fetch` of `file://`, so feed the WASM module its bytes directly.
+const currentDir = dirname(fileURLToPath(import.meta.url));
+const wasmPath = resolve(currentDir, "../wasm/chromahash_wasm_bg.wasm");
+await init(readFileSync(wasmPath));
 
 const args = process.argv.slice(2);
 const subcommand = args[0];

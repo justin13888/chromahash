@@ -3,18 +3,40 @@ name: CI (TypeScript)
 on:
   push:
     branches: [master]
-    paths: ["typescript/**", ".github/workflows/ci-typescript.yml"]
+    paths:
+      ["typescript/**", "bindings/wasm/**", "rust/**", ".github/workflows/ci-typescript.yml"]
   pull_request:
-    paths: ["typescript/**", ".github/workflows/ci-typescript.yml"]
+    paths:
+      ["typescript/**", "bindings/wasm/**", "rust/**", ".github/workflows/ci-typescript.yml"]
 
 jobs:
   ci:
+    # The package wraps the wasm-pack glue (full encode+decode) plus a synced
+    # pure-TS decode-only module, so the WASM build must be staged into
+    # typescript/wasm/ before tsc + the test runner can consume it.
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: typescript
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain + wasm target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: command -v wasm-pack >/dev/null 2>&1 || cargo install wasm-pack --locked
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            bindings/wasm/target
+          key: ${{ runner.os }}-cargo-wasm-${{ hashFiles('bindings/wasm/Cargo.toml') }}
+
+      - name: Build WASM glue (staged into typescript/wasm/)
+        run: wasm-pack build --target web bindings/wasm --out-dir ../../typescript/wasm
 
       - uses: pnpm/action-setup@v4
         with:
@@ -27,16 +49,21 @@ jobs:
           cache-dependency-path: typescript/pnpm-lock.yaml
 
       - name: Install dependencies
+        working-directory: typescript
         run: pnpm install --frozen-lockfile
 
       - name: Format check
+        working-directory: typescript
         run: pnpm run format:check
 
       - name: Lint
+        working-directory: typescript
         run: pnpm run lint
 
       - name: Build
+        working-directory: typescript
         run: pnpm run build
 
       - name: Test
+        working-directory: typescript
         run: pnpm run test

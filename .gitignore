@@ -1,6 +1,8 @@
 # === Node ===
 node_modules/
 dist/
+# wasm-pack glue (.wasm + JS + .d.ts) staged into the TS package by `just ts-cbuild`.
+typescript/wasm/
 .pnp.*
 .yarn/*
 !.yarn/patches

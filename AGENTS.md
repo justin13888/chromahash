@@ -12,6 +12,7 @@ Language tooling is mostly managed by `mise` and common commands are run via `ju
 
 - All six implementations MUST produce identical output for the same input — the spec in `spec/` is the source of truth
 - Use strict TypeScript — no `any` types
+- TypeScript: the full encode+decode path is a thin facade over the `chromahash-wasm` (`wasm-bindgen`) build, which is **async**: `await init()` once before encoding/decoding (browsers fetch the co-located `.wasm`; Node passes the bytes). `just ts-cbuild` stages the wasm-pack glue into `typescript/wasm/` (gitignored build output, biome-ignored). The lone hand-maintained algorithm port is `typescript/src/decode.ts` — a pure-TS, no-WASM-init **decode-only** module (exported as `@chromahash/typescript/decode`) for render-only consumers; `decode.test.ts` keeps it honest with a sync guard asserting bit-for-bit equality against the WASM decode over the spec vectors + a fuzz corpus
 - Rust: `#![deny(warnings)]` on public crates once stable
 - Kotlin: Kotlin DSL only (`.gradle.kts`), target JVM 21
 - Swift: a thin facade over UniFFI-generated bindings (no native algorithm); Swift 6 concurrency, no `@unchecked Sendable` hacks. `just swift-cbuild` assembles the `ChromaHashFFI.xcframework` + generated bindings (build outputs). macOS via xcframework; Linux `systemLibrary` support is a follow-up

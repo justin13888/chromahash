@@ -87,7 +87,7 @@ compare: build-compare
 # ─── Benchmark ──────────────────────────────────────────────────────────────
 
 # Build benchmark harnesses (release mode), incl. both ThumbHash baselines (native Rust + JS)
-build-benchmark: go-cbuild swift-cbuild
+build-benchmark: go-cbuild swift-cbuild ts-cbuild
     cargo build --manifest-path rust/Cargo.toml --release --example encode_stdin
     mise exec node@24 -- pnpm --prefix typescript run build
     cd go && CGO_ENABLED=1 go build -o encode-stdin ./cmd/encode-stdin
@@ -112,7 +112,7 @@ bench-batch: bench-batch-rust bench-batch-go bench-batch-swift bench-batch-kotli
 bench-batch-rust:
     cargo run --manifest-path rust/Cargo.toml --release --example batch_bench
 
-bench-batch-ts:
+bench-batch-ts: ts-cbuild
     mise exec node@24 -- pnpm --prefix typescript run bench
 
 bench-batch-kotlin:
@@ -319,6 +319,12 @@ android-set-secrets:
     echo "Now delete the local key files: rm signing-key.asc signing-password.txt"
 
 # ─── TypeScript ──────────────────────────────────────────────────────────────
+# The package wraps the wasm-pack glue (full encode+decode path) plus a synced
+# pure-TS decode-only module. `ts-cbuild` stages the glue into typescript/wasm/
+# (gitignored build output); tsc + the test runner consume it from there.
+
+ts-cbuild:
+    mise exec -- wasm-pack build --target web bindings/wasm --out-dir ../../typescript/wasm
 
 format-ts:
     mise exec node@24 -- pnpm --prefix typescript run format
@@ -334,10 +340,10 @@ lint-ts:
 lint-fix-ts:
     mise exec node@24 -- pnpm --prefix typescript run lint:fix
 
-test-ts:
+test-ts: ts-cbuild
     mise exec node@24 -- pnpm --prefix typescript run test
 
-build-ts:
+build-ts: ts-cbuild
     mise exec node@24 -- pnpm --prefix typescript run build
 
 # ─── Kotlin ──────────────────────────────────────────────────────────────────
