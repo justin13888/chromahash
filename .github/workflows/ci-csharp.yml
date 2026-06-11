@@ -3,16 +3,15 @@ name: CI (C#)
 on:
   push:
     branches: [master]
-    paths: ["csharp/**", ".github/workflows/ci-csharp.yml"]
+    paths: ["csharp/**", "bindings/c/**", "rust/**", ".github/workflows/ci-csharp.yml"]
   pull_request:
-    paths: ["csharp/**", ".github/workflows/ci-csharp.yml"]
+    paths: ["csharp/**", "bindings/c/**", "rust/**", ".github/workflows/ci-csharp.yml"]
 
 jobs:
   ci:
+    # The C# library is a P/Invoke wrapper over chromahash-c, so the cdylib must be
+    # built (and copied next to the assembly by the csproj) before tests run.
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: csharp
     steps:
       - uses: actions/checkout@v4
 
@@ -21,11 +20,20 @@ jobs:
         with:
           dotnet-version: "9.x"
 
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build the chromahash-c cdylib
+        run: cargo build --manifest-path bindings/c/Cargo.toml --release
+
       - name: Format check
+        working-directory: csharp
         run: dotnet format Chromahash.sln --verify-no-changes --verbosity quiet
 
       - name: Lint
+        working-directory: csharp
         run: dotnet build Chromahash.sln -warnaserror --verbosity quiet
 
       - name: Test
+        working-directory: csharp
         run: dotnet test Chromahash.sln --verbosity quiet

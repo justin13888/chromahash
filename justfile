@@ -127,7 +127,7 @@ bench-batch-go: go-cbuild
 bench-batch-python:
     cd python && uv run python benchmarks/batch_bench.py
 
-bench-batch-csharp:
+bench-batch-csharp: csharp-cbuild
     mise exec dotnet@9 -- dotnet run -c Release --project csharp/benchmarks/Chromahash.Bench
 
 # ─── Rust ────────────────────────────────────────────────────────────────────
@@ -443,15 +443,20 @@ format-fix-csharp: format-csharp
 format-check-csharp:
     mise exec dotnet@9 -- dotnet format csharp/Chromahash.sln --verify-no-changes --verbosity quiet
 
+# Build the chromahash-c cdylib (release); the lib csproj copies it next to the
+# managed assembly so P/Invoke resolves it at runtime.
+csharp-cbuild:
+    cargo build --manifest-path bindings/c/Cargo.toml --release
+
 lint-csharp:
     mise exec dotnet@9 -- dotnet build csharp/Chromahash.sln -warnaserror --verbosity quiet
 
 lint-fix-csharp: lint-csharp
 
-test-csharp:
+test-csharp: csharp-cbuild
     mise exec dotnet@9 -- dotnet test csharp/Chromahash.sln --verbosity quiet
 
-build-csharp:
+build-csharp: csharp-cbuild
     mise exec dotnet@9 -- dotnet build csharp/Chromahash.sln --verbosity quiet
 
 # ─── Changelog / Release ─────────────────────────────────────────────────────

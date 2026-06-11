@@ -1,15 +1,36 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net9.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- LibraryImport's source-generated marshalling stubs require unsafe code. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <LangVersion>latest</LangVersion>
     <RootNamespace>ChromaHash</RootNamespace>
     <AssemblyName>ChromaHash</AssemblyName>
     <Version>0.5.0</Version>
     <Description>ChromaHash: modern LQIP (Low Quality Image Placeholder) format</Description>
   </PropertyGroup>
+
+  <!-- Native chromahash-c library (the cdylib wrapping the Rust core). Copied next
+       to the managed assembly so P/Invoke resolves it from the application
+       directory, and flows transitively to referencing projects (tests, CLI).
+       Built + staged by `just csharp-cbuild` into bindings/c/target/release.
+       NuGet RID packaging (runtimes/<rid>/native) is wired in the release flow. -->
+  <PropertyGroup>
+    <ChromahashNativeDir>$(MSBuildThisFileDirectory)../../../bindings/c/target/release</ChromahashNativeDir>
+  </PropertyGroup>
+
+  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('OSX')) And Exists('$(ChromahashNativeDir)/libchromahash_c.dylib')">
+    <None Include="$(ChromahashNativeDir)/libchromahash_c.dylib" Link="libchromahash_c.dylib" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('Linux')) And Exists('$(ChromahashNativeDir)/libchromahash_c.so')">
+    <None Include="$(ChromahashNativeDir)/libchromahash_c.so" Link="libchromahash_c.so" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('Windows')) And Exists('$(ChromahashNativeDir)/chromahash_c.dll')">
+    <None Include="$(ChromahashNativeDir)/chromahash_c.dll" Link="chromahash_c.dll" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 
 </Project>
