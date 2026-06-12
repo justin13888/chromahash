@@ -18,6 +18,8 @@ zero-dependency.
 chromahash = "0.5"
 ```
 
+The minimum supported Rust version (MSRV) is **1.85**.
+
 See the [project repository](https://github.com/justin13888/chromahash) for the
 full format specification, the other language implementations, and usage
 examples.
