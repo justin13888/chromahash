@@ -114,4 +114,33 @@ mod tests {
             "PQ(1.0) should be near 1.0, got {max}"
         );
     }
+
+    #[test]
+    fn bt2020_pq_matches_reference_formula() {
+        // The boundary test alone left the PQ + Reinhard arithmetic loose enough
+        // that swapping an operator (/, *, -) still landed in (0.9, 1.0) at x=1.
+        // Pin every step against an independent std-`powf` reference: any mutated
+        // operator diverges far past 1e-9 across the curve's interior.
+        fn reference(x: f64) -> f64 {
+            const M1: f64 = 0.1593017578125;
+            const M2: f64 = 78.84375;
+            const C1: f64 = 0.8359375;
+            const C2: f64 = 18.8515625;
+            const C3: f64 = 18.6875;
+            let n = x.powf(1.0 / M2);
+            let num = (n - C1).max(0.0);
+            let den = C2 - C3 * n;
+            let y_linear = (num / den).powf(1.0 / M1);
+            let l = y_linear * 10000.0 / 203.0;
+            l / (1.0 + l)
+        }
+        for &x in &[0.0, 0.05, 0.1, 0.25, 0.5, 0.6, 0.75, 0.9, 1.0] {
+            let got = bt2020_pq_eotf(x);
+            let want = reference(x);
+            assert!(
+                (got - want).abs() < 1e-9,
+                "bt2020_pq_eotf({x}) = {got}, reference {want}"
+            );
+        }
+    }
 }

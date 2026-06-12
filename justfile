@@ -163,6 +163,25 @@ test-rust:
 build-rust:
     cargo build --manifest-path rust/Cargo.toml
 
+# cargo-mutants applies small code mutations and checks the tests catch each one;
+# a surviving (MISSED) mutant is a test gap. ARGS pass through to cargo-mutants.
+# Full sweep of the core crate — slow (~1100 mutants); lefthook/CI use the diff form
+mutants-rust *ARGS:
+    cargo mutants -d rust {{ ARGS }}
+
+# Incremental sweep: only mutate core lines changed vs BASE (default origin/master)
+mutants-rust-diff base="origin/master":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    diff="$(mktemp)"
+    trap 'rm -f "$diff"' EXIT
+    git -C rust diff --relative "{{ base }}" -- . > "$diff"
+    if [ ! -s "$diff" ]; then
+        echo "mutants-rust-diff: no core Rust changes vs {{ base }} — nothing to test"
+        exit 0
+    fi
+    cargo mutants -d rust --in-diff "$diff"
+
 # ─── C binding (chromahash-c) ─────────────────────────────────────────────────
 # Hand-written extern "C" surface + cbindgen header. The header is regenerated on
 # every build (build.rs) into bindings/c/include/chromahash.h (a committed artifact).

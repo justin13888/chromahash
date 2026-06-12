@@ -513,4 +513,109 @@ mod tests {
             "encoding should be deterministic"
         );
     }
+
+    #[test]
+    fn highfreq_roundtrip_golden() {
+        // A spectrally rich image is the only thing that pins decode's synthesis
+        // window and its cx≥w / cy≥h frequency filter: every spec vector is a
+        // smooth gradient, so its high-frequency AC is ≈0 and those paths go
+        // unexercised. Hash and decoded pixels are this build's own output — a
+        // regression (or surviving mutant) that shifts them is caught.
+        let (w, h) = (16u32, 16u32);
+        let mut rgba = vec![0u8; (w * h * 4) as usize];
+        for y in 0..h {
+            for x in 0..w {
+                let i = ((y * w + x) * 4) as usize;
+                rgba[i] = ((x * 37 + y * 101) % 256) as u8;
+                rgba[i + 1] = ((x * 53) ^ (y * 191)) as u8;
+                rgba[i + 2] = ((x * x + y * y * 3) % 256) as u8;
+                rgba[i + 3] = 255;
+            }
+        }
+        let hash = ChromaHash::encode(w, h, &rgba, Gamut::Srgb);
+        assert_eq!(
+            hash.as_bytes(),
+            &[
+                79, 97, 48, 16, 8, 32, 70, 4, 144, 72, 52, 104, 169, 132, 70, 18, 244, 156, 98,
+                102, 49, 162, 169, 8, 152, 26, 44, 105, 119, 30, 166, 89
+            ]
+        );
+
+        // Full render: the window-attenuated high-frequency coefficients carry
+        // real amplitude here, so `ac · weight` (not `ac / weight`) is pinned.
+        let (dw, dh, px) = hash.decode();
+        assert_eq!((dw, dh), (32, 32));
+        let p = |i: usize| &px[i * 4..i * 4 + 4];
+        assert_eq!(p(0), [83, 75, 0, 255]);
+        assert_eq!(p(17), [143, 122, 70, 255]);
+        assert_eq!(p(500), [145, 140, 154, 255]);
+        assert_eq!(p(1000), [149, 136, 147, 255]);
+
+        // Aggressive cap: coefficients with cx ≥ 4 or cy ≥ 4 must be dropped, not
+        // kept — asserting the whole 4×4 pins the off-axis pixels where those
+        // dropped bases are non-zero (so `||` can't degrade to `&&`).
+        let (cw, ch, cpx) = hash.decode_capped(4, 4);
+        assert_eq!((cw, ch), (4, 4));
+        let expected: [[u8; 4]; 16] = [
+            [124, 110, 0, 255],
+            [155, 132, 42, 255],
+            [142, 128, 115, 255],
+            [136, 136, 198, 255],
+            [151, 141, 125, 255],
+            [136, 128, 125, 255],
+            [145, 138, 154, 255],
+            [143, 136, 165, 255],
+            [144, 136, 146, 255],
+            [140, 135, 148, 255],
+            [142, 137, 143, 255],
+            [141, 133, 125, 255],
+            [136, 127, 145, 255],
+            [147, 134, 139, 255],
+            [142, 130, 132, 255],
+            [132, 130, 139, 255],
+        ];
+        for (i, e) in expected.iter().enumerate() {
+            assert_eq!(&cpx[i * 4..i * 4 + 4], e, "capped pixel {i}");
+        }
+
+        // The synthesis window is only active under non-default tunables
+        // (w_min < 1); the default render keeps every weight at 1.0, where
+        // `ac * weight` and `ac / weight` coincide. Decode the same hash with the
+        // window engaged so the per-coefficient weight application is pinned.
+        let windowed = Tunables {
+            w_min_l: 0.55,
+            w_exp_l: 2,
+            w_min_c: 0.6,
+            w_exp_c: 2,
+            ..Tunables::DEFAULT
+        };
+        let (ww, wh, wpx) = hash.decode_tuned(&windowed);
+        assert_eq!((ww, wh), (32, 32));
+        let wp = |i: usize| &wpx[i * 4..i * 4 + 4];
+        assert_eq!(wp(0), [103, 91, 0, 255]);
+        assert_eq!(wp(17), [143, 127, 94, 255]);
+        assert_eq!(wp(500), [144, 138, 148, 255]);
+        assert_eq!(wp(1000), [145, 134, 144, 255]);
+    }
+
+    #[test]
+    fn tuned_default_matches_public_api() {
+        // The doc-hidden `*_tuned` sweep entry points must be exactly the public
+        // API at `Tunables::DEFAULT`. Comparing full results (not just lengths)
+        // pins them against whole-body replacement with a trivial tuple.
+        for &(w, h) in &[(8u32, 6u32), (1, 1), (16, 9), (9, 16)] {
+            let rgba = horizontal_gradient(w, h);
+            let hash = ChromaHash::encode(w, h, &rgba, Gamut::Srgb);
+            assert_eq!(
+                hash.decode_tuned(&Tunables::DEFAULT),
+                hash.decode(),
+                "decode_tuned diverges from decode for {w}×{h}"
+            );
+            assert_eq!(
+                hash.decode_capped_tuned(4, 4, &Tunables::DEFAULT),
+                hash.decode_capped(4, 4),
+                "decode_capped_tuned diverges from decode_capped for {w}×{h}"
+            );
+        }
+    }
 }

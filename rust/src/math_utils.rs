@@ -307,11 +307,41 @@ mod tests {
     fn portable_cos_known_values() {
         let pi = std::f64::consts::PI;
         assert!((portable_cos(0.0) - 1.0).abs() < 1e-15);
-        assert!(portable_cos(pi / 2.0).abs() < 1e-8);
+        // Tight bound: π/2 maximises x² in the reduced domain, so the smallest
+        // Horner coefficient is what makes cos(π/2) land on zero. Loosening it
+        // (e.g. flipping that term's sign) perturbs this by ~2e-10.
+        assert!(portable_cos(pi / 2.0).abs() < 1e-12);
         assert!((portable_cos(pi) - (-1.0)).abs() < 1e-15);
         assert!((portable_cos(2.0 * pi) - 1.0).abs() < 1e-14);
         // Check accuracy for a typical DCT argument
         assert!((portable_cos(pi / 16.0 * 3.0 * 7.5) - (-0.2902846772544624)).abs() < 1e-10);
+    }
+
+    #[test]
+    fn portable_cos_negative_and_large_arguments() {
+        // cos is even, so the first step folds negatives via `x = -x`. The
+        // known-value test only fed non-negative arguments, leaving the
+        // negation (and the `x < 0.0` guard) untested — a large negative input
+        // that skips range reduction exposes any break there.
+        let pi = std::f64::consts::PI;
+        for &x in &[
+            -0.5,
+            -pi / 2.0,
+            -pi,
+            -3.0 * pi,
+            -7.3,
+            7.3,
+            42.0,
+            -42.0,
+            -100.0,
+        ] {
+            let got = portable_cos(x);
+            let want = x.cos();
+            assert!(
+                (got - want).abs() < 1e-9,
+                "portable_cos({x}) = {got}, std {want}"
+            );
+        }
     }
 
     #[test]

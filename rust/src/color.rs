@@ -222,4 +222,47 @@ mod tests {
             "P3 and sRGB red should differ in OKLAB a"
         );
     }
+
+    #[test]
+    fn gamma_rgb_to_oklab_white_and_linear_path() {
+        // White gamma sRGB → OKLAB ≈ (1, 0, 0). Pins the (generation-only)
+        // reference fn against whole-body replacement (e.g. [0;3] / [1;3]).
+        let white = gamma_rgb_to_oklab(1.0, 1.0, 1.0, Gamut::Srgb);
+        assert!((white[0] - 1.0).abs() < 1e-6, "white L: {}", white[0]);
+        assert!(white[1].abs() < 1e-6, "white a: {}", white[1]);
+        assert!(white[2].abs() < 1e-6, "white b: {}", white[2]);
+
+        // It must equal applying the gamut EOTF then the linear OKLAB path.
+        let (r, g, b) = (0.5, 0.3, 0.8);
+        let via_linear = linear_rgb_to_oklab(
+            [
+                transfer::srgb_eotf(r),
+                transfer::srgb_eotf(g),
+                transfer::srgb_eotf(b),
+            ],
+            Gamut::Srgb,
+        );
+        assert_eq!(gamma_rgb_to_oklab(r, g, b, Gamut::Srgb), via_linear);
+    }
+
+    #[test]
+    fn oklab_to_srgb_known_and_linear_path() {
+        // Mid-gray survives the OKLAB round-trip back to gamma sRGB ≈ 0.5 — a
+        // value distinct from every constant the body could be replaced with.
+        let lab_gray = gamma_rgb_to_oklab(0.5, 0.5, 0.5, Gamut::Srgb);
+        let srgb = oklab_to_srgb(lab_gray);
+        for (i, &c) in srgb.iter().enumerate() {
+            assert!((c - 0.5).abs() < 1e-6, "gray channel {i}: {c}");
+        }
+
+        // It must equal oklab→linear→clamp→gamma applied channel-wise.
+        let lab = [0.6, 0.05, -0.04];
+        let lin = oklab_to_linear_srgb(lab);
+        let expected = [
+            srgb_gamma(clamp01(lin[0])),
+            srgb_gamma(clamp01(lin[1])),
+            srgb_gamma(clamp01(lin[2])),
+        ];
+        assert_eq!(oklab_to_srgb(lab), expected);
+    }
 }

@@ -10,6 +10,7 @@ dotnet = "9"
 "cargo:convco" = "0.6.4"
 "cargo:cargo-ndk" = "4.1.2" # cross-compile the Android binding's cdylib per ABI
 "cargo:wasm-pack" = "0.15.0" # build the WASM binding (chromahash-wasm) for the web
+"cargo:cargo-mutants" = "27.1.0" # mutation-test the core Rust crate (just mutants-rust)
 "aqua:cli/cli" = "2.93.0"   # gh — used by the Android publishing bootstrap recipes
 
 [settings]

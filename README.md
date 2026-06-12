@@ -89,6 +89,7 @@ just lint-fix   # auto-fix lint errors everywhere
 just compare    # generate LQIP comparison report
 just compare-versions # local-only: compare chromahash format versions (v0.2–v0.5 + current)
 just benchmark  # run performance benchmark
+just mutants-rust # mutation-test the core Rust crate (cargo-mutants; see TESTING.md)
 just changelog  # regenerate the [Unreleased] CHANGELOG section from commits
 just release X.Y.Z # cut a release section in the CHANGELOG (see RELEASING.md)
 ```
