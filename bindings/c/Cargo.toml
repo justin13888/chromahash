@@ -2,9 +2,19 @@
 name = "chromahash-c"
 version = "0.5.0"
 authors = ["Justin Chung <noreply@justinchung.net>"]
-# Edition 2021 (the core is 2021-compatible too): hand-written `#[no_mangle]`
-# extern fns and cbindgen detection are simplest here, and nothing in this thin
-# wrapper needs 2024 features. The core crate stays on edition 2024.
+# Edition 2021 is deliberate, not stale. A Rust edition is a source-language
+# concept (macro hygiene, prelude, the `unsafe` rules for `extern` blocks) and
+# has zero effect on the emitted C ABI — consumers get the same symbols either
+# way — so 2021 vs 2024 is immaterial for a crate whose entire public surface is
+# `extern "C"`. It stays on 2021 only because nothing here needs 2024 features;
+# the core crate is on edition 2024.
+#
+# The C surface is hand-written `#[no_mangle] extern "C"` fns (with cbindgen
+# generating the header), not an auto-generated binding, on purpose: a
+# first-class C API wants full control over the exact symbol names, the
+# struct/enum ABI, and a clean idiomatic header — control a generator would not
+# give. (UniFFI serves the higher-level languages; this C ABI is the low-level
+# foundation that C# and Go also link against.)
 edition = "2021"
 description = "C ABI (cbindgen) exposing the ChromaHash core to C — and the FFI foundation the C# and Go bindings link against"
 license = "MIT OR Apache-2.0"
