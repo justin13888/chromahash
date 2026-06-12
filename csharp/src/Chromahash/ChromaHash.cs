@@ -49,13 +49,17 @@ public sealed class ChromaHash : IEquatable<ChromaHash>
         }
     }
 
-    /// <summary>Decode a ChromaHash into an RGBA image. Returns (width, height, rgba_pixels).</summary>
-    public (uint Width, uint Height, byte[] Rgba) Decode()
+    /// <summary>
+    /// Decode a ChromaHash into an RGBA image in the given output gamut
+    /// (Srgb / DisplayP3 / AdobeRgb; others fall back to sRGB).
+    /// Returns (width, height, rgba_pixels).
+    /// </summary>
+    public (uint Width, uint Height, byte[] Rgba) Decode(Gamut output = Gamut.Srgb)
     {
         IntPtr handle = CreateHandle();
         try
         {
-            var st = Native.chromahash_decode(handle, out Native.Image img);
+            var st = Native.chromahash_decode_to(handle, output, out Native.Image img);
             if (st != Native.Status.Ok)
                 throw new InvalidOperationException($"chromahash decode failed: {st}");
             return ReadImage(ref img);
@@ -68,14 +72,15 @@ public sealed class ChromaHash : IEquatable<ChromaHash>
 
     /// <summary>
     /// Decode a ChromaHash into an RGBA image, capped at the given maximum
-    /// dimensions. Returns (width, height, rgba_pixels).
+    /// dimensions, in the given output gamut. Returns (width, height, rgba_pixels).
     /// </summary>
-    public (uint Width, uint Height, byte[] Rgba) DecodeCapped(uint maxWidth, uint maxHeight)
+    public (uint Width, uint Height, byte[] Rgba) DecodeCapped(
+        uint maxWidth, uint maxHeight, Gamut output = Gamut.Srgb)
     {
         IntPtr handle = CreateHandle();
         try
         {
-            var st = Native.chromahash_decode_capped(handle, maxWidth, maxHeight, out Native.Image img);
+            var st = Native.chromahash_decode_capped_to(handle, maxWidth, maxHeight, output, out Native.Image img);
             if (st != Native.Status.Ok)
                 throw new InvalidOperationException($"chromahash decode_capped failed: {st}");
             return ReadImage(ref img);

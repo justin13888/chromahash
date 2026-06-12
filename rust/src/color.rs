@@ -25,6 +25,20 @@ pub fn oklab_to_linear_srgb(lab: [f64; 3]) -> [f64; 3] {
     matvec3(&M1_INV_SRGB, lms)
 }
 
+/// Convert OKLAB to linear RGB in the given **output** gamut (LMS → gamut RGB).
+/// sRGB / Display P3 / Adobe RGB are real display targets; BT.2020 / ProPhoto
+/// fall back to sRGB (see `Gamut::m1_inv_matrix`). The caller clips each channel
+/// to [0, 1] before the gamma encode (relative-colorimetric, §12.6).
+pub fn oklab_to_linear_output(lab: [f64; 3], output: Gamut) -> [f64; 3] {
+    let lms_cbrt = matvec3(&M2_INV, lab);
+    let lms = [
+        lms_cbrt[0] * lms_cbrt[0] * lms_cbrt[0],
+        lms_cbrt[1] * lms_cbrt[1] * lms_cbrt[1],
+        lms_cbrt[2] * lms_cbrt[2] * lms_cbrt[2],
+    ];
+    matvec3(output.m1_inv_matrix(), lms)
+}
+
 /// Convert gamma-encoded source RGB to OKLAB.
 /// Used in test_vectors generation; encode pipeline uses EOTF LUT + linear_rgb_to_oklab.
 #[allow(dead_code)]

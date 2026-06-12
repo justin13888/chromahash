@@ -86,25 +86,37 @@ func (ch *ChromaHash) handle() *C.ChromaHash {
 	return handle
 }
 
-// Decode decodes the ChromaHash into an RGBA image.
+// Decode decodes the ChromaHash into an sRGB RGBA image.
 // Returns width, height, and RGBA pixel data (row-major, 4 bytes per pixel).
 func (ch ChromaHash) Decode() (int, int, []byte) {
+	return ch.DecodeTo(GamutSRGB)
+}
+
+// DecodeTo decodes the ChromaHash into an RGBA image in the given output gamut
+// (GamutSRGB / GamutDisplayP3 / GamutAdobeRGB; others fall back to sRGB).
+// Returns width, height, and RGBA pixel data.
+func (ch ChromaHash) DecodeTo(output Gamut) (int, int, []byte) {
 	handle := ch.handle()
 	defer C.chromahash_free(handle)
 	var img C.ChromaHashImage
-	if C.chromahash_decode(handle, &img) != C.CHROMA_HASH_STATUS_OK {
+	if C.chromahash_decode_to(handle, C.ChromaHashGamut(output), &img) != C.CHROMA_HASH_STATUS_OK {
 		panic("chromahash: decode failed")
 	}
 	return readImage(&img)
 }
 
-// DecodeCapped decodes into an RGBA image, capped at the given maximum
+// DecodeCapped decodes into an sRGB RGBA image, capped at the given maximum
 // dimensions. Returns width, height, and RGBA pixel data.
 func (ch ChromaHash) DecodeCapped(maxW, maxH int) (int, int, []byte) {
+	return ch.DecodeCappedTo(maxW, maxH, GamutSRGB)
+}
+
+// DecodeCappedTo decodes (see DecodeCapped) in the given output gamut.
+func (ch ChromaHash) DecodeCappedTo(maxW, maxH int, output Gamut) (int, int, []byte) {
 	handle := ch.handle()
 	defer C.chromahash_free(handle)
 	var img C.ChromaHashImage
-	if C.chromahash_decode_capped(handle, C.uint32_t(maxW), C.uint32_t(maxH), &img) != C.CHROMA_HASH_STATUS_OK {
+	if C.chromahash_decode_capped_to(handle, C.uint32_t(maxW), C.uint32_t(maxH), C.ChromaHashGamut(output), &img) != C.CHROMA_HASH_STATUS_OK {
 		panic("chromahash: decode_capped failed")
 	}
 	return readImage(&img)

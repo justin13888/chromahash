@@ -76,9 +76,10 @@ pub const ALPHA_AC_BITS: u32 = 4;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Tunables {
     pub layout: AcLayout,
-    /// DC chroma quantization ranges. v0.6 shrinks these toward the sRGB
-    /// OKLab hull (|a| ≤ 0.277, b ∈ [−0.312, 0.199]) — chroma beyond the hull
-    /// is clamped at decode anyway, so range buys precision for free.
+    /// DC chroma quantization ranges. Sized to the union OKLab hull of the
+    /// display-output gamuts (sRGB ∪ Display P3 ∪ Adobe RGB: max |a| ≈ 0.347,
+    /// max |b| ≈ 0.321) so wide-gamut colors are stored faithfully for
+    /// rendering to a P3/Adobe display (§5.1), not truncated to the sRGB hull.
     pub max_chroma_a: f64,
     pub max_chroma_b: f64,
     pub max_l_scale: f64,
@@ -108,7 +109,8 @@ impl Tunables {
     /// rebalanced layouts on natural images; chroma AC scale range 0.125
     /// (v0.5: 0.5) is the single largest quality win (the corpus maximum
     /// chroma scale is 0.113 — the old range wasted two bits); chroma DC
-    /// ranges sized to the sRGB OKLab hull; µ_C=8 exploits the finer chroma
+    /// ranges sized to the display-output gamut hull (sRGB ∪ P3 ∪ Adobe);
+    /// µ_C=8 exploits the finer chroma
     /// scale near zero; out-of-gamut chroma is clipped per-channel at decode
     /// (relative-colorimetric, §12.6); the synthesis window is DISABLED (w_min=1.0) — with fine
     /// chroma scales it costs more detail than the banding it suppresses,
@@ -116,8 +118,8 @@ impl Tunables {
     /// noise, not luma ringing.
     pub const DEFAULT: Tunables = Tunables {
         layout: LAYOUT_B,
-        max_chroma_a: 0.28,
-        max_chroma_b: 0.32,
+        max_chroma_a: 0.35,
+        max_chroma_b: 0.33,
         max_l_scale: 0.5,
         max_a_scale: 0.125,
         max_b_scale: 0.125,
@@ -195,8 +197,23 @@ pub const M1_INV_SRGB: [[f64; 3]; 3] = [
     [-0.0041960863, -0.7034186147, 1.7076147010],
 ];
 
+/// M1_INV[Display P3]: LMS → Linear Display P3 (inverse of M1_DISPLAY_P3).
+pub const M1_INV_DISPLAY_P3: [[f64; 3]; 3] = [
+    [3.1277689869, -2.2571357957, 0.1293668089],
+    [-1.0910090475, 2.4133317585, -0.3223227108],
+    [-0.0260108130, -0.5080413260, 1.5340521389],
+];
+
+/// M1_INV[Adobe RGB]: LMS → Linear Adobe RGB (inverse of M1_ADOBE_RGB).
+pub const M1_INV_ADOBE_RGB: [[f64; 3]; 3] = [
+    [2.5540368478, -1.6219762024, 0.0679393544],
+    [-1.2684380042, 2.6097574007, -0.3413193963],
+    [-0.0562347471, -0.5670418342, 1.6232765812],
+];
+
 impl Gamut {
-    /// Return the M1 matrix for this gamut.
+    /// Return the M1 matrix for this gamut (linear gamut RGB → LMS), used at
+    /// encode to ingest any source gamut.
     pub(crate) fn m1_matrix(self) -> &'static [[f64; 3]; 3] {
         match self {
             Gamut::Srgb => &M1_SRGB,
@@ -205,6 +222,25 @@ impl Gamut {
             Gamut::Bt2020 => &M1_BT2020,
             Gamut::ProPhotoRgb => &M1_PROPHOTO_RGB,
         }
+    }
+
+    /// Return the inverse M1 matrix (LMS → linear gamut RGB) for rendering
+    /// decode output **to** this gamut. Only sRGB / Display P3 / Adobe RGB are
+    /// valid display-output gamuts; BT.2020 (HDR PQ, no clean SDR inverse) and
+    /// ProPhoto (not a display gamut) fall back to sRGB output.
+    pub(crate) fn m1_inv_matrix(self) -> &'static [[f64; 3]; 3] {
+        match self {
+            Gamut::DisplayP3 => &M1_INV_DISPLAY_P3,
+            Gamut::AdobeRgb => &M1_INV_ADOBE_RGB,
+            Gamut::Srgb | Gamut::Bt2020 | Gamut::ProPhotoRgb => &M1_INV_SRGB,
+        }
+    }
+
+    /// Whether decode output to this gamut uses the Adobe RGB gamma (γ = 2.2).
+    /// sRGB and Display P3 share the sRGB piecewise transfer; the sRGB fallback
+    /// gamuts (BT.2020/ProPhoto) use sRGB too.
+    pub(crate) fn output_uses_adobe_gamma(self) -> bool {
+        matches!(self, Gamut::AdobeRgb)
     }
 }
 
@@ -252,6 +288,35 @@ mod tests {
             identity_error(&product) < 5e-8,
             "M1[sRGB] × M1_INV[sRGB] should be identity"
         );
+    }
+
+    #[test]
+    fn output_inverse_matrices_invert_their_m1() {
+        // Each display-output gamut's M1_INV must be the inverse of its M1.
+        for (name, m1, m1_inv) in [
+            ("Display P3", &M1_DISPLAY_P3, &M1_INV_DISPLAY_P3),
+            ("Adobe RGB", &M1_ADOBE_RGB, &M1_INV_ADOBE_RGB),
+        ] {
+            let product = matmul3(m1, m1_inv);
+            assert!(
+                identity_error(&product) < 5e-8,
+                "M1[{name}] × M1_INV[{name}] should be identity"
+            );
+        }
+    }
+
+    #[test]
+    fn output_gamut_selectors_resolve() {
+        // sRGB / P3 / Adobe are real output gamuts; BT.2020 / ProPhoto fall back
+        // to sRGB (no clean SDR display inverse).
+        assert_eq!(*Gamut::Srgb.m1_inv_matrix(), M1_INV_SRGB);
+        assert_eq!(*Gamut::DisplayP3.m1_inv_matrix(), M1_INV_DISPLAY_P3);
+        assert_eq!(*Gamut::AdobeRgb.m1_inv_matrix(), M1_INV_ADOBE_RGB);
+        assert_eq!(*Gamut::Bt2020.m1_inv_matrix(), M1_INV_SRGB);
+        assert_eq!(*Gamut::ProPhotoRgb.m1_inv_matrix(), M1_INV_SRGB);
+        assert!(Gamut::AdobeRgb.output_uses_adobe_gamma());
+        assert!(!Gamut::DisplayP3.output_uses_adobe_gamma());
+        assert!(!Gamut::Srgb.output_uses_adobe_gamma());
     }
 
     #[test]

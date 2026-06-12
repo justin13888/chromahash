@@ -76,10 +76,22 @@ internal static partial class Native
     internal static partial Status chromahash_decode(IntPtr hash, out Image outImage);
 
     [LibraryImport(Lib)]
+    internal static partial Status chromahash_decode_to(IntPtr hash, Gamut output, out Image outImage);
+
+    [LibraryImport(Lib)]
     internal static partial Status chromahash_decode_capped(
         IntPtr hash,
         uint maxWidth,
         uint maxHeight,
+        out Image outImage
+    );
+
+    [LibraryImport(Lib)]
+    internal static partial Status chromahash_decode_capped_to(
+        IntPtr hash,
+        uint maxWidth,
+        uint maxHeight,
+        Gamut output,
         out Image outImage
     );
 

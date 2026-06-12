@@ -23,6 +23,12 @@ pub fn adobe_rgb_eotf(x: f64) -> f64 {
     portable_pow(x, 2.2)
 }
 
+/// Adobe RGB gamma (linear → gamma): x^(1/2.2). The decode-output inverse of
+/// `adobe_rgb_eotf`, used when rendering to an Adobe RGB display.
+pub fn adobe_rgb_gamma(x: f64) -> f64 {
+    portable_pow(x, 1.0 / 2.2)
+}
+
 /// ProPhoto RGB EOTF (gamma → linear): x^1.8.
 pub fn prophoto_rgb_eotf(x: f64) -> f64 {
     portable_pow(x, 1.8)

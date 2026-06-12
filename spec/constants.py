@@ -33,8 +33,8 @@ MU_ALPHA = 5     # Alpha AC
 # two bits of precision and caused the characteristic chroma banding and
 # desaturation).
 
-MAX_CHROMA_A = 0.28        # Max absolute OKLAB 'a' DC value (sRGB hull max |a| = 0.2746)
-MAX_CHROMA_B = 0.32        # Max absolute OKLAB 'b' DC value (sRGB hull max |b| = 0.3115)
+MAX_CHROMA_A = 0.35        # Max absolute OKLAB 'a' DC (sRGB∪P3∪Adobe hull max |a| ≈ 0.347)
+MAX_CHROMA_B = 0.33        # Max absolute OKLAB 'b' DC (sRGB∪P3∪Adobe hull max |b| ≈ 0.321)
 MAX_L_SCALE = 0.5          # Max luminance AC amplitude
 MAX_A_SCALE = 0.125        # Max chroma-a AC amplitude
 MAX_B_SCALE = 0.125        # Max chroma-b AC amplitude
