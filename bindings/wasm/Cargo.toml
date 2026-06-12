@@ -4,8 +4,10 @@ name = "chromahash-wasm"
 # features. The core crate stays on edition 2024.
 edition = "2021"
 version = "0.5.0"
+authors = ["Justin Chung <noreply@justinchung.net>"]
 description = "WebAssembly bindings (wasm-bindgen) exposing the ChromaHash core to JavaScript/TypeScript on the web"
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/justin13888/chromahash"
 publish = false
 
 [lib]

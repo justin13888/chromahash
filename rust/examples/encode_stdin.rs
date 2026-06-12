@@ -19,6 +19,9 @@ fn usage() -> ! {
 /// Parse CHROMAHASH_TUNE overrides on top of the v0.6 defaults.
 /// Unknown keys or malformed values abort loudly — a silently ignored knob
 /// would corrupt a whole sweep.
+///
+/// Each match arm below mirrors one field of `chromahash::Tunables`; keep this
+/// parser in sync with that struct (see `rust/src/constants.rs`).
 fn tunables_from_env() -> Tunables {
     let mut t = Tunables::DEFAULT;
     let Ok(spec) = std::env::var("CHROMAHASH_TUNE") else {

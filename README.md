@@ -4,12 +4,28 @@
 
 chromahash is a multi-language library implementing a compact, high-fidelity Low Quality Image Placeholder (LQIP) format. All seven implementations are spec-compatible — identical input produces identical output across languages.
 
+## Packages
+
+| Language | Package | Registry |
+| -------- | ------- | -------- |
+| Rust | `chromahash` | [crates.io](https://crates.io/crates/chromahash) |
+| TypeScript | `@chromahash/typescript` | [npm](https://www.npmjs.com/package/@chromahash/typescript) |
+| Python | `chromahash` | [PyPI](https://pypi.org/project/chromahash/) |
+| C# | `ChromaHash` | [NuGet](https://www.nuget.org/packages/ChromaHash) |
+| Java / Kotlin (JVM) | `io.github.justin13888:chromahash-jvm` | [Maven Central](https://central.sonatype.com/artifact/io.github.justin13888/chromahash-jvm) |
+| Android | `io.github.justin13888:chromahash-android` | [Maven Central](https://central.sonatype.com/artifact/io.github.justin13888/chromahash-android) |
+| Go | `github.com/justin13888/chromahash/go` | [pkg.go.dev](https://pkg.go.dev/github.com/justin13888/chromahash/go) |
+| Swift | SwiftPM (`https://github.com/justin13888/chromahash`) | [Swift Package Index](https://swiftpackageindex.com/justin13888/chromahash) |
+| C | `chromahash-c` | [source](bindings/c) (C ABI — the FFI foundation, no registry) |
+
+> Some registries publish on the next tagged release — see [`RELEASING.md`](RELEASING.md).
+
 ## Why ChromaHash?
 
 ChromaHash is built for professional photo management at scale, where perceptual quality, layout precision, and wide-gamut correctness matter. Every claim below is defined and quantified in the [format specification](spec/).
 
-- **Perceptual, human-centric quality.** Color is encoded in the [OKLAB](https://bottosson.github.io/posts/oklab/) perceptually-uniform color space (the same model adopted by CSS Color 4), so quantization steps map to evenly-perceived changes. AC coefficients use µ-law companding (µ=5) to spend precision where DCT energy actually clusters, a per-pixel frequency-priority scan order weights vertical and diagonal detail the way the eye does instead of biasing horizontal frequencies, and out-of-gamut colors are softened with a hue-preserving Oklch clamp rather than hard-clipped.
-- **Wide-gamut aware.** Encodes from sRGB, Display P3, Adobe RGB, BT.2020, or ProPhoto RGB sources into absolute OKLAB coordinates and always decodes to sRGB — wide-gamut color is preserved instead of being flattened to sRGB-only like most LQIP formats.
+- **Perceptual, human-centric quality.** Color is encoded in the [OKLAB](https://bottosson.github.io/posts/oklab/) perceptually-uniform color space (the same model adopted by CSS Color 4), so quantization steps map to evenly-perceived changes. AC coefficients use µ-law companding (µ=5) to spend precision where DCT energy actually clusters, a per-pixel frequency-priority scan order weights vertical and diagonal detail the way the eye does instead of biasing horizontal frequencies, and out-of-gamut colors are mapped back into the display gamut with a relative-colorimetric per-channel clip rather than hard-clipped in linear RGB.
+- **Wide-gamut aware.** Encodes from sRGB, Display P3, Adobe RGB, BT.2020, or ProPhoto RGB sources into absolute OKLAB coordinates and decodes to a caller-chosen display gamut — sRGB, Display P3, or Adobe RGB — so wide-gamut color is preserved end-to-end instead of being flattened to sRGB-only like most LQIP formats.
 - **Precise layout.** An 8-bit log₂ aspect ratio keeps placeholder dimensions within ~1.09% of the original across ratios up to 16:1 (vs ThumbHash's 3-bit ~7% and ~7:1). The DCT grid adaptively reshapes to the aspect ratio, so no coefficients are wasted on non-square images.
 - **Fixed 32 bytes.** Every hash is exactly 32 bytes — memory-aligned, cache-friendly, and a zero-overhead database column or cache key with no length framing to parse.
 - **Fast decode with alpha.** Decoding runs in ~36µs native / ~182µs JS (well under 1ms), and transparent images are supported within the same fixed 32 bytes.

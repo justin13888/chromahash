@@ -5,18 +5,6 @@ zero-dependency [`chromahash`](../../rust) core, with a `cbindgen`-generated
 header. This is the first-class C API and the FFI foundation the C# (P/Invoke)
 and Go (cgo) bindings link against.
 
-## Layout
-
-```
-bindings/c/
-  src/lib.rs              # the extern "C" surface
-  cbindgen.toml           # header generation config
-  build.rs                # runs cbindgen on every build → include/chromahash.h
-  include/chromahash.h    # GENERATED, committed; CI diffs it to catch drift
-  examples/roundtrip.c    # smoke test proving the header compiles + cdylib links
-  tests/spec_vectors.rs   # parity gate: spec vectors driven through the C ABI
-```
-
 ## Build
 
 ```sh

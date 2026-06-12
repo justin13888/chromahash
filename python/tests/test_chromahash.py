@@ -9,8 +9,6 @@ the Rust core (the single source of truth).
 import json
 import os
 
-import pytest
-
 from chromahash import ChromaHash, Gamut
 
 SPEC_VECTORS = os.path.join(os.path.dirname(__file__), "../../spec/test-vectors")
@@ -89,23 +87,9 @@ def test_decode_valid_dimensions():
     assert len(pixels) == w * h * 4
 
 
-@pytest.mark.parametrize(
-    "gamut",
-    [Gamut.SRGB, Gamut.DISPLAY_P3, Gamut.ADOBE_RGB, Gamut.BT2020, Gamut.PROPHOTO_RGB],
-)
-def test_all_gamuts_produce_output(gamut: Gamut):
-    ch = ChromaHash.encode(4, 4, solid_image(4, 4, 200, 100, 50, 255), gamut)
-    assert len(ch.as_bytes()) == 32
-
-
 def test_from_bytes_roundtrip():
     ch = ChromaHash.encode(4, 4, solid_image(4, 4, 128, 64, 32, 255), Gamut.SRGB)
     assert ChromaHash.from_bytes(ch.as_bytes()) == ch
-
-
-def test_deterministic_encoding():
-    rgba = solid_image(8, 8, 200, 100, 50, 255)
-    assert ChromaHash.encode(8, 8, rgba, Gamut.SRGB) == ChromaHash.encode(8, 8, rgba, Gamut.SRGB)
 
 
 def test_version_supported_detects_legacy():

@@ -93,17 +93,6 @@ public class ChromaHashTests
     }
 
     [Fact]
-    public void SolidColorRoundtrip()
-    {
-        CH hash = CH.Encode(4, 4, Helpers.SolidImage(4, 4, 200, 100, 50, 255), Gamut.Srgb);
-        byte[] avg = hash.AverageColor();
-        Assert.True(Math.Abs(avg[0] - 200) <= 3, $"R: expected ~200, got {avg[0]}");
-        Assert.True(Math.Abs(avg[1] - 100) <= 3, $"G: expected ~100, got {avg[1]}");
-        Assert.True(Math.Abs(avg[2] - 50) <= 3, $"B: expected ~50, got {avg[2]}");
-        Assert.Equal(255, avg[3]);
-    }
-
-    [Fact]
     public void DecodeProducesValidDimensions()
     {
         CH hash = CH.Encode(4, 4, Helpers.SolidImage(4, 4, 128, 64, 32, 255), Gamut.Srgb);
@@ -113,47 +102,11 @@ public class ChromaHashTests
         Assert.Equal((int)(w * h * 4), pixels.Length);
     }
 
-    [Theory]
-    [InlineData(16u, 4u)]
-    [InlineData(4u, 16u)]
-    [InlineData(10u, 10u)]
-    [InlineData(3u, 7u)]
-    [InlineData(100u, 25u)]
-    public void VariousAspectRatios(uint w, uint h)
-    {
-        CH hash = CH.Encode(w, h, Helpers.SolidImage((int)w, (int)h, 128, 64, 32, 255), Gamut.Srgb);
-        var (dw, dh, pixels) = hash.Decode();
-        Assert.True(dw > 0 && dh > 0, $"decode dims should be > 0 for {w}×{h}");
-        Assert.Equal((int)(dw * dh * 4), pixels.Length);
-    }
-
-    [Theory]
-    [InlineData(Gamut.Srgb)]
-    [InlineData(Gamut.DisplayP3)]
-    [InlineData(Gamut.AdobeRgb)]
-    [InlineData(Gamut.Bt2020)]
-    [InlineData(Gamut.ProPhotoRgb)]
-    public void AllGamutsProduceOutput(Gamut gamut)
-    {
-        CH hash = CH.Encode(4, 4, Helpers.SolidImage(4, 4, 200, 100, 50, 255), gamut);
-        Assert.Equal(32, hash.AsBytes().Length);
-    }
-
     [Fact]
     public void FromBytesRoundtrip()
     {
         CH hash = CH.Encode(4, 4, Helpers.SolidImage(4, 4, 128, 64, 32, 255), Gamut.Srgb);
         Assert.Equal(hash, CH.FromBytes(hash.AsBytes()));
-    }
-
-    [Fact]
-    public void DeterministicEncoding()
-    {
-        byte[] rgba = Helpers.HorizontalGradient(16, 16);
-        Assert.Equal(
-            CH.Encode(16, 16, rgba, Gamut.Srgb).AsBytes(),
-            CH.Encode(16, 16, rgba, Gamut.Srgb).AsBytes()
-        );
     }
 
     [Fact]

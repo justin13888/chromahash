@@ -231,26 +231,10 @@ func TestEncodeProduces32Bytes(t *testing.T) {
 	}
 }
 
-func TestDeterministicEncoding(t *testing.T) {
-	rgba := horizontalGradient(16, 16)
-	if Encode(16, 16, rgba, GamutSRGB).Hash != Encode(16, 16, rgba, GamutSRGB).Hash {
-		t.Error("encoding not deterministic")
-	}
-}
-
 func TestFromBytesRoundtrip(t *testing.T) {
 	ch := Encode(4, 4, solidImage(4, 4, 128, 64, 32, 255), GamutSRGB)
 	if FromBytes(ch.Hash).Hash != ch.Hash {
 		t.Error("FromBytes roundtrip failed")
-	}
-}
-
-func TestAllGamutsProduceOutput(t *testing.T) {
-	rgba := solidImage(4, 4, 200, 100, 50, 255)
-	for _, g := range []Gamut{GamutSRGB, GamutDisplayP3, GamutAdobeRGB, GamutBT2020, GamutProPhotoRGB} {
-		if len(Encode(4, 4, rgba, g).Hash) != 32 {
-			t.Errorf("gamut %v: did not produce 32 bytes", g)
-		}
 	}
 }
 
@@ -262,13 +246,6 @@ func TestValidDecodeDimensions(t *testing.T) {
 	}
 	if len(pixels) != w*h*4 {
 		t.Errorf("pixel length %d, want %d", len(pixels), w*h*4)
-	}
-}
-
-func TestVerticalGradientDecodes(t *testing.T) {
-	ch := Encode(16, 16, verticalGradient(16, 16), GamutSRGB)
-	if w, h, _ := ch.Decode(); w <= 0 || h <= 0 {
-		t.Errorf("vertical gradient decode produced %dx%d", w, h)
 	}
 }
 

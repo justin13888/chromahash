@@ -71,8 +71,13 @@ pub const ALPHA_AC_COUNT: usize = 5;
 pub const ALPHA_AC_BITS: u32 = 4;
 
 /// All v0.6 format parameters. The shipped format uses [`Tunables::DEFAULT`];
-/// the comparison harness can override these (via the encode_stdin example)
-/// while sweeping the corpus to lock the final constants.
+/// the comparison harness can override these while sweeping the corpus to lock
+/// the final constants, via the `CHROMAHASH_TUNE` env parser in the
+/// `rust/examples/encode_stdin.rs` example binary.
+///
+/// NOTE: every field below is mirrored by a `key=value` knob in that example's
+/// `tunables_from_env()`. When adding, removing, or renaming a field here, update
+/// that parser in lockstep — an unhandled key aborts the whole sweep.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Tunables {
     pub layout: AcLayout,
