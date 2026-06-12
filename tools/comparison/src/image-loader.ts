@@ -43,17 +43,25 @@ export async function loadImage(filePath: string): Promise<ImageInput> {
 
 /**
  * Convert raw RGBA pixel data to a PNG data URI via sharp.
+ *
+ * `icc` optionally embeds a named ICC profile (e.g. `"p3"`) *without* converting
+ * the pixels — it tags bytes that are already encoded in that gamut so a
+ * color-managed (wide-gamut) viewer renders them correctly. Used for ChromaHash
+ * previews decoded to a wide-gamut display target.
  */
 export async function rgbaToDataUri(
   rgba: Uint8Array,
   width: number,
   height: number,
+  icc?: string,
 ): Promise<string> {
-  const png = await sharp(Buffer.from(rgba), {
+  let pipeline = sharp(Buffer.from(rgba), {
     raw: { width, height, channels: 4 },
-  })
-    .png()
-    .toBuffer();
+  });
+  if (icc) {
+    pipeline = pipeline.withMetadata({ icc });
+  }
+  const png = await pipeline.png().toBuffer();
   return `data:image/png;base64,${png.toString("base64")}`;
 }
 

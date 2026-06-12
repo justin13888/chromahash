@@ -293,19 +293,33 @@ async function main(): Promise<void> {
     input.metricReferenceRgba = gamutToSrgbReference(input.smallRgba, gamut);
 
     // Gamut fixtures store raw bytes tagged with a wide gamut and carry no ICC
-    // profile, so rendering them as plain sRGB misrepresents the source. For
-    // those, show the color-managed sRGB appearance (the same reference metrics
-    // and a correct decode target) so the Original matches what a gamut-aware
-    // decode reproduces — issue #39. sRGB images keep the full-res file path.
+    // profile, so rendering them as plain sRGB misrepresents the source (#39).
+    // For Display P3 — a real, ICC-taggable display gamut — show the *source*
+    // P3 bytes tagged with the P3 profile, so on a wide-gamut viewer the Original
+    // and the (P3-decoded, P3-tagged) ChromaHash preview both show the true
+    // saturated color and match, while sRGB-only formats look less saturated.
+    // Other wide gamuts (Adobe RGB / BT.2020 / ProPhoto) aren't P3-taggable and
+    // fall back to the color-managed sRGB appearance.
     const colorManaged = gamut !== "srgb";
-    const displayRgba = input.metricReferenceRgba ?? input.smallRgba;
+    const p3 = gamut === "displayp3";
+    const previewIcc = p3 ? "p3" : undefined;
+    // P3: the raw source bytes are already P3-encoded — tag, don't convert.
+    const displayRgba = p3
+      ? input.smallRgba
+      : (input.metricReferenceRgba ?? input.smallRgba);
     const originalDataUri = colorManaged
-      ? await rgbaToDataUri(displayRgba, input.smallWidth, input.smallHeight)
+      ? await rgbaToDataUri(
+          displayRgba,
+          input.smallWidth,
+          input.smallHeight,
+          previewIcc,
+        )
       : await fileBufferToDisplayDataUri(input.fileBuffer);
     const loResDataUri = await rgbaToDataUri(
       colorManaged ? displayRgba : input.smallRgba,
       input.smallWidth,
       input.smallHeight,
+      previewIcc,
     );
 
     // Run format adapters
