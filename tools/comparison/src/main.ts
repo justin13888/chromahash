@@ -292,9 +292,18 @@ async function main(): Promise<void> {
     // image's true sRGB appearance, not the raw gamut-encoded bytes.
     input.metricReferenceRgba = gamutToSrgbReference(input.smallRgba, gamut);
 
-    const originalDataUri = await fileBufferToDisplayDataUri(input.fileBuffer);
+    // Gamut fixtures store raw bytes tagged with a wide gamut and carry no ICC
+    // profile, so rendering them as plain sRGB misrepresents the source. For
+    // those, show the color-managed sRGB appearance (the same reference metrics
+    // and a correct decode target) so the Original matches what a gamut-aware
+    // decode reproduces — issue #39. sRGB images keep the full-res file path.
+    const colorManaged = gamut !== "srgb";
+    const displayRgba = input.metricReferenceRgba ?? input.smallRgba;
+    const originalDataUri = colorManaged
+      ? await rgbaToDataUri(displayRgba, input.smallWidth, input.smallHeight)
+      : await fileBufferToDisplayDataUri(input.fileBuffer);
     const loResDataUri = await rgbaToDataUri(
-      input.smallRgba,
+      colorManaged ? displayRgba : input.smallRgba,
       input.smallWidth,
       input.smallHeight,
     );

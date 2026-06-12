@@ -274,6 +274,8 @@ ${catEntries
   th { background: #2a2a4a; }
   body.light th { background: #e8e8e8; color: #333; }
   .section-title { margin: 24px 0 8px; font-size: 1.1rem; border-bottom: 1px solid #555; padding-bottom: 4px; }
+  .section-note { margin: -2px 0 8px; font-size: 0.8rem; line-height: 1.5; color: #aaa; max-width: 80ch; }
+  body.light .section-note { color: #666; }
   .image-row { display: flex; gap: 8px; align-items: flex-start; flex-wrap: wrap; margin: 8px 0; padding: 8px; background: #222244; border-radius: 4px; }
   body.light .image-row { background: #fff; border: 1px solid #ddd; }
   .image-cell { text-align: center; min-width: 80px; }
@@ -359,7 +361,11 @@ ${categories
     const catEntries = entries.filter((e) => e.category === category);
     if (catEntries.length === 0) return "";
     return `
-<div class="section-title">${category}</div>
+<div class="section-title">${category}</div>${
+      category === "Gamut"
+        ? `\n<p class="section-note">Originals here are shown as their true sRGB appearance — the wide-gamut source color-managed for an sRGB display — so they match a correct, gamut-aware decode. The gamut-aware ChromaHash reproduces it; formats that ignore the source gamut encode the raw bytes and look off on these rows by design (see their higher ΔE00).</p>`
+        : ""
+    }
 ${catEntries
   .map(
     (entry) => `
