@@ -16,20 +16,22 @@ const GAMUT_MAP: Record<string, string> = {
 };
 
 function encodeViaRust(
+  binary: string,
   w: number,
   h: number,
   rgba: Uint8Array,
   gamut: string,
 ): Uint8Array {
-  const output = execFileSync(
-    RUST_CLI,
-    ["encode", String(w), String(h), gamut],
-    { input: Buffer.from(rgba), encoding: "buffer", timeout: 30_000 },
-  );
+  const output = execFileSync(binary, ["encode", String(w), String(h), gamut], {
+    input: Buffer.from(rgba),
+    encoding: "buffer",
+    timeout: 30_000,
+  });
   return new Uint8Array(output);
 }
 
 function decodeViaRust(
+  binary: string,
   hash: Uint8Array,
   maxW?: number,
   maxH?: number,
@@ -42,7 +44,7 @@ function decodeViaRust(
     maxW !== undefined && maxH !== undefined
       ? [String(maxW), String(maxH)]
       : [];
-  const output = execFileSync(RUST_CLI, ["decode", ...extraArgs], {
+  const output = execFileSync(binary, ["decode", ...extraArgs], {
     input: Buffer.from(hash),
     encoding: "buffer",
     timeout: 30_000,
@@ -57,25 +59,52 @@ function decodeViaRust(
 }
 
 export class ChromaHashAdapter implements FormatAdapter {
-  readonly name = "ChromaHash";
+  readonly name: string;
+  /** The `encode_stdin` binary used to both encode and decode. */
+  private readonly binaryPath: string;
+  /** Cap the decode to source dims (true), or decode uncapped (false). */
+  private readonly capToSource: boolean;
+
+  /**
+   * @param opts.name        Display name (default "ChromaHash").
+   * @param opts.binaryPath  Version-specific `encode_stdin` binary (default: the
+   *   working tree's debug build). A version must encode and decode with the same
+   *   binary — hashes are not portable across format versions (header bit 47).
+   * @param opts.capToSource Cap decode to source dims (default true). The version
+   *   report decodes uncapped (false) so every build is framed identically — the
+   *   oldest tags lack capped-decode support, and metrics resample to source anyway.
+   */
+  constructor(opts?: {
+    name?: string;
+    binaryPath?: string;
+    capToSource?: boolean;
+  }) {
+    this.name = opts?.name ?? "ChromaHash";
+    this.binaryPath = opts?.binaryPath ?? RUST_CLI;
+    this.capToSource = opts?.capToSource ?? true;
+  }
 
   async process(input: ImageInput, iterations: number): Promise<FormatResult> {
     const { smallWidth: w, smallHeight: h, smallRgba: rgba } = input;
     const gamut = GAMUT_MAP[input.gamut ?? "srgb"] ?? "srgb";
+    const bin = this.binaryPath;
 
     // Encode once to get result, then time the operation
-    const encoded = encodeViaRust(w, h, rgba, gamut);
+    const encoded = encodeViaRust(bin, w, h, rgba, gamut);
     const encodeTimeMs = await timeMs(() => {
-      encodeViaRust(w, h, rgba, gamut);
+      encodeViaRust(bin, w, h, rgba, gamut);
     }, iterations);
 
     const encodedSizeBytes = encoded.length;
 
-    // Decode capped to source dims so metrics are computed at source resolution.
-    // This prevents penalising ChromaHash for synthesising detail beyond the source.
-    const decoded = decodeViaRust(encoded, w, h);
+    // Decode (capped to source dims so metrics are computed at source resolution,
+    // which avoids penalising ChromaHash for synthesising detail beyond the source).
+    // `computeAllMetrics` resamples the decode to source either way.
+    const capW = this.capToSource ? w : undefined;
+    const capH = this.capToSource ? h : undefined;
+    const decoded = decodeViaRust(bin, encoded, capW, capH);
     const decodeTimeMs = await timeMs(() => {
-      decodeViaRust(encoded, w, h);
+      decodeViaRust(bin, encoded, capW, capH);
     }, iterations);
 
     const { w: dw, h: dh, rgba: decodedRgba } = decoded;
