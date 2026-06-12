@@ -363,7 +363,7 @@ ${categories
     return `
 <div class="section-title">${category}</div>${
       category === "Gamut"
-        ? `\n<p class="section-note">Originals here are shown as their true sRGB appearance — the wide-gamut source color-managed for an sRGB display — so they match a correct, gamut-aware decode. The gamut-aware ChromaHash reproduces it; formats that ignore the source gamut encode the raw bytes and look off on these rows by design (see their higher ΔE00).</p>`
+        ? `\n<p class="section-note">ΔE00 is scored in sRGB against the source's color-managed sRGB appearance, so the cross-format comparison stays apples-to-apples; the gamut-aware ChromaHash matches it while formats that ignore the source gamut look off (higher ΔE00). The <strong>Display P3</strong> row's Original and ChromaHash previews are decoded to P3 and tagged with the P3 ICC profile: on a wide-gamut (P3) display they show the true saturated color and match each other, while the sRGB-only formats appear less saturated — ChromaHash renders correctly to the display's gamut.</p>`
         : ""
     }
 ${catEntries

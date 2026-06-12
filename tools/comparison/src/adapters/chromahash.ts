@@ -30,9 +30,20 @@ function encodeViaRust(
   return new Uint8Array(output);
 }
 
+/**
+ * Display gamuts ChromaHash can decode *to*, paired with the named ICC profile
+ * to tag the preview with so a color-managed viewer renders it correctly.
+ * sharp ships sRGB and P3 profiles; other source gamuts (Adobe RGB, BT.2020,
+ * ProPhoto) preview in sRGB — the decoder falls back to sRGB for them anyway.
+ */
+const PREVIEW_OUTPUT: Record<string, { out: string; icc?: string }> = {
+  displayp3: { out: "displayp3", icc: "p3" },
+};
+
 function decodeViaRust(
   binary: string,
   hash: Uint8Array,
+  outGamut: string,
   maxW?: number,
   maxH?: number,
 ): {
@@ -48,6 +59,7 @@ function decodeViaRust(
     input: Buffer.from(hash),
     encoding: "buffer",
     timeout: 30_000,
+    env: { ...process.env, CHROMAHASH_OUT: outGamut },
   });
   const newline = output.indexOf(0x0a);
   const header = output.subarray(0, newline).toString("ascii");
@@ -102,13 +114,29 @@ export class ChromaHashAdapter implements FormatAdapter {
     // `computeAllMetrics` resamples the decode to source either way.
     const capW = this.capToSource ? w : undefined;
     const capH = this.capToSource ? h : undefined;
-    const decoded = decodeViaRust(bin, encoded, capW, capH);
+    // Metrics are always scored in sRGB against the color-managed sRGB reference,
+    // so the cross-format comparison stays apples-to-apples.
+    const decoded = decodeViaRust(bin, encoded, "srgb", capW, capH);
     const decodeTimeMs = await timeMs(() => {
-      decodeViaRust(bin, encoded, capW, capH);
+      decodeViaRust(bin, encoded, "srgb", capW, capH);
     }, iterations);
 
     const { w: dw, h: dh, rgba: decodedRgba } = decoded;
-    const dataUri = await rgbaToDataUri(decodedRgba, dw, dh);
+
+    // Preview: decode to the source display gamut where ChromaHash supports it
+    // (Display P3), and tag it with that ICC profile so a wide-gamut viewer shows
+    // the true saturated color. Other gamuts preview in sRGB (decoder fallback).
+    const preview = PREVIEW_OUTPUT[gamut];
+    const previewDecode = preview
+      ? decodeViaRust(bin, encoded, preview.out, capW, capH)
+      : decoded;
+    const dataUri = await rgbaToDataUri(
+      previewDecode.rgba,
+      previewDecode.w,
+      previewDecode.h,
+      preview?.icc,
+    );
+
     const reference = input.metricReferenceRgba ?? rgba;
     const metrics = await computeAllMetrics(
       reference,
