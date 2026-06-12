@@ -3,6 +3,14 @@
   "version": "0.5.0",
   "description": "Modern, high-quality image placeholder representation for professional formats",
   "license": "MIT OR Apache-2.0",
+  "author": "Justin Chung <noreply@justinchung.net>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/justin13888/chromahash.git",
+    "directory": "typescript"
+  },
+  "homepage": "https://github.com/justin13888/chromahash#readme",
+  "keywords": ["image", "placeholder", "lqip", "thumbnail", "preview"],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

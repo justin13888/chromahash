@@ -142,6 +142,7 @@ mavenPublishing {
             developer {
                 id.set("justin13888")
                 name.set("Justin Chung")
+                email.set("noreply@justinchung.net")
                 url.set("https://github.com/justin13888")
             }
         }
