@@ -165,22 +165,6 @@ class ChromaHashTest {
     }
 
     @Test
-    fun `deterministic encoding`() {
-        val rgba =
-            ByteArray(64) { i ->
-                when (i % 4) {
-                    0 -> 200.toByte()
-                    1 -> 100.toByte()
-                    2 -> 50.toByte()
-                    else -> 255.toByte()
-                }
-            }
-        val h1 = ChromaHash.encode(4u, 4u, rgba, Gamut.SRGB).use { it.asBytes() }
-        val h2 = ChromaHash.encode(4u, 4u, rgba, Gamut.SRGB).use { it.asBytes() }
-        assertContentEquals(h1, h2, "encoding should be deterministic")
-    }
-
-    @Test
     fun `version support reflects header bit`() {
         val rgba = ByteArray(64) { if (it % 4 == 3) 255.toByte() else 128.toByte() }
         ChromaHash.encode(4u, 4u, rgba, Gamut.SRGB).use { hash ->

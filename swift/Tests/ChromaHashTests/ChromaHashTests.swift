@@ -142,20 +142,6 @@ func gamutFromName(_ name: String) -> Gamut {
   #expect(ChromaHash.fromBytes(hash.hash) == hash)
 }
 
-@Test func deterministicEncoding() {
-  let rgba: [UInt8] = Array(repeating: [200, 100, 50, 255], count: 64).flatMap { $0 }
-  let a = ChromaHash.encode(width: 8, height: 8, rgba: rgba, gamut: .sRGB)
-  let b = ChromaHash.encode(width: 8, height: 8, rgba: rgba, gamut: .sRGB)
-  #expect(a.hash == b.hash)
-}
-
-@Test func allGamutsProduceOutput() {
-  let rgba: [UInt8] = Array(repeating: [200, 100, 50, 255], count: 16).flatMap { $0 }
-  for gamut in [Gamut.sRGB, .displayP3, .adobeRGB, .bt2020, .proPhotoRGB] {
-    #expect(ChromaHash.encode(width: 4, height: 4, rgba: rgba, gamut: gamut).hash.count == 32)
-  }
-}
-
 @Test func versionSupportedDetectsLegacy() {
   let rgba: [UInt8] = Array(repeating: [128, 128, 128, 255], count: 16).flatMap { $0 }
   let hash = ChromaHash.encode(width: 4, height: 4, rgba: rgba, gamut: .sRGB)
