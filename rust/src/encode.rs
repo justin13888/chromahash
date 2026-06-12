@@ -319,3 +319,239 @@ pub fn encode_with(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables) -> [
 pub fn encode(w: u32, h: u32, rgba: &[u8], gamut: Gamut) -> [u8; 32] {
     encode_with(w, h, rgba, gamut, &Tunables::DEFAULT)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Self-contained golden vectors copied from `spec/test-vectors/`. The
+    // crate's full golden cross-check lives in `tests/spec_vectors.rs`, but that
+    // reads the sibling `spec/` dir, which cargo-mutants' isolated per-crate
+    // build doesn't stage — so the encode pipeline is pinned here too, in-crate,
+    // where the mutation sweep (`cargo mutants`, library tests only) can use it.
+
+    fn solid(w: u32, h: u32, r: u8, g: u8, b: u8, a: u8) -> Vec<u8> {
+        let mut rgba = vec![0u8; (w * h * 4) as usize];
+        for px in rgba.chunks_exact_mut(4) {
+            px.copy_from_slice(&[r, g, b, a]);
+        }
+        rgba
+    }
+
+    #[test]
+    fn encode_golden_solids() {
+        // Saturated gamut corners exercise the decode-aware DC code search; the
+        // neutral/extreme tones pin the DC and scale quantizers and the header
+        // packing. (spec/test-vectors/integration-encode.json)
+        let cases: &[(u8, u8, u8, Gamut, [u8; 32])] = &[
+            (
+                128,
+                128,
+                128,
+                Gamut::Srgb,
+                [
+                    76, 32, 16, 0, 0, 32, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 239,
+                    189, 247, 222, 123, 239, 189, 187, 187, 187, 187, 187, 187, 187, 187, 59,
+                ],
+            ),
+            (
+                255,
+                0,
+                0,
+                Gamut::Srgb,
+                [
+                    207, 121, 22, 0, 0, 32, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 239,
+                    189, 247, 222, 123, 239, 189, 187, 187, 187, 187, 187, 187, 187, 187, 59,
+                ],
+            ),
+            (
+                0,
+                255,
+                0,
+                Gamut::Srgb,
+                [
+                    109, 198, 24, 0, 0, 32, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 239,
+                    189, 247, 222, 123, 239, 189, 187, 187, 187, 187, 187, 187, 187, 187, 59,
+                ],
+            ),
+            (
+                0,
+                0,
+                255,
+                Gamut::Srgb,
+                [
+                    185, 220, 0, 0, 0, 32, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 239,
+                    189, 247, 222, 123, 239, 189, 187, 187, 187, 187, 187, 187, 187, 187, 59,
+                ],
+            ),
+            (
+                255,
+                255,
+                255,
+                Gamut::Srgb,
+                [
+                    127, 32, 16, 0, 0, 32, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 239,
+                    189, 247, 222, 123, 239, 189, 187, 187, 187, 187, 187, 187, 187, 187, 59,
+                ],
+            ),
+            (
+                0,
+                0,
+                0,
+                Gamut::Srgb,
+                [
+                    0, 32, 16, 0, 0, 32, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 239,
+                    189, 247, 222, 123, 239, 189, 187, 187, 187, 187, 187, 187, 187, 187, 59,
+                ],
+            ),
+            // Wide-gamut solids: the same pixels map through a different M1
+            // matrix (and EOTF for ProPhoto) → distinct OKLAB and DC codes.
+            (
+                200,
+                100,
+                50,
+                Gamut::DisplayP3,
+                [
+                    79, 238, 21, 0, 0, 32, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 239,
+                    189, 247, 222, 123, 239, 189, 187, 187, 187, 187, 187, 187, 187, 187, 59,
+                ],
+            ),
+            (
+                220,
+                50,
+                30,
+                Gamut::ProPhotoRgb,
+                [
+                    212, 63, 22, 0, 0, 32, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 239,
+                    189, 247, 222, 123, 239, 189, 187, 187, 187, 187, 187, 187, 187, 187, 59,
+                ],
+            ),
+        ];
+        for &(r, g, b, gamut, expected) in cases {
+            let rgba = solid(4, 4, r, g, b, 255);
+            assert_eq!(
+                encode(4, 4, &rgba, gamut),
+                expected,
+                "solid ({r},{g},{b}) {gamut:?}"
+            );
+        }
+
+        // 1×1 solid (aspect-byte extreme, single-pixel DCT).
+        assert_eq!(
+            encode(1, 1, &solid(1, 1, 200, 100, 50, 255), Gamut::Srgb),
+            [
+                206, 43, 21, 0, 0, 32, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 239, 189,
+                247, 222, 123, 239, 189, 187, 187, 187, 187, 187, 187, 187, 187, 59
+            ]
+        );
+    }
+
+    #[test]
+    fn encode_golden_gradients() {
+        // Non-constant channels drive every AC slot: pins the per-tier write
+        // order, the scale factors, and the µ-law quantizer. Inputs and hashes
+        // are the gradient_8x4 / gradient_4x8 spec vectors verbatim.
+        let g8x4: [u8; 128] = [
+            0, 0, 255, 255, 36, 0, 255, 255, 72, 0, 255, 255, 109, 0, 255, 255, 145, 0, 255, 255,
+            182, 0, 255, 255, 218, 0, 255, 255, 255, 0, 255, 255, 0, 85, 170, 255, 36, 72, 170,
+            255, 72, 60, 170, 255, 109, 48, 170, 255, 145, 36, 170, 255, 182, 24, 170, 255, 218,
+            12, 170, 255, 255, 0, 170, 255, 0, 170, 85, 255, 36, 145, 85, 255, 72, 121, 85, 255,
+            109, 97, 85, 255, 145, 72, 85, 255, 182, 48, 85, 255, 218, 24, 85, 255, 255, 0, 85,
+            255, 0, 255, 0, 255, 36, 218, 0, 255, 72, 182, 0, 255, 109, 145, 0, 255, 145, 109, 0,
+            255, 182, 72, 0, 255, 218, 36, 0, 255, 255, 0, 0, 255,
+        ];
+        assert_eq!(
+            encode(8, 4, &g8x4, Gamut::Srgb),
+            [
+                200, 167, 141, 120, 245, 39, 39, 116, 128, 154, 227, 212, 58, 231, 158, 123, 49,
+                66, 232, 222, 123, 239, 61, 224, 75, 187, 171, 43, 200, 186, 59, 59
+            ]
+        );
+
+        let g4x8: [u8; 128] = [
+            0, 0, 255, 255, 85, 0, 255, 255, 170, 0, 255, 255, 255, 0, 255, 255, 0, 36, 218, 255,
+            85, 24, 218, 255, 170, 12, 218, 255, 255, 0, 218, 255, 0, 72, 182, 255, 85, 48, 182,
+            255, 170, 24, 182, 255, 255, 0, 182, 255, 0, 109, 145, 255, 85, 72, 145, 255, 170, 36,
+            145, 255, 255, 0, 145, 255, 0, 145, 109, 255, 85, 97, 109, 255, 170, 48, 109, 255, 255,
+            0, 109, 255, 0, 182, 72, 255, 85, 121, 72, 255, 170, 60, 72, 255, 255, 0, 72, 255, 0,
+            218, 36, 255, 85, 145, 36, 255, 170, 72, 36, 255, 255, 0, 36, 255, 0, 255, 0, 255, 85,
+            170, 0, 255, 170, 85, 0, 255, 255, 0, 0, 255,
+        ];
+        assert_eq!(
+            encode(4, 8, &g4x8, Gamut::Srgb),
+            [
+                73, 40, 142, 144, 49, 24, 65, 23, 80, 161, 155, 30, 69, 247, 222, 123, 208, 61,
+                232, 222, 123, 239, 189, 45, 72, 187, 187, 3, 43, 186, 187, 75
+            ]
+        );
+    }
+
+    #[test]
+    fn encode_golden_alpha() {
+        // Any α < 255 flips the alpha layout (6×6 L grid + alpha channel). Pins
+        // the alpha-DC/scale write and the alpha-weighted average. checkerboard
+        // alternates opaque red / transparent blue → average is red at α≈132.
+        let cb: [u8; 256] = [
+            255, 0, 0, 255, 0, 0, 255, 0, 255, 0, 0, 255, 0, 0, 255, 0, 255, 0, 0, 255, 0, 0, 255,
+            0, 255, 0, 0, 255, 0, 0, 255, 0, 0, 0, 255, 0, 255, 0, 0, 255, 0, 0, 255, 0, 255, 0, 0,
+            255, 0, 0, 255, 0, 255, 0, 0, 255, 0, 0, 255, 0, 255, 0, 0, 255, 255, 0, 0, 255, 0, 0,
+            255, 0, 255, 0, 0, 255, 0, 0, 255, 0, 255, 0, 0, 255, 0, 0, 255, 0, 255, 0, 0, 255, 0,
+            0, 255, 0, 0, 0, 255, 0, 255, 0, 0, 255, 0, 0, 255, 0, 255, 0, 0, 255, 0, 0, 255, 0,
+            255, 0, 0, 255, 0, 0, 255, 0, 255, 0, 0, 255, 255, 0, 0, 255, 0, 0, 255, 0, 255, 0, 0,
+            255, 0, 0, 255, 0, 255, 0, 0, 255, 0, 0, 255, 0, 255, 0, 0, 255, 0, 0, 255, 0, 0, 0,
+            255, 0, 255, 0, 0, 255, 0, 0, 255, 0, 255, 0, 0, 255, 0, 0, 255, 0, 255, 0, 0, 255, 0,
+            0, 255, 0, 255, 0, 0, 255, 255, 0, 0, 255, 0, 0, 255, 0, 255, 0, 0, 255, 0, 0, 255, 0,
+            255, 0, 0, 255, 0, 0, 255, 0, 255, 0, 0, 255, 0, 0, 255, 0, 0, 0, 255, 0, 255, 0, 0,
+            255, 0, 0, 255, 0, 255, 0, 0, 255, 0, 0, 255, 0, 255, 0, 0, 255, 0, 0, 255, 0, 255, 0,
+            0, 255,
+        ];
+        assert_eq!(
+            encode(8, 8, &cb, Gamut::Srgb),
+            [
+                207, 121, 22, 0, 0, 96, 16, 190, 239, 251, 190, 239, 123, 239, 189, 247, 222, 123,
+                239, 189, 119, 119, 119, 119, 119, 119, 119, 119, 119, 119, 231, 119
+            ]
+        );
+    }
+
+    #[test]
+    fn encode_fully_transparent() {
+        // Every pixel α = 0 → the alpha-weighted sum is zero, so the average must
+        // default to black rather than divide by zero (`avg_alpha > 0.0` guard).
+        let hash = encode(4, 4, &[0u8; 4 * 4 * 4], Gamut::Srgb);
+        assert_eq!(
+            hash,
+            [
+                0, 32, 16, 0, 0, 96, 0, 190, 239, 251, 190, 239, 123, 239, 189, 247, 222, 123, 239,
+                189, 119, 119, 119, 119, 119, 119, 119, 119, 119, 119, 119, 119
+            ]
+        );
+    }
+
+    #[test]
+    fn encode_alpha_gradient() {
+        // A smooth left→right alpha ramp over a solid colour gives the alpha
+        // channel a non-zero scale and real AC content — pins the alpha-scale
+        // quantizer (the checkerboard's extreme α saturates it to a constant).
+        let (w, h) = (8u32, 8u32);
+        let mut rgba = vec![0u8; (w * h * 4) as usize];
+        for y in 0..h {
+            for x in 0..w {
+                let idx = ((y * w + x) * 4) as usize;
+                rgba[idx..idx + 4].copy_from_slice(&[
+                    200,
+                    60,
+                    40,
+                    (x as f64 / (w - 1) as f64 * 255.0) as u8,
+                ]);
+            }
+        }
+        assert_eq!(
+            encode(w, h, &rgba, Gamut::Srgb),
+            [
+                199, 177, 20, 0, 0, 96, 239, 190, 239, 251, 190, 239, 123, 239, 189, 247, 222, 123,
+                239, 189, 119, 119, 119, 119, 119, 119, 119, 119, 119, 119, 112, 119
+            ]
+        );
+    }
+}

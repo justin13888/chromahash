@@ -315,9 +315,11 @@ Lefthook enforces checks automatically:
 | Hook | What runs | Purpose |
 |------|-----------|---------|
 | `pre-commit` | `just format-fix`, `just lint-fix` | Auto-fix style issues before committing |
-| `pre-push` | `just format-check`, `just lint`, `just test` | Block push if anything fails |
+| `pre-push` | `just format-check`, `just lint`, `just test`, `just mutants-rust-diff` | Block push if anything fails |
 
 These hooks are installed via `lefthook install`. The pre-push hook runs the full test suite, so a successful `git push` implies all checks passed.
+
+The `mutants-rust-diff` pre-push step is gated on `rust/src/**/*.rs` edits, so non-Rust pushes skip it. It mutation-tests only the core lines the push changes (see [Mutation Testing](#mutation-testing)). Skip it explicitly with `LEFTHOOK_EXCLUDE=mutants-rust git push`.
 
 ---
 
@@ -337,8 +339,48 @@ Each language has an independent CI workflow triggered only when its directory c
 | `ci-python.yml` | `python/**`, `bindings/uniffi/**`, `rust/**` | fmt check, lint, test |
 | `ci-csharp.yml` | `csharp/**`, `bindings/c/**`, `rust/**` | fmt check, build (lint), test |
 | `ci-android.yml` | `bindings/uniffi/**` | spec-vector test; AAR cross-compile + assemble |
+| `ci-mutants.yml` | `rust/**` (PRs) | mutation-test the changed core lines (`--in-diff`); manual full sweep via workflow_dispatch |
 
 CI mirrors the local `just` commands. If local checks pass, CI should pass.
+
+---
+
+## Mutation Testing
+
+[cargo-mutants](https://mutants.rs) stress-tests the **core Rust crate's own test
+suite**: it applies small mutations to `rust/src` (flip a comparison, swap an
+operator, replace a function body with a constant) and checks the tests catch
+each one. A *missed* mutant is a line the tests run but don't actually pin — a
+coverage gap a line-coverage number would hide.
+
+Scope is the core only (per issue #41); the FFI bindings are thin wrappers and
+are exercised by their own spec-vector tests.
+
+```bash
+just mutants-rust                     # full sweep of rust/src (~1200 mutants, minutes)
+just mutants-rust-diff                # only the lines changed vs origin/master (fast)
+just mutants-rust --file src/dct.rs   # extra args pass straight to cargo-mutants
+```
+
+**How the sweep sees the golden vectors.** cargo-mutants builds the crate in an
+isolated copy of `rust/` that does not include the sibling `spec/` dir, so the
+external golden test (`tests/spec_vectors.rs`, gated by the default-on
+`spec-vectors` feature) is skipped during the sweep (`no_default_features` in
+`rust/.cargo/mutants.toml`). The encode/decode pipeline is instead pinned for
+mutation by **self-contained golden unit tests** in `src/encode.rs` and
+`src/decode.rs` that embed the expected hashes/pixels directly. Normal
+`cargo test` and CI run the full external golden test as usual.
+
+**Equivalent mutants.** A few mutations can't be killed by any test because they
+produce identical observable behaviour (e.g. `>` vs `>=` at a boundary no input
+reaches) or only affect resource cleanup. These are listed, with justification,
+in `exclude_re` in `rust/.cargo/mutants.toml` — keep that list short and prefer
+adding a test over an exclusion.
+
+**Where it runs.** The `mutants-rust-diff` lefthook pre-push step gates pushes
+that touch `rust/src` on the changed lines being covered; `ci-mutants.yml` runs
+the same incremental check on pull requests. The full sweep is manual
+(`just mutants-rust`, or the `ci-mutants` workflow_dispatch) because it is slow.
 
 ---
 

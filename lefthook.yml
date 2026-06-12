@@ -33,3 +33,9 @@ pre-push:
       run: just lint
     test:
       run: just test
+    mutants-rust:
+      # Mutation-test only the core lines this push changes (cargo-mutants
+      # --in-diff vs origin/master). Gated on core .rs edits so non-Rust pushes
+      # skip it. Skip explicitly with: LEFTHOOK_EXCLUDE=mutants-rust git push
+      glob: "rust/src/**/*.rs"
+      run: just mutants-rust-diff

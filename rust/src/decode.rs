@@ -303,3 +303,140 @@ pub fn average_color_with(hash: &[u8; 32], t: &Tunables) -> [u8; 4] {
 pub fn average_color(hash: &[u8; 32]) -> [u8; 4] {
     average_color_with(hash, &Tunables::DEFAULT)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Self-contained golden vectors copied from `spec/test-vectors/`. The full
+    // golden cross-check lives in `tests/spec_vectors.rs`, but that reads the
+    // sibling `spec/` dir which cargo-mutants' isolated per-crate build doesn't
+    // stage — so the decode pipeline is pinned here too, in-crate, for the
+    // mutation sweep (library tests only).
+
+    fn assert_uniform(rgba: &[u8], px: [u8; 4]) {
+        for (i, chunk) in rgba.chunks_exact(4).enumerate() {
+            assert_eq!(chunk, px, "pixel {i} diverges from {px:?}");
+        }
+    }
+
+    #[test]
+    fn decode_golden_solids() {
+        // Solid hashes decode to a uniform field — pins the header unpack, the
+        // DC dequantize, and the gamut clamp. (integration-decode.json)
+        let gray = [
+            76, 32, 16, 0, 0, 32, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 239, 189, 247,
+            222, 123, 239, 189, 187, 187, 187, 187, 187, 187, 187, 187, 59,
+        ];
+        let (w, h, rgba) = decode(&gray);
+        assert_eq!((w, h), (32, 32));
+        assert_uniform(&rgba, [128, 128, 128, 255]);
+
+        let blue = [
+            185, 220, 0, 0, 0, 32, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 239, 189, 247,
+            222, 123, 239, 189, 187, 187, 187, 187, 187, 187, 187, 187, 59,
+        ];
+        let (w, h, rgba) = decode(&blue);
+        assert_eq!((w, h), (32, 32));
+        assert_uniform(&rgba, [3, 0, 252, 255]);
+    }
+
+    #[test]
+    fn decode_golden_alpha() {
+        // Alpha hash: the 6×6 layout + alpha channel must be read at the right
+        // bit offsets, and `average_color` must report the sub-255 alpha — pins
+        // the alpha-DC read in both the full render and the header-only path.
+        let cb = [
+            207, 121, 22, 0, 0, 96, 16, 190, 239, 251, 190, 239, 123, 239, 189, 247, 222, 123, 239,
+            189, 119, 119, 119, 119, 119, 119, 119, 119, 119, 119, 231, 119,
+        ];
+        let (w, h, rgba) = decode(&cb);
+        assert_eq!((w, h), (32, 32));
+        assert_uniform(&rgba, [251, 1, 0, 132]);
+        assert_eq!(average_color(&cb), [251, 1, 0, 132]);
+    }
+
+    #[test]
+    fn decode_golden_gradient() {
+        // A non-flat field exercises the AC read loops and the separable IDCT at
+        // every pixel. gradient_200x50 → 32×8; sampled pixels are verbatim from
+        // the spec vector.
+        let hash = [
+            197, 168, 109, 88, 237, 47, 163, 183, 80, 1, 106, 174, 73, 247, 220, 142, 245, 57, 247,
+            222, 123, 239, 65, 184, 227, 75, 187, 171, 60, 184, 186, 59,
+        ];
+        let (w, h, rgba) = decode(&hash);
+        assert_eq!((w, h), (32, 8));
+        let px = |i: usize| &rgba[i * 4..i * 4 + 4];
+        assert_eq!(px(0), [47, 29, 222, 255]);
+        assert_eq!(px(31), [245, 0, 231, 255]);
+        assert_eq!(px(128), [0, 133, 122, 255]);
+        assert_eq!(px(255), [248, 10, 0, 255]);
+    }
+
+    #[test]
+    fn decode_golden_gradient_16x16() {
+        // A 32×32 render reaches the windowed high-frequency coefficients, so the
+        // per-coefficient window weight actually shapes the output here (it's ≈1
+        // for the low frequencies the 32×8 case keeps). (integration-decode.json)
+        let hash = [
+            70, 232, 109, 104, 47, 32, 129, 128, 237, 43, 114, 175, 57, 247, 220, 172, 177, 189,
+            247, 222, 123, 206, 57, 134, 172, 51, 195, 131, 42, 203, 187, 51,
+        ];
+        let (w, h, rgba) = decode(&hash);
+        assert_eq!((w, h), (32, 32));
+        let px = |i: usize| &rgba[i * 4..i * 4 + 4];
+        assert_eq!(px(0), [24, 34, 245, 255]);
+        assert_eq!(px(16), [138, 0, 247, 255]);
+        assert_eq!(px(400), [139, 48, 155, 255]);
+        assert_eq!(px(600), [195, 38, 100, 255]);
+        assert_eq!(px(1000), [21, 179, 0, 255]);
+    }
+
+    #[test]
+    fn decode_alpha_gradient_varies() {
+        // Decoded alpha must ramp across the row — pins the alpha AC bit offsets
+        // and scale, which a uniform-alpha vector (checkerboard) can't reach.
+        // Hash is `encode_alpha_gradient`'s output; expected pixels are its decode.
+        let hash = [
+            199, 177, 20, 0, 0, 96, 239, 190, 239, 251, 190, 239, 123, 239, 189, 247, 222, 123,
+            239, 189, 119, 119, 119, 119, 119, 119, 119, 119, 119, 119, 112, 119,
+        ];
+        let (w, h, rgba) = decode(&hash);
+        assert_eq!((w, h), (32, 32));
+        let px = |i: usize| &rgba[i * 4..i * 4 + 4];
+        // First row: alpha climbs left→right; RGB stays put.
+        assert_eq!(px(0), [200, 59, 42, 5]);
+        assert_eq!(px(16), [200, 59, 42, 129]);
+        assert_eq!(px(31), [200, 59, 42, 242]);
+        assert_eq!(px(1023), [200, 59, 42, 242]);
+    }
+
+    #[test]
+    fn decode_capped_golden() {
+        // Capping renders at a coarser raster — pins decode_capped's size math and
+        // the frequency filter that drops coefficients with cx ≥ w or cy ≥ h.
+        // Sampling along the strip (not just pixel 0) makes that filter observable.
+        // (integration-decode-capped.json)
+        let strip = [
+            59, 174, 171, 232, 52, 0, 126, 191, 9, 227, 131, 15, 62, 248, 222, 123, 239, 189, 247,
+            222, 123, 239, 61, 31, 196, 187, 187, 115, 188, 187, 187, 59,
+        ];
+        let (w, h, rgba) = decode_capped(&strip, 1, 100);
+        assert_eq!((w, h), (1, 32));
+        let px = |i: usize| &rgba[i * 4..i * 4 + 4];
+        assert_eq!(px(0), [243, 31, 0, 255]);
+        assert_eq!(px(8), [186, 0, 64, 255]);
+        assert_eq!(px(16), [124, 0, 132, 255]);
+        assert_eq!(px(24), [59, 0, 200, 255]);
+        assert_eq!(px(31), [9, 30, 244, 255]);
+
+        let grad = [
+            70, 232, 109, 104, 47, 32, 129, 128, 237, 43, 114, 175, 57, 247, 220, 172, 177, 189,
+            247, 222, 123, 206, 57, 134, 172, 51, 195, 131, 42, 203, 187, 51,
+        ];
+        let (w, h, rgba) = decode_capped(&grad, 8, 8);
+        assert_eq!((w, h), (8, 8));
+        assert_eq!(&rgba[0..4], [27, 37, 242, 255]);
+    }
+}

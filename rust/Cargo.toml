@@ -14,4 +14,24 @@ categories = ["multimedia::images", "encoding", "compression"]
 
 [dependencies]
 
+[features]
+# `spec-vectors` (on by default) enables the integration golden test
+# `tests/spec_vectors.rs`, which reads ../spec/test-vectors. It's a no-op for
+# library consumers — it only gates a dev test target. cargo-mutants builds with
+# --no-default-features so it skips that target: the sweep stages only the rust/
+# crate, without the sibling spec/ dir, so the test couldn't compile there. The
+# encode/decode pipeline is pinned for the sweep by the self-contained golden
+# unit tests in src/encode.rs and src/decode.rs instead. See rust/mutants.toml.
+default = ["spec-vectors"]
+spec-vectors = []
+
+[[test]]
+name = "spec_vectors"
+required-features = ["spec-vectors"]
+
 [dev-dependencies]
+# Test-only: parse the shared spec test vectors and assert the reference
+# implementation reproduces them byte-for-byte. The published crate stays
+# dependency-free — serde_json never enters the runtime graph. Mirrors the
+# golden-vector tests in the binding crates (bindings/c, bindings/uniffi, ...).
+serde_json = "1"
