@@ -185,6 +185,17 @@ export function buildHarnesses(): void {
       args: ["build", path.join(ROOT, "csharp/src/Chromahash.Cli")],
       cwd: ROOT,
     },
+    {
+      // Wide-gamut → sRGB metric-reference converter (delegates to gamut-color).
+      label: "gamut-ref",
+      command: "cargo",
+      args: [
+        "build",
+        "--manifest-path",
+        path.join(ROOT, "tools/gamut-ref-stdin/Cargo.toml"),
+      ],
+      cwd: ROOT,
+    },
   ];
 
   for (const step of steps) {

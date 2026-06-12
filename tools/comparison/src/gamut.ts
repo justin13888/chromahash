@@ -7,130 +7,67 @@
  * gamut-tagged image to its true sRGB appearance (relative-colorimetric, with
  * per-channel clipping) so metrics measure the right target for every format.
  *
- * Matrices and EOTFs mirror spec/constants.py and rust/src/transfer.rs — the
- * exact interpretation the chromahash encoder applies to gamut-tagged input.
- * This is harness code, not format code, so plain Math.pow is fine here.
+ * The color math itself — the per-gamut EOTFs, the OKLab M1 / M1⁻¹[sRGB]
+ * matrices, and the sRGB inverse-EOTF — is **not** reimplemented here. It is
+ * delegated to the same-author `gamut` ecosystem (`gamut-color`) via the
+ * `tools/gamut-ref-stdin` Rust shim, so those matrices and transfer functions
+ * are defined once (in gamut) instead of transcribed into this harness. The
+ * shim is the encoder-exact interpretation chromahash applies to gamut-tagged
+ * input; this is harness code (Tier-1, correctness-only), not format code.
  */
 
-type Mat3 = [
-  [number, number, number],
-  [number, number, number],
-  [number, number, number],
-];
+import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import path from "node:path";
 
-/** Linear gamut RGB → LMS (cone response). From spec/constants.py M1[gamut]. */
-const M1: Record<string, Mat3> = {
-  srgb: [
-    [0.4122214708, 0.5363325363, 0.0514459929],
-    [0.2119034982, 0.6806995451, 0.1073969566],
-    [0.0883024619, 0.2817188376, 0.6299787005],
-  ],
-  displayp3: [
-    [0.4813798544, 0.4621183697, 0.0565017758],
-    [0.2288319449, 0.6532168128, 0.1179512422],
-    [0.0839457557, 0.2241652689, 0.6918889754],
-  ],
-  adobergb: [
-    [0.5764322615, 0.3699132211, 0.0536545174],
-    [0.2963164739, 0.5916761266, 0.1120073994],
-    [0.1234782548, 0.2194986958, 0.6570230494],
-  ],
-  bt2020: [
-    [0.6167557872, 0.3601983994, 0.0230458134],
-    [0.265133064, 0.6358393641, 0.0990275718],
-    [0.1001026342, 0.2039065194, 0.6959908464],
-  ],
-  prophoto: [
-    [0.7154484635, 0.352791548, -0.0682400115],
-    [0.2744116551, 0.6677976408, 0.057790704],
-    [0.1097844385, 0.1861982875, 0.704017274],
-  ],
-};
+// Repo root from the compiled location (dist/gamut.js → ../../.. = repo root).
+const ROOT = path.resolve(import.meta.dirname, "../../..");
+const GAMUT_REF_CRATE = path.join(ROOT, "tools/gamut-ref-stdin");
+const GAMUT_REF_BIN = path.join(
+  GAMUT_REF_CRATE,
+  "target/debug/gamut-ref-stdin",
+);
 
-/** LMS → linear sRGB. From spec/constants.py M1_INV_SRGB. */
-const M1_INV_SRGB: Mat3 = [
-  [4.0767416621, -3.3077115913, 0.2309699292],
-  [-1.2684380046, 2.6097574011, -0.3413193965],
-  [-0.0041960863, -0.7034186147, 1.707614701],
-];
+let ensuredBuilt = false;
 
-/** sRGB EOTF (gamma → linear), per spec §5.3. */
-function srgbEotf(x: number): number {
-  return x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4;
+/**
+ * Build the shim if it is missing. The normal compare flow pre-builds it in the
+ * harness build phase (so this is a no-op); this fallback covers paths that skip
+ * that phase — `--skip-harnesses`, tests, or importing this module directly.
+ */
+function ensureBuilt(): void {
+  if (ensuredBuilt) {
+    return;
+  }
+  if (!existsSync(GAMUT_REF_BIN)) {
+    execFileSync(
+      "cargo",
+      ["build", "--manifest-path", path.join(GAMUT_REF_CRATE, "Cargo.toml")],
+      { stdio: "inherit" },
+    );
+  }
+  ensuredBuilt = true;
 }
-
-/** sRGB gamma (linear → gamma), per spec §12.6. */
-function srgbGamma(x: number): number {
-  return x <= 0.0031308 ? 12.92 * x : 1.055 * x ** (1 / 2.4) - 0.055;
-}
-
-/** BT.2020 PQ (ST 2084) inverse EOTF + Reinhard tone-map, per rust/src/transfer.rs. */
-function bt2020PqEotf(x: number): number {
-  const M1_PQ = 0.1593017578125;
-  const M2_PQ = 78.84375;
-  const C1 = 0.8359375;
-  const C2 = 18.8515625;
-  const C3 = 18.6875;
-  const n = x ** (1 / M2_PQ);
-  const num = Math.max(n - C1, 0);
-  const den = C2 - C3 * n;
-  const yLinear = (num / den) ** (1 / M1_PQ);
-  const l = (yLinear * 10000) / 203;
-  return l / (1 + l);
-}
-
-/** Per-gamut EOTF (encoded byte value in [0,1] → linear light). */
-const EOTF: Record<string, (x: number) => number> = {
-  srgb: srgbEotf,
-  displayp3: srgbEotf,
-  adobergb: (x) => x ** 2.2,
-  bt2020: bt2020PqEotf,
-  prophoto: (x) => x ** 1.8,
-};
-
-const clamp01 = (x: number): number => (x < 0 ? 0 : x > 1 ? 1 : x);
 
 /**
  * Convert gamut-tagged RGBA bytes to their sRGB appearance (alpha passthrough).
- * Returns the input unchanged for sRGB (identity round trip not worth the float churn).
+ *
+ * `gamut` is the harness's normalized key (`srgb`, `displayp3`, `adobergb`,
+ * `bt2020`, `prophoto`). Returns the input unchanged for sRGB — it is already
+ * the metric target, and short-circuiting avoids a needless subprocess (the
+ * shim treats sRGB and any unknown key as identity too).
  */
 export function gamutToSrgbReference(
   rgba: Uint8Array,
   gamut: string,
 ): Uint8Array {
-  const m1 = M1[gamut];
-  const eotf = EOTF[gamut];
-  if (gamut === "srgb" || m1 === undefined || eotf === undefined) {
+  if (gamut === "srgb") {
     return rgba;
   }
-
-  // 256-entry EOTF lookup (mirrors the encoder's LUT approach).
-  const lut = new Float64Array(256);
-  for (let i = 0; i < 256; i++) {
-    lut[i] = eotf(i / 255);
-  }
-
-  const out = new Uint8Array(rgba.length);
-  for (let i = 0; i < rgba.length; i += 4) {
-    const r = lut[rgba[i] ?? 0] ?? 0;
-    const g = lut[rgba[i + 1] ?? 0] ?? 0;
-    const b = lut[rgba[i + 2] ?? 0] ?? 0;
-
-    const l = m1[0][0] * r + m1[0][1] * g + m1[0][2] * b;
-    const m = m1[1][0] * r + m1[1][1] * g + m1[1][2] * b;
-    const s = m1[2][0] * r + m1[2][1] * g + m1[2][2] * b;
-
-    const lr =
-      M1_INV_SRGB[0][0] * l + M1_INV_SRGB[0][1] * m + M1_INV_SRGB[0][2] * s;
-    const lg =
-      M1_INV_SRGB[1][0] * l + M1_INV_SRGB[1][1] * m + M1_INV_SRGB[1][2] * s;
-    const lb =
-      M1_INV_SRGB[2][0] * l + M1_INV_SRGB[2][1] * m + M1_INV_SRGB[2][2] * s;
-
-    out[i] = Math.round(255 * srgbGamma(clamp01(lr)));
-    out[i + 1] = Math.round(255 * srgbGamma(clamp01(lg)));
-    out[i + 2] = Math.round(255 * srgbGamma(clamp01(lb)));
-    out[i + 3] = rgba[i + 3] ?? 255;
-  }
-  return out;
+  ensureBuilt();
+  const out = execFileSync(GAMUT_REF_BIN, [gamut], {
+    input: Buffer.from(rgba),
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  return new Uint8Array(out.buffer, out.byteOffset, out.byteLength);
 }

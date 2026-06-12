@@ -1,0 +1,28 @@
+# Wide-gamut → sRGB reference converter for the comparison harness.
+#
+# This replaces the hand-maintained color math that used to live in
+# `tools/comparison/src/gamut.ts` with a thin wrapper over the same-author
+# `gamut` ecosystem's color primitives (`gamut-color`): the per-gamut EOTFs, the
+# OKLab `M1` / `M1⁻¹[sRGB]` matrices, and the sRGB inverse-EOTF are all gamut's,
+# so the matrices and transfer functions are defined once (in gamut) instead of
+# transcribed here and in chromahash.
+#
+# Standalone crate (no Cargo workspace at the repo root) so the core `chromahash`
+# crate stays zero-dependency. `gamut` is unpublished, so it is pinned by git rev
+# rather than version. This is harness code, not format code: gamut-color is
+# Tier-1 (correctness-only `std` f64), which is exactly right here — the metric
+# reference is not on chromahash's bit-exact cross-language path.
+[package]
+name = "gamut-ref-stdin"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "gamut-ref-stdin"
+path = "src/main.rs"
+
+[dependencies]
+# Pinned to gamut master @ a57526a (the `feat/tonemapping` merge), where
+# gamut-color gained the encoder-exact transfer + OKLab + profile surface.
+gamut-color = { git = "https://github.com/justin13888/gamut", rev = "a57526af2fa8ecdd6264a49e8ab53f38d143ff32" }

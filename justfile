@@ -8,19 +8,19 @@ default:
 
 # Format all implementations
 [parallel]
-format: format-rust format-c format-wasm format-ts format-jvm format-swift format-go format-python format-csharp format-android format-compare format-thumbhash
+format: format-rust format-c format-wasm format-ts format-jvm format-swift format-go format-python format-csharp format-android format-compare format-thumbhash format-gamutref
 
 # Lint all implementations
 [parallel]
-lint: lint-rust lint-c lint-wasm lint-ts lint-jvm lint-swift lint-go lint-python lint-csharp lint-android lint-compare lint-thumbhash
+lint: lint-rust lint-c lint-wasm lint-ts lint-jvm lint-swift lint-go lint-python lint-csharp lint-android lint-compare lint-thumbhash lint-gamutref
 
 # Auto-fix formatting in all implementations
 [parallel]
-format-fix: format-fix-rust format-fix-c format-fix-wasm format-fix-ts format-fix-jvm format-fix-swift format-fix-go format-fix-python format-fix-csharp format-fix-android format-fix-compare format-fix-thumbhash
+format-fix: format-fix-rust format-fix-c format-fix-wasm format-fix-ts format-fix-jvm format-fix-swift format-fix-go format-fix-python format-fix-csharp format-fix-android format-fix-compare format-fix-thumbhash format-fix-gamutref
 
 # Auto-fix linting in all implementations
 [parallel]
-lint-fix: lint-fix-rust lint-fix-c lint-fix-wasm lint-fix-ts lint-fix-jvm lint-fix-swift lint-fix-go lint-fix-python lint-fix-csharp lint-fix-android lint-fix-compare lint-fix-thumbhash
+lint-fix: lint-fix-rust lint-fix-c lint-fix-wasm lint-fix-ts lint-fix-jvm lint-fix-swift lint-fix-go lint-fix-python lint-fix-csharp lint-fix-android lint-fix-compare lint-fix-thumbhash lint-fix-gamutref
 
 # Run all tests
 [parallel]
@@ -32,7 +32,7 @@ build: build-rust build-c build-wasm build-ts build-jvm build-swift build-go bui
 
 # Check formatting (no writes) across all implementations
 [parallel]
-format-check: format-check-rust format-check-c format-check-wasm format-check-ts format-check-jvm format-check-swift format-check-go format-check-python format-check-csharp format-check-android format-check-compare format-check-thumbhash
+format-check: format-check-rust format-check-c format-check-wasm format-check-ts format-check-jvm format-check-swift format-check-go format-check-python format-check-csharp format-check-android format-check-compare format-check-thumbhash format-check-gamutref
 
 # ─── Comparison tool ────────────────────────────────────────────────────────
 
@@ -67,6 +67,25 @@ lint-thumbhash:
 lint-fix-thumbhash:
     cargo clippy --manifest-path tools/thumbhash-rs/Cargo.toml --fix --allow-staged --allow-dirty
     cargo clippy --manifest-path tools/thumbhash-rs/Cargo.toml -- -D warnings
+
+# ─── Gamut → sRGB reference (delegates to gamut-color) ────────────────────────
+# Standalone crate (keeps the core chromahash crate zero-dep). Wraps gamut's
+# color primitives for the comparison harness's metric-reference conversion.
+
+format-gamutref:
+    cargo fmt --manifest-path tools/gamut-ref-stdin/Cargo.toml
+
+format-fix-gamutref: format-gamutref
+
+format-check-gamutref:
+    cargo fmt --manifest-path tools/gamut-ref-stdin/Cargo.toml --check
+
+lint-gamutref:
+    cargo clippy --manifest-path tools/gamut-ref-stdin/Cargo.toml -- -D warnings
+
+lint-fix-gamutref:
+    cargo clippy --manifest-path tools/gamut-ref-stdin/Cargo.toml --fix --allow-staged --allow-dirty
+    cargo clippy --manifest-path tools/gamut-ref-stdin/Cargo.toml -- -D warnings
 
 # Build the comparison tool
 build-compare:
