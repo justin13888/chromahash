@@ -4,6 +4,22 @@
 
 chromahash is a multi-language library implementing a compact, high-fidelity Low Quality Image Placeholder (LQIP) format. All seven implementations are spec-compatible — identical input produces identical output across languages.
 
+## Packages
+
+| Language | Package | Registry |
+| -------- | ------- | -------- |
+| Rust | `chromahash` | [crates.io](https://crates.io/crates/chromahash) |
+| TypeScript | `@chromahash/typescript` | [npm](https://www.npmjs.com/package/@chromahash/typescript) |
+| Python | `chromahash` | [PyPI](https://pypi.org/project/chromahash/) |
+| C# | `ChromaHash` | [NuGet](https://www.nuget.org/packages/ChromaHash) |
+| Java / Kotlin (JVM) | `io.github.justin13888:chromahash-jvm` | [Maven Central](https://central.sonatype.com/artifact/io.github.justin13888/chromahash-jvm) |
+| Android | `io.github.justin13888:chromahash-android` | [Maven Central](https://central.sonatype.com/artifact/io.github.justin13888/chromahash-android) |
+| Go | `github.com/justin13888/chromahash/go` | [pkg.go.dev](https://pkg.go.dev/github.com/justin13888/chromahash/go) |
+| Swift | SwiftPM (`https://github.com/justin13888/chromahash`) | [Swift Package Index](https://swiftpackageindex.com/justin13888/chromahash) |
+| C | `chromahash-c` | [source](bindings/c) (C ABI — the FFI foundation, no registry) |
+
+> Some registries publish on the next tagged release — see [`RELEASING.md`](RELEASING.md).
+
 ## Why ChromaHash?
 
 ChromaHash is built for professional photo management at scale, where perceptual quality, layout precision, and wide-gamut correctness matter. Every claim below is defined and quantified in the [format specification](spec/).
