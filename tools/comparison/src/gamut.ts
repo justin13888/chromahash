@@ -1,11 +1,13 @@
 /**
- * Wide-gamut → sRGB conversion for metric references.
+ * Wide-gamut → sRGB conversion for metric references and report previews.
  *
  * The gamut fixtures store pixel bytes that are *tagged* with a non-sRGB gamut.
  * Comparing decoded previews against those raw bytes as if they were sRGB
  * penalizes formats that color-manage correctly. This module converts a
  * gamut-tagged image to its true sRGB appearance (relative-colorimetric, with
- * per-channel clipping) so metrics measure the right target for every format.
+ * per-channel clipping) so metrics measure the right target for every format —
+ * and so the report's Original / encoder-input previews show that same true
+ * appearance instead of the raw bytes, matching a correct gamut-aware decode.
  *
  * The color math itself — the per-gamut EOTFs, the OKLab M1 / M1⁻¹[sRGB]
  * matrices, and the sRGB inverse-EOTF — is **not** reimplemented here. It is
