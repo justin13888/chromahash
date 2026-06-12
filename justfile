@@ -86,6 +86,14 @@ install-iqa:
 compare: build-compare go-cbuild swift-cbuild ts-cbuild python-cbuild csharp-cbuild
     mise exec -- pnpm --prefix tools/comparison run compare
 
+# Local-only: compare chromahash's own format versions (v0.2–v0.5 + the current
+# working tree, the primary variant) to gauge whether current changes improve
+# quality. Each tag is built as a release encode_stdin in a cached git worktree
+# under tools/comparison/.versions/ (gitignored). Not run in CI. Requires iqa-cli
+# on PATH (run `just install-iqa` once). Writes output/versions-report.{html,json}.
+compare-versions: build-compare
+    mise exec -- node tools/comparison/dist/main.js --versions v0.2,v0.3,v0.4,v0.5,current
+
 # ─── Benchmark ──────────────────────────────────────────────────────────────
 
 # Build benchmark harnesses (release mode), incl. both ThumbHash baselines (native Rust + JS)

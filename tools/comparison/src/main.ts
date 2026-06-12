@@ -9,6 +9,10 @@ import { BlurHashAdapter } from "./adapters/blurhash.ts";
 import { LqipModernAdapter } from "./adapters/lqip-modern.ts";
 import { UnpicAdapter } from "./adapters/unpic.ts";
 import {
+  prepareVersionBinaries,
+  type VersionBinary,
+} from "./version-builds.ts";
+import {
   loadImage,
   rgbaToDataUri,
   fileBufferToDisplayDataUri,
@@ -40,26 +44,41 @@ import type {
 const { values } = parseArgs({
   options: {
     images: { type: "string", default: "fixtures/**/*.{png,jpg}" },
-    output: { type: "string", default: "output/report.html" },
+    // No parseArgs default: the code-level default below picks the report name so
+    // version mode can fall back to versions-report.html instead of clobbering it.
+    output: { type: "string" },
     json: { type: "string" },
     iterations: { type: "string", default: "10" },
     "skip-harnesses": { type: "boolean", default: false },
     "generate-fixtures": { type: "boolean", default: true },
     "skip-natural": { type: "boolean", default: false },
     formats: { type: "string" },
+    versions: { type: "string" },
     commit: { type: "string" },
   },
 });
 
 const imagesGlob = values.images ?? "fixtures/**/*.{png,jpg}";
-const outputPath = values.output ?? "output/report.html";
+const outputPath =
+  values.output ??
+  (values.versions ? "output/versions-report.html" : "output/report.html");
 const iterations = Number.parseInt(values.iterations ?? "10", 10);
-const skipHarnesses = values["skip-harnesses"] ?? false;
+// Version-comparison mode compares chromahash builds only, so the cross-language
+// harness verification is irrelevant there and is always skipped.
+const skipHarnesses =
+  (values["skip-harnesses"] ?? false) || Boolean(values.versions);
 const shouldGenerateFixtures = values["generate-fixtures"] ?? true;
 const skipNatural = values["skip-natural"] ?? false;
 /** Optional comma-separated format filter (case-insensitive), e.g. --formats ChromaHash,ThumbHash. */
 const formatFilter = values.formats
   ? values.formats.split(",").map((f) => f.trim().toLowerCase())
+  : null;
+/** Optional chromahash version list, e.g. --versions v0.2,v0.3,v0.4,v0.5,current. */
+const versionList = values.versions
+  ? values.versions
+      .split(",")
+      .map((v) => v.trim())
+      .filter(Boolean)
   : null;
 
 /** Derive the JSON output path from the HTML output path by swapping the extension. */
@@ -102,6 +121,38 @@ function resolveRepoUrl(): string | null {
   const server = process.env.GITHUB_SERVER_URL;
   const repo = process.env.GITHUB_REPOSITORY;
   return server && repo ? `${server}/${repo}` : null;
+}
+
+/**
+ * Label for the working-tree ("current") build in the version report: the short
+ * commit plus a dirty marker, e.g. `current (a1b2c3d, dirty)`. This is the primary
+ * variant — it's what the report exists to evaluate against the released tags.
+ */
+function currentVariantLabel(toolRoot: string): string {
+  const git = (args: string[]): string => {
+    try {
+      return execFileSync("git", args, {
+        cwd: toolRoot,
+        encoding: "utf8",
+      }).trim();
+    } catch {
+      return "";
+    }
+  };
+  const short = git(["rev-parse", "--short", "HEAD"]) || "unknown";
+  const dirty = git(["status", "--porcelain"]).length > 0;
+  return `current (${short}${dirty ? ", dirty" : ""})`;
+}
+
+/** Order version builds for display: current (primary) first, then tags descending. */
+function orderVersions(bins: VersionBinary[]): VersionBinary[] {
+  const current = bins.filter((b) => b.version === "current");
+  const tags = bins
+    .filter((b) => b.version !== "current")
+    .sort((a, b) =>
+      b.version.localeCompare(a.version, undefined, { numeric: true }),
+    );
+  return [...current, ...tags];
 }
 
 async function main(): Promise<void> {
@@ -155,29 +206,55 @@ async function main(): Promise<void> {
     console.log("Harnesses built.");
   }
 
-  // Initialize adapters
-  let adapters: FormatAdapter[] = [
-    new ChromaHashAdapter(),
-    new ThumbHashAdapter(),
-    new BlurHashAdapter(),
-    new LqipModernAdapter(),
-    new UnpicAdapter(),
-  ];
-  if (formatFilter) {
-    adapters = adapters.filter((a) =>
-      formatFilter.includes(a.name.toLowerCase()),
+  // Initialize adapters. In version-comparison mode every "format" column is a
+  // chromahash build (one per version, each round-tripping with its own binary);
+  // otherwise it's the cross-format LQIP line-up.
+  let adapters: FormatAdapter[];
+  let activeFormatNames: string[];
+  if (versionList) {
+    console.log("Preparing chromahash version binaries...");
+    const bins = orderVersions(prepareVersionBinaries(versionList));
+    adapters = bins.map(
+      (b) =>
+        new ChromaHashAdapter({
+          name:
+            b.version === "current" ? currentVariantLabel(toolRoot) : b.version,
+          binaryPath: b.binaryPath,
+          // Decode uncapped so every version is framed identically (the oldest
+          // tags lack capped decode); metrics resample to source regardless.
+          capToSource: false,
+        }),
     );
     if (adapters.length === 0) {
-      console.error(`--formats matched no adapters: ${values.formats}`);
+      console.error("No version binaries were built; nothing to compare.");
       process.exit(1);
     }
-    console.log(
-      `Format filter active: ${adapters.map((a) => a.name).join(", ")}`,
+    activeFormatNames = adapters.map((a) => a.name);
+    console.log(`Version comparison: ${activeFormatNames.join(", ")}`);
+  } else {
+    adapters = [
+      new ChromaHashAdapter(),
+      new ThumbHashAdapter(),
+      new BlurHashAdapter(),
+      new LqipModernAdapter(),
+      new UnpicAdapter(),
+    ];
+    if (formatFilter) {
+      adapters = adapters.filter((a) =>
+        formatFilter.includes(a.name.toLowerCase()),
+      );
+      if (adapters.length === 0) {
+        console.error(`--formats matched no adapters: ${values.formats}`);
+        process.exit(1);
+      }
+      console.log(
+        `Format filter active: ${adapters.map((a) => a.name).join(", ")}`,
+      );
+    }
+    activeFormatNames = FORMAT_NAMES.filter((n) =>
+      adapters.some((a) => a.name === n),
     );
   }
-  const activeFormatNames = FORMAT_NAMES.filter((n) =>
-    adapters.some((a) => a.name === n),
-  );
 
   const entries: Array<{
     name: string;
@@ -385,7 +462,13 @@ async function main(): Promise<void> {
   await fs.writeFile(absJson, `${JSON.stringify(json, null, 2)}\n`);
 
   // Render the HTML report (now referencing the standalone images by path).
-  const html = generateReport(entries, meta);
+  const html = generateReport(
+    entries,
+    meta,
+    versionList
+      ? { formatNames: activeFormatNames, showImplementations: false }
+      : undefined,
+  );
   await fs.writeFile(absOutput, html);
 
   const link = (p: string) => `\x1b]8;;file://${p}\x1b\\${p}\x1b]8;;\x1b\\`;

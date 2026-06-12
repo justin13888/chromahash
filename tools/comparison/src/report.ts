@@ -163,9 +163,13 @@ export const LANGUAGES = [
 export function generateReport(
   entries: ImageEntry[],
   meta: ReportMeta,
+  opts?: { formatNames?: string[]; showImplementations?: boolean },
 ): string {
-  const formatNames = FORMAT_NAMES;
+  const formatNames = opts?.formatNames ?? FORMAT_NAMES;
   const languages = LANGUAGES;
+  // The cross-language verification tab is only meaningful for the cross-format
+  // report; the version-comparison report (one chromahash build per column) hides it.
+  const showImplementations = opts?.showImplementations ?? true;
 
   // Compute summary stats: natural/realistic only (primary), and all images
   const naturalFilter = (e: ImageEntry) =>
@@ -196,6 +200,55 @@ export function generateReport(
     "Natural",
     "Realistic",
   ];
+
+  const implementationsTab = showImplementations
+    ? `<!-- Tab 2: ChromaHash Implementations -->
+<div id="tab-implementations" class="tab-content">
+<h2 style="margin-bottom:12px">Cross-Language Verification</h2>
+
+<table>
+<tr><th>Language</th><th>Status</th></tr>
+${langPassFail
+  .map(
+    (l) =>
+      `<tr><td>${l.language}</td><td class="${l.pass === null ? "" : l.pass ? "pass" : "fail"}">${l.pass === null ? "N/A" : l.pass ? "PASS" : "FAIL"}</td></tr>`,
+  )
+  .join("\n")}
+</table>
+
+${categories
+  .map((category) => {
+    const catEntries = entries.filter((e) => e.category === category);
+    if (catEntries.length === 0) return "";
+    return `
+<div class="section-title">${category}</div>
+${catEntries
+  .map(
+    (entry) => `
+<div class="image-row">
+  <div class="image-name">${entry.name}</div>
+  <div class="image-cell">
+    <div class="original-wrap">
+      <img class="img-hires" src="${entry.originalDataUri}" alt="Original">
+      <img class="img-lores" src="${entry.loResDataUri}" alt="Encoder input">
+    </div>
+    <div class="label">Original<br>${entry.originalWidth}x${entry.originalHeight}px</div>
+  </div>
+  ${entry.harnessResults
+    .map(
+      (r) => `<div class="image-cell">
+    ${r.dataUri ? `<img src="${r.dataUri}" alt="${r.language}" class="${r.matches ? "" : "mismatch"}">` : '<div style="width:80px;height:150px;background:#333;display:flex;align-items:center;justify-content:center;color:#f44">Error</div>'}
+    <div class="label ${r.matches ? "pass" : "fail"}">${r.language}</div>
+  </div>`,
+    )
+    .join("\n  ")}
+</div>`,
+  )
+  .join("\n")}`;
+  })
+  .join("\n")}
+</div>`
+    : "";
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -259,9 +312,13 @@ export function generateReport(
 <body>
 <h1>ChromaHash Visual Comparison Report</h1>
 <div class="controls">
-  <button class="active" onclick="switchTab('formats', event)">LQIP Formats</button>
+${
+  showImplementations
+    ? `  <button class="active" onclick="switchTab('formats', event)">LQIP Formats</button>
   <button onclick="switchTab('implementations', event)">ChromaHash Implementations</button>
-  <button onclick="toggleTheme()">Toggle Light/Dark</button>
+`
+    : ""
+}  <button onclick="toggleTheme()">Toggle Light/Dark</button>
   <button onclick="toggleBlur()">Toggle Blur</button>
 </div>
 
@@ -343,52 +400,7 @@ ${catEntries
   .join("\n")}
 </div>
 
-<!-- Tab 2: ChromaHash Implementations -->
-<div id="tab-implementations" class="tab-content">
-<h2 style="margin-bottom:12px">Cross-Language Verification</h2>
-
-<table>
-<tr><th>Language</th><th>Status</th></tr>
-${langPassFail
-  .map(
-    (l) =>
-      `<tr><td>${l.language}</td><td class="${l.pass === null ? "" : l.pass ? "pass" : "fail"}">${l.pass === null ? "N/A" : l.pass ? "PASS" : "FAIL"}</td></tr>`,
-  )
-  .join("\n")}
-</table>
-
-${categories
-  .map((category) => {
-    const catEntries = entries.filter((e) => e.category === category);
-    if (catEntries.length === 0) return "";
-    return `
-<div class="section-title">${category}</div>
-${catEntries
-  .map(
-    (entry) => `
-<div class="image-row">
-  <div class="image-name">${entry.name}</div>
-  <div class="image-cell">
-    <div class="original-wrap">
-      <img class="img-hires" src="${entry.originalDataUri}" alt="Original">
-      <img class="img-lores" src="${entry.loResDataUri}" alt="Encoder input">
-    </div>
-    <div class="label">Original<br>${entry.originalWidth}x${entry.originalHeight}px</div>
-  </div>
-  ${entry.harnessResults
-    .map(
-      (r) => `<div class="image-cell">
-    ${r.dataUri ? `<img src="${r.dataUri}" alt="${r.language}" class="${r.matches ? "" : "mismatch"}">` : '<div style="width:80px;height:150px;background:#333;display:flex;align-items:center;justify-content:center;color:#f44">Error</div>'}
-    <div class="label ${r.matches ? "pass" : "fail"}">${r.language}</div>
-  </div>`,
-    )
-    .join("\n  ")}
-</div>`,
-  )
-  .join("\n")}`;
-  })
-  .join("\n")}
-</div>
+${implementationsTab}
 
 <script>
 function switchTab(tab, evt) {
