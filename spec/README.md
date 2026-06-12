@@ -277,14 +277,17 @@ Source RGB → Linearize (source EOTF) → LMS (M1[source_gamut]) → OKLAB (M2)
 ```
 
 The resulting OKLAB values are **absolute** — the same physical color produces the same
-(L, a, b) regardless of source gamut. No gamut flag is stored; no decode-time branching.
+(L, a, b) regardless of source gamut. No gamut flag is stored. The decoder renders the
+absolute OKLAB to a caller-chosen **output gamut** (§11), so the same hash can be shown
+correctly on an sRGB, Display P3, or Adobe RGB display.
 
-> **Note (v0.6):** DC chroma quantization ranges are sized to the sRGB OKLAB hull (§7.1).
-> Wide-gamut colors outside the hull clip at encode — intentionally, because the decoder
-> clips to sRGB anyway, so chroma range beyond the hull is unreachable and only wastes
-> precision. The decode-aware DC selection (§10.3) chooses the codes whose decoded sRGB
-> color is closest to the (clipped) true average, so clipping costs no decoded
-> accuracy. AC coefficients are differences around the DC and are unaffected.
+> **Note (v0.6):** DC chroma quantization ranges are sized to the OKLAB hull of the
+> display-output gamuts — the union of sRGB, Display P3 and Adobe RGB (§7.1) — so colors
+> within any of those gamuts are stored faithfully and render at full saturation on a
+> matching display. Source colors more saturated than that union (e.g. some BT.2020 /
+> ProPhoto inputs) clip at encode; no real display can show them anyway. The decode-aware
+> DC selection (§10.3) keeps the stored DC within ±1 code of the true average. AC
+> coefficients are differences around the DC and are unaffected.
 
 ### 5.2 Decoding Pipeline
 
@@ -444,10 +447,11 @@ the natural raster); it only takes effect for sub-natural renders.
 The nominal codes above are the starting point for the decode-aware DC search (§10.3),
 which may shift each of L/a/b by ±1 code.
 
-`MAX_CHROMA_A = 0.28` and `MAX_CHROMA_B = 0.32` cover the sRGB OKLAB hull
-(max |a| = 0.2746 at the magenta corner, max |b| = 0.3115 at the blue corner). Chroma
-beyond the hull is unreachable after the decoder's per-channel clip to sRGB, so the
-range stops there — 1.4–1.6× finer DC steps than a range sized to wide-gamut sources.
+`MAX_CHROMA_A = 0.35` and `MAX_CHROMA_B = 0.33` cover the OKLAB hull of the union of the
+display-output gamuts — sRGB ∪ Display P3 ∪ Adobe RGB (max |a| ≈ 0.347, max |b| ≈ 0.321).
+This stores colors within any output gamut faithfully so they render at full saturation
+on a matching display (§11). The range stops there — wider sources (BT.2020/ProPhoto)
+clip, since no supported display can show beyond this hull.
 
 > **Note:** The a/b DC encode formula `round(64 + 63×x)` produces indices in [1, 127],
 > never 0. Conforming encoders MUST NOT produce raw=0 for a/b DC (the DC search clamps
@@ -746,10 +750,23 @@ solids round-trip nearly exactly.
 
 ## 11. Decoding Algorithm
 
+The decoder renders the stored absolute OKLAB into a caller-chosen **output gamut**:
+`sRGB`, `Display P3`, or `Adobe RGB`. For each output gamut it uses that gamut's inverse
+matrix `M1_inv[gamut]` (LMS → linear gamut RGB, §12.5) and gamma curve (`srgbGamma` for
+sRGB and Display P3, which share the sRGB transfer; `x^(1/2.2)` for Adobe RGB), then
+clips each channel to `[0, 1]` (relative-colorimetric, §12.6). Colors within the target
+gamut render at full saturation; colors outside it clip to its boundary. Output gamut
+defaults to sRGB. `BT.2020` (HDR PQ, no clean SDR display inverse) and `ProPhoto` (not a
+display gamut) are not output targets and fall back to sRGB. `averageColor` (§11.2)
+always returns sRGB.
+
 ### 11.1 Pseudocode
 
 ```
-function decode(hash) -> (w, h, rgba):
+function decode(hash, output_gamut = sRGB) -> (w, h, rgba):
+    // output_gamut ∈ {sRGB, Display P3, Adobe RGB}; others fall back to sRGB.
+    // M1_inv[output_gamut] and gamma_lut (built from the gamut's transfer) are
+    // selected once here and used in the per-pixel loop below (§11 intro, §12.5).
     // 1. Unpack header
     header = 0
     for i in 0..5: header |= hash[i] << (i*8)
@@ -838,12 +855,12 @@ function decode(hash) -> (w, h, rgba):
             // per-channel clip of rgb_lin below (relative-colorimetric, §12.6)
             L = clamp(L, 0.0, 1.0)
 
-            // OKLAB → sRGB via gamma LUT
-            rgb_lin = oklabToLinearRgb(L, a, b)
+            // OKLAB → linear output-gamut RGB (M1_inv[output_gamut]) → gamma LUT
+            rgb_lin = oklabToLinearRgb(L, a, b, output_gamut)
             idx = (y*w + x) * 4
-            rgba[idx+0] = linearToSrgb8(clamp(rgb_lin[0], 0, 1), gamma_lut)
-            rgba[idx+1] = linearToSrgb8(clamp(rgb_lin[1], 0, 1), gamma_lut)
-            rgba[idx+2] = linearToSrgb8(clamp(rgb_lin[2], 0, 1), gamma_lut)
+            rgba[idx+0] = linearToGamma8(clamp(rgb_lin[0], 0, 1), gamma_lut)
+            rgba[idx+1] = linearToGamma8(clamp(rgb_lin[1], 0, 1), gamma_lut)
+            rgba[idx+2] = linearToGamma8(clamp(rgb_lin[2], 0, 1), gamma_lut)
             rgba[idx+3] = round(255 * clamp(alpha, 0, 1))
 
     return (w, h, rgba)
@@ -887,8 +904,8 @@ All constants are authoritatively defined in `spec/constants.py`.
 ### 12.1 Scalar Constants
 
 ```
-MAX_CHROMA_A       = 0.28    # Max absolute OKLAB 'a' DC (sRGB hull max |a| = 0.2746)
-MAX_CHROMA_B       = 0.32    # Max absolute OKLAB 'b' DC (sRGB hull max |b| = 0.3115)
+MAX_CHROMA_A       = 0.35    # Max absolute OKLAB 'a' DC (sRGB∪P3∪Adobe hull max |a| ≈ 0.347)
+MAX_CHROMA_B       = 0.33    # Max absolute OKLAB 'b' DC (sRGB∪P3∪Adobe hull max |b| ≈ 0.321)
 MAX_L_SCALE        = 0.5     # Max luminance AC amplitude
 MAX_A_SCALE        = 0.125   # Max chroma-a AC amplitude (corpus max: 0.111)
 MAX_B_SCALE        = 0.125   # Max chroma-b AC amplitude (corpus max: 0.113)
@@ -961,15 +978,34 @@ Derived as `M_LMS × M_XYZ[gamut]`. Property: `M1 × [1,1,1]^T ≈ [1,1,1]^T`.
   0.1097844385   0.1861982875   0.7040172740
 ```
 
-### 12.5 M1_inv[sRGB] — Decoder Matrix (LMS → sRGB linear)
+### 12.5 M1_inv[output gamut] — Decoder Matrices (LMS → linear gamut RGB)
 
-This is the **only** M1 inverse the decoder needs:
+The decoder selects one of these by the output gamut (§11). Each is the exact inverse of
+the corresponding `M1` in §12.4. sRGB / Display P3 / Adobe RGB are the display-output
+gamuts; BT.2020 / ProPhoto fall back to `M1_inv[sRGB]`.
 
+**M1_inv[sRGB]:**
 ```
   4.0767416621  -3.3077115913   0.2309699292
  -1.2684380046   2.6097574011  -0.3413193965
  -0.0041960863  -0.7034186147   1.7076147010
 ```
+
+**M1_inv[Display P3]:**
+```
+  3.1277689869  -2.2571357957   0.1293668089
+ -1.0910090475   2.4133317585  -0.3223227108
+ -0.0260108130  -0.5080413260   1.5340521389
+```
+
+**M1_inv[Adobe RGB]:**
+```
+  2.5540368478  -1.6219762024   0.0679393544
+ -1.2684380042   2.6097574007  -0.3413193963
+ -0.0562347471  -0.5670418342   1.6232765812
+```
+
+Output gamma: sRGB and Display P3 use `srgbGamma` (§12.6); Adobe RGB uses `x^(1/2.2)`.
 
 ### 12.6 Helper Functions
 
@@ -1175,8 +1211,11 @@ decoder can never display, and chroma AC scale ranges (0.5) exceeded the measure
 maximum (0.113) by 4.4× — together wasting roughly two bits of every chroma field. The
 result was visible chroma banding and desaturation.
 
-**Fix.** `MAX_CHROMA_A/B` sized to the sRGB OKLAB hull (0.28/0.32); `MAX_A/B_SCALE`
-to 0.125. This was the single largest quality win of the revision.
+**Fix.** `MAX_CHROMA_A/B` sized to the display-output gamut union — sRGB ∪ Display P3 ∪
+Adobe RGB (0.35/0.33), still far tighter than v0.5's ±0.45 — so wide-gamut colors are
+stored faithfully for multi-gamut output (§11) without wasting precision on chroma no
+display can show; `MAX_A/B_SCALE` to 0.125. This was the single largest quality win of
+the revision.
 
 ### Change 6 — Decode-aware DC code selection (§10.3)
 

@@ -37,8 +37,8 @@ const CA_BITS = 4;
 const ALPHA_AC_COUNT = 5;
 const ALPHA_AC_BITS = 4;
 
-const MAX_CHROMA_A = 0.28;
-const MAX_CHROMA_B = 0.32;
+const MAX_CHROMA_A = 0.35;
+const MAX_CHROMA_B = 0.33;
 const MAX_L_SCALE = 0.5;
 const MAX_A_SCALE = 0.125;
 const MAX_B_SCALE = 0.125;
@@ -71,6 +71,37 @@ const M1_INV_SRGB: Mat3 = [
   [-1.2684380046, 2.6097574011, -0.3413193965],
   [-0.0041960863, -0.7034186147, 1.707614701],
 ];
+
+/** M1_INV[Display P3]: LMS → linear Display P3. */
+const M1_INV_DISPLAY_P3: Mat3 = [
+  [3.1277689869, -2.2571357957, 0.1293668089],
+  [-1.0910090475, 2.4133317585, -0.3223227108],
+  [-0.026010813, -0.508041326, 1.5340521389],
+];
+
+/** M1_INV[Adobe RGB]: LMS → linear Adobe RGB. */
+const M1_INV_ADOBE_RGB: Mat3 = [
+  [2.5540368478, -1.6219762024, 0.0679393544],
+  [-1.2684380042, 2.6097574007, -0.3413193963],
+  [-0.0562347471, -0.5670418342, 1.6232765812],
+];
+
+/**
+ * Decode output gamut: the display target the placeholder is rendered into.
+ * `Display P3` shares the sRGB transfer curve; `Adobe RGB` uses γ = 2.2.
+ */
+export type OutputGamut = "sRGB" | "Display P3" | "Adobe RGB";
+
+function m1InvFor(output: OutputGamut): Mat3 {
+  switch (output) {
+    case "Display P3":
+      return M1_INV_DISPLAY_P3;
+    case "Adobe RGB":
+      return M1_INV_ADOBE_RGB;
+    default:
+      return M1_INV_SRGB;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Portable math (bit-exact across languages; see rust/src/math_utils.rs)
@@ -224,24 +255,34 @@ function srgbGamma(x: number): number {
   return 1.055 * portablePow(x, 1.0 / 2.4) - 0.055;
 }
 
-/** 4096-entry sRGB gamma LUT: lut[i] = sRGB8(i/4095). Per spec §12.6. */
-function buildGammaLut(): Uint8Array {
+/** Adobe RGB gamma (linear → gamma): x^(1/2.2). Per spec §12.5. */
+function adobeRgbGamma(x: number): number {
+  return portablePow(x, 1.0 / 2.2);
+}
+
+/** 4096-entry gamma LUT for a transfer fn: lut[i] = γ(i/4095)·255. Per spec §12.6. */
+function buildGammaLut(gamma: (x: number) => number): Uint8Array {
   const lut = new Uint8Array(4096);
   for (let i = 0; i < 4096; i++) {
-    const srgb = srgbGamma(i / 4095.0);
-    lut[i] = roundHalfAwayFromZero(clamp01(srgb) * 255.0);
+    lut[i] = roundHalfAwayFromZero(clamp01(gamma(i / 4095.0)) * 255.0);
   }
   return lut;
 }
 
-const GAMMA_LUT = buildGammaLut();
+// sRGB / Display P3 share the sRGB transfer; Adobe RGB uses γ = 2.2.
+const SRGB_GAMMA_LUT = buildGammaLut(srgbGamma);
+const ADOBE_GAMMA_LUT = buildGammaLut(adobeRgbGamma);
 
-/** Map linear [0,1] to sRGB u8 via the LUT. Per spec §12.6. */
-function linearToSrgb8(x: number): number {
+function gammaLutFor(output: OutputGamut): Uint8Array {
+  return output === "Adobe RGB" ? ADOBE_GAMMA_LUT : SRGB_GAMMA_LUT;
+}
+
+/** Map linear [0,1] to gamma-encoded u8 via the given LUT. Per spec §12.6. */
+function linearToGamma8(x: number, lut: Uint8Array): number {
   let idx = roundHalfAwayFromZero(x * 4095.0);
   if (idx < 0) idx = 0;
   else if (idx > 4095) idx = 4095;
-  return GAMMA_LUT[idx] ?? 0;
+  return lut[idx] ?? 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -249,13 +290,21 @@ function linearToSrgb8(x: number): number {
 // ---------------------------------------------------------------------------
 
 function oklabToLinearSrgb(lab: Vec3): [number, number, number] {
+  return oklabToLinearOutput(lab, "sRGB");
+}
+
+/** OKLAB → linear RGB in the given output gamut (LMS → gamut RGB). Per spec §12.5. */
+function oklabToLinearOutput(
+  lab: Vec3,
+  output: OutputGamut,
+): [number, number, number] {
   const c = matvec3(M2_INV, lab);
   const lms: Vec3 = [
     c[0] * c[0] * c[0],
     c[1] * c[1] * c[1],
     c[2] * c[2] * c[2],
   ];
-  return matvec3(M1_INV_SRGB, lms);
+  return matvec3(m1InvFor(output), lms);
 }
 
 // ---------------------------------------------------------------------------
@@ -411,7 +460,12 @@ function prepareChannel(
 // ---------------------------------------------------------------------------
 
 /** Render a ChromaHash at the given pixel dimensions. Per spec §11 (v0.6). */
-function renderAtSize(hash: Uint8Array, w: number, h: number): Uint8Array {
+function renderAtSize(
+  hash: Uint8Array,
+  w: number,
+  h: number,
+  output: OutputGamut,
+): Uint8Array {
   // 1. Header (48 bits)
   const lDcQ = readBits(hash, 0, 7);
   const aDcQ = readBits(hash, 7, 7);
@@ -514,6 +568,7 @@ function renderAtSize(hash: Uint8Array, w: number, h: number): Uint8Array {
   const cosY = precomputeCosTable(h, maxCy + 1);
 
   // 7. Render
+  const gammaLut = gammaLutFor(output);
   const rgba = new Uint8Array(w * h * 4);
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
@@ -557,11 +612,11 @@ function renderAtSize(hash: Uint8Array, w: number, h: number): Uint8Array {
         : 1.0;
 
       const lClamped = clamp01(l);
-      const rgbLin = oklabToLinearSrgb([lClamped, a, b]);
+      const rgbLin = oklabToLinearOutput([lClamped, a, b], output);
       const idx = (y * w + x) * 4;
-      rgba[idx] = linearToSrgb8(clamp01(rgbLin[0]));
-      rgba[idx + 1] = linearToSrgb8(clamp01(rgbLin[1]));
-      rgba[idx + 2] = linearToSrgb8(clamp01(rgbLin[2]));
+      rgba[idx] = linearToGamma8(clamp01(rgbLin[0]), gammaLut);
+      rgba[idx + 1] = linearToGamma8(clamp01(rgbLin[1]), gammaLut);
+      rgba[idx + 2] = linearToGamma8(clamp01(rgbLin[2]), gammaLut);
       rgba[idx + 3] = roundHalfAwayFromZero(255.0 * clamp01(alpha));
     }
   }
@@ -597,27 +652,46 @@ function readAspect(hash: Uint8Array): number {
   return readBits(hash, 38, 8);
 }
 
-/** Decode a ChromaHash into an RGBA image. Per spec §11 (v0.6). */
+/** Decode a ChromaHash into an sRGB RGBA image. Per spec §11 (v0.6). */
 export function decode(hash: Uint8Array): DecodedImage {
-  assertHash(hash);
-  const [w, h] = decodeOutputSize(readAspect(hash));
-  return { w, h, rgba: renderAtSize(hash, w, h) };
+  return decodeTo(hash, "sRGB");
 }
 
 /**
- * Decode a ChromaHash into an RGBA image, capped at the given max dimensions.
- * Useful when the natural decoded size would exceed the source dimensions.
+ * Decode a ChromaHash into an RGBA image in the given output gamut
+ * (`sRGB`, `Display P3`, or `Adobe RGB`). Wide-gamut colors render at full
+ * saturation when the target gamut can represent them, clipped otherwise.
+ */
+export function decodeTo(hash: Uint8Array, output: OutputGamut): DecodedImage {
+  assertHash(hash);
+  const [w, h] = decodeOutputSize(readAspect(hash));
+  return { w, h, rgba: renderAtSize(hash, w, h, output) };
+}
+
+/**
+ * Decode a ChromaHash into an sRGB RGBA image, capped at the given max
+ * dimensions. Useful when the natural decoded size would exceed the source.
  */
 export function decodeCapped(
   hash: Uint8Array,
   maxWidth: number,
   maxHeight: number,
 ): DecodedImage {
+  return decodeCappedTo(hash, maxWidth, maxHeight, "sRGB");
+}
+
+/** Capped decode (see {@link decodeCapped}) in the given output gamut. */
+export function decodeCappedTo(
+  hash: Uint8Array,
+  maxWidth: number,
+  maxHeight: number,
+  output: OutputGamut,
+): DecodedImage {
   assertHash(hash);
   const [natW, natH] = decodeOutputSize(readAspect(hash));
   const w = Math.min(natW, maxWidth);
   const h = Math.min(natH, maxHeight);
-  return { w, h, rgba: renderAtSize(hash, w, h) };
+  return { w, h, rgba: renderAtSize(hash, w, h, output) };
 }
 
 /** Extract the average color without a full decode. Per spec §11.2. */
@@ -637,9 +711,9 @@ export function averageColor(hash: Uint8Array): RgbaColor {
   const alpha = hasAlpha ? readBits(hash, 48, 5) / 31.0 : 1.0;
 
   return {
-    r: linearToSrgb8(clamp01(rgbLin[0])),
-    g: linearToSrgb8(clamp01(rgbLin[1])),
-    b: linearToSrgb8(clamp01(rgbLin[2])),
+    r: linearToGamma8(clamp01(rgbLin[0]), SRGB_GAMMA_LUT),
+    g: linearToGamma8(clamp01(rgbLin[1]), SRGB_GAMMA_LUT),
+    b: linearToGamma8(clamp01(rgbLin[2]), SRGB_GAMMA_LUT),
     a: roundHalfAwayFromZero(255.0 * clamp01(alpha)),
   };
 }

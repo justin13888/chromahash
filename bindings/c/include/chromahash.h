@@ -168,19 +168,37 @@ bool chromahash_is_version_supported(const ChromaHash *hash);
 ChromaHashStatus chromahash_average_color(const ChromaHash *hash, ChromaHashColor *out_color);
 
 /**
- * Decode into an RGBA image (≤ 32×32 px). `*out_image` receives a library-owned
+ * Decode into an sRGB RGBA image (≤ 32×32 px). `*out_image` receives a library-owned
  * image to release with [`chromahash_image_free`].
  */
 ChromaHashStatus chromahash_decode(const ChromaHash *hash, ChromaHashImage *out_image);
 
 /**
- * Decode into an RGBA image, capped at the given maximum dimensions. `*out_image`
+ * Decode into an RGBA image in the given output gamut (sRGB / Display P3 /
+ * Adobe RGB; others fall back to sRGB). `*out_image` receives a library-owned
+ * image to release with [`chromahash_image_free`].
+ */
+ChromaHashStatus chromahash_decode_to(const ChromaHash *hash,
+                                      ChromaHashGamut output,
+                                      ChromaHashImage *out_image);
+
+/**
+ * Decode into an sRGB RGBA image, capped at the given maximum dimensions. `*out_image`
  * receives a library-owned image to release with [`chromahash_image_free`].
  */
 ChromaHashStatus chromahash_decode_capped(const ChromaHash *hash,
                                           uint32_t max_width,
                                           uint32_t max_height,
                                           ChromaHashImage *out_image);
+
+/**
+ * Capped decode (see [`chromahash_decode_capped`]) in the given output gamut.
+ */
+ChromaHashStatus chromahash_decode_capped_to(const ChromaHash *hash,
+                                             uint32_t max_width,
+                                             uint32_t max_height,
+                                             ChromaHashGamut output,
+                                             ChromaHashImage *out_image);
 
 /**
  * Release the RGBA buffer owned by a [`ChromaHashImage`] and zero the struct.

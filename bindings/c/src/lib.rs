@@ -276,6 +276,7 @@ unsafe fn decode_into(
     hash: *const ChromaHash,
     out_image: *mut ChromaHashImage,
     capped: Option<(u32, u32)>,
+    output: CoreGamut,
 ) -> ChromaHashStatus {
     if hash.is_null() || out_image.is_null() {
         return ChromaHashStatus::NullPointer;
@@ -283,8 +284,8 @@ unsafe fn decode_into(
     let handle = &*hash;
     let result = panic::catch_unwind(AssertUnwindSafe(|| {
         let (w, h, rgba) = match capped {
-            Some((max_w, max_h)) => handle.inner.decode_capped(max_w, max_h),
-            None => handle.inner.decode(),
+            Some((max_w, max_h)) => handle.inner.decode_capped_to(max_w, max_h, output),
+            None => handle.inner.decode_to(output),
         };
         make_image(w, h, rgba)
     }));
@@ -297,17 +298,29 @@ unsafe fn decode_into(
     }
 }
 
-/// Decode into an RGBA image (≤ 32×32 px). `*out_image` receives a library-owned
+/// Decode into an sRGB RGBA image (≤ 32×32 px). `*out_image` receives a library-owned
 /// image to release with [`chromahash_image_free`].
 #[no_mangle]
 pub unsafe extern "C" fn chromahash_decode(
     hash: *const ChromaHash,
     out_image: *mut ChromaHashImage,
 ) -> ChromaHashStatus {
-    decode_into(hash, out_image, None)
+    decode_into(hash, out_image, None, CoreGamut::Srgb)
 }
 
-/// Decode into an RGBA image, capped at the given maximum dimensions. `*out_image`
+/// Decode into an RGBA image in the given output gamut (sRGB / Display P3 /
+/// Adobe RGB; others fall back to sRGB). `*out_image` receives a library-owned
+/// image to release with [`chromahash_image_free`].
+#[no_mangle]
+pub unsafe extern "C" fn chromahash_decode_to(
+    hash: *const ChromaHash,
+    output: ChromaHashGamut,
+    out_image: *mut ChromaHashImage,
+) -> ChromaHashStatus {
+    decode_into(hash, out_image, None, output.into())
+}
+
+/// Decode into an sRGB RGBA image, capped at the given maximum dimensions. `*out_image`
 /// receives a library-owned image to release with [`chromahash_image_free`].
 #[no_mangle]
 pub unsafe extern "C" fn chromahash_decode_capped(
@@ -316,7 +329,29 @@ pub unsafe extern "C" fn chromahash_decode_capped(
     max_height: u32,
     out_image: *mut ChromaHashImage,
 ) -> ChromaHashStatus {
-    decode_into(hash, out_image, Some((max_width, max_height)))
+    decode_into(
+        hash,
+        out_image,
+        Some((max_width, max_height)),
+        CoreGamut::Srgb,
+    )
+}
+
+/// Capped decode (see [`chromahash_decode_capped`]) in the given output gamut.
+#[no_mangle]
+pub unsafe extern "C" fn chromahash_decode_capped_to(
+    hash: *const ChromaHash,
+    max_width: u32,
+    max_height: u32,
+    output: ChromaHashGamut,
+    out_image: *mut ChromaHashImage,
+) -> ChromaHashStatus {
+    decode_into(
+        hash,
+        out_image,
+        Some((max_width, max_height)),
+        output.into(),
+    )
 }
 
 /// Release the RGBA buffer owned by a [`ChromaHashImage`] and zero the struct.

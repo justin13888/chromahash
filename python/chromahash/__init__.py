@@ -47,18 +47,28 @@ class ChromaHash:
         obj = _CoreHash.encode(w, h, bytes(rgba), _GAMUT_TO_CORE[gamut])
         return cls(obj.as_bytes())
 
-    def decode(self) -> tuple[int, int, bytes]:
-        """Decode a ChromaHash into an RGBA image.
-        Returns (width, height, rgba_pixels).
+    def decode(self, output: Gamut = Gamut.SRGB) -> tuple[int, int, bytes]:
+        """Decode a ChromaHash into an RGBA image in the given output gamut.
+
+        ``output`` selects the display target (``Gamut.SRGB``,
+        ``Gamut.DISPLAY_P3``, or ``Gamut.ADOBE_RGB``); wide-gamut colors render
+        at full saturation on a matching display. ``Gamut.BT2020`` and
+        ``Gamut.PROPHOTO_RGB`` are not display-output gamuts and fall back to
+        sRGB. Returns (width, height, rgba_pixels).
         """
-        result = _CoreHash.from_bytes(self._hash).decode()
+        result = _CoreHash.from_bytes(self._hash).decode_to(_GAMUT_TO_CORE[output])
         return (result.width, result.height, result.rgba)
 
-    def decode_capped(self, max_w: int, max_h: int) -> tuple[int, int, bytes]:
+    def decode_capped(
+        self, max_w: int, max_h: int, output: Gamut = Gamut.SRGB
+    ) -> tuple[int, int, bytes]:
         """Decode a ChromaHash into an RGBA image, capped at the given max
-        dimensions. Returns (width, height, rgba_pixels).
+        dimensions, in the given output gamut.
+        Returns (width, height, rgba_pixels).
         """
-        result = _CoreHash.from_bytes(self._hash).decode_capped(max_w, max_h)
+        result = _CoreHash.from_bytes(self._hash).decode_capped_to(
+            max_w, max_h, _GAMUT_TO_CORE[output]
+        )
         return (result.width, result.height, result.rgba)
 
     def average_color(self) -> tuple[int, int, int, int]:

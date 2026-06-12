@@ -129,12 +129,19 @@ fn main() {
                 .expect("failed to read hash from stdin");
             let ch = ChromaHash::from_bytes(hash);
             let t = tunables_from_env();
+            // Output gamut via env (keeps positional args stable for the
+            // comparison harness): srgb (default) | displayp3 | adobergb.
+            let out_gamut = match std::env::var("CHROMAHASH_OUT").as_deref() {
+                Ok("displayp3") => Gamut::DisplayP3,
+                Ok("adobergb") => Gamut::AdobeRgb,
+                _ => Gamut::Srgb,
+            };
             let (w, h, rgba) = if args.len() == 4 {
                 let max_w: u32 = args[2].parse().expect("invalid max_width");
                 let max_h: u32 = args[3].parse().expect("invalid max_height");
-                ch.decode_capped_tuned(max_w, max_h, &t)
+                ch.decode_capped_to_tuned(max_w, max_h, out_gamut, &t)
             } else {
-                ch.decode_tuned(&t)
+                ch.decode_to_tuned(out_gamut, &t)
             };
             let header = format!("{w} {h}\n");
             io::stdout()

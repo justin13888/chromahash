@@ -110,9 +110,15 @@ impl ChromaHash {
         }))
     }
 
-    /// Decode into an RGBA image (≤ 32×32 px).
+    /// Decode into an sRGB RGBA image (≤ 32×32 px).
     pub fn decode(&self) -> DecodeResult {
-        let (width, height, rgba) = self.inner.decode();
+        self.decode_to(Gamut::Srgb)
+    }
+
+    /// Decode into an RGBA image in the given output gamut (sRGB / Display P3 /
+    /// Adobe RGB; others fall back to sRGB).
+    pub fn decode_to(&self, output: Gamut) -> DecodeResult {
+        let (width, height, rgba) = self.inner.decode_to(output.into());
         DecodeResult {
             width: width as i32,
             height: height as i32,
@@ -120,9 +126,14 @@ impl ChromaHash {
         }
     }
 
-    /// Decode into an RGBA image, capped at the given maximum dimensions.
+    /// Decode into an sRGB RGBA image, capped at the given maximum dimensions.
     pub fn decode_capped(&self, max_w: u32, max_h: u32) -> DecodeResult {
-        let (width, height, rgba) = self.inner.decode_capped(max_w, max_h);
+        self.decode_capped_to(max_w, max_h, Gamut::Srgb)
+    }
+
+    /// Capped decode (see `decode_capped`) in the given output gamut.
+    pub fn decode_capped_to(&self, max_w: u32, max_h: u32, output: Gamut) -> DecodeResult {
+        let (width, height, rgba) = self.inner.decode_capped_to(max_w, max_h, output.into());
         DecodeResult {
             width: width as i32,
             height: height as i32,

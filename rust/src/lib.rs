@@ -45,11 +45,28 @@ impl ChromaHash {
         decode::decode(&self.hash)
     }
 
+    /// Decode a ChromaHash into an RGBA image in the given output gamut.
+    ///
+    /// `output` selects the display gamut to render into: `Srgb`, `DisplayP3`,
+    /// or `AdobeRgb`. Wide-gamut colors are rendered at full saturation when the
+    /// target gamut can represent them, and clipped (relative-colorimetric) to
+    /// the target otherwise. `Bt2020` and `ProPhotoRgb` are not display-output
+    /// gamuts and fall back to sRGB. Returns (width, height, rgba_pixels).
+    pub fn decode_to(&self, output: Gamut) -> (u32, u32, Vec<u8>) {
+        decode::decode_to(&self.hash, output)
+    }
+
     /// Decode a ChromaHash into an RGBA image, capped at the given max dimensions.
     /// Useful when the decoded size would exceed the source image dimensions.
     /// Returns (width, height, rgba_pixels).
     pub fn decode_capped(&self, max_w: u32, max_h: u32) -> (u32, u32, Vec<u8>) {
         decode::decode_capped(&self.hash, max_w, max_h)
+    }
+
+    /// Decode capped at the given max dimensions, in the given output gamut.
+    /// Returns (width, height, rgba_pixels).
+    pub fn decode_capped_to(&self, max_w: u32, max_h: u32, output: Gamut) -> (u32, u32, Vec<u8>) {
+        decode::decode_capped_to(&self.hash, max_w, max_h, output)
     }
 
     /// Extract the average color without full decode.
@@ -87,10 +104,28 @@ impl ChromaHash {
         decode::decode_with(&self.hash, t)
     }
 
+    /// Decode to an output gamut with explicit tunables (harness interface).
+    #[doc(hidden)]
+    pub fn decode_to_tuned(&self, output: Gamut, t: &Tunables) -> (u32, u32, Vec<u8>) {
+        decode::decode_to_with(&self.hash, t, output)
+    }
+
     /// Capped decode with explicit tunables (comparison-harness sweep interface).
     #[doc(hidden)]
     pub fn decode_capped_tuned(&self, max_w: u32, max_h: u32, t: &Tunables) -> (u32, u32, Vec<u8>) {
         decode::decode_capped_with(&self.hash, max_w, max_h, t)
+    }
+
+    /// Capped decode to an output gamut with explicit tunables (harness interface).
+    #[doc(hidden)]
+    pub fn decode_capped_to_tuned(
+        &self,
+        max_w: u32,
+        max_h: u32,
+        output: Gamut,
+        t: &Tunables,
+    ) -> (u32, u32, Vec<u8>) {
+        decode::decode_capped_to_with(&self.hash, max_w, max_h, t, output)
     }
 
     /// Get the raw 32-byte hash data.
@@ -546,10 +581,10 @@ mod tests {
         let (dw, dh, px) = hash.decode();
         assert_eq!((dw, dh), (32, 32));
         let p = |i: usize| &px[i * 4..i * 4 + 4];
-        assert_eq!(p(0), [83, 68, 0, 255]);
-        assert_eq!(p(17), [143, 122, 70, 255]);
-        assert_eq!(p(500), [145, 140, 154, 255]);
-        assert_eq!(p(1000), [149, 136, 147, 255]);
+        assert_eq!(p(0), [84, 67, 0, 255]);
+        assert_eq!(p(17), [145, 122, 70, 255]);
+        assert_eq!(p(500), [146, 139, 154, 255]);
+        assert_eq!(p(1000), [150, 135, 147, 255]);
 
         // Aggressive cap: coefficients with cx ≥ 4 or cy ≥ 4 must be dropped, not
         // kept — asserting the whole 4×4 pins the off-axis pixels where those
@@ -557,22 +592,22 @@ mod tests {
         let (cw, ch, cpx) = hash.decode_capped(4, 4);
         assert_eq!((cw, ch), (4, 4));
         let expected: [[u8; 4]; 16] = [
-            [126, 110, 0, 255],
-            [155, 132, 42, 255],
-            [142, 128, 115, 255],
-            [136, 136, 198, 255],
-            [151, 141, 125, 255],
-            [136, 128, 125, 255],
-            [145, 138, 154, 255],
-            [143, 136, 165, 255],
-            [144, 136, 146, 255],
-            [140, 135, 148, 255],
-            [142, 137, 143, 255],
-            [141, 133, 125, 255],
-            [136, 127, 145, 255],
-            [147, 134, 139, 255],
-            [142, 130, 132, 255],
-            [132, 130, 139, 255],
+            [127, 110, 0, 255],
+            [156, 131, 42, 255],
+            [143, 127, 115, 255],
+            [137, 136, 198, 255],
+            [152, 140, 125, 255],
+            [137, 127, 124, 255],
+            [147, 137, 153, 255],
+            [144, 135, 165, 255],
+            [145, 136, 146, 255],
+            [141, 134, 148, 255],
+            [143, 137, 142, 255],
+            [142, 133, 125, 255],
+            [137, 127, 145, 255],
+            [149, 133, 138, 255],
+            [143, 130, 131, 255],
+            [133, 129, 139, 255],
         ];
         for (i, e) in expected.iter().enumerate() {
             assert_eq!(&cpx[i * 4..i * 4 + 4], e, "capped pixel {i}");
@@ -592,10 +627,10 @@ mod tests {
         let (ww, wh, wpx) = hash.decode_tuned(&windowed);
         assert_eq!((ww, wh), (32, 32));
         let wp = |i: usize| &wpx[i * 4..i * 4 + 4];
-        assert_eq!(wp(0), [104, 91, 0, 255]);
-        assert_eq!(wp(17), [143, 127, 94, 255]);
-        assert_eq!(wp(500), [144, 138, 148, 255]);
-        assert_eq!(wp(1000), [145, 134, 144, 255]);
+        assert_eq!(wp(0), [105, 90, 0, 255]);
+        assert_eq!(wp(17), [144, 126, 93, 255]);
+        assert_eq!(wp(500), [145, 137, 148, 255]);
+        assert_eq!(wp(1000), [147, 134, 144, 255]);
     }
 
     #[test]

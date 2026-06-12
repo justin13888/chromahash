@@ -7,7 +7,9 @@ import {
   averageColor,
   decode,
   decodeCapped,
+  decodeTo,
   isVersionSupported,
+  type OutputGamut,
 } from "./decode.ts";
 import { ChromaHash, init } from "./index.ts";
 
@@ -162,6 +164,32 @@ describe("pure-TS decode matches WASM exactly (sync guard)", () => {
       for (let i = 0; i < 32; i++) hash[i] = next() & 0xff;
       hash[5] = (hash[5] ?? 0) & 0x7f; // clear version bit (v0.6)
       assertExactDecode(hash, `fuzz#${n}`);
+    }
+  });
+
+  it("agrees on every output gamut over the spec hashes", () => {
+    // The pure-TS multi-gamut decode (decodeTo) must match WASM decodeTo for
+    // each display-output gamut, not just the sRGB default.
+    const gamuts: OutputGamut[] = ["sRGB", "Display P3", "Adobe RGB"];
+    const vectors = loadVectors<EncodeVector[]>("integration-encode.json");
+    for (const vec of vectors) {
+      const hash = new Uint8Array(vec.expected.hash);
+      for (const g of gamuts) {
+        const pure = decodeTo(hash, g);
+        const wasm = ChromaHash.fromBytes(hash).decodeTo(g);
+        assert.equal(
+          pure.rgba.length,
+          wasm.rgba.length,
+          `${vec.name}/${g}: length`,
+        );
+        for (let i = 0; i < wasm.rgba.length; i++) {
+          assert.equal(
+            pure.rgba[i],
+            wasm.rgba[i],
+            `${vec.name}/${g}: byte ${i} (pure=${pure.rgba[i]}, wasm=${wasm.rgba[i]})`,
+          );
+        }
+      }
     }
   });
 });

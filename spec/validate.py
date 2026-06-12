@@ -239,40 +239,41 @@ def validate_row_sums():
 
 
 def validate_oklab_bounds():
-    """Check MAX_CHROMA_A/B cover the sRGB OKLAB hull (the decode target).
+    """Check MAX_CHROMA_A/B cover the display-output gamut union hull.
 
-    v0.6 sizes the chroma DC ranges to the sRGB hull rather than the union of
-    source gamuts: the decoder always clamps to sRGB, so DC chroma beyond the
-    hull is unreachable and only wastes quantization precision. Wide-gamut DCs
-    outside the hull clip at encode; the decode-aware DC search (spec §10.3)
-    selects the codes minimizing the post-clamp error.
+    v0.6 sizes the chroma DC ranges to the OKLAB hull of the union of the
+    display-output gamuts (sRGB ∪ Display P3 ∪ Adobe RGB) so wide-gamut colors
+    are stored faithfully for multi-gamut decode output (spec §11). The range
+    stops there — wider sources (BT.2020/ProPhoto) clip at encode, since no
+    supported display can show beyond this hull; the decode-aware DC search
+    (spec §10.3) keeps the stored DC within ±1 code of the true average.
     """
-    print("\n5. OKLAB bounds and MAX_CHROMA coverage (sRGB hull)")
+    print("\n5. OKLAB bounds and MAX_CHROMA coverage (sRGB∪P3∪Adobe hull)")
 
-    srgb_max_a = 0.0
-    srgb_max_b = 0.0
+    union_max_a = 0.0
+    union_max_b = 0.0
 
-    for r in [0.0, 1.0]:
-        for g in [0.0, 1.0]:
-            for b in [0.0, 1.0]:
-                if r == 0 and g == 0 and b == 0:
-                    continue
-                lms = matvec(M1_SRGB, [r, g, b])
-                lms_cbrt = [math.copysign(abs(x) ** (1 / 3), x) for x in lms]
-                lab = matvec(M2, lms_cbrt)
-                srgb_max_a = max(srgb_max_a, abs(lab[1]))
-                srgb_max_b = max(srgb_max_b, abs(lab[2]))
+    for m1 in (M1_SRGB, M1_DISPLAY_P3, M1_ADOBE_RGB):
+        for r in [0.0, 1.0]:
+            for g in [0.0, 1.0]:
+                for b in [0.0, 1.0]:
+                    if r == 0 and g == 0 and b == 0:
+                        continue
+                    lms = matvec(m1, [r, g, b])
+                    lms_cbrt = [math.copysign(abs(x) ** (1 / 3), x) for x in lms]
+                    lab = matvec(M2, lms_cbrt)
+                    union_max_a = max(union_max_a, abs(lab[1]))
+                    union_max_b = max(union_max_b, abs(lab[2]))
 
-    check(MAX_CHROMA_A >= srgb_max_a,
-          f"MAX_CHROMA_A={MAX_CHROMA_A} ≥ sRGB hull max |a|={srgb_max_a:.4f}")
-    check(MAX_CHROMA_B >= srgb_max_b,
-          f"MAX_CHROMA_B={MAX_CHROMA_B} ≥ sRGB hull max |b|={srgb_max_b:.4f}")
-    # Ranges should be tight: more than ~10% slack re-wastes the precision
-    # the v0.6 retuning reclaimed.
-    check(MAX_CHROMA_A <= srgb_max_a * 1.1,
-          f"MAX_CHROMA_A={MAX_CHROMA_A} ≤ 1.1 × sRGB hull max |a| (tight range)")
-    check(MAX_CHROMA_B <= srgb_max_b * 1.1,
-          f"MAX_CHROMA_B={MAX_CHROMA_B} ≤ 1.1 × sRGB hull max |b| (tight range)")
+    check(MAX_CHROMA_A >= union_max_a,
+          f"MAX_CHROMA_A={MAX_CHROMA_A} ≥ sRGB∪P3∪Adobe hull max |a|={union_max_a:.4f}")
+    check(MAX_CHROMA_B >= union_max_b,
+          f"MAX_CHROMA_B={MAX_CHROMA_B} ≥ sRGB∪P3∪Adobe hull max |b|={union_max_b:.4f}")
+    # Ranges should be tight: more than ~10% slack wastes quantization precision.
+    check(MAX_CHROMA_A <= union_max_a * 1.1,
+          f"MAX_CHROMA_A={MAX_CHROMA_A} ≤ 1.1 × union hull max |a| (tight range)")
+    check(MAX_CHROMA_B <= union_max_b * 1.1,
+          f"MAX_CHROMA_B={MAX_CHROMA_B} ≤ 1.1 × union hull max |b| (tight range)")
 
 
 def validate_scale_constants():

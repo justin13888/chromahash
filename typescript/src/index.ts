@@ -109,14 +109,23 @@ export class ChromaHash {
   }
 
   /**
-   * Decode a ChromaHash into an RGBA image.
+   * Decode a ChromaHash into an sRGB RGBA image.
    * Returns the decoded width, height, and RGBA pixel data.
    */
   decode(): { w: number; h: number; rgba: Uint8Array } {
+    return this.decodeTo("sRGB");
+  }
+
+  /**
+   * Decode a ChromaHash into an RGBA image in the given output gamut
+   * (`sRGB`, `Display P3`, or `Adobe RGB` — others fall back to sRGB).
+   * Wide-gamut colors render at full saturation on a matching display.
+   */
+  decodeTo(output: Gamut): { w: number; h: number; rgba: Uint8Array } {
     ensureReady();
     const handle = WasmHash.fromBytes(this.hash);
     try {
-      const r = handle.decode();
+      const r = handle.decodeTo(GAMUT_TO_WASM[output]);
       try {
         return { w: r.width, h: r.height, rgba: r.rgba };
       } finally {
@@ -128,17 +137,30 @@ export class ChromaHash {
   }
 
   /**
-   * Decode a ChromaHash into an RGBA image, capped at the given max dimensions.
-   * Useful when the natural decoded size would exceed the source dimensions.
+   * Decode a ChromaHash into an sRGB RGBA image, capped at the given max
+   * dimensions. Useful when the natural decoded size would exceed the source.
    */
   decodeCapped(
     maxWidth: number,
     maxHeight: number,
   ): { w: number; h: number; rgba: Uint8Array } {
+    return this.decodeCappedTo(maxWidth, maxHeight, "sRGB");
+  }
+
+  /** Capped decode (see {@link decodeCapped}) in the given output gamut. */
+  decodeCappedTo(
+    maxWidth: number,
+    maxHeight: number,
+    output: Gamut,
+  ): { w: number; h: number; rgba: Uint8Array } {
     ensureReady();
     const handle = WasmHash.fromBytes(this.hash);
     try {
-      const r = handle.decodeCapped(maxWidth, maxHeight);
+      const r = handle.decodeCappedTo(
+        maxWidth,
+        maxHeight,
+        GAMUT_TO_WASM[output],
+      );
       try {
         return { w: r.width, h: r.height, rgba: r.rgba };
       } finally {

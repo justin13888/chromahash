@@ -46,18 +46,21 @@ public struct ChromaHash: Sendable, Equatable {
         return ChromaHash(hash: [UInt8](obj.asBytes()))
     }
 
-    /// Decode a ChromaHash into an RGBA image. Returns (width, height, rgba_pixels).
-    public func decode() -> (width: Int, height: Int, rgba: [UInt8]) {
-        let result = binding().decode()
+    /// Decode a ChromaHash into an RGBA image in the given output gamut
+    /// (`.sRGB`, `.displayP3`, or `.adobeRGB`; others fall back to sRGB).
+    /// Returns (width, height, rgba_pixels).
+    public func decode(to output: Gamut = .sRGB) -> (width: Int, height: Int, rgba: [UInt8]) {
+        let result = binding().decodeTo(output: output.binding)
         return (Int(result.width), Int(result.height), [UInt8](result.rgba))
     }
 
     /// Decode a ChromaHash into an RGBA image, capped at the given maximum
-    /// dimensions. Returns (width, height, rgba_pixels).
-    public func decodeCapped(maxWidth: Int, maxHeight: Int) -> (
+    /// dimensions, in the given output gamut. Returns (width, height, rgba_pixels).
+    public func decodeCapped(maxWidth: Int, maxHeight: Int, to output: Gamut = .sRGB) -> (
         width: Int, height: Int, rgba: [UInt8]
     ) {
-        let result = binding().decodeCapped(maxW: UInt32(maxWidth), maxH: UInt32(maxHeight))
+        let result = binding().decodeCappedTo(
+            maxW: UInt32(maxWidth), maxH: UInt32(maxHeight), output: output.binding)
         return (Int(result.width), Int(result.height), [UInt8](result.rgba))
     }
 
