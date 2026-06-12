@@ -1,6 +1,6 @@
 use crate::aspect::encode_aspect;
 use crate::bitpack::write_bits;
-use crate::color::{linear_rgb_to_oklab, oklab_to_linear_srgb, soft_gamut_clamp};
+use crate::color::{linear_rgb_to_oklab, oklab_to_linear_srgb};
 use crate::constants::{ALPHA_AC_BITS, ALPHA_AC_COUNT, Gamut, Tunables};
 use crate::dct::{Selection, dct_encode_selected, precompute_cos_table, select_coefficients};
 use crate::math_utils::{clamp_neg1_1, clamp01, round_half_away_from_zero};
@@ -23,14 +23,13 @@ fn build_eotf_lut(gamut: Gamut) -> [f64; 256] {
 }
 
 /// Simulate the decoder's DC-only path for a quantized (L, a, b) code triple:
-/// dequantize → clamp → soft gamut clamp → linear sRGB → gamma. Returns the
+/// dequantize → clamp L → linear sRGB → per-channel clip → gamma. Returns the
 /// gamma-encoded sRGB triple the decoder would render for a flat region.
 fn dc_decode_sim(l_q: u32, a_q: u32, b_q: u32, t: &Tunables) -> [f64; 3] {
     let l = l_q as f64 / 127.0;
     let a = (a_q as f64 - 64.0) / 63.0 * t.max_chroma_a;
     let b = (b_q as f64 - 64.0) / 63.0 * t.max_chroma_b;
-    let lab = soft_gamut_clamp(clamp01(l), a, b, t.gamut_l_blend);
-    let rgb = oklab_to_linear_srgb(lab);
+    let rgb = oklab_to_linear_srgb([clamp01(l), a, b]);
     [
         srgb_gamma(clamp01(rgb[0])),
         srgb_gamma(clamp01(rgb[1])),
@@ -40,13 +39,13 @@ fn dc_decode_sim(l_q: u32, a_q: u32, b_q: u32, t: &Tunables) -> [f64; 3] {
 
 /// Decode-aware DC code selection. Per spec §10 (v0.6).
 ///
-/// Plain rounding of the DC triple can land a near-gamut-boundary color just
-/// outside sRGB, where the decoder's gamut clamp then drags it far from the
-/// true average (v0.5's solid-blue failure: (0,0,255) decoded as (0,58,214)).
-/// Searching the ±1 neighborhood of the nominal codes — scoring each by the
-/// simulated decoded color against the clamp-mapped target — costs 27 DC
-/// simulations (~10 µs) and zero bits. Fixed iteration order and strict
-/// improvement (`<`) keep it deterministic; ties keep the nominal codes.
+/// Plain rounding of the DC triple, combined with quantization and the
+/// decoder's per-channel clip of out-of-gamut chroma, can land the decoded
+/// flat color away from the true average. Searching the ±1 neighborhood of the
+/// nominal codes — scoring each by the simulated decoded color against the
+/// clipped target — costs 27 DC simulations (~10 µs) and zero bits. Fixed
+/// iteration order and strict improvement (`<`) keep it deterministic; ties
+/// keep the nominal codes.
 fn select_dc_codes(l_mean: f64, a_mean: f64, b_mean: f64, t: &Tunables) -> (u32, u32, u32) {
     let l0 = round_half_away_from_zero(127.0 * clamp01(l_mean)) as i64;
     let a0 = round_half_away_from_zero(64.0 + 63.0 * clamp_neg1_1(a_mean / t.max_chroma_a)) as i64;
@@ -57,9 +56,8 @@ fn select_dc_codes(l_mean: f64, a_mean: f64, b_mean: f64, t: &Tunables) -> (u32,
     }
 
     // Target = what the decoder could at best show for the true average color
-    // (out-of-gamut targets are first mapped by the same clamp).
-    let target_lab = soft_gamut_clamp(clamp01(l_mean), a_mean, b_mean, t.gamut_l_blend);
-    let target_rgb = oklab_to_linear_srgb(target_lab);
+    // (out-of-gamut targets are clipped per-channel, same as the decoder).
+    let target_rgb = oklab_to_linear_srgb([clamp01(l_mean), a_mean, b_mean]);
     let target = [
         srgb_gamma(clamp01(target_rgb[0])),
         srgb_gamma(clamp01(target_rgb[1])),
@@ -360,7 +358,7 @@ mod tests {
                 0,
                 Gamut::Srgb,
                 [
-                    207, 121, 22, 0, 0, 32, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 239,
+                    208, 121, 22, 0, 0, 32, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 239,
                     189, 247, 222, 123, 239, 189, 187, 187, 187, 187, 187, 187, 187, 187, 59,
                 ],
             ),
@@ -370,7 +368,7 @@ mod tests {
                 0,
                 Gamut::Srgb,
                 [
-                    109, 198, 24, 0, 0, 32, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 239,
+                    238, 5, 25, 0, 0, 32, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 239,
                     189, 247, 222, 123, 239, 189, 187, 187, 187, 187, 187, 187, 187, 187, 59,
                 ],
             ),
@@ -380,7 +378,7 @@ mod tests {
                 255,
                 Gamut::Srgb,
                 [
-                    185, 220, 0, 0, 0, 32, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 239,
+                    57, 156, 0, 0, 0, 32, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 239,
                     189, 247, 222, 123, 239, 189, 187, 187, 187, 187, 187, 187, 187, 187, 59,
                 ],
             ),
@@ -422,7 +420,7 @@ mod tests {
                 30,
                 Gamut::ProPhotoRgb,
                 [
-                    212, 63, 22, 0, 0, 32, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 239,
+                    85, 127, 22, 0, 0, 32, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 239,
                     189, 247, 222, 123, 239, 189, 187, 187, 187, 187, 187, 187, 187, 187, 59,
                 ],
             ),
@@ -508,7 +506,7 @@ mod tests {
         assert_eq!(
             encode(8, 8, &cb, Gamut::Srgb),
             [
-                207, 121, 22, 0, 0, 96, 16, 190, 239, 251, 190, 239, 123, 239, 189, 247, 222, 123,
+                208, 121, 22, 0, 0, 96, 16, 190, 239, 251, 190, 239, 123, 239, 189, 247, 222, 123,
                 239, 189, 119, 119, 119, 119, 119, 119, 119, 119, 119, 119, 231, 119
             ]
         );

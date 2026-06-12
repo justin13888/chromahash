@@ -1,6 +1,6 @@
 use crate::aspect::decode_output_size;
 use crate::bitpack::read_bits;
-use crate::color::{oklab_to_linear_srgb, soft_gamut_clamp};
+use crate::color::oklab_to_linear_srgb;
 use crate::constants::{ALPHA_AC_BITS, ALPHA_AC_COUNT, Tunables};
 use crate::dct::{
     dct_decode_pixel_separable, precompute_cos_table, select_coefficients, window_weights,
@@ -208,11 +208,10 @@ fn render_at_size(hash: &[u8; 32], w: usize, h: usize, t: &Tunables) -> Vec<u8> 
                 1.0
             };
 
-            // Clamp L from DCT ringing, then soft gamut clamp (v0.6)
+            // Clamp L from DCT ringing; out-of-gamut chroma is handled by the
+            // per-channel clamp01 below (relative-colorimetric clip, §12.6).
             let l_clamped = clamp01(l);
-            let [l_out, a_out, b_out] = soft_gamut_clamp(l_clamped, a, b, t.gamut_l_blend);
-
-            let rgb_linear = oklab_to_linear_srgb([l_out, a_out, b_out]);
+            let rgb_linear = oklab_to_linear_srgb([l_clamped, a, b]);
             let idx = (y * w + x) * 4;
             rgba_out[idx] = linear_to_srgb8(clamp01(rgb_linear[0]), &gamma_lut);
             rgba_out[idx + 1] = linear_to_srgb8(clamp01(rgb_linear[1]), &gamma_lut);
@@ -279,9 +278,7 @@ pub fn average_color_with(hash: &[u8; 32], t: &Tunables) -> [u8; 4] {
     let b_dc = (b_dc_q as f64 - 64.0) / 63.0 * t.max_chroma_b;
 
     let l_clamped = clamp01(l_dc);
-    let [l_out, a_out, b_out] = soft_gamut_clamp(l_clamped, a_dc, b_dc, t.gamut_l_blend);
-
-    let rgb_linear = oklab_to_linear_srgb([l_out, a_out, b_out]);
+    let rgb_linear = oklab_to_linear_srgb([l_clamped, a_dc, b_dc]);
     let gamma_lut = build_gamma_lut();
 
     let alpha = if has_alpha {
@@ -333,12 +330,12 @@ mod tests {
         assert_uniform(&rgba, [128, 128, 128, 255]);
 
         let blue = [
-            185, 220, 0, 0, 0, 32, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 239, 189, 247,
+            57, 156, 0, 0, 0, 32, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 239, 189, 247,
             222, 123, 239, 189, 187, 187, 187, 187, 187, 187, 187, 187, 59,
         ];
         let (w, h, rgba) = decode(&blue);
         assert_eq!((w, h), (32, 32));
-        assert_uniform(&rgba, [3, 0, 252, 255]);
+        assert_uniform(&rgba, [0, 0, 255, 255]);
     }
 
     #[test]
@@ -347,13 +344,13 @@ mod tests {
         // bit offsets, and `average_color` must report the sub-255 alpha — pins
         // the alpha-DC read in both the full render and the header-only path.
         let cb = [
-            207, 121, 22, 0, 0, 96, 16, 190, 239, 251, 190, 239, 123, 239, 189, 247, 222, 123, 239,
+            208, 121, 22, 0, 0, 96, 16, 190, 239, 251, 190, 239, 123, 239, 189, 247, 222, 123, 239,
             189, 119, 119, 119, 119, 119, 119, 119, 119, 119, 119, 231, 119,
         ];
         let (w, h, rgba) = decode(&cb);
         assert_eq!((w, h), (32, 32));
-        assert_uniform(&rgba, [251, 1, 0, 132]);
-        assert_eq!(average_color(&cb), [251, 1, 0, 132]);
+        assert_uniform(&rgba, [255, 0, 0, 132]);
+        assert_eq!(average_color(&cb), [255, 0, 0, 132]);
     }
 
     #[test]
@@ -369,9 +366,9 @@ mod tests {
         assert_eq!((w, h), (32, 8));
         let px = |i: usize| &rgba[i * 4..i * 4 + 4];
         assert_eq!(px(0), [47, 29, 222, 255]);
-        assert_eq!(px(31), [245, 0, 231, 255]);
-        assert_eq!(px(128), [0, 133, 122, 255]);
-        assert_eq!(px(255), [248, 10, 0, 255]);
+        assert_eq!(px(31), [247, 0, 233, 255]);
+        assert_eq!(px(128), [0, 137, 124, 255]);
+        assert_eq!(px(255), [248, 9, 0, 255]);
     }
 
     #[test]
@@ -387,10 +384,10 @@ mod tests {
         assert_eq!((w, h), (32, 32));
         let px = |i: usize| &rgba[i * 4..i * 4 + 4];
         assert_eq!(px(0), [24, 34, 245, 255]);
-        assert_eq!(px(16), [138, 0, 247, 255]);
+        assert_eq!(px(16), [140, 0, 254, 255]);
         assert_eq!(px(400), [139, 48, 155, 255]);
         assert_eq!(px(600), [195, 38, 100, 255]);
-        assert_eq!(px(1000), [21, 179, 0, 255]);
+        assert_eq!(px(1000), [0, 184, 0, 255]);
     }
 
     #[test]
@@ -425,8 +422,8 @@ mod tests {
         let (w, h, rgba) = decode_capped(&strip, 1, 100);
         assert_eq!((w, h), (1, 32));
         let px = |i: usize| &rgba[i * 4..i * 4 + 4];
-        assert_eq!(px(0), [243, 31, 0, 255]);
-        assert_eq!(px(8), [186, 0, 64, 255]);
+        assert_eq!(px(0), [247, 16, 0, 255]);
+        assert_eq!(px(8), [187, 0, 64, 255]);
         assert_eq!(px(16), [124, 0, 132, 255]);
         assert_eq!(px(24), [59, 0, 200, 255]);
         assert_eq!(px(31), [9, 30, 244, 255]);
