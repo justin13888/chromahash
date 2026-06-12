@@ -95,11 +95,8 @@ pub struct Tunables {
     pub w_exp_l: u32,
     pub w_min_c: f64,
     pub w_exp_c: u32,
-    /// Gamut clamp v2: lightness blend toward mid-gray for the clamp anchor.
-    /// 0.0 reproduces constant-L chroma-only clamping.
-    pub gamut_l_blend: f64,
     /// Encoder-only: search the ±1 neighborhood of the DC codes for the
-    /// triple minimizing post-clamp sRGB error (off only for ablation).
+    /// triple minimizing post-clip sRGB error (off only for ablation).
     pub dc_search: bool,
 }
 
@@ -112,8 +109,8 @@ impl Tunables {
     /// (v0.5: 0.5) is the single largest quality win (the corpus maximum
     /// chroma scale is 0.113 — the old range wasted two bits); chroma DC
     /// ranges sized to the sRGB OKLab hull; µ_C=8 exploits the finer chroma
-    /// scale near zero; gamut anchor blend 0.5 wins the Gamut category
-    /// outright; the synthesis window is DISABLED (w_min=1.0) — with fine
+    /// scale near zero; out-of-gamut chroma is clipped per-channel at decode
+    /// (relative-colorimetric, §12.6); the synthesis window is DISABLED (w_min=1.0) — with fine
     /// chroma scales it costs more detail than the banding it suppresses,
     /// and v0.5's visible striping turned out to be chroma quantization
     /// noise, not luma ringing.
@@ -132,7 +129,6 @@ impl Tunables {
         w_exp_l: 1,
         w_min_c: 1.0,
         w_exp_c: 1,
-        gamut_l_blend: 0.5,
         dc_search: true,
     };
 }

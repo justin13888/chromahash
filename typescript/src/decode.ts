@@ -50,7 +50,6 @@ const W_MIN_L = 1.0;
 const W_EXP_L = 1;
 const W_MIN_C = 1.0;
 const W_EXP_C = 1;
-const GAMUT_L_BLEND = 0.5;
 
 type Mat3 = readonly [
   readonly [number, number, number],
@@ -257,42 +256,6 @@ function oklabToLinearSrgb(lab: Vec3): [number, number, number] {
     c[2] * c[2] * c[2],
   ];
   return matvec3(M1_INV_SRGB, lms);
-}
-
-function inGamut(rgb: Vec3): boolean {
-  return (
-    rgb[0] >= 0.0 &&
-    rgb[0] <= 1.0 &&
-    rgb[1] >= 0.0 &&
-    rgb[1] <= 1.0 &&
-    rgb[2] >= 0.0 &&
-    rgb[2] <= 1.0
-  );
-}
-
-/** Soft gamut clamp v2 via segment bisection. Per spec §12.6 (v0.6). */
-function softGamutClamp(
-  l: number,
-  a: number,
-  b: number,
-  lBlend: number,
-): [number, number, number] {
-  if (inGamut(oklabToLinearSrgb([l, a, b]))) return [l, a, b];
-
-  const anchorL = l + lBlend * (0.5 - l);
-
-  let lo = 0.0;
-  let hi = 1.0;
-  for (let i = 0; i < 16; i++) {
-    const mid = (lo + hi) / 2.0;
-    const lTest = l + (anchorL - l) * mid;
-    const aTest = a * (1.0 - mid);
-    const bTest = b * (1.0 - mid);
-    if (inGamut(oklabToLinearSrgb([lTest, aTest, bTest]))) hi = mid;
-    else lo = mid;
-  }
-
-  return [l + (anchorL - l) * hi, a * (1.0 - hi), b * (1.0 - hi)];
 }
 
 // ---------------------------------------------------------------------------
@@ -594,8 +557,7 @@ function renderAtSize(hash: Uint8Array, w: number, h: number): Uint8Array {
         : 1.0;
 
       const lClamped = clamp01(l);
-      const [lOut, aOut, bOut] = softGamutClamp(lClamped, a, b, GAMUT_L_BLEND);
-      const rgbLin = oklabToLinearSrgb([lOut, aOut, bOut]);
+      const rgbLin = oklabToLinearSrgb([lClamped, a, b]);
       const idx = (y * w + x) * 4;
       rgba[idx] = linearToSrgb8(clamp01(rgbLin[0]));
       rgba[idx + 1] = linearToSrgb8(clamp01(rgbLin[1]));
@@ -671,8 +633,7 @@ export function averageColor(hash: Uint8Array): RgbaColor {
   const bDc = ((bDcQ - 64.0) / 63.0) * MAX_CHROMA_B;
 
   const lClamped = clamp01(lDc);
-  const [lOut, aOut, bOut] = softGamutClamp(lClamped, aDc, bDc, GAMUT_L_BLEND);
-  const rgbLin = oklabToLinearSrgb([lOut, aOut, bOut]);
+  const rgbLin = oklabToLinearSrgb([lClamped, aDc, bDc]);
   const alpha = hasAlpha ? readBits(hash, 48, 5) / 31.0 : 1.0;
 
   return {

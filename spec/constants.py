@@ -40,9 +40,8 @@ MAX_A_SCALE = 0.125        # Max chroma-a AC amplitude
 MAX_B_SCALE = 0.125        # Max chroma-b AC amplitude
 MAX_A_ALPHA_SCALE = 0.5    # Max alpha AC amplitude
 
-# Gamut clamp v2 anchor blend (§12.6): out-of-gamut colors are projected
-# toward the achromatic anchor (L + GAMUT_L_BLEND·(0.5 − L), 0, 0).
-GAMUT_L_BLEND = 0.5
+# Out-of-sRGB OKLAB values are mapped by relative-colorimetric per-channel
+# clipping in linear sRGB (§12.6) — no separate clamp constant is needed.
 
 # =========================================================================
 # AC Layout (§3.2, §6.4)

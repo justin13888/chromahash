@@ -12,7 +12,7 @@ fn usage() -> ! {
     eprintln!();
     eprintln!("Sweep interface: set CHROMAHASH_TUNE to space-separated key=value");
     eprintln!("pairs to override v0.6 format constants, e.g.");
-    eprintln!("  CHROMAHASH_TUNE=\"layout=B w_min_l=1.0 gamut_l_blend=0\"");
+    eprintln!("  CHROMAHASH_TUNE=\"layout=B w_min_l=1.0 mu_c=8\"");
     std::process::exit(1);
 }
 
@@ -67,7 +67,6 @@ fn tunables_from_env() -> Tunables {
             "w_exp_l" => t.w_exp_l = parse_u32(),
             "w_min_c" => t.w_min_c = parse_f64(),
             "w_exp_c" => t.w_exp_c = parse_u32(),
-            "gamut_l_blend" => t.gamut_l_blend = parse_f64(),
             "dc_search" => t.dc_search = value == "1" || value == "true",
             _ => {
                 eprintln!("CHROMAHASH_TUNE: unknown key '{key}'");

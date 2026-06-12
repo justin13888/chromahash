@@ -26,7 +26,6 @@ from constants import (
     D50_XY,
     D65_XY,
     GAMUT_PRIMARIES,
-    GAMUT_L_BLEND,
     MAX_A_ALPHA_SCALE,
     MAX_A_SCALE,
     MAX_B_SCALE,
@@ -288,8 +287,6 @@ def validate_scale_constants():
     ]:
         check(val > 0, f"{name} = {val} > 0")
         check(val <= 1.0, f"{name} = {val} ≤ 1.0")
-
-    check(0.0 <= GAMUT_L_BLEND <= 1.0, f"GAMUT_L_BLEND = {GAMUT_L_BLEND} in [0, 1]")
 
 
 def validate_mu_law():

@@ -5,9 +5,7 @@ mod tests {
     use crate::ChromaHash;
     use crate::aspect::{decode_aspect, decode_output_size, encode_aspect};
     use crate::bitpack::{read_bits, write_bits};
-    use crate::color::{
-        gamma_rgb_to_oklab, linear_rgb_to_oklab, oklab_to_linear_srgb, soft_gamut_clamp,
-    };
+    use crate::color::{gamma_rgb_to_oklab, linear_rgb_to_oklab, oklab_to_linear_srgb};
     use crate::constants::{Gamut, Tunables};
     use crate::dct::select_coefficients;
     use crate::math_utils::{cbrt_halley, cbrt_signed};
@@ -292,47 +290,6 @@ mod tests {
             }
             let json = format!("[\n{}\n]\n", cases.join(",\n"));
             std::fs::write(spec_dir.join("unit-bitpack.json"), json).unwrap();
-        }
-
-        // --- unit-softgamutclamp.json ---
-        {
-            let mut cases = Vec::new();
-            // Representative OKLAB inputs: in-gamut and out-of-gamut
-            let test_inputs: &[(&str, f64, f64, f64)] = &[
-                // In-gamut: should pass through unchanged
-                ("gray_mid", 0.5, 0.0, 0.0),
-                ("white", 1.0, 0.0, 0.0),
-                ("black", 0.0, 0.0, 0.0),
-                ("green_ish", 0.7, -0.1, 0.1),
-                // Saturated colors that may be out of gamut
-                ("saturated_red", 0.5, 0.4, 0.2),
-                ("saturated_blue", 0.4, -0.1, -0.3),
-                ("saturated_yellow", 0.8, -0.05, 0.3),
-                ("very_saturated", 0.5, 0.45, 0.0),
-                ("very_saturated_2", 0.5, 0.0, 0.45),
-                // Above the sRGB red cusp (L≈0.63): exercises the v0.6
-                // lightness-blended anchor (constant-L clamping here collapses
-                // to near-gray; the blend must retain most of the chroma)
-                ("above_red_cusp", 0.70, 0.25, 0.12),
-                // Just outside the sRGB blue corner: the solid-blue DC case
-                ("near_blue_corner", 0.4488, -0.0357, -0.3143),
-                // Edge: achromatic
-                ("achromatic_low", 0.1, 0.0, 0.0),
-                ("achromatic_high", 0.9, 0.0, 0.0),
-            ];
-            let blend = Tunables::DEFAULT.gamut_l_blend;
-            for &(name, l, a, b) in test_inputs {
-                let [lo, ao, bo] = soft_gamut_clamp(l, a, b, blend);
-                cases.push(format!(
-                    r#"  {{
-    "name": "{name}",
-    "input": {{ "L": {l}, "a": {a}, "b": {b}, "l_blend": {blend} }},
-    "expected": {{ "L": {lo}, "a": {ao}, "b": {bo} }}
-  }}"#,
-                ));
-            }
-            let json = format!("[\n{}\n]\n", cases.join(",\n"));
-            std::fs::write(spec_dir.join("unit-softgamutclamp.json"), json).unwrap();
         }
 
         // --- unit-cbrt.json ---

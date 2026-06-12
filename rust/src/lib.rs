@@ -546,7 +546,7 @@ mod tests {
         let (dw, dh, px) = hash.decode();
         assert_eq!((dw, dh), (32, 32));
         let p = |i: usize| &px[i * 4..i * 4 + 4];
-        assert_eq!(p(0), [83, 75, 0, 255]);
+        assert_eq!(p(0), [83, 68, 0, 255]);
         assert_eq!(p(17), [143, 122, 70, 255]);
         assert_eq!(p(500), [145, 140, 154, 255]);
         assert_eq!(p(1000), [149, 136, 147, 255]);
@@ -557,7 +557,7 @@ mod tests {
         let (cw, ch, cpx) = hash.decode_capped(4, 4);
         assert_eq!((cw, ch), (4, 4));
         let expected: [[u8; 4]; 16] = [
-            [124, 110, 0, 255],
+            [126, 110, 0, 255],
             [155, 132, 42, 255],
             [142, 128, 115, 255],
             [136, 136, 198, 255],
@@ -592,7 +592,7 @@ mod tests {
         let (ww, wh, wpx) = hash.decode_tuned(&windowed);
         assert_eq!((ww, wh), (32, 32));
         let wp = |i: usize| &wpx[i * 4..i * 4 + 4];
-        assert_eq!(wp(0), [103, 91, 0, 255]);
+        assert_eq!(wp(0), [104, 91, 0, 255]);
         assert_eq!(wp(17), [143, 127, 94, 255]);
         assert_eq!(wp(500), [144, 138, 148, 255]);
         assert_eq!(wp(1000), [145, 134, 144, 255]);

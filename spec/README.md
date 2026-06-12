@@ -108,7 +108,7 @@ Bit 47 in the header serves as a version discriminator:
 |---------|--------|-------|
 | v0.1 | 0 | Original spec — never publicly released |
 | v0.2–v0.5 | 1 | Adaptive grids (`deriveGrid`), triangular selection, even-level µ-law, constant-L gamut clamp |
-| **v0.6** | **0** | **This spec.** Top-K selection, exact-zero µ-law, decode-aware DC, gamut clamp v2 |
+| **v0.6** | **0** | **This spec.** Top-K selection, exact-zero µ-law, decode-aware DC, relative-colorimetric gamut clip |
 
 Encoders MUST set bit 47 to 0. Because v0.1 was never released, bit 47 = 0 unambiguously
 identifies a v0.6 hash, and bit 47 = 1 identifies a legacy v0.2–v0.5 hash — the first
@@ -281,9 +281,9 @@ The resulting OKLAB values are **absolute** — the same physical color produces
 
 > **Note (v0.6):** DC chroma quantization ranges are sized to the sRGB OKLAB hull (§7.1).
 > Wide-gamut colors outside the hull clip at encode — intentionally, because the decoder
-> clamps to sRGB anyway, so chroma range beyond the hull is unreachable and only wastes
+> clips to sRGB anyway, so chroma range beyond the hull is unreachable and only wastes
 > precision. The decode-aware DC selection (§10.3) chooses the codes whose decoded sRGB
-> color is closest to the (gamut-clamped) true average, so clipping costs no decoded
+> color is closest to the (clipped) true average, so clipping costs no decoded
 > accuracy. AC coefficients are differences around the DC and are unaffected.
 
 ### 5.2 Decoding Pipeline
@@ -446,13 +446,13 @@ which may shift each of L/a/b by ±1 code.
 
 `MAX_CHROMA_A = 0.28` and `MAX_CHROMA_B = 0.32` cover the sRGB OKLAB hull
 (max |a| = 0.2746 at the magenta corner, max |b| = 0.3115 at the blue corner). Chroma
-beyond the hull is unreachable after the decoder's gamut clamp, so the range stops
-there — 1.4–1.6× finer DC steps than a range sized to wide-gamut sources.
+beyond the hull is unreachable after the decoder's per-channel clip to sRGB, so the
+range stops there — 1.4–1.6× finer DC steps than a range sized to wide-gamut sources.
 
 > **Note:** The a/b DC encode formula `round(64 + 63×x)` produces indices in [1, 127],
 > never 0. Conforming encoders MUST NOT produce raw=0 for a/b DC (the DC search clamps
 > its candidates to [1, 127]). Decoders encountering raw=0 will reconstruct a slightly
-> out-of-range chroma value; this is handled by the downstream soft gamut clamp.
+> out-of-range chroma value; this is handled by the downstream per-channel gamut clip.
 
 ### 7.2 Scale Factor Quantization
 
@@ -697,18 +697,17 @@ function encode(W, H, rgba, gamut) -> byte[32]:
 
 ### 10.3 Decode-Aware DC Selection
 
-Plain rounding of the DC triple can land a near-gamut-boundary color just outside sRGB,
-where the decoder's gamut clamp then drags it far from the true average (v0.5 decoded
-solid blue `(0,0,255)` as `(0,58,214)`). The encoder therefore simulates the decoder's
-DC path and searches the ±1 neighborhood of the nominal codes:
+Plain rounding of the DC triple, combined with quantization and the decoder's
+per-channel clip of out-of-gamut chroma (§12.6), can land the decoded flat color away
+from the true average. The encoder therefore simulates the decoder's DC path and
+searches the ±1 neighborhood of the nominal codes:
 
 ```
 function dcDecodeSim(L_q, a_q, b_q) -> (r, g, b):    // gamma-encoded sRGB floats
     L = L_q / 127.0
     a = (a_q - 64) / 63.0 * MAX_CHROMA_A
     b = (b_q - 64) / 63.0 * MAX_CHROMA_B
-    (L, a, b) = softGamutClamp(clamp(L, 0, 1), a, b)  // §12.6
-    rgb_lin = oklabToLinearRgb(L, a, b)
+    rgb_lin = oklabToLinearRgb(clamp(L, 0, 1), a, b)
     return (srgbGamma(clamp(rgb_lin[0],0,1)), srgbGamma(clamp(rgb_lin[1],0,1)),
             srgbGamma(clamp(rgb_lin[2],0,1)))
 
@@ -718,9 +717,8 @@ function selectDcCodes(L_mean, a_mean, b_mean) -> (L_q, a_q, b_q):
     b0 = round(64 + 63 * clamp(b_mean / MAX_CHROMA_B, -1, 1))
 
     // Target = the best color the decoder could show for the true average
-    // (out-of-gamut targets are first mapped by the same clamp)
-    (tL, ta, tb) = softGamutClamp(clamp(L_mean, 0, 1), a_mean, b_mean)
-    rgb_lin = oklabToLinearRgb(tL, ta, tb)
+    // (out-of-gamut targets are clipped per-channel, same as the decoder)
+    rgb_lin = oklabToLinearRgb(clamp(L_mean, 0, 1), a_mean, b_mean)
     target = (srgbGamma(clamp(rgb_lin[0],0,1)), srgbGamma(clamp(rgb_lin[1],0,1)),
               srgbGamma(clamp(rgb_lin[2],0,1)))
 
@@ -836,9 +834,9 @@ function decode(hash) -> (w, h, rgba):
                     alpha += A_vals[j] * cos(π/w*cx*(x+0.5)) * cos(π/h*cy*(y+0.5))
                                        * ((cx>0?2:1) * (cy>0?2:1))
 
-            // Soft gamut clamp v2 (preserves hue; blends L toward mid-gray, §12.6)
+            // Clamp L from DCT ringing; out-of-gamut chroma is handled by the
+            // per-channel clip of rgb_lin below (relative-colorimetric, §12.6)
             L = clamp(L, 0.0, 1.0)
-            (L, a, b) = softGamutClamp(L, a, b)
 
             // OKLAB → sRGB via gamma LUT
             rgb_lin = oklabToLinearRgb(L, a, b)
@@ -859,8 +857,7 @@ The DC coefficients can be converted to an average RGBA color without full decod
 function averageColor(hash) -> (r, g, b, a):
     ...extract L_dc, a_dc, b_dc, hasAlpha from header...
     L_dc = clamp(L_dc, 0, 1)
-    (L_dc, a_dc, b_dc) = softGamutClamp(L_dc, a_dc, b_dc)
-    lms_cbrt = M2_inv × [L_dc, a_dc, b_dc]
+    lms_cbrt = M2_inv × [L_dc, a_dc, b_dc]  // out-of-gamut chroma clipped per-channel below
     lms = [lms_cbrt[0]³, lms_cbrt[1]³, lms_cbrt[2]³]
     rgb_lin = M1_inv_sRGB × lms
     r = srgbGamma(clamp(rgb_lin[0], 0, 1))
@@ -899,7 +896,6 @@ MAX_A_ALPHA_SCALE  = 0.5     # Max alpha AC amplitude
 MU_L               = 5       # µ-law parameter, luminance AC
 MU_C               = 8       # µ-law parameter, chroma AC
 MU_ALPHA           = 5       # µ-law parameter, alpha AC
-GAMUT_L_BLEND      = 0.5     # Gamut clamp v2 anchor lightness blend (§12.6)
 ```
 
 These values were locked by a coordinate-descent sweep against the reference comparison
@@ -998,37 +994,23 @@ cbrt(x):
 Max error ≤ 2 ULP. The seed division MUST use **signed int64** arithmetic — unsigned
 wraps for inputs < 1.0.
 
-**Soft gamut clamp v2** (segment bisection toward a lightness-blended anchor):
+**Gamut clip** (relative-colorimetric, per-channel):
 
-```
-softGamutClamp(L, a, b):
-    rgb = oklabToLinearRgb(L, a, b)
-    if inGamut(rgb): return (L, a, b)
+Out-of-sRGB OKLAB values are mapped to the display gamut by **per-channel clipping in
+linear sRGB** — i.e. after `oklabToLinearRgb`, each channel is clamped to `[0, 1]`
+before the gamma encode. This is exactly the `clamp(rgb_lin[i], 0, 1)` already present
+in the decode loop (§11) and the DC-search simulation (§10.3); there is no separate
+clamp helper. The result is what a standard sRGB display shows for the same color
+(maximum in-gamut saturation toward the gamut corner), so the decoded placeholder
+matches how the source image actually renders.
 
-    anchor_L = L + GAMUT_L_BLEND * (0.5 - L)     // achromatic anchor, L blended toward mid-gray
-    lo = 0.0; hi = 1.0
-    for i in 0..15:                              // fixed 16 iterations, no early exit
-        mid = (lo + hi) / 2.0
-        L_t = L + (anchor_L - L) * mid
-        a_t = a * (1.0 - mid)
-        b_t = b * (1.0 - mid)
-        if inGamut(oklabToLinearRgb(L_t, a_t, b_t)): hi = mid
-        else: lo = mid
-    return (L + (anchor_L - L) * hi, a * (1.0 - hi), b * (1.0 - hi))
-```
-
-Precondition: L must be in [0, 1] (caller clamps before calling). Hue is preserved
-(a and b shrink by the same factor); lightness drifts toward 0.5 proportionally to how
-far out of gamut the color sits. The anchor is always in gamut (the OKLAB gray axis maps
-to `rgb = (L³, L³, L³)`), so the bisection brackets the gamut surface; `hi` is the
-in-gamut side of the final bracket (its initial value 1.0 is in gamut and every
-assignment follows a successful in-gamut test).
-
-> **Why blend lightness:** a constant-L clamp (v0.2–v0.5) has almost no chroma headroom
-> for colors whose L sits above a gamut cusp — e.g. ProPhoto red (L ≈ 0.70) above the
-> sRGB red cusp (L ≈ 0.63) collapsed to pale pink. Trading a small lightness shift for
-> chroma retains far more of the perceived color. `GAMUT_L_BLEND = 0` reproduces the old
-> constant-L behavior (modulo bisection parametrization).
+> **Why relative-colorimetric clip:** an out-of-gamut color has no exact sRGB
+> representation. Per-channel clipping keeps the color at the gamut boundary (maximum
+> saturation), matching the standard display rendering. Earlier versions instead
+> *desaturated* out-of-gamut colors toward gray (v0.2–v0.5: constant-L clamp; an interim
+> v0.6 draft: a lightness-blended soft clamp), which made saturated wide-gamut solids —
+> e.g. a Display P3 or ProPhoto red — decode noticeably washed-out relative to the real
+> image. Clipping is also simpler and branch-free.
 
 ```
 oklabToLinearRgb(L, a, b):
@@ -1207,14 +1189,18 @@ neighborhood and keeps the one minimizing gamma-sRGB error against the clamp-map
 target. Deterministic (fixed order, strict improvement, ties keep nominal). Solid blue
 now decodes at ΔE00 0.36.
 
-### Change 7 — Gamut clamp v2: lightness-blended anchor (§12.6)
+### Change 7 — Relative-colorimetric gamut clip (§12.6)
 
-**Problem.** The constant-L chroma-only clamp collapsed colors above a gamut cusp to
-near-gray (ProPhoto red → pale pink).
+**Problem.** Both the v0.2–v0.5 constant-L clamp and an interim v0.6 lightness-blended
+soft clamp *desaturated* out-of-sRGB colors (toward gray / toward the gamut interior),
+so saturated wide-gamut solids — a Display P3 or ProPhoto red — decoded visibly
+washed-out relative to how the source actually renders on a display.
 
-**Fix.** Out-of-gamut colors project along the segment toward
-`(L + GAMUT_L_BLEND·(0.5 − L), 0, 0)`: hue-preserving, with a lightness give that
-retains most of the saturation near cusps.
+**Fix.** Out-of-gamut OKLAB values are mapped by **per-channel clipping in linear sRGB**
+(the `clamp(rgb_lin[i], 0, 1)` already in the decode loop) — relative-colorimetric, the
+same mapping a display applies. Saturated colors land at the gamut boundary (maximum
+in-gamut saturation) instead of being pulled inward, and the separate soft-clamp helper
+is removed.
 
 ### Evaluated and rejected
 
@@ -1236,8 +1222,8 @@ frequency-normalized decoding.
 | **Decode cost** | ~36µs native / ~182µs JS. OKLAB is 18× costlier per pixel than linear color, but both are <1ms. |
 | **Solid images** | 26 bytes of zero AC coefficients wasted. Irrelevant for photographs. |
 | **Extreme ratios** | Ratios beyond 16:1 clamp to 16:1. Rare in photography. |
-| **Wide-gamut DC clipping** | DC chroma beyond the sRGB hull clips at encode (§5.1). Invisible at decode (the decoder clamps to sRGB regardless); a future P3-decode profile would be a format break. |
-| **Gamut clamp** | Out-of-sRGB OKLAB values are soft-clamped with a small lightness give (§12.6). Almost always imperceptible at placeholder resolution. |
+| **Wide-gamut DC clipping** | DC chroma beyond the sRGB hull clips at encode (§5.1). Invisible at decode (the decoder clips to sRGB regardless); a future P3-decode profile would be a format break. |
+| **Gamut clip** | Out-of-sRGB OKLAB values are clipped per-channel in linear sRGB (relative-colorimetric, §12.6) — the same mapping a display applies, so saturated wide-gamut solids render at full in-gamut saturation rather than desaturated. |
 | **No progressive decode** | All 32 bytes must be received first. Never a practical bottleneck. |
 
 ---

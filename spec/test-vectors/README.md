@@ -21,8 +21,6 @@ cargo test --manifest-path rust/Cargo.toml -- generate_test_vectors --nocapture 
 - `unit-aspect.json` — Aspect ratio encoding/decoding and output sizes
 - `unit-bitpack.json` — Bit packing `readBits`/`writeBits` operations
 - `unit-cbrt.json` — Halley cube root accuracy
-- `unit-softgamutclamp.json` — Soft gamut clamp v2 (lightness-blended anchor,
-  `l_blend` = GAMUT_L_BLEND), including above-cusp and gamut-corner inputs
 
 ### Integration tests (v0.6)
 

@@ -10,7 +10,7 @@ hands-on reference for the build/publish commands.
 
 The Kotlin implementation ([`kotlin/`](../kotlin/)) is correct, spec-compatible, and the most
 ergonomic choice if you only decode a handful of placeholders. But it is pure-JVM **scalar** code:
-decoding runs a per-pixel inverse DCT, a 16-iteration soft gamut clamp, and an OKLab→sRGB conversion
+decoding runs a per-pixel inverse DCT, a per-channel gamut clip, and an OKLab→sRGB conversion
 entirely on the JVM heap, with no SIMD. The JVM has no portable SIMD story, so the planned SIMD work
 ([#3](https://github.com/justin13888/chromahash/issues/3)) only targets Rust, Swift, and C#.
 
@@ -177,7 +177,7 @@ optional host-JVM end-to-end check through the generated Kotlin is described in 
 
 **Use the native path when** you decode many placeholders or decode on the render hot path:
 
-- One-shot decode amortizes JNI/UniFFI marshalling to noise; the work is the inner DCT + gamut-clamp
+- One-shot decode amortizes JNI/UniFFI marshalling to noise; the work is the inner DCT + color-conversion
   loops, where native scalar already beats the JVM and avoids GC churn from per-pixel float math.
 - ARM64 plus the upcoming SIMD work ([#3](https://github.com/justin13888/chromahash/issues/3))
   widens the gap further.
