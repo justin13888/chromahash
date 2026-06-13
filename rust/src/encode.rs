@@ -337,6 +337,41 @@ mod tests {
     }
 
     #[test]
+    fn select_dc_codes_searches_l_neighbors() {
+        // The decode-aware DC search must explore the L code's ±1 neighbours, not
+        // only the rounded nominal `l0`. At a near-black, maximally-green-chroma
+        // working point the decoder's per-channel gamut clip makes a neighbour
+        // strictly better, so the search returns `l0 ± 1`.
+        //
+        // The `(l0 + dl)` → `(l0 * dl)` mutation collapses the L candidate set to
+        // {l0*0, l0*-1→clamp0, l0*1} = {0, l0} over dl ∈ {0,-1,1}, which can reach
+        // neither neighbour. Every golden solid happens to have `l0` optimal, so
+        // only an input that genuinely selects a neighbour pins this out. These
+        // are at the v0.6 working point (max_chroma_b = 0.33); the exact tuples
+        // are this build's own search output.
+        let t = &Tunables::DEFAULT;
+        let l = 14.0_f64 / 60.0; // l0 = round(127 · 0.2333…) = 30
+        let l0 = round_half_away_from_zero(127.0 * clamp01(l)) as u32;
+        assert_eq!(l0, 30, "fixture assumes nominal L code 30");
+        assert!(t.dc_search, "search must be enabled for the ± scan");
+
+        // Maximally-green a (−max_chroma_a) with two nearby b values that tip the
+        // clipped decode toward the opposite L neighbours.
+        let b_up = (5.0_f64 / 60.0 - 0.5) * 2.0 * 0.33; // -0.275 → picks l0 + 1
+        let b_dn = (8.0_f64 / 60.0 - 0.5) * 2.0 * 0.33; // -0.242 → picks l0 - 1
+        assert_eq!(
+            select_dc_codes(l, -0.35, b_up, t),
+            (31, 1, 13),
+            "search must reach l0 + 1 = 31"
+        );
+        assert_eq!(
+            select_dc_codes(l, -0.35, b_dn, t),
+            (29, 2, 17),
+            "search must reach l0 - 1 = 29"
+        );
+    }
+
+    #[test]
     fn encode_golden_solids() {
         // Saturated gamut corners exercise the decode-aware DC code search; the
         // neutral/extreme tones pin the DC and scale quantizers and the header

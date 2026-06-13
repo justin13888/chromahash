@@ -110,6 +110,31 @@ mod tests {
     }
 
     #[test]
+    fn adobe_rgb_gamma_matches_reference() {
+        // adobe_rgb_gamma(x) = x^(1/2.2). Nothing in the decode suite renders to
+        // Adobe RGB with enough precision to pin this curve, so assert it directly
+        // against a std-`powf` reference across the interior. This kills the
+        // constant-return mutants (0.0 / 1.0 / -1.0 — caught off the boundaries)
+        // and the exponent operator swaps: `1.0 / 2.2` → `1.0 % 2.2` = 1.0 (the
+        // identity x^1) or → `1.0 * 2.2` = 2.2 (the inverse, x^2.2), both of which
+        // diverge far past 1e-9 in the curve's interior.
+        for &x in &[0.0, 0.05, 0.2, 0.5, 0.75, 0.9, 1.0] {
+            let got = adobe_rgb_gamma(x);
+            let want = x.powf(1.0 / 2.2);
+            assert!(
+                (got - want).abs() < 1e-9,
+                "adobe_rgb_gamma({x}) = {got}, reference {want}"
+            );
+        }
+        // It is the inverse of adobe_rgb_eotf (x^2.2): γ(eotf(x)) ≈ x. The midpoint
+        // x = 0.5 alone separates every surviving mutant from the true curve.
+        for &x in &[0.1, 0.3, 0.5, 0.6, 0.95] {
+            let round = adobe_rgb_gamma(adobe_rgb_eotf(x));
+            assert!((round - x).abs() < 1e-9, "adobe roundtrip at {x}: {round}");
+        }
+    }
+
+    #[test]
     fn bt2020_pq_boundaries() {
         // PQ(0) should give 0
         assert_eq!(bt2020_pq_eotf(0.0), 0.0);

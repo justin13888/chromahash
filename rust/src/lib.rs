@@ -653,4 +653,57 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn gamut_wrappers_match_public_api() {
+        // The gamut-aware decode wrappers — decode_capped_to (public) and the
+        // doc-hidden decode_to_tuned / decode_capped_to_tuned — are otherwise
+        // never called, so whole-body replacement with a trivial tuple survives.
+        // Pin each against the already-golden free-function behaviour at
+        // Tunables::DEFAULT, and assert the output gamut actually flows through.
+        //
+        // A saturated P3 green clips in sRGB but not in P3, so the renders differ
+        // by gamut — that gives both an equality oracle (per gamut) and an
+        // inequality oracle (P3 ≠ sRGB) that the constant-tuple mutants fail.
+        let p3_green = [0u8, 200, 80, 255].repeat(16);
+        for &(w, h) in &[(8u32, 6u32), (1, 1), (16, 9), (9, 16)] {
+            let mut rgba = vec![0u8; (w * h * 4) as usize];
+            for px in rgba.chunks_exact_mut(4) {
+                px.copy_from_slice(&p3_green[0..4]);
+            }
+            let hash = ChromaHash::encode(w, h, &rgba, Gamut::DisplayP3);
+
+            for output in [Gamut::Srgb, Gamut::DisplayP3, Gamut::AdobeRgb] {
+                assert_eq!(
+                    hash.decode_to_tuned(output, &Tunables::DEFAULT),
+                    hash.decode_to(output),
+                    "decode_to_tuned diverges from decode_to for {w}×{h} {output:?}"
+                );
+                assert_eq!(
+                    hash.decode_capped_to_tuned(4, 4, output, &Tunables::DEFAULT),
+                    hash.decode_capped_to(4, 4, output),
+                    "decode_capped_to_tuned diverges from decode_capped_to for {w}×{h} {output:?}"
+                );
+            }
+
+            // decode_capped_to at sRGB must equal the non-gamut decode_capped.
+            assert_eq!(
+                hash.decode_capped_to(4, 4, Gamut::Srgb),
+                hash.decode_capped(4, 4),
+                "decode_capped_to(Srgb) diverges from decode_capped for {w}×{h}"
+            );
+
+            // The output gamut must change the pixels, not be ignored.
+            assert_ne!(
+                hash.decode_to_tuned(Gamut::DisplayP3, &Tunables::DEFAULT),
+                hash.decode_to_tuned(Gamut::Srgb, &Tunables::DEFAULT),
+                "decode_to_tuned must honour the output gamut for {w}×{h}"
+            );
+            assert_ne!(
+                hash.decode_capped_to(4, 4, Gamut::DisplayP3),
+                hash.decode_capped_to(4, 4, Gamut::Srgb),
+                "decode_capped_to must honour the output gamut for {w}×{h}"
+            );
+        }
+    }
 }
