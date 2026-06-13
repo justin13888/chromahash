@@ -15,7 +15,7 @@ plugins {
 // Maven coordinate group (GitHub-verified Sonatype Central namespace), shared
 // with the Android AAR. INDEPENDENT of the generated package `io.chromahash.ffi`.
 group = "io.github.justin13888"
-version = "0.5.0" // tracks the chromahash core crate version
+version = "0.6.0" // tracks the chromahash core crate version
 
 repositories {
     mavenCentral()

@@ -15,6 +15,54 @@ producer-side metadata. See `spec/README.md` §2.5 for details.
 ## [Unreleased]
 <!-- git-cliff-unreleased-end -->
 
+## [0.6.0] - 2026-06-13
+
+### Added
+
+- **comparison**: Output JSON report with standalone images
+- **comparison**: Color-manage gamut metric references, add --formats filter
+- **rust**: V0.6 bitstream — top-K selection, exact-zero µ-law, DC search, gamut clamp v2
+- **c**: Add chromahash-c C ABI binding with cbindgen header
+- **uniffi**: Expose is_version_supported and BatchEncoder
+- **wasm**: Add chromahash-wasm wasm-bindgen binding
+- **go**: Convert Go to a cgo wrapper over the C ABI
+- **csharp**: Convert C# to a P/Invoke wrapper over the C ABI
+- **swift**: Convert Swift to a UniFFI-generated binding
+- **py**: Convert Python to a UniFFI-generated binding
+- **ts**: Convert TypeScript to a wasm-bindgen binding + pure-TS decode
+- **jvm**: Replace the pure-Kotlin port with a UniFFI JVM binding
+- **comparison**: Add chromahash version-comparison report (#35)
+- **rust**: Decode to a caller-chosen output gamut (sRGB/P3/Adobe)
+- **comparison**: Showcase ChromaHash wide-gamut output on Display P3
+
+### Changed
+
+- **uniffi**: Rename bindings/android to bindings/uniffi
+- **comparison**: Convert gamut→sRGB reference to gamut-color
+
+### Fixed
+
+- **swift**: Run tests serially to avoid the BatchEncoder deadlock
+- **comparison**: Color-manage gamut originals so they match a correct decode
+- **rust**: Map out-of-gamut colors by relative-colorimetric clip
+
+### Documentation
+
+- **spec**: Specify the v0.6 format
+- Drop the redundant Architecture section from the README
+- Correct decode-gamut and out-of-gamut claims in README
+- Add language library/registry table to README
+- **rust**: Document MSRV 1.85 in crate README
+- Trim AGENTS.md to enforceable requirements
+- Slim RELEASING.md to human-facing steps
+- **rust**: Pin encode_stdin example to the Tunables definition
+- **c**: Expand Cargo.toml rationale for edition 2021 and handwritten ABI
+- **c**: Remove Layout section from README
+- **go**: Add package README
+- **py**: Add package README
+- Update benchmark results on Apple M3 Pro
+
+
 ## [0.5.0] - 2026-06-10
 
 ### Added
@@ -133,7 +181,8 @@ The v0.2 reference reworked the format: adaptive grids, `MAX_CHROMA` lowered fro
 - Official format specification under `spec/`.
 - Monorepo scaffolding, README, and development guide.
 
-[Unreleased]: https://github.com/justin13888/chromahash/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/justin13888/chromahash/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/justin13888/chromahash/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/justin13888/chromahash/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/justin13888/chromahash/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/justin13888/chromahash/compare/v0.2.0...v0.3.0

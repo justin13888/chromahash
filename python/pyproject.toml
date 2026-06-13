@@ -1,6 +1,6 @@
 [project]
 name = "chromahash"
-version = "0.5.0"
+version = "0.6.0"
 description = "ChromaHash: modern LQIP (Low Quality Image Placeholder) format"
 readme = "README.md"
 authors = [{ name = "Justin Chung", email = "noreply@justinchung.net" }]

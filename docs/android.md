@@ -16,7 +16,7 @@ entirely on the JVM heap, with no SIMD. The JVM has no portable SIMD story, so t
 
 On the client, **decode is the hot path** — encoding is normally done server-side, and an app
 decodes placeholders at render time, often many per screen. The Rust core
-([`rust/`](../rust/), crate `chromahash` v0.5.0, **zero dependencies**) is portable, compiles
+([`rust/`](../rust/), crate `chromahash` v0.6.0, **zero dependencies**) is portable, compiles
 natively for Android's ARM64 devices, and is the implementation that will gain SIMD. Bridging it to
 Kotlin/Java over JNI gives Android the fast decoder while keeping a Kotlin-shaped API.
 
