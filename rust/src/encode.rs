@@ -1,6 +1,6 @@
 use crate::aspect::encode_aspect;
 use crate::bitpack::write_bits;
-use crate::color::{linear_rgb_to_oklab, oklab_to_linear_srgb};
+use crate::color::oklab_to_linear_srgb;
 use crate::constants::{ALPHA_AC_BITS, ALPHA_AC_COUNT, Gamut, Tunables};
 use crate::dct::{Selection, dct_encode_selected, precompute_cos_table, select_coefficients};
 use crate::math_utils::{clamp_neg1_1, clamp01, round_half_away_from_zero};
@@ -130,29 +130,38 @@ pub fn encode_with(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables) -> [
     // 1. Precompute EOTF LUT (256 entries, eliminates per-pixel portable_pow)
     let eotf_lut = build_eotf_lut(gamut);
 
-    // 2. Per-pixel OKLAB conversion with alpha accumulation
-    let mut oklab_pixels = vec![[0.0f64; 3]; pixel_count];
+    // 2. Per-pixel OKLAB conversion with alpha accumulation.
+    //
+    // The linear-RGB → OKLAB transform is independent per pixel, so it runs
+    // through the SIMD batch path (`simd::oklab_forward_batch`), whose output is
+    // byte-identical to per-pixel `linear_rgb_to_oklab`. The alpha-weighted
+    // average is a reduction, so it stays a scalar pass in pixel order to keep
+    // the floating-point summation bit-exact.
+    let mut lin_r = vec![0.0f64; pixel_count];
+    let mut lin_g = vec![0.0f64; pixel_count];
+    let mut lin_b = vec![0.0f64; pixel_count];
     let mut alpha_pixels = vec![0.0f64; pixel_count];
+    for i in 0..pixel_count {
+        lin_r[i] = eotf_lut[rgba[i * 4] as usize];
+        lin_g[i] = eotf_lut[rgba[i * 4 + 1] as usize];
+        lin_b[i] = eotf_lut[rgba[i * 4 + 2] as usize];
+        alpha_pixels[i] = rgba[i * 4 + 3] as f64 / 255.0;
+    }
+
+    let mut oklab_pixels = vec![[0.0f64; 3]; pixel_count];
+    crate::simd::oklab_forward_batch(&lin_r, &lin_g, &lin_b, gamut, &mut oklab_pixels);
+
     let mut avg_l = 0.0;
     let mut avg_a = 0.0;
     let mut avg_b = 0.0;
     let mut avg_alpha = 0.0;
-
     for i in 0..pixel_count {
-        let r_lin = eotf_lut[rgba[i * 4] as usize];
-        let g_lin = eotf_lut[rgba[i * 4 + 1] as usize];
-        let b_lin = eotf_lut[rgba[i * 4 + 2] as usize];
-        let alpha = rgba[i * 4 + 3] as f64 / 255.0;
-
-        let lab = linear_rgb_to_oklab([r_lin, g_lin, b_lin], gamut);
-
+        let alpha = alpha_pixels[i];
+        let lab = oklab_pixels[i];
         avg_l += alpha * lab[0];
         avg_a += alpha * lab[1];
         avg_b += alpha * lab[2];
         avg_alpha += alpha;
-
-        oklab_pixels[i] = lab;
-        alpha_pixels[i] = alpha;
     }
 
     // 3. Compute alpha-weighted average color
