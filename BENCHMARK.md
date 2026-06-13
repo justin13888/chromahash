@@ -1,20 +1,20 @@
 # Chromahash Benchmark
 
-Output generated with `just benchmark` on AMD Ryzen 7800X3D.
+Output generated with `just benchmark` on Apple M3 Pro.
 
 ## Benchmark Summary — 100×100 RGB gradient, bulk count = 1000
 
 | Implementation | encode single | decode single | encode bulk (total) | encode bulk (per-op) | decode bulk (total) | decode bulk (per-op) |
 | --- | --- | --- | --- | --- | --- | --- |
-| Rust | 2.59 ms | 1.09 ms | 109.32 ms | 109.32 µs | 336.30 ms | 336.30 µs |
-| Go | 4.11 ms | 1.39 ms | 300.81 ms | 300.81 µs | 189.43 ms | 189.43 µs |
-| TypeScript | 47.35 ms | 24.32 ms | 18160.04 ms | 18160.04 µs | 285.22 ms | 285.22 µs |
-| Python | 134.88 ms | 42.82 ms | 98733.33 ms | 98733.33 µs | 7731.78 ms | 7731.78 µs |
-| Kotlin | 61.62 ms | 49.20 ms | 514.90 ms | 514.90 µs | 256.95 ms | 256.95 µs |
-| Swift | 7.11 ms | 4.49 ms | 586.94 ms | 586.94 µs | 195.46 ms | 195.46 µs |
-| C# | 43.54 ms | 28.78 ms | 733.03 ms | 733.03 µs | 355.83 ms | 355.83 µs |
-| ThumbHash (Rust) _(ThumbHash baseline)_ | 2.02 ms | 0.86 ms | 78.44 ms | 78.44 µs | 82.59 ms | 82.59 µs |
-| ThumbHash (JS) _(ThumbHash baseline)_ | 29.11 ms | 23.97 ms | 474.52 ms | 474.52 µs | 162.53 ms | 162.53 µs |
+| Rust | 2.62 ms | 2.17 ms | 72.59 ms | 72.59 µs | 240.70 ms | 240.70 µs |
+| Go | 5.77 ms | 4.74 ms | 74.99 ms | 74.99 µs | 241.30 ms | 241.30 µs |
+| TypeScript | 46.14 ms | 44.90 ms | 614.49 ms | 614.49 µs | 307.11 ms | 307.11 µs |
+| Python | 49.84 ms | 45.22 ms | 4791.10 ms | 4791.10 µs | 299.84 ms | 299.84 µs |
+| Kotlin | 426.49 ms | 457.25 ms | 634.88 ms | 634.88 µs | 786.23 ms | 786.23 µs |
+| Swift | 3.80 ms | 3.96 ms | 105.86 ms | 105.86 µs | 240.99 ms | 240.99 µs |
+| C# | 27.81 ms | 27.15 ms | 133.63 ms | 133.63 µs | 261.47 ms | 261.47 µs |
+| ThumbHash (Rust) _(ThumbHash baseline)_ | 2.73 ms | 1.89 ms | 55.64 ms | 55.64 µs | 37.00 ms | 37.00 µs |
+| ThumbHash (JS) _(ThumbHash baseline)_ | 40.21 ms | 33.89 ms | 533.04 ms | 533.04 µs | 222.35 ms | 222.35 µs |
 
 > **single** times include process startup (JVM/.NET/Node cold start dominates) — a startup/latency proxy, not per-op compute. **bulk per-op** (= median / count) is the real compute number.
 >
