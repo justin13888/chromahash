@@ -1,0 +1,111 @@
+name: Release (npm)
+
+# Publish the @chromahash/typescript package to npm when a release tag is pushed.
+# Releases are cut with `just release X.Y.Z`, which creates and pushes the
+# `vX.Y.Z` tag (see RELEASING.md). This workflow builds the wasm glue + TypeScript
+# and publishes via npm trusted publishing (OIDC) — no stored token. It is
+# idempotent: a version already on npm is skipped.
+#
+# The wasm artifact is platform-independent, so a single Linux job produces the
+# whole package (no native matrix). npm's trusted-publisher config references this
+# workflow's filename (release-npm.yml) — don't rename it without updating npm.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build and pack without publishing"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-npm-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # OIDC token for npm trusted publishing + provenance
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain + wasm target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: command -v wasm-pack >/dev/null 2>&1 || cargo install wasm-pack --locked
+
+      # Mirrors `just ts-cbuild` / ci-typescript.yml: --out-dir is relative to the
+      # crate dir (bindings/wasm), so ../../typescript/wasm resolves to the package.
+      - name: Build WASM glue (staged into typescript/wasm/)
+        run: wasm-pack build --target web bindings/wasm --out-dir ../../typescript/wasm
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          cache: pnpm
+          cache-dependency-path: typescript/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: typescript
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        working-directory: typescript
+        run: pnpm run build
+
+      - name: Verify tag matches package.json version
+        if: github.event_name == 'push'
+        working-directory: typescript
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$pkg" ]; then
+            echo "Tag v$tag does not match typescript/package.json version $pkg" >&2
+            exit 1
+          fi
+
+      - name: Skip if version already on npm
+        id: check
+        working-directory: typescript
+        run: |
+          ver="$(node -p "require('./package.json').version")"
+          if npm view "@chromahash/typescript@$ver" version >/dev/null 2>&1; then
+            echo "Version $ver already on npm — skipping."
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Trusted publishing (OIDC) needs npm >= 11.5.1 — newer than the npm bundled
+      # with Node 24. No NODE_AUTH_TOKEN is set: npm uses the OIDC flow for a
+      # package configured with a trusted publisher.
+      - name: Upgrade npm (OIDC trusted publishing needs >= 11.5.1)
+        if: steps.check.outputs.published == 'false'
+        run: npm install -g npm@latest
+
+      # --access public is required for the first publish of a scoped package;
+      # --provenance emits a signed build-provenance attestation (needs id-token).
+      - name: Publish (dry run)
+        if: steps.check.outputs.published == 'false' && github.event_name == 'workflow_dispatch' && inputs.dry_run
+        working-directory: typescript
+        run: npm publish --access public --provenance --dry-run
+
+      - name: Publish
+        if: steps.check.outputs.published == 'false' && !(github.event_name == 'workflow_dispatch' && inputs.dry_run)
+        working-directory: typescript
+        run: npm publish --access public --provenance

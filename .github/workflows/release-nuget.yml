@@ -1,0 +1,157 @@
+name: Release (NuGet)
+
+# Publish the ChromaHash .NET package to NuGet when a release tag is pushed.
+# Releases are cut with `just release X.Y.Z` (see RELEASING.md). Publishes via
+# NuGet trusted publishing (OIDC) — no stored API key. Idempotent: --skip-duplicate
+# plus a flat-container probe avoid re-publishing an existing version.
+#
+# The package is a P/Invoke wrapper over chromahash-c, so it bundles every RID's
+# native lib under runtimes/<rid>/native (the csproj packs these with
+# -p:PackNativeAssets=true). A matrix cross-compiles each lib; one publish job
+# gathers them and packs+pushes a single multi-RID .nupkg. Linux libs are built
+# with cargo-zigbuild pinned to glibc 2.17.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Pack without pushing to NuGet"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-nuget-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-natives:
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { runner: ubuntu-latest,  target: x86_64-unknown-linux-gnu,  rid: linux-x64,   lib: libchromahash_c.so,    zig: true }
+          - { runner: ubuntu-latest,  target: aarch64-unknown-linux-gnu, rid: linux-arm64, lib: libchromahash_c.so,    zig: true }
+          - { runner: macos-14,       target: x86_64-apple-darwin,       rid: osx-x64,     lib: libchromahash_c.dylib, zig: false }
+          - { runner: macos-14,       target: aarch64-apple-darwin,      rid: osx-arm64,   lib: libchromahash_c.dylib, zig: false }
+          - { runner: windows-latest, target: x86_64-pc-windows-msvc,    rid: win-x64,     lib: chromahash_c.dll,      zig: false }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install zig (Linux cross)
+        if: matrix.zig
+        uses: mlugg/setup-zig@v2
+
+      - name: Install cargo-zigbuild
+        if: matrix.zig
+        run: command -v cargo-zigbuild >/dev/null 2>&1 || cargo install cargo-zigbuild --locked
+
+      - name: Build chromahash-c cdylib
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.zig }}" = "true" ]; then
+            cargo zigbuild --release --manifest-path bindings/c/Cargo.toml --target ${{ matrix.target }}.2.17
+          else
+            cargo build --release --manifest-path bindings/c/Cargo.toml --target ${{ matrix.target }}
+          fi
+          mkdir -p "runtimes/${{ matrix.rid }}/native"
+          cp "bindings/c/target/${{ matrix.target }}/release/${{ matrix.lib }}" "runtimes/${{ matrix.rid }}/native/"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nuget-native-${{ matrix.rid }}
+          path: runtimes
+          if-no-files-found: error
+
+  publish:
+    needs: build-natives
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # OIDC token for NuGet trusted publishing
+    steps:
+      - uses: actions/checkout@v4
+
+      # Merge every RID's artifact into runtimes/<rid>/native.
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: nuget-native-*
+          merge-multiple: true
+          path: runtimes
+
+      - name: Verify all RID libs are present
+        run: |
+          set -euo pipefail
+          expected="linux-x64/native/libchromahash_c.so linux-arm64/native/libchromahash_c.so osx-x64/native/libchromahash_c.dylib osx-arm64/native/libchromahash_c.dylib win-x64/native/chromahash_c.dll"
+          for f in $expected; do
+            test -f "runtimes/$f" || { echo "Missing native lib: runtimes/$f" >&2; exit 1; }
+          done
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.x"
+
+      - name: Verify tag matches csproj version
+        if: github.event_name == 'push'
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          ver="$(grep -oE '<Version>[^<]+</Version>' csharp/src/Chromahash/Chromahash.csproj \
+            | head -1 | sed -E 's/<Version>(.*)<\/Version>/\1/')"
+          if [ "$tag" != "$ver" ]; then
+            echo "Tag v$tag does not match Chromahash.csproj version $ver" >&2
+            exit 1
+          fi
+
+      - name: Pack multi-RID NuGet package
+        run: |
+          set -euo pipefail
+          dotnet pack csharp/src/Chromahash/Chromahash.csproj -c Release \
+            -p:PackNativeAssets=true \
+            -p:ChromahashRuntimesDir="$GITHUB_WORKSPACE/runtimes" \
+            -o nupkgs
+          pkg="$(ls nupkgs/*.nupkg | head -1)"
+          for rid in linux-x64 linux-arm64 osx-x64 osx-arm64 win-x64; do
+            unzip -l "$pkg" | grep -q "runtimes/$rid/native/" || { echo "nupkg missing runtimes/$rid/native" >&2; exit 1; }
+          done
+          echo "nupkg carries all five RID native assets."
+
+      - name: Skip if version already on NuGet
+        id: check
+        run: |
+          ver="$(grep -oE '<Version>[^<]+</Version>' csharp/src/Chromahash/Chromahash.csproj \
+            | head -1 | sed -E 's/<Version>(.*)<\/Version>/\1/')"
+          if curl -sSfI "https://api.nuget.org/v3-flatcontainer/chromahash/$ver/chromahash.$ver.nupkg" >/dev/null 2>&1; then
+            echo "Version $ver already on NuGet — skipping."
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # NuGet trusted publishing: exchange the GitHub OIDC token for a short-lived
+      # API key. Requires a trusted-publishing policy on NuGet.org tied to this repo
+      # + workflow and the account in NUGET_USER (see RELEASING.md).
+      - name: Authenticate with NuGet (trusted publishing)
+        if: steps.check.outputs.published == 'false' && !(github.event_name == 'workflow_dispatch' && inputs.dry_run)
+        id: nuget-login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ secrets.NUGET_USER }}
+
+      - name: Push to NuGet
+        if: steps.check.outputs.published == 'false' && !(github.event_name == 'workflow_dispatch' && inputs.dry_run)
+        run: |
+          dotnet nuget push nupkgs/*.nupkg \
+            --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}" \
+            --source https://api.nuget.org/v3/index.json \
+            --skip-duplicate

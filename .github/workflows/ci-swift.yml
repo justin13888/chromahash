@@ -3,15 +3,20 @@ name: CI (Swift)
 on:
   push:
     branches: [master]
-    paths: ["swift/**", "bindings/uniffi/**", "rust/**", ".github/workflows/ci-swift.yml"]
+    paths: ["swift/**", "Package.swift", "bindings/uniffi/**", "rust/**", ".github/workflows/ci-swift.yml"]
   pull_request:
-    paths: ["swift/**", "bindings/uniffi/**", "rust/**", ".github/workflows/ci-swift.yml"]
+    paths: ["swift/**", "Package.swift", "bindings/uniffi/**", "rust/**", ".github/workflows/ci-swift.yml"]
 
 jobs:
   ci:
     # macOS: the Swift binding consumes a UniFFI xcframework assembled with
     # xcodebuild. (Linux support via a systemLibrary modulemap is a follow-up.)
     runs-on: macos-latest
+    # Build/test against the locally built xcframework rather than the released,
+    # checksum-pinned remote one (see Package.swift). The manifest is at the repo
+    # root, so swift build/test run from the root.
+    env:
+      CHROMAHASH_LOCAL_XCFRAMEWORK: "1"
     steps:
       - uses: actions/checkout@v4
 
@@ -36,11 +41,9 @@ jobs:
             -headers "$hdr" -output swift/ChromaHashFFI.xcframework
 
       - name: Build
-        working-directory: swift
         run: swift build
 
       - name: Test
-        working-directory: swift
         # Run serially. BatchEncoder.encodeBatch blocks the calling thread on an
         # OperationQueue (waitUntilFinished: true). Swift Testing's default
         # parallel executor runs the synchronous tests on the Swift-concurrency

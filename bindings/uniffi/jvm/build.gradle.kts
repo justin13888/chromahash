@@ -123,6 +123,22 @@ val stageNativeLib by tasks.registering(Copy::class) {
     into(File(generatedResources, jnaPrefix))
 }
 
+// Release packaging stages PRE-BUILT cdylibs for every supported platform, so the
+// published JAR runs on linux/macOS/windows × x86_64/aarch64 — not just the build
+// host. CI cross-compiles each platform's cdylib and lays them out under
+// `-PnativeLibsDir` as `<os>-<arch>/<lib>` (JNA's bundled-resource convention),
+// e.g. linux-x86-64/libchromahash_uniffi.so, win32-x86-64/chromahash_uniffi.dll.
+// When the property is absent (local dev, CI tests) only the host lib is staged.
+val nativeLibsDir: String? = findProperty("nativeLibsDir") as String?
+
+val stageNativeLibs by tasks.registering(Copy::class) {
+    group = "build"
+    description = "Stage pre-built per-platform cdylibs (from -PnativeLibsDir) into JNA's layout."
+    onlyIf { nativeLibsDir != null }
+    nativeLibsDir?.let { from(it) }
+    into(generatedResources)
+}
+
 sourceSets {
     main {
         kotlin.srcDir(generatedBindings)
@@ -131,7 +147,9 @@ sourceSets {
 }
 
 tasks.named("compileKotlin") { dependsOn(generateUniffiBindings) }
-tasks.named("processResources") { dependsOn(stageNativeLib) }
+tasks.named("processResources") {
+    dependsOn(if (nativeLibsDir != null) stageNativeLibs else stageNativeLib)
+}
 
 tasks.test {
     useJUnitPlatform()

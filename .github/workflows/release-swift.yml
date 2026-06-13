@@ -1,0 +1,126 @@
+name: Release (Swift)
+
+# Make `github.com/justin13888/chromahash` resolvable as a Swift package when a
+# release tag is pushed. SwiftPM/SPI build from the tag's tree, which can't run
+# cargo — so the native code ships as a prebuilt, checksum-pinned xcframework
+# attached to the GitHub release, and the generated Swift bindings are committed
+# onto the tag.
+#
+# Checksum-in-tag chicken-and-egg: Package.swift must contain the checksum of an
+# asset that doesn't exist until this workflow builds it. So this job builds the
+# xcframework, attaches it to the release, pins Package.swift's url+checksum +
+# commits the generated bindings, and moves the vX.Y.Z tag to that commit. The
+# move re-triggers the v* workflows, but every release workflow is idempotent
+# (this one skips once the asset exists), so they converge with no duplicate work.
+# The pinned Package.swift differs from the original tag commit only in Swift
+# files, so the already-published non-Swift artifacts are unaffected.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build the xcframework without publishing/retagging"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-swift-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: macos-14
+    permissions:
+      contents: write # upload the release asset, commit the pin, move the tag
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Skip if xcframework already attached to the release
+        id: check
+        if: github.event_name == 'push'
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --json assets -q '.assets[].name' 2>/dev/null \
+              | grep -qx "ChromaHashFFI.xcframework.zip"; then
+            echo "Asset already attached to $GITHUB_REF_NAME — skipping."
+            echo "done=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "done=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install Rust toolchain + Apple targets
+        if: steps.check.outputs.done != 'true'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin,aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
+
+      # Build macOS (arm64+x86_64), iOS device (arm64) and iOS simulator
+      # (arm64+x86_64) slices into one xcframework. tvOS/watchOS/visionOS are a
+      # follow-up (their Rust targets are not tier-2).
+      - name: Build multi-platform xcframework
+        if: steps.check.outputs.done != 'true'
+        run: |
+          set -euo pipefail
+          cargo build --release --manifest-path bindings/uniffi/Cargo.toml
+          gen="$(mktemp -d)"
+          ( cd bindings/uniffi && cargo run --release --quiet --bin uniffi-bindgen -- \
+              generate --library target/release/libchromahash_uniffi.dylib \
+              --language swift --out-dir "$gen" )
+          mkdir -p swift/Sources/ChromaHashBindings
+          cp "$gen/chromahash_uniffi.swift" swift/Sources/ChromaHashBindings/
+          hdr="$(mktemp -d)"
+          cp "$gen/chromahash_uniffiFFI.h" "$hdr/"
+          cp "$gen/chromahash_uniffiFFI.modulemap" "$hdr/module.modulemap"
+          for t in aarch64-apple-darwin x86_64-apple-darwin aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios; do
+            cargo build --release --manifest-path bindings/uniffi/Cargo.toml --target "$t"
+          done
+          base=bindings/uniffi/target
+          rm -rf slices && mkdir -p slices/macos slices/ios slices/ios-sim
+          lipo -create "$base/aarch64-apple-darwin/release/libchromahash_uniffi.a" \
+                       "$base/x86_64-apple-darwin/release/libchromahash_uniffi.a" \
+                       -output slices/macos/libchromahash_uniffi.a
+          cp "$base/aarch64-apple-ios/release/libchromahash_uniffi.a" slices/ios/libchromahash_uniffi.a
+          lipo -create "$base/aarch64-apple-ios-sim/release/libchromahash_uniffi.a" \
+                       "$base/x86_64-apple-ios/release/libchromahash_uniffi.a" \
+                       -output slices/ios-sim/libchromahash_uniffi.a
+          rm -rf swift/ChromaHashFFI.xcframework
+          xcodebuild -create-xcframework \
+            -library slices/macos/libchromahash_uniffi.a -headers "$hdr" \
+            -library slices/ios/libchromahash_uniffi.a -headers "$hdr" \
+            -library slices/ios-sim/libchromahash_uniffi.a -headers "$hdr" \
+            -output swift/ChromaHashFFI.xcframework
+          ( cd swift && zip -ry ChromaHashFFI.xcframework.zip ChromaHashFFI.xcframework )
+
+      - name: Compute checksum
+        if: steps.check.outputs.done != 'true'
+        id: sum
+        run: echo "checksum=$(swift package compute-checksum swift/ChromaHashFFI.xcframework.zip)" >> "$GITHUB_OUTPUT"
+
+      - name: Dry-run summary
+        if: steps.check.outputs.done != 'true' && github.event_name == 'workflow_dispatch' && inputs.dry_run
+        run: echo "Built xcframework; checksum=${{ steps.sum.outputs.checksum }} (dry run — not publishing)."
+
+      - name: Attach asset, pin Package.swift, move the tag
+        if: steps.check.outputs.done != 'true' && github.event_name == 'push'
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          sum="${{ steps.sum.outputs.checksum }}"
+          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --title "$tag" --notes "ChromaHash $tag"
+          gh release upload "$tag" swift/ChromaHashFFI.xcframework.zip --clobber
+          # Pin the remote binaryTarget to this tag + checksum.
+          tag="$tag" sum="$sum" perl -i -pe \
+            's{releases/download/v[^/]+/ChromaHashFFI}{releases/download/$ENV{tag}/ChromaHashFFI}; s{(checksum: ")[0-9a-f]+(")}{$1$ENV{sum}$2}' \
+            Package.swift
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f Package.swift swift/Sources/ChromaHashBindings
+          git commit -m "build(swift): pin xcframework for $tag"
+          git tag -f "$tag" -m "$tag"
+          git push -f origin "refs/tags/$tag"

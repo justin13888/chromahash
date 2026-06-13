@@ -22,8 +22,7 @@
   <!-- Native chromahash-c library (the cdylib wrapping the Rust core). Copied next
        to the managed assembly so P/Invoke resolves it from the application
        directory, and flows transitively to referencing projects (tests, CLI).
-       Built + staged by `just csharp-cbuild` into bindings/c/target/release.
-       NuGet RID packaging (runtimes/<rid>/native) is wired in the release flow. -->
+       Built + staged by `just csharp-cbuild` into bindings/c/target/release. -->
   <PropertyGroup>
     <ChromahashNativeDir>$(MSBuildThisFileDirectory)../../../bindings/c/target/release</ChromahashNativeDir>
   </PropertyGroup>
@@ -36,6 +35,22 @@
   </ItemGroup>
   <ItemGroup Condition="$([MSBuild]::IsOSPlatform('Windows')) And Exists('$(ChromahashNativeDir)/chromahash_c.dll')">
     <None Include="$(ChromahashNativeDir)/chromahash_c.dll" Link="chromahash_c.dll" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- NuGet RID packaging: bundle every RID's native lib under runtimes/<rid>/native
+       so the published package resolves P/Invoke ("chromahash_c") on
+       linux/macOS/windows × x64/arm64. The release workflow cross-compiles each lib
+       into $(ChromahashRuntimesDir)/<rid>/native and packs with -p:PackNativeAssets=true.
+       Off by default so ordinary build/test/dotnet pack are unaffected. -->
+  <PropertyGroup Condition="'$(PackNativeAssets)' == 'true'">
+    <ChromahashRuntimesDir Condition="'$(ChromahashRuntimesDir)' == ''">$(MSBuildThisFileDirectory)runtimes</ChromahashRuntimesDir>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(PackNativeAssets)' == 'true'">
+    <None Include="$(ChromahashRuntimesDir)/linux-x64/native/libchromahash_c.so"    Pack="true" PackagePath="runtimes/linux-x64/native/" />
+    <None Include="$(ChromahashRuntimesDir)/linux-arm64/native/libchromahash_c.so"  Pack="true" PackagePath="runtimes/linux-arm64/native/" />
+    <None Include="$(ChromahashRuntimesDir)/osx-x64/native/libchromahash_c.dylib"   Pack="true" PackagePath="runtimes/osx-x64/native/" />
+    <None Include="$(ChromahashRuntimesDir)/osx-arm64/native/libchromahash_c.dylib" Pack="true" PackagePath="runtimes/osx-arm64/native/" />
+    <None Include="$(ChromahashRuntimesDir)/win-x64/native/chromahash_c.dll"        Pack="true" PackagePath="runtimes/win-x64/native/" />
   </ItemGroup>
 
 </Project>
