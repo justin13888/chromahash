@@ -117,8 +117,11 @@ jobs:
               cargo test --target ${{ matrix.target }} --features full simd:: -- --skip avx2
               ;;
             wasm)
+              # Scope to the `simd::` differential tests: wasm32-wasip1 has no
+              # thread support, so the full lib suite would abort in the
+              # thread-spawning `batch` tests. (Matches `just test-simd-emulated`.)
               export RUSTFLAGS="-C target-feature=+simd128"
               export CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime"
-              cargo test --lib --target ${{ matrix.target }} --features full
+              cargo test --lib --target ${{ matrix.target }} --features full simd::
               ;;
           esac
