@@ -329,7 +329,7 @@ Each language has an independent CI workflow triggered only when its directory c
 
 | Workflow | Trigger path | Steps |
 |----------|-------------|-------|
-| `ci-rust.yml` | `rust/**` | fmt check, clippy, test |
+| `ci-rust.yml` | `rust/**` | fmt check, clippy, test (`--features full`, incl. x86_64 SIMD diff); `simd-diff` matrix runs the per-backend differential tests per target (native Arm NEON, QEMU SSE2-only, wasmtime simd128) |
 | `ci-c.yml` | `bindings/c/**`, `rust/**` | fmt check, clippy, header drift, test, C example |
 | `ci-wasm.yml` | `bindings/wasm/**`, `rust/**` | fmt check, clippy, test (wasm in Node) |
 | `ci-typescript.yml` | `typescript/**`, `bindings/wasm/**`, `rust/**` | build WASM, fmt check, lint, build, test |
@@ -342,6 +342,52 @@ Each language has an independent CI workflow triggered only when its directory c
 | `ci-mutants.yml` | `rust/**` (PRs) | mutation-test the changed core lines (`--in-diff`); manual full sweep via workflow_dispatch |
 
 CI mirrors the local `just` commands. If local checks pass, CI should pass.
+
+---
+
+## SIMD Differential Testing
+
+The core color math has hand-written SIMD backends (`rust/src/simd/`): AVX2/SSE2
+on x86, NEON on aarch64, simd128 on wasm, plus the always-available scalar
+fallback. Each must produce **byte-identical** output to the scalar reference
+(`color::linear_rgb_to_oklab`) — that equivalence is what lets the SIMD path stay
+spec-conformant. It is pinned by *differential tests* in `src/simd/mod.rs` that
+run a backend over a fuzzed batch (many sizes × all gamuts × edge pixels) and
+assert every pixel equals scalar.
+
+Two run on a plain `cargo test`:
+
+- `scalar_backend_matches_reference` — the scalar batch path vs the reference.
+- `public_dispatch_matches_reference` — whatever backend *this* host selects.
+
+The **per-backend** tests (`avx2_…`, `sse2_…`, `neon_…`, `wasm_simd128_…`) each
+pin one *specific* backend and are gated behind the off-by-default
+`simd-diff-tests` feature (included in `full`). Because a backend only compiles
+for its own target, full coverage means running the suite on — or emulating —
+every target.
+
+**They fail rather than skip.** Running the suite on a host that cannot execute a
+backend it was asked to validate (the AVX2 test on a non-AVX2 CPU, or
+`simd-diff-tests` on a target with no vector backend at all) is a
+misconfiguration — usually a mis-targeted CI job — so it panics with a clear
+message instead of passing green with zero coverage.
+
+```bash
+just test-simd-diff        # native host: every backend this CPU/arch provides
+just setup-simd-targets    # add the rustup targets the emulated sweep needs
+just test-simd-emulated    # every target via QEMU (x86_64 AVX2 + SSE2-only,
+                           # aarch64 NEON) and wasmtime (wasm32 simd128)
+```
+
+`test-simd-emulated` needs `qemu-user`, `gcc-aarch64-linux-gnu`, and `wasmtime`
+on `PATH`. QEMU user-mode emulates Linux targets, so on a non-Linux host run it
+inside a Linux container.
+
+**Where it runs in CI.** `ci-rust.yml` runs the differential tests on each
+machine target: the main job covers x86_64 AVX2+SSE2 (`cargo test --features
+full`), and the `simd-diff` matrix adds a native Arm runner (NEON), a QEMU job
+forcing an SSE2-only CPU (the no-AVX2 dispatch path), and a wasmtime job
+(simd128).
 
 ---
 
