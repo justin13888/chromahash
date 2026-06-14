@@ -182,6 +182,50 @@ test-rust:
 build-rust:
     cargo build --manifest-path rust/Cargo.toml
 
+# Pin every vector backend this CPU/arch actually provides (AVX2/SSE2, NEON, …)
+# against the scalar reference. The `full` feature turns on `simd-diff-tests`,
+# which *fails* rather than silently skipping if the host can't run a backend it
+# was asked to validate. Other targets: `just test-simd-emulated`.
+# Run the native-host SIMD differential tests.
+test-simd-diff:
+    cargo test --manifest-path rust/Cargo.toml --features full simd::
+
+# Install the rustup targets the emulated SIMD sweep cross-compiles to.
+setup-simd-targets:
+    rustup target add x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu wasm32-wasip1
+
+# Emulate each target and run its differential suite: x86_64 AVX2 and SSE2-only
+# via QEMU, aarch64 NEON via QEMU, wasm32 simd128 via wasmtime — the combinations
+# the per-target CI jobs cover, on a single host (e.g. an Apple-silicon laptop).
+# QEMU user-mode emulates Linux targets, so on a non-Linux host run inside a Linux
+# container. Prereqs (not via mise): `just setup-simd-targets`, plus `qemu-user`,
+# `gcc-aarch64-linux-gnu`, and `wasmtime` on PATH.
+# Run the SIMD differential tests across every emulated target.
+test-simd-emulated:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for tool in qemu-x86_64 qemu-aarch64 aarch64-linux-gnu-gcc wasmtime; do
+        command -v "$tool" >/dev/null 2>&1 || {
+            echo "test-simd-emulated: missing '$tool'. Install qemu-user, gcc-aarch64-linux-gnu and wasmtime, then run 'just setup-simd-targets'." >&2
+            exit 1
+        }
+    done
+    cd rust
+    echo '== x86_64 · AVX2 (+SSE2) =='
+    CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='qemu-x86_64 -cpu max' \
+        cargo test --target x86_64-unknown-linux-gnu --features full simd::
+    echo '== x86_64 · SSE2-only (no AVX2) =='
+    CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='qemu-x86_64 -cpu Nehalem' \
+        cargo test --target x86_64-unknown-linux-gnu --features full simd:: -- --skip avx2
+    echo '== aarch64 · NEON =='
+    sysroot="$(aarch64-linux-gnu-gcc -print-sysroot)"
+    CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER='aarch64-linux-gnu-gcc' \
+    CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUNNER="qemu-aarch64 -L ${sysroot:-/usr/aarch64-linux-gnu}" \
+        cargo test --target aarch64-unknown-linux-gnu --features full simd::
+    echo '== wasm32 · simd128 =='
+    RUSTFLAGS='-C target-feature=+simd128' CARGO_TARGET_WASM32_WASIP1_RUNNER='wasmtime' \
+        cargo test --lib --target wasm32-wasip1 --features full simd::
+
 # cargo-mutants applies small code mutations and checks the tests catch each one;
 # a surviving (MISSED) mutant is a test gap. ARGS pass through to cargo-mutants.
 # Full sweep of the core crate — slow (~1100 mutants); lefthook/CI use the diff form

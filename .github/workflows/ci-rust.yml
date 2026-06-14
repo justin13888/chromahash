@@ -36,5 +36,92 @@ jobs:
       - name: Lint
         run: cargo clippy -- -D warnings
 
+      # `--features full` adds `simd-diff-tests`, so the AVX2 + SSE2 backends are
+      # differentially validated here on the x86_64 runner (GitHub's runners have
+      # AVX2). The remaining backends are covered by the `simd-diff` matrix below.
       - name: Test
-        run: cargo test
+        run: cargo test --features full
+
+  # Each SIMD backend only compiles for its own target, so "test every backend"
+  # means running the differential suite on (or under emulation of) every target.
+  # With `simd-diff-tests` these tests fail rather than skip on a host that can't
+  # execute the backend, so a mis-targeted job can't pass green with zero coverage.
+  simd-diff:
+    name: SIMD diff · ${{ matrix.label }}
+    needs: ci
+    runs-on: ${{ matrix.runs-on }}
+    defaults:
+      run:
+        working-directory: rust
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # aarch64 NEON on a native Arm runner — also re-runs the full spec
+          # vectors, confirming byte-identical output on Arm.
+          - label: aarch64 neon
+            kind: native
+            runs-on: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+          # x86_64 forced to an SSE2-but-no-AVX2 CPU via QEMU, exercising the SSE2
+          # backend and the no-AVX2 dispatch fallback the native runner never hits.
+          - label: x86_64 sse2-only (qemu)
+            kind: sse2-qemu
+            runs-on: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          # wasm32 simd128 under wasmtime.
+          - label: wasm32 simd128 (wasmtime)
+            kind: wasm
+            runs-on: ubuntu-latest
+            target: wasm32-wasip1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install QEMU (user-mode)
+        if: matrix.kind == 'sse2-qemu'
+        run: sudo apt-get update && sudo apt-get install -y qemu-user
+
+      - name: Install wasmtime
+        if: matrix.kind == 'wasm'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasmtime
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: ${{ runner.os }}-${{ matrix.kind }}-${{ matrix.target }}-cargo-${{ hashFiles('rust/Cargo.lock') }}
+
+      - name: Differential tests
+        shell: bash
+        run: |
+          set -euxo pipefail
+          case "${{ matrix.kind }}" in
+            native)
+              cargo test --target ${{ matrix.target }} --features full
+              ;;
+            sse2-qemu)
+              # `-cpu Nehalem` has SSE2 but not AVX2: the SSE2 backend and the
+              # SSE2 dispatch path run, while the AVX2 test would (correctly) fail
+              # on this CPU — so skip just that one.
+              export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER="qemu-x86_64 -cpu Nehalem"
+              cargo test --target ${{ matrix.target }} --features full simd:: -- --skip avx2
+              ;;
+            wasm)
+              # Scope to the `simd::` differential tests: wasm32-wasip1 has no
+              # thread support, so the full lib suite would abort in the
+              # thread-spawning `batch` tests. (Matches `just test-simd-emulated`.)
+              export RUSTFLAGS="-C target-feature=+simd128"
+              export CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime"
+              cargo test --lib --target ${{ matrix.target }} --features full simd::
+              ;;
+          esac

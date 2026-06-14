@@ -8,6 +8,7 @@ mod decode;
 mod encode;
 mod math_utils;
 mod mulaw;
+mod simd;
 mod test_vectors;
 mod transfer;
 
