@@ -1,3 +1,77 @@
+//! ChromaHash — a compact, perceptual image placeholder (LQIP).
+//!
+//! ChromaHash encodes any image into a fixed **32-byte** code that decodes back
+//! into a smooth, color-accurate thumbnail — the kind of blurred placeholder you
+//! show while the full image loads. It works in the perceptual
+//! [OKLab](https://bottosson.github.io/posts/oklab/) color space, supports
+//! wide-gamut sources (Display P3, Adobe RGB, BT.2020, ProPhoto RGB) and an
+//! alpha channel, and is bit-exact across platforms and languages: the same
+//! input always produces the same 32 bytes. The core crate has **zero runtime
+//! dependencies**.
+//!
+//! # Quick start
+//!
+//! ```
+//! use chromahash::{ChromaHash, Gamut};
+//!
+//! // A 2×2 RGBA image (4 bytes per pixel).
+//! let rgba: [u8; 16] = [
+//!     255, 0, 0, 255, /**/ 0, 255, 0, 255,
+//!     0, 0, 255, 255, /**/ 255, 255, 0, 255,
+//! ];
+//!
+//! // Encode to a 32-byte hash, tagging the source color space.
+//! let hash = ChromaHash::encode(2, 2, &rgba, Gamut::Srgb);
+//! let bytes: &[u8; 32] = hash.as_bytes(); // store or transmit these
+//!
+//! // Later: reconstruct a placeholder at its natural size, or…
+//! let (w, h, pixels) = ChromaHash::from_bytes(*bytes).decode();
+//! assert_eq!(pixels.len(), (w * h * 4) as usize);
+//!
+//! // …grab just the average color for an instant solid-color fill.
+//! let [r, g, b, a] = hash.average_color();
+//! # let _ = (r, g, b, a);
+//! ```
+//!
+//! # API surface
+//!
+//! [`ChromaHash`] is the whole public API:
+//!
+//! - [`ChromaHash::encode`] — image → hash.
+//! - [`ChromaHash::decode`] / [`decode_to`](ChromaHash::decode_to) — hash → RGBA
+//!   at its natural size, optionally in a chosen output [`Gamut`].
+//! - [`decode_capped`](ChromaHash::decode_capped) /
+//!   [`decode_capped_to`](ChromaHash::decode_capped_to) — render no larger than
+//!   the given bounds (a band-limited render, free of aliasing).
+//! - [`average_color`](ChromaHash::average_color) — the DC color, without a full
+//!   decode.
+//! - [`from_bytes`](ChromaHash::from_bytes) / [`as_bytes`](ChromaHash::as_bytes)
+//!   — round-trip the raw 32 bytes.
+//! - [`is_version_supported`](ChromaHash::is_version_supported) — see
+//!   [Versioning](#versioning).
+//!
+//! [`BatchEncoder`] amortizes setup across many images for higher throughput;
+//! its output is byte-identical to calling [`ChromaHash::encode`] per image.
+//!
+//! # Versioning
+//!
+//! This crate implements the **v0.6** bitstream. A hash carries its version
+//! in-band; [`ChromaHash::is_version_supported`] reports whether this build can
+//! decode it. Decoding an unsupported (legacy v0.2–v0.5) hash does not error —
+//! it produces unspecified output — so check the version first when handling
+//! hashes of unknown provenance. The bitstream is a pre-1.0 **draft** and is not
+//! yet guaranteed stable across releases.
+//!
+//! # Feature flags
+//!
+//! - **`simd`** *(default)* — enable the SIMD backends (AVX2/SSE2, NEON,
+//!   wasm simd128). Each replays the scalar path op-for-op, so output is
+//!   byte-identical; disabling it only changes speed.
+//! - **`spec-vectors`** *(default)* — compile the shared `spec/test-vectors`
+//!   integration test. Test-only; no effect on the library.
+//! - **`simd-diff-tests`** / **`full`** — opt-in scalar-vs-SIMD differential
+//!   tests (dev-only). See `TESTING.md`.
+
 mod aspect;
 mod batch;
 mod bitpack;
@@ -34,6 +108,11 @@ impl ChromaHash {
     /// - `w`, `h`: image dimensions (>= 1 each)
     /// - `rgba`: pixel data in RGBA format (4 bytes per pixel)
     /// - `gamut`: source color space
+    ///
+    /// # Panics
+    ///
+    /// Panics if `w` or `h` is 0, or if `rgba.len()` is not exactly
+    /// `w * h * 4`.
     pub fn encode(w: u32, h: u32, rgba: &[u8], gamut: Gamut) -> Self {
         Self {
             hash: encode::encode(w, h, rgba, gamut),
@@ -42,6 +121,10 @@ impl ChromaHash {
 
     /// Decode a ChromaHash into an RGBA image.
     /// Returns (width, height, rgba_pixels).
+    ///
+    /// Output is unspecified for a hash this build does not support; check
+    /// [`is_version_supported`](Self::is_version_supported) first when the hash's
+    /// provenance is unknown.
     pub fn decode(&self) -> (u32, u32, Vec<u8>) {
         decode::decode(&self.hash)
     }
