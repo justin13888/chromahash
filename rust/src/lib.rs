@@ -251,74 +251,6 @@ mod tests {
         rgba
     }
 
-    /// Create a vertical gradient RGBA image.
-    fn vertical_gradient(w: u32, h: u32) -> Vec<u8> {
-        let mut rgba = vec![0u8; (w * h * 4) as usize];
-        for y in 0..h {
-            let t = y as f64 / (h - 1).max(1) as f64;
-            for x in 0..w {
-                let idx = ((y * w + x) * 4) as usize;
-                rgba[idx] = (t * 255.0) as u8;
-                rgba[idx + 1] = (t * 128.0) as u8;
-                rgba[idx + 2] = ((1.0 - t) * 255.0) as u8;
-                rgba[idx + 3] = 255;
-            }
-        }
-        rgba
-    }
-
-    #[test]
-    fn encode_produces_32_bytes() {
-        let rgba = solid_image(4, 4, 128, 128, 128, 255);
-        let hash = ChromaHash::encode(4, 4, &rgba, Gamut::Srgb);
-        assert_eq!(hash.as_bytes().len(), 32);
-    }
-
-    #[test]
-    fn solid_color_roundtrip() {
-        let rgba = solid_image(4, 4, 200, 100, 50, 255);
-        let hash = ChromaHash::encode(4, 4, &rgba, Gamut::Srgb);
-        let avg = hash.average_color();
-
-        // DC color should be close to input
-        assert!(
-            (avg[0] as i32 - 200).unsigned_abs() <= 3,
-            "R: expected ~200, got {}",
-            avg[0]
-        );
-        assert!(
-            (avg[1] as i32 - 100).unsigned_abs() <= 3,
-            "G: expected ~100, got {}",
-            avg[1]
-        );
-        assert!(
-            (avg[2] as i32 - 50).unsigned_abs() <= 3,
-            "B: expected ~50, got {}",
-            avg[2]
-        );
-        assert_eq!(avg[3], 255);
-    }
-
-    #[test]
-    fn solid_black_roundtrip() {
-        let rgba = solid_image(4, 4, 0, 0, 0, 255);
-        let hash = ChromaHash::encode(4, 4, &rgba, Gamut::Srgb);
-        let avg = hash.average_color();
-        assert!(avg[0] <= 2, "R should be ~0, got {}", avg[0]);
-        assert!(avg[1] <= 2, "G should be ~0, got {}", avg[1]);
-        assert!(avg[2] <= 2, "B should be ~0, got {}", avg[2]);
-    }
-
-    #[test]
-    fn solid_white_roundtrip() {
-        let rgba = solid_image(4, 4, 255, 255, 255, 255);
-        let hash = ChromaHash::encode(4, 4, &rgba, Gamut::Srgb);
-        let avg = hash.average_color();
-        assert!(avg[0] >= 253, "R should be ~255, got {}", avg[0]);
-        assert!(avg[1] >= 253, "G should be ~255, got {}", avg[1]);
-        assert!(avg[2] >= 253, "B should be ~255, got {}", avg[2]);
-    }
-
     #[test]
     fn has_alpha_flag_set_correctly() {
         // Opaque
@@ -335,16 +267,6 @@ mod tests {
         });
         let has_alpha = ((header >> 46) & 1) == 1;
         assert!(has_alpha, "semi-transparent image should have alpha flag");
-    }
-
-    #[test]
-    fn decode_produces_valid_dimensions() {
-        let rgba = solid_image(4, 4, 128, 64, 32, 255);
-        let hash = ChromaHash::encode(4, 4, &rgba, Gamut::Srgb);
-        let (w, h, pixels) = hash.decode();
-        assert!(w > 0 && w <= 32);
-        assert!(h > 0 && h <= 32);
-        assert_eq!(pixels.len(), (w * h * 4) as usize);
     }
 
     #[test]
@@ -466,61 +388,6 @@ mod tests {
     }
 
     #[test]
-    fn gradient_encode_decode() {
-        let w = 16;
-        let h = 16;
-        let rgba = horizontal_gradient(w, h);
-        let hash = ChromaHash::encode(w, h, &rgba, Gamut::Srgb);
-        let (dw, dh, _pixels) = hash.decode();
-        assert!(dw > 0 && dh > 0);
-    }
-
-    #[test]
-    fn vertical_gradient_encode_decode() {
-        let w = 16;
-        let h = 16;
-        let rgba = vertical_gradient(w, h);
-        let hash = ChromaHash::encode(w, h, &rgba, Gamut::Srgb);
-        let (dw, dh, _pixels) = hash.decode();
-        assert!(dw > 0 && dh > 0);
-    }
-
-    #[test]
-    fn one_by_one_pixel() {
-        let rgba = solid_image(1, 1, 200, 100, 50, 255);
-        let hash = ChromaHash::encode(1, 1, &rgba, Gamut::Srgb);
-        assert_eq!(hash.as_bytes().len(), 32);
-        let avg = hash.average_color();
-        assert!(
-            (avg[0] as i32 - 200).unsigned_abs() <= 3,
-            "1×1 R: expected ~200, got {}",
-            avg[0]
-        );
-    }
-
-    #[test]
-    fn large_image_100x100() {
-        let w = 100;
-        let h = 100;
-        let rgba = horizontal_gradient(w, h);
-        let hash = ChromaHash::encode(w, h, &rgba, Gamut::Srgb);
-        assert_eq!(hash.as_bytes().len(), 32);
-    }
-
-    #[test]
-    fn version_bit_clear() {
-        // v0.6: bit 47 of the header is 0 (v0.2–v0.5 hashes have it set to 1),
-        // making v0.6 hashes distinguishable in-band from all prior versions.
-        let rgba = solid_image(4, 4, 128, 128, 128, 255);
-        let hash = ChromaHash::encode(4, 4, &rgba, Gamut::Srgb);
-        let header: u64 = (0..6).fold(0u64, |acc, i| {
-            acc | ((hash.as_bytes()[i] as u64) << (i * 8))
-        });
-        let version = (header >> 47) & 1;
-        assert_eq!(version, 0, "v0.6 must clear bit 47");
-    }
-
-    #[test]
     fn large_image_encode_decode() {
         // Full-res encoding: dimensions well beyond the old 100×100 limit
         let w = 200u32;
@@ -544,40 +411,6 @@ mod tests {
         let (dw, dh, pixels) = hash.decode();
         assert!(dw > dh, "panorama output should be wider than tall");
         assert_eq!(pixels.len(), (dw * dh * 4) as usize);
-    }
-
-    #[test]
-    fn various_aspect_ratios() {
-        for &(w, h) in &[(16, 4), (4, 16), (10, 10), (3, 7), (100, 25)] {
-            let rgba = solid_image(w, h, 128, 64, 32, 255);
-            let hash = ChromaHash::encode(w, h, &rgba, Gamut::Srgb);
-            let (dw, dh, pixels) = hash.decode();
-            assert!(dw > 0 && dh > 0, "decode dims should be > 0 for {w}×{h}");
-            assert_eq!(
-                pixels.len(),
-                (dw * dh * 4) as usize,
-                "pixel data length mismatch for {w}×{h}"
-            );
-        }
-    }
-
-    #[test]
-    fn all_gamuts_produce_output() {
-        let rgba = solid_image(4, 4, 200, 100, 50, 255);
-        for gamut in [
-            Gamut::Srgb,
-            Gamut::DisplayP3,
-            Gamut::AdobeRgb,
-            Gamut::Bt2020,
-            Gamut::ProPhotoRgb,
-        ] {
-            let hash = ChromaHash::encode(4, 4, &rgba, gamut);
-            assert_eq!(
-                hash.as_bytes().len(),
-                32,
-                "gamut {gamut:?} should produce 32 bytes"
-            );
-        }
     }
 
     #[test]

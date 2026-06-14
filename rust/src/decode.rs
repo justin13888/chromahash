@@ -379,6 +379,9 @@ mod tests {
     fn decode_golden_solids() {
         // Solid hashes decode to a uniform field — pins the header unpack, the
         // DC dequantize, and the gamut clamp. (integration-decode.json)
+        // average_color on these opaque hashes must report alpha = 255 (the
+        // has_alpha = 0 branch defaults alpha to 1.0), pinning the header-only
+        // DC path independently of the full render.
         let gray = [
             76, 32, 16, 0, 0, 32, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 239, 189, 247,
             222, 123, 239, 189, 187, 187, 187, 187, 187, 187, 187, 187, 59,
@@ -386,6 +389,7 @@ mod tests {
         let (w, h, rgba) = decode(&gray);
         assert_eq!((w, h), (32, 32));
         assert_uniform(&rgba, [128, 128, 128, 255]);
+        assert_eq!(average_color(&gray), [128, 128, 128, 255]);
 
         let blue = [
             57, 29, 1, 0, 0, 32, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 239, 189, 247,
@@ -394,6 +398,7 @@ mod tests {
         let (w, h, rgba) = decode(&blue);
         assert_eq!((w, h), (32, 32));
         assert_uniform(&rgba, [0, 0, 255, 255]);
+        assert_eq!(average_color(&blue), [0, 0, 255, 255]);
     }
 
     #[test]
