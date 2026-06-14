@@ -320,25 +320,96 @@ mod tests {
         });
     }
 
-    #[cfg(all(feature = "simd", any(target_arch = "x86", target_arch = "x86_64")))]
+    // ── Per-backend differential tests (opt-in: `simd-diff-tests`, in `full`) ──
+    //
+    // `public_dispatch_matches_reference` above only ever exercises whatever
+    // backend *this* host selects. These tests instead pin each *specific*
+    // vector backend against the scalar reference, so every backend is validated
+    // on (or under emulation of) the target that compiles it. Because that is the
+    // whole point, they must never quietly become no-ops: when this feature is on
+    // and the host cannot execute a backend it was asked to validate, the test
+    // *fails* instead of skipping — a mis-targeted run (e.g. the AVX2 suite on a
+    // non-AVX2 CPU) is a misconfiguration, not a pass. Run with
+    // `just test-simd-diff` (native) or `just test-simd-emulated` (all targets).
+
+    #[cfg(all(
+        feature = "simd-diff-tests",
+        any(target_arch = "x86", target_arch = "x86_64")
+    ))]
     #[test]
     fn sse2_backend_matches_reference() {
-        if std::is_x86_feature_detected!("sse2") {
-            assert_batch_matches("sse2", |r, g, b, gamut, out| unsafe {
-                x86::oklab_forward_batch_sse2(r, g, b, gamut, out)
-            });
-        }
+        assert!(
+            std::is_x86_feature_detected!("sse2"),
+            "simd-diff-tests: this host lacks SSE2, so the SSE2 backend cannot be \
+             validated here — run the suite on an SSE2-capable target instead of \
+             skipping it (see `just test-simd-emulated`)"
+        );
+        assert_batch_matches("sse2", |r, g, b, gamut, out| unsafe {
+            x86::oklab_forward_batch_sse2(r, g, b, gamut, out)
+        });
     }
 
-    #[cfg(all(feature = "simd", any(target_arch = "x86", target_arch = "x86_64")))]
+    #[cfg(all(
+        feature = "simd-diff-tests",
+        any(target_arch = "x86", target_arch = "x86_64")
+    ))]
     #[test]
     fn avx2_backend_matches_reference() {
-        if std::is_x86_feature_detected!("avx2") {
-            assert_batch_matches("avx2", |r, g, b, gamut, out| unsafe {
-                x86::oklab_forward_batch_avx2(r, g, b, gamut, out)
-            });
-        } else {
-            eprintln!("AVX2 not available on this host; skipping avx2 differential test");
-        }
+        assert!(
+            std::is_x86_feature_detected!("avx2"),
+            "simd-diff-tests: this host lacks AVX2, so the AVX2 backend cannot be \
+             validated here — run the suite on an AVX2-capable target instead of \
+             skipping it (see `just test-simd-emulated`)"
+        );
+        assert_batch_matches("avx2", |r, g, b, gamut, out| unsafe {
+            x86::oklab_forward_batch_avx2(r, g, b, gamut, out)
+        });
+    }
+
+    #[cfg(all(feature = "simd-diff-tests", target_arch = "aarch64"))]
+    #[test]
+    fn neon_backend_matches_reference() {
+        // NEON (incl. f64) is mandatory in the aarch64 baseline, so if this test
+        // compiled for aarch64 the host can run it — no runtime guard needed.
+        assert_batch_matches("neon", |r, g, b, gamut, out| unsafe {
+            neon::oklab_forward_batch_neon(r, g, b, gamut, out)
+        });
+    }
+
+    #[cfg(all(
+        feature = "simd-diff-tests",
+        target_arch = "wasm32",
+        target_feature = "simd128"
+    ))]
+    #[test]
+    fn wasm_simd128_backend_matches_reference() {
+        // simd128 is a compile-time target feature: a compiled-in backend is a
+        // runnable one under the wasm engine.
+        assert_batch_matches("simd128", |r, g, b, gamut, out| unsafe {
+            wasm::oklab_forward_batch_simd128(r, g, b, gamut, out)
+        });
+    }
+
+    // Opting into `simd-diff-tests` on a target/config that produces *no* vector
+    // backend (armv7, riscv64, wasm32 without `+simd128`, …) would otherwise
+    // leave the suite silently scalar-only — exactly the quiet skip this feature
+    // exists to forbid. Fail loudly instead.
+    #[cfg(all(
+        feature = "simd-diff-tests",
+        not(any(
+            target_arch = "x86",
+            target_arch = "x86_64",
+            target_arch = "aarch64",
+            all(target_arch = "wasm32", target_feature = "simd128")
+        ))
+    ))]
+    #[test]
+    fn simd_diff_tests_require_a_vector_backend() {
+        panic!(
+            "simd-diff-tests is enabled but no SIMD backend compiles for this \
+             target/config, so there is nothing to differentially test. Build a \
+             target that has one (x86/x86_64, aarch64, or wasm32 with \
+             `-C target-feature=+simd128`) or drop the feature."
+        );
     }
 }

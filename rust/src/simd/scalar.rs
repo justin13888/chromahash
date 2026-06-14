@@ -6,6 +6,11 @@
 
 use super::SimdF64;
 
+// Constructed by the x86 dispatch fallback and by the differential tests on
+// every arch, but on targets whose dispatch is unconditional (aarch64 NEON,
+// wasm simd128) the non-test lib build never monomorphises it — so `allow` the
+// otherwise-correct dead-code warning there.
+#[allow(dead_code)]
 #[derive(Clone, Copy)]
 pub(crate) struct ScalarF64(f64);
 

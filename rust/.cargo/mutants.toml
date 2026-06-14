@@ -10,17 +10,19 @@
 # src/decode.rs instead.
 no_default_features = true
 
-# Re-enable `simd` (dropped above with the defaults) so the host-runnable SIMD
-# backends — AVX2/SSE2 on the x86_64 sweep host — and the generic SIMD math are
-# actually built and exercised by the differential test, giving them real
-# mutation coverage rather than silently falling back to scalar.
-features = ["simd"]
+# Re-enable `simd` plus the opt-in `simd-diff-tests` (both dropped above with the
+# defaults) so the host-runnable SIMD backends — AVX2/SSE2 on the x86_64 sweep
+# host — and the generic SIMD math are actually built and exercised by the
+# per-backend differential tests, giving them real mutation coverage rather than
+# silently falling back to scalar. (The sweep host must therefore be AVX2-capable;
+# the avx2 test asserts the feature is present rather than skipping.)
+features = ["simd", "simd-diff-tests"]
 
 # …but the aarch64-NEON and wasm32-simd128 backends are `cfg`-gated to those
 # architectures, so on the x86_64 sweep host their source never compiles and no
 # mutant in them can be killed — every one would be a spurious MISS. They are
-# verified instead by the per-arch differential test (CI's aarch64 job for NEON,
-# `wasm-pack test` for simd128) and the cross-target compile checks.
+# verified instead by the per-arch differential tests (CI's aarch64 job for NEON,
+# the wasm32 job under wasmtime for simd128) and the cross-target compile checks.
 exclude_globs = ["src/simd/neon.rs", "src/simd/wasm.rs"]
 
 # Exclusions — each line is a mutant that cannot be killed by any test because
