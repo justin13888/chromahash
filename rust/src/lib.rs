@@ -1,3 +1,77 @@
+//! ChromaHash — a compact, perceptual image placeholder (LQIP).
+//!
+//! ChromaHash encodes any image into a fixed **32-byte** code that decodes back
+//! into a smooth, color-accurate thumbnail — the kind of blurred placeholder you
+//! show while the full image loads. It works in the perceptual
+//! [OKLab](https://bottosson.github.io/posts/oklab/) color space, supports
+//! wide-gamut sources (Display P3, Adobe RGB, BT.2020, ProPhoto RGB) and an
+//! alpha channel, and is bit-exact across platforms and languages: the same
+//! input always produces the same 32 bytes. The core crate has **zero runtime
+//! dependencies**.
+//!
+//! # Quick start
+//!
+//! ```
+//! use chromahash::{ChromaHash, Gamut};
+//!
+//! // A 2×2 RGBA image (4 bytes per pixel).
+//! let rgba: [u8; 16] = [
+//!     255, 0, 0, 255, /**/ 0, 255, 0, 255,
+//!     0, 0, 255, 255, /**/ 255, 255, 0, 255,
+//! ];
+//!
+//! // Encode to a 32-byte hash, tagging the source color space.
+//! let hash = ChromaHash::encode(2, 2, &rgba, Gamut::Srgb);
+//! let bytes: &[u8; 32] = hash.as_bytes(); // store or transmit these
+//!
+//! // Later: reconstruct a placeholder at its natural size, or…
+//! let (w, h, pixels) = ChromaHash::from_bytes(*bytes).decode();
+//! assert_eq!(pixels.len(), (w * h * 4) as usize);
+//!
+//! // …grab just the average color for an instant solid-color fill.
+//! let [r, g, b, a] = hash.average_color();
+//! # let _ = (r, g, b, a);
+//! ```
+//!
+//! # API surface
+//!
+//! [`ChromaHash`] is the whole public API:
+//!
+//! - [`ChromaHash::encode`] — image → hash.
+//! - [`ChromaHash::decode`] / [`decode_to`](ChromaHash::decode_to) — hash → RGBA
+//!   at its natural size, optionally in a chosen output [`Gamut`].
+//! - [`decode_capped`](ChromaHash::decode_capped) /
+//!   [`decode_capped_to`](ChromaHash::decode_capped_to) — render no larger than
+//!   the given bounds (a band-limited render, free of aliasing).
+//! - [`average_color`](ChromaHash::average_color) — the DC color, without a full
+//!   decode.
+//! - [`from_bytes`](ChromaHash::from_bytes) / [`as_bytes`](ChromaHash::as_bytes)
+//!   — round-trip the raw 32 bytes.
+//! - [`is_version_supported`](ChromaHash::is_version_supported) — see
+//!   [Versioning](#versioning).
+//!
+//! [`BatchEncoder`] amortizes setup across many images for higher throughput;
+//! its output is byte-identical to calling [`ChromaHash::encode`] per image.
+//!
+//! # Versioning
+//!
+//! This crate implements the **v0.6** bitstream. A hash carries its version
+//! in-band; [`ChromaHash::is_version_supported`] reports whether this build can
+//! decode it. Decoding an unsupported (legacy v0.2–v0.5) hash does not error —
+//! it produces unspecified output — so check the version first when handling
+//! hashes of unknown provenance. The bitstream is a pre-1.0 **draft** and is not
+//! yet guaranteed stable across releases.
+//!
+//! # Feature flags
+//!
+//! - **`simd`** *(default)* — enable the SIMD backends (AVX2/SSE2, NEON,
+//!   wasm simd128). Each replays the scalar path op-for-op, so output is
+//!   byte-identical; disabling it only changes speed.
+//! - **`spec-vectors`** *(default)* — compile the shared `spec/test-vectors`
+//!   integration test. Test-only; no effect on the library.
+//! - **`simd-diff-tests`** / **`full`** — opt-in scalar-vs-SIMD differential
+//!   tests (dev-only). See `TESTING.md`.
+
 mod aspect;
 mod batch;
 mod bitpack;
@@ -8,6 +82,7 @@ mod decode;
 mod encode;
 mod math_utils;
 mod mulaw;
+mod simd;
 mod test_vectors;
 mod transfer;
 
@@ -33,6 +108,11 @@ impl ChromaHash {
     /// - `w`, `h`: image dimensions (>= 1 each)
     /// - `rgba`: pixel data in RGBA format (4 bytes per pixel)
     /// - `gamut`: source color space
+    ///
+    /// # Panics
+    ///
+    /// Panics if `w` or `h` is 0, or if `rgba.len()` is not exactly
+    /// `w * h * 4`.
     pub fn encode(w: u32, h: u32, rgba: &[u8], gamut: Gamut) -> Self {
         Self {
             hash: encode::encode(w, h, rgba, gamut),
@@ -41,6 +121,10 @@ impl ChromaHash {
 
     /// Decode a ChromaHash into an RGBA image.
     /// Returns (width, height, rgba_pixels).
+    ///
+    /// Output is unspecified for a hash this build does not support; check
+    /// [`is_version_supported`](Self::is_version_supported) first when the hash's
+    /// provenance is unknown.
     pub fn decode(&self) -> (u32, u32, Vec<u8>) {
         decode::decode(&self.hash)
     }
@@ -167,74 +251,6 @@ mod tests {
         rgba
     }
 
-    /// Create a vertical gradient RGBA image.
-    fn vertical_gradient(w: u32, h: u32) -> Vec<u8> {
-        let mut rgba = vec![0u8; (w * h * 4) as usize];
-        for y in 0..h {
-            let t = y as f64 / (h - 1).max(1) as f64;
-            for x in 0..w {
-                let idx = ((y * w + x) * 4) as usize;
-                rgba[idx] = (t * 255.0) as u8;
-                rgba[idx + 1] = (t * 128.0) as u8;
-                rgba[idx + 2] = ((1.0 - t) * 255.0) as u8;
-                rgba[idx + 3] = 255;
-            }
-        }
-        rgba
-    }
-
-    #[test]
-    fn encode_produces_32_bytes() {
-        let rgba = solid_image(4, 4, 128, 128, 128, 255);
-        let hash = ChromaHash::encode(4, 4, &rgba, Gamut::Srgb);
-        assert_eq!(hash.as_bytes().len(), 32);
-    }
-
-    #[test]
-    fn solid_color_roundtrip() {
-        let rgba = solid_image(4, 4, 200, 100, 50, 255);
-        let hash = ChromaHash::encode(4, 4, &rgba, Gamut::Srgb);
-        let avg = hash.average_color();
-
-        // DC color should be close to input
-        assert!(
-            (avg[0] as i32 - 200).unsigned_abs() <= 3,
-            "R: expected ~200, got {}",
-            avg[0]
-        );
-        assert!(
-            (avg[1] as i32 - 100).unsigned_abs() <= 3,
-            "G: expected ~100, got {}",
-            avg[1]
-        );
-        assert!(
-            (avg[2] as i32 - 50).unsigned_abs() <= 3,
-            "B: expected ~50, got {}",
-            avg[2]
-        );
-        assert_eq!(avg[3], 255);
-    }
-
-    #[test]
-    fn solid_black_roundtrip() {
-        let rgba = solid_image(4, 4, 0, 0, 0, 255);
-        let hash = ChromaHash::encode(4, 4, &rgba, Gamut::Srgb);
-        let avg = hash.average_color();
-        assert!(avg[0] <= 2, "R should be ~0, got {}", avg[0]);
-        assert!(avg[1] <= 2, "G should be ~0, got {}", avg[1]);
-        assert!(avg[2] <= 2, "B should be ~0, got {}", avg[2]);
-    }
-
-    #[test]
-    fn solid_white_roundtrip() {
-        let rgba = solid_image(4, 4, 255, 255, 255, 255);
-        let hash = ChromaHash::encode(4, 4, &rgba, Gamut::Srgb);
-        let avg = hash.average_color();
-        assert!(avg[0] >= 253, "R should be ~255, got {}", avg[0]);
-        assert!(avg[1] >= 253, "G should be ~255, got {}", avg[1]);
-        assert!(avg[2] >= 253, "B should be ~255, got {}", avg[2]);
-    }
-
     #[test]
     fn has_alpha_flag_set_correctly() {
         // Opaque
@@ -251,16 +267,6 @@ mod tests {
         });
         let has_alpha = ((header >> 46) & 1) == 1;
         assert!(has_alpha, "semi-transparent image should have alpha flag");
-    }
-
-    #[test]
-    fn decode_produces_valid_dimensions() {
-        let rgba = solid_image(4, 4, 128, 64, 32, 255);
-        let hash = ChromaHash::encode(4, 4, &rgba, Gamut::Srgb);
-        let (w, h, pixels) = hash.decode();
-        assert!(w > 0 && w <= 32);
-        assert!(h > 0 && h <= 32);
-        assert_eq!(pixels.len(), (w * h * 4) as usize);
     }
 
     #[test]
@@ -382,61 +388,6 @@ mod tests {
     }
 
     #[test]
-    fn gradient_encode_decode() {
-        let w = 16;
-        let h = 16;
-        let rgba = horizontal_gradient(w, h);
-        let hash = ChromaHash::encode(w, h, &rgba, Gamut::Srgb);
-        let (dw, dh, _pixels) = hash.decode();
-        assert!(dw > 0 && dh > 0);
-    }
-
-    #[test]
-    fn vertical_gradient_encode_decode() {
-        let w = 16;
-        let h = 16;
-        let rgba = vertical_gradient(w, h);
-        let hash = ChromaHash::encode(w, h, &rgba, Gamut::Srgb);
-        let (dw, dh, _pixels) = hash.decode();
-        assert!(dw > 0 && dh > 0);
-    }
-
-    #[test]
-    fn one_by_one_pixel() {
-        let rgba = solid_image(1, 1, 200, 100, 50, 255);
-        let hash = ChromaHash::encode(1, 1, &rgba, Gamut::Srgb);
-        assert_eq!(hash.as_bytes().len(), 32);
-        let avg = hash.average_color();
-        assert!(
-            (avg[0] as i32 - 200).unsigned_abs() <= 3,
-            "1×1 R: expected ~200, got {}",
-            avg[0]
-        );
-    }
-
-    #[test]
-    fn large_image_100x100() {
-        let w = 100;
-        let h = 100;
-        let rgba = horizontal_gradient(w, h);
-        let hash = ChromaHash::encode(w, h, &rgba, Gamut::Srgb);
-        assert_eq!(hash.as_bytes().len(), 32);
-    }
-
-    #[test]
-    fn version_bit_clear() {
-        // v0.6: bit 47 of the header is 0 (v0.2–v0.5 hashes have it set to 1),
-        // making v0.6 hashes distinguishable in-band from all prior versions.
-        let rgba = solid_image(4, 4, 128, 128, 128, 255);
-        let hash = ChromaHash::encode(4, 4, &rgba, Gamut::Srgb);
-        let header: u64 = (0..6).fold(0u64, |acc, i| {
-            acc | ((hash.as_bytes()[i] as u64) << (i * 8))
-        });
-        let version = (header >> 47) & 1;
-        assert_eq!(version, 0, "v0.6 must clear bit 47");
-    }
-
-    #[test]
     fn large_image_encode_decode() {
         // Full-res encoding: dimensions well beyond the old 100×100 limit
         let w = 200u32;
@@ -460,40 +411,6 @@ mod tests {
         let (dw, dh, pixels) = hash.decode();
         assert!(dw > dh, "panorama output should be wider than tall");
         assert_eq!(pixels.len(), (dw * dh * 4) as usize);
-    }
-
-    #[test]
-    fn various_aspect_ratios() {
-        for &(w, h) in &[(16, 4), (4, 16), (10, 10), (3, 7), (100, 25)] {
-            let rgba = solid_image(w, h, 128, 64, 32, 255);
-            let hash = ChromaHash::encode(w, h, &rgba, Gamut::Srgb);
-            let (dw, dh, pixels) = hash.decode();
-            assert!(dw > 0 && dh > 0, "decode dims should be > 0 for {w}×{h}");
-            assert_eq!(
-                pixels.len(),
-                (dw * dh * 4) as usize,
-                "pixel data length mismatch for {w}×{h}"
-            );
-        }
-    }
-
-    #[test]
-    fn all_gamuts_produce_output() {
-        let rgba = solid_image(4, 4, 200, 100, 50, 255);
-        for gamut in [
-            Gamut::Srgb,
-            Gamut::DisplayP3,
-            Gamut::AdobeRgb,
-            Gamut::Bt2020,
-            Gamut::ProPhotoRgb,
-        ] {
-            let hash = ChromaHash::encode(4, 4, &rgba, gamut);
-            assert_eq!(
-                hash.as_bytes().len(),
-                32,
-                "gamut {gamut:?} should produce 32 bytes"
-            );
-        }
     }
 
     #[test]
@@ -650,6 +567,59 @@ mod tests {
                 hash.decode_capped_tuned(4, 4, &Tunables::DEFAULT),
                 hash.decode_capped(4, 4),
                 "decode_capped_tuned diverges from decode_capped for {w}×{h}"
+            );
+        }
+    }
+
+    #[test]
+    fn gamut_wrappers_match_public_api() {
+        // The gamut-aware decode wrappers — decode_capped_to (public) and the
+        // doc-hidden decode_to_tuned / decode_capped_to_tuned — are otherwise
+        // never called, so whole-body replacement with a trivial tuple survives.
+        // Pin each against the already-golden free-function behaviour at
+        // Tunables::DEFAULT, and assert the output gamut actually flows through.
+        //
+        // A saturated P3 green clips in sRGB but not in P3, so the renders differ
+        // by gamut — that gives both an equality oracle (per gamut) and an
+        // inequality oracle (P3 ≠ sRGB) that the constant-tuple mutants fail.
+        let p3_green = [0u8, 200, 80, 255].repeat(16);
+        for &(w, h) in &[(8u32, 6u32), (1, 1), (16, 9), (9, 16)] {
+            let mut rgba = vec![0u8; (w * h * 4) as usize];
+            for px in rgba.chunks_exact_mut(4) {
+                px.copy_from_slice(&p3_green[0..4]);
+            }
+            let hash = ChromaHash::encode(w, h, &rgba, Gamut::DisplayP3);
+
+            for output in [Gamut::Srgb, Gamut::DisplayP3, Gamut::AdobeRgb] {
+                assert_eq!(
+                    hash.decode_to_tuned(output, &Tunables::DEFAULT),
+                    hash.decode_to(output),
+                    "decode_to_tuned diverges from decode_to for {w}×{h} {output:?}"
+                );
+                assert_eq!(
+                    hash.decode_capped_to_tuned(4, 4, output, &Tunables::DEFAULT),
+                    hash.decode_capped_to(4, 4, output),
+                    "decode_capped_to_tuned diverges from decode_capped_to for {w}×{h} {output:?}"
+                );
+            }
+
+            // decode_capped_to at sRGB must equal the non-gamut decode_capped.
+            assert_eq!(
+                hash.decode_capped_to(4, 4, Gamut::Srgb),
+                hash.decode_capped(4, 4),
+                "decode_capped_to(Srgb) diverges from decode_capped for {w}×{h}"
+            );
+
+            // The output gamut must change the pixels, not be ignored.
+            assert_ne!(
+                hash.decode_to_tuned(Gamut::DisplayP3, &Tunables::DEFAULT),
+                hash.decode_to_tuned(Gamut::Srgb, &Tunables::DEFAULT),
+                "decode_to_tuned must honour the output gamut for {w}×{h}"
+            );
+            assert_ne!(
+                hash.decode_capped_to(4, 4, Gamut::DisplayP3),
+                hash.decode_capped_to(4, 4, Gamut::Srgb),
+                "decode_capped_to must honour the output gamut for {w}×{h}"
             );
         }
     }

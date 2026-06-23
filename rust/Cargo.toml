@@ -23,8 +23,33 @@ categories = ["multimedia::images", "encoding", "compression"]
 # crate, without the sibling spec/ dir, so the test couldn't compile there. The
 # encode/decode pipeline is pinned for the sweep by the self-contained golden
 # unit tests in src/encode.rs and src/decode.rs instead. See rust/mutants.toml.
-default = ["spec-vectors"]
+default = ["spec-vectors", "simd"]
 spec-vectors = []
+
+# `simd` (on by default) enables the hand-written `core::arch` SIMD backends for
+# the hot per-pixel color math (AVX2/SSE2 on x86, NEON on aarch64, simd128 on
+# wasm), selected at runtime (x86) or compile time (others). It adds no
+# dependencies and no public API: output is byte-identical to the scalar path,
+# which is always retained as the fallback. Build `--no-default-features` (or
+# without `simd`) for a pure-scalar build — e.g. the scalar WASM artifact or a
+# conservative target. See `src/simd/`.
+simd = []
+
+# `simd-diff-tests` (off by default) compiles the per-backend SIMD differential
+# tests in `src/simd/` — each pins one *specific* vector backend (AVX2, SSE2,
+# NEON, wasm simd128) against the scalar reference. It is a dev/CI-only switch
+# with no library API and implies `simd`. Two properties make it worth a flag of
+# its own: it is platform-specific (each backend only compiles for its target,
+# so coverage means running — or emulating — every target), and unlike a plain
+# `cargo test` it *fails* rather than skips on a host that cannot execute a
+# backend it was asked to validate, so a mis-targeted run can never pass with
+# zero coverage. CI runs it per machine target; locally use `just test-simd-diff`
+# (native) or `just test-simd-emulated` (every target via QEMU/wasmtime).
+simd-diff-tests = ["simd"]
+
+# `full` turns on every feature — the default set plus the opt-in
+# `simd-diff-tests` — for "test everything" invocations (CI and `just`).
+full = ["spec-vectors", "simd", "simd-diff-tests"]
 
 [[test]]
 name = "spec_vectors"

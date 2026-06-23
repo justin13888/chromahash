@@ -379,6 +379,9 @@ mod tests {
     fn decode_golden_solids() {
         // Solid hashes decode to a uniform field — pins the header unpack, the
         // DC dequantize, and the gamut clamp. (integration-decode.json)
+        // average_color on these opaque hashes must report alpha = 255 (the
+        // has_alpha = 0 branch defaults alpha to 1.0), pinning the header-only
+        // DC path independently of the full render.
         let gray = [
             76, 32, 16, 0, 0, 32, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 239, 189, 247,
             222, 123, 239, 189, 187, 187, 187, 187, 187, 187, 187, 187, 59,
@@ -386,6 +389,7 @@ mod tests {
         let (w, h, rgba) = decode(&gray);
         assert_eq!((w, h), (32, 32));
         assert_uniform(&rgba, [128, 128, 128, 255]);
+        assert_eq!(average_color(&gray), [128, 128, 128, 255]);
 
         let blue = [
             57, 29, 1, 0, 0, 32, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 239, 189, 247,
@@ -394,6 +398,7 @@ mod tests {
         let (w, h, rgba) = decode(&blue);
         assert_eq!((w, h), (32, 32));
         assert_uniform(&rgba, [0, 0, 255, 255]);
+        assert_eq!(average_color(&blue), [0, 0, 255, 255]);
     }
 
     #[test]
@@ -493,5 +498,38 @@ mod tests {
         let (w, h, rgba) = decode_capped(&grad, 8, 8);
         assert_eq!((w, h), (8, 8));
         assert_eq!(&rgba[0..4], [29, 36, 242, 255]);
+    }
+
+    #[test]
+    fn decode_capped_to_golden() {
+        use crate::ChromaHash;
+        // decode_capped_to is the gamut-aware capped entry point; the rest of the
+        // in-crate suite only reaches decode_capped (sRGB), leaving this whole
+        // function unexercised. Pin its sRGB output against the golden capped
+        // render and cross-check it equals decode_capped — killing whole-body
+        // replacement with a trivial tuple.
+        let grad = [
+            198, 230, 109, 104, 47, 32, 129, 128, 237, 43, 114, 175, 57, 247, 220, 172, 177, 189,
+            247, 222, 123, 206, 57, 134, 172, 51, 195, 131, 42, 203, 187, 51,
+        ];
+        let (w, h, rgba) = decode_capped_to(&grad, 8, 8, Gamut::Srgb);
+        assert_eq!((w, h), (8, 8));
+        assert_eq!(&rgba[0..4], [29, 36, 242, 255]);
+        assert_eq!(
+            decode_capped_to(&grad, 8, 8, Gamut::Srgb),
+            decode_capped(&grad, 8, 8),
+            "decode_capped_to(Srgb) must equal decode_capped"
+        );
+
+        // The output gamut must flow through: a capped P3-encoded saturated green
+        // clips in sRGB but not in P3, so the two capped renders differ.
+        let p3_green = [0u8, 200, 80, 255].repeat(16);
+        let hash = ChromaHash::encode(4, 4, &p3_green, Gamut::DisplayP3);
+        let bytes = *hash.as_bytes();
+        assert_ne!(
+            decode_capped_to(&bytes, 4, 4, Gamut::DisplayP3),
+            decode_capped_to(&bytes, 4, 4, Gamut::Srgb),
+            "P3 vs sRGB capped output must differ"
+        );
     }
 }
