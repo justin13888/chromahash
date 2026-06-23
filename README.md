@@ -18,7 +18,7 @@ chromahash is a multi-language library implementing a compact, high-fidelity Low
 | Swift | SwiftPM (`https://github.com/justin13888/chromahash`) | [Swift Package Index](https://swiftpackageindex.com/justin13888/chromahash) |
 | C | `chromahash-c` | [source](bindings/c) (C ABI — the FFI foundation, no registry) |
 
-> Some registries publish on the next tagged release — see [`RELEASING.md`](RELEASING.md).
+> Every package is published to its registry automatically on each tagged release — see [`RELEASING.md`](RELEASING.md).
 
 ## Why ChromaHash?
 

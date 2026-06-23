@@ -1,0 +1,173 @@
+name: Release (JVM)
+
+# Publish the chromahash-jvm desktop/server JAR to Maven Central + GitHub Packages
+# when a release tag is pushed. Releases are cut with `just release X.Y.Z`, which
+# creates and pushes the `vX.Y.Z` tag (see RELEASING.md).
+#
+# Unlike the Android AAR, the JVM JAR must be a CROSS-PLATFORM "fat JAR": JNA loads
+# the native cdylib bundled under `<os>-<arch>/` resource dirs, so the JAR must
+# carry every platform's lib (linux/macOS/windows × x86_64/aarch64) — building on
+# a single runner would ship a JAR that only works on that one host. So a matrix
+# cross-compiles each cdylib, then one gather+publish job stages them all into the
+# JNA layout (-PnativeLibsDir) before vanniktech publishes.
+#
+# Idempotent against Maven Central: a version already on Central is skipped. Uses
+# the existing Sonatype namespace + GPG signing secrets (shared with the AAR).
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build the fat JAR without publishing"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-jvm-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # Cross-compile the chromahash-uniffi cdylib for every JVM-supported platform.
+  # Linux uses cargo-zigbuild pinned to glibc 2.17 for broad (manylinux-class)
+  # compatibility; macOS/Windows build natively on their own runners.
+  build-natives:
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { runner: ubuntu-latest,  target: x86_64-unknown-linux-gnu,  jna: linux-x86-64,   lib: libchromahash_uniffi.so,    zig: true }
+          - { runner: ubuntu-latest,  target: aarch64-unknown-linux-gnu, jna: linux-aarch64,  lib: libchromahash_uniffi.so,    zig: true }
+          - { runner: macos-14,       target: x86_64-apple-darwin,       jna: darwin-x86-64,  lib: libchromahash_uniffi.dylib, zig: false }
+          - { runner: macos-14,       target: aarch64-apple-darwin,      jna: darwin-aarch64, lib: libchromahash_uniffi.dylib, zig: false }
+          - { runner: windows-latest, target: x86_64-pc-windows-msvc,    jna: win32-x86-64,   lib: chromahash_uniffi.dll,      zig: false }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install zig + cargo-zigbuild (Linux cross)
+        if: matrix.zig
+        uses: mlugg/setup-zig@v2
+
+      - name: Install cargo-zigbuild
+        if: matrix.zig
+        run: command -v cargo-zigbuild >/dev/null 2>&1 || cargo install cargo-zigbuild --locked
+
+      - name: Build cdylib
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.zig }}" = "true" ]; then
+            cargo zigbuild --release --manifest-path bindings/uniffi/Cargo.toml --target ${{ matrix.target }}.2.17
+          else
+            cargo build --release --manifest-path bindings/uniffi/Cargo.toml --target ${{ matrix.target }}
+          fi
+          mkdir -p "staging/${{ matrix.jna }}"
+          cp "bindings/uniffi/target/${{ matrix.target }}/release/${{ matrix.lib }}" "staging/${{ matrix.jna }}/"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jvm-native-${{ matrix.jna }}
+          path: staging
+          if-no-files-found: error
+
+  publish:
+    needs: build-natives
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # publish to GitHub Packages
+    steps:
+      - uses: actions/checkout@v4
+
+      # Merge every platform's artifact into one JNA-layout tree: natives/<os>-<arch>/<lib>.
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: jvm-native-*
+          merge-multiple: true
+          path: natives
+
+      - name: Verify all platform libs are present
+        run: |
+          set -euo pipefail
+          expected="linux-x86-64/libchromahash_uniffi.so linux-aarch64/libchromahash_uniffi.so darwin-x86-64/libchromahash_uniffi.dylib darwin-aarch64/libchromahash_uniffi.dylib win32-x86-64/chromahash_uniffi.dll"
+          for f in $expected; do
+            test -f "natives/$f" || { echo "Missing native lib: natives/$f" >&2; exit 1; }
+          done
+          echo "All 5 platform cdylibs staged."
+
+      # mise provides java + gradle (toolchain-from-mise policy, same as release-android).
+      - uses: jdx/mise-action@v2
+        with:
+          install: true
+
+      # uniffi-bindgen generates the (platform-independent) Kotlin glue from a host
+      # cdylib build, so the publish runner still needs the Rust toolchain.
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Verify tag matches build.gradle.kts version
+        if: github.event_name == 'push'
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          gradle_ver="$(grep -oE '^version = "[^"]+"' bindings/uniffi/jvm/build.gradle.kts \
+            | head -1 | sed -E 's/version = "(.*)"/\1/')"
+          if [ "$tag" != "$gradle_ver" ]; then
+            echo "Tag v$tag does not match bindings/uniffi/jvm/build.gradle.kts version $gradle_ver" >&2
+            exit 1
+          fi
+
+      - name: Skip if version already on Maven Central
+        id: check
+        run: |
+          ver="$(grep -oE '^version = "[^"]+"' bindings/uniffi/jvm/build.gradle.kts \
+            | head -1 | sed -E 's/version = "(.*)"/\1/')"
+          url="https://repo1.maven.org/maven2/io/github/justin13888/chromahash-jvm/$ver/chromahash-jvm-$ver.pom"
+          if curl -sSfI "$url" >/dev/null 2>&1; then
+            echo "Version $ver already on Maven Central — skipping."
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Dry run (manual dispatch): assemble the fat JAR and assert it carries all
+      # five JNA dirs, without publishing.
+      - name: Assemble fat JAR (dry run)
+        if: github.event_name == 'workflow_dispatch' && inputs.dry_run
+        working-directory: bindings/uniffi/jvm
+        run: |
+          mise exec java@21 gradle@9.4.0 -- ./gradlew jar \
+            --no-configuration-cache -PnativeLibsDir="$GITHUB_WORKSPACE/natives"
+          jar="$(ls build/libs/*.jar | head -1)"
+          for p in linux-x86-64 linux-aarch64 darwin-x86-64 darwin-aarch64 win32-x86-64; do
+            unzip -l "$jar" | grep -q "$p/" || { echo "JAR missing $p native lib" >&2; exit 1; }
+          done
+          echo "Fat JAR contains all five platform dirs."
+
+      # One Gradle invocation stages all natives (-PnativeLibsDir), builds the fat
+      # JAR, signs it, and publishes to Maven Central + GitHub Packages.
+      - name: Publish to Maven Central + GitHub Packages
+        if: steps.check.outputs.published == 'false' && !(github.event_name == 'workflow_dispatch' && inputs.dry_run)
+        working-directory: bindings/uniffi/jvm
+        env:
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_PASSWORD }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mise exec java@21 gradle@9.4.0 -- ./gradlew \
+            publishAndReleaseToMavenCentral \
+            publishMavenPublicationToGitHubPackagesRepository \
+            --no-configuration-cache --stacktrace \
+            -PnativeLibsDir="$GITHUB_WORKSPACE/natives"

@@ -500,12 +500,52 @@ swift-cbuild:
 
 # Run the Swift spec-vector tests. --no-parallel: the blocking OperationQueue in
 # BatchEncoder deadlocks Swift Testing's parallel pool on low-core machines (see
-# ci-swift.yml); the suite runs in ~0.05s, so serial costs nothing.
+# ci-swift.yml); the suite runs in ~0.05s, so serial costs nothing. Package.swift
+# is at the repo root; CHROMAHASH_LOCAL_XCFRAMEWORK selects the locally built
+# xcframework over the released remote one.
 test-swift: swift-cbuild
-    cd swift && mise exec swift@6.2.4 -- swift test --no-parallel
+    CHROMAHASH_LOCAL_XCFRAMEWORK=1 mise exec swift@6.2.4 -- swift test --no-parallel
 
 build-swift: swift-cbuild
-    cd swift && mise exec swift@6.2.4 -- swift build
+    CHROMAHASH_LOCAL_XCFRAMEWORK=1 mise exec swift@6.2.4 -- swift build
+
+# Assemble the multi-platform release xcframework (macOS + iOS device/simulator)
+# that release-swift.yml zips, checksums, and attaches to the GitHub release.
+# macOS-only. tvOS/watchOS/visionOS slices are a follow-up.
+swift-xcframework:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Host dylib drives uniffi-bindgen (metadata) and the committed Swift bindings.
+    cargo build --release --manifest-path bindings/uniffi/Cargo.toml
+    gen="$(mktemp -d)"
+    ( cd bindings/uniffi && cargo run --release --quiet --bin uniffi-bindgen -- \
+        generate --library target/release/libchromahash_uniffi.dylib \
+        --language swift --out-dir "$gen" )
+    mkdir -p swift/Sources/ChromaHashBindings
+    cp "$gen/chromahash_uniffi.swift" swift/Sources/ChromaHashBindings/
+    hdr="$(mktemp -d)"
+    cp "$gen/chromahash_uniffiFFI.h" "$hdr/"
+    cp "$gen/chromahash_uniffiFFI.modulemap" "$hdr/module.modulemap"
+    for t in aarch64-apple-darwin x86_64-apple-darwin aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios; do
+        rustup target add "$t" >/dev/null 2>&1 || true
+        cargo build --release --manifest-path bindings/uniffi/Cargo.toml --target "$t"
+    done
+    base=bindings/uniffi/target
+    rm -rf swift/.xcf-slices && mkdir -p swift/.xcf-slices/{macos,ios,ios-sim}
+    lipo -create "$base/aarch64-apple-darwin/release/libchromahash_uniffi.a" \
+                 "$base/x86_64-apple-darwin/release/libchromahash_uniffi.a" \
+                 -output swift/.xcf-slices/macos/libchromahash_uniffi.a
+    cp "$base/aarch64-apple-ios/release/libchromahash_uniffi.a" swift/.xcf-slices/ios/libchromahash_uniffi.a
+    lipo -create "$base/aarch64-apple-ios-sim/release/libchromahash_uniffi.a" \
+                 "$base/x86_64-apple-ios/release/libchromahash_uniffi.a" \
+                 -output swift/.xcf-slices/ios-sim/libchromahash_uniffi.a
+    rm -rf swift/ChromaHashFFI.xcframework
+    xcodebuild -create-xcframework \
+        -library swift/.xcf-slices/macos/libchromahash_uniffi.a -headers "$hdr" \
+        -library swift/.xcf-slices/ios/libchromahash_uniffi.a -headers "$hdr" \
+        -library swift/.xcf-slices/ios-sim/libchromahash_uniffi.a -headers "$hdr" \
+        -output swift/ChromaHashFFI.xcframework
+    rm -rf swift/.xcf-slices
 
 # ─── Go ──────────────────────────────────────────────────────────────────────
 

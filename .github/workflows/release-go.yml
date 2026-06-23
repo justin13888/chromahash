@@ -1,0 +1,138 @@
+name: Release (Go)
+
+# Make `go get github.com/justin13888/chromahash/go@vX.Y.Z` work when a release tag
+# is pushed. The Go binding is a cgo wrapper over the chromahash-c static lib, but
+# a consumer's `go build` can't run cargo — so the prebuilt per-platform static
+# archives must already be in the tagged module tree.
+#
+# Design (keeps master free of committed binaries): a matrix builds the static lib
+# for every supported platform; the finalize job force-adds them under
+# go/lib/<goos>_<goarch>/ plus the C header, commits that ON TOP of the release
+# commit, and points the `go/vX.Y.Z` SUBDIRECTORY tag (which is what the module
+# proxy resolves for the `/go` module) at it. The binaries live only on that tag,
+# never on master. Idempotent: an existing go/<tag> is left alone.
+#
+# Note: `go/vX.Y.Z` does not match the `v*` trigger, so creating it re-triggers
+# nothing.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build + smoke-test libs without creating the go/ tag"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-go-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-libs:
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { runner: ubuntu-latest, target: x86_64-unknown-linux-gnu,  plat: linux_amd64 }
+          - { runner: ubuntu-latest, target: aarch64-unknown-linux-gnu, plat: linux_arm64 }
+          - { runner: ubuntu-latest, target: x86_64-pc-windows-gnu,      plat: windows_amd64 }
+          - { runner: macos-14,      target: x86_64-apple-darwin,        plat: darwin_amd64 }
+          - { runner: macos-14,      target: aarch64-apple-darwin,       plat: darwin_arm64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # `--crate-type staticlib` builds ONLY the archive (not the cdylib), so no
+      # cross linker is needed and the .a is glibc-version-agnostic — the consumer
+      # binds libc symbols when they link it.
+      - name: Build chromahash-c static lib
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo rustc --release --manifest-path bindings/c/Cargo.toml \
+            --target ${{ matrix.target }} --crate-type staticlib
+          mkdir -p "stage/${{ matrix.plat }}"
+          cp "bindings/c/target/${{ matrix.target }}/release/libchromahash_c.a" "stage/${{ matrix.plat }}/"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: go-lib-${{ matrix.plat }}
+          path: stage
+          if-no-files-found: error
+
+  finalize:
+    needs: build-libs
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create + push the go/<tag> subdirectory tag
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Skip if go/<tag> already exists
+        id: check
+        if: github.event_name == 'push'
+        run: |
+          if git ls-remote --tags --exit-code origin "refs/tags/go/${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            echo "go/${GITHUB_REF_NAME} already published — skipping."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: go-lib-*
+          merge-multiple: true
+          path: stage
+
+      - name: Stage prebuilt libs + header into the go module tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          for d in linux_amd64 linux_arm64 darwin_amd64 darwin_arm64 windows_amd64; do
+            test -f "stage/$d/libchromahash_c.a" || { echo "missing stage/$d/libchromahash_c.a" >&2; exit 1; }
+            mkdir -p "go/lib/$d"
+            cp "stage/$d/libchromahash_c.a" "go/lib/$d/"
+          done
+          mkdir -p go/include
+          cp bindings/c/include/chromahash.h go/include/
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      # Consumer-like build: with no flat go/lib/libchromahash_c.a present, cgo must
+      # link the staged go/lib/linux_amd64 archive — proving `go get` will link
+      # without cargo.
+      - name: Smoke test (link the committed linux/amd64 lib)
+        working-directory: go
+        env:
+          CGO_ENABLED: "1"
+        run: go build ./...
+
+      - name: Create + push go/<tag>
+        if: github.event_name == 'push' && steps.check.outputs.exists == 'false'
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f go/lib go/include
+          git commit -m "build(go): prebuilt native libs for $tag"
+          git tag -a "go/$tag" -m "go/$tag"
+          git push origin "go/$tag"
+
+      - name: Warm the module proxy
+        if: github.event_name == 'push' && steps.check.outputs.exists == 'false'
+        run: |
+          GOPROXY=https://proxy.golang.org go list -m "github.com/justin13888/chromahash/go@${GITHUB_REF_NAME}" || true
