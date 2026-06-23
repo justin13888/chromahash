@@ -49,6 +49,13 @@ jobs:
       - name: Build WASM glue (staged into typescript/wasm/)
         run: wasm-pack build --target web bindings/wasm --out-dir ../../typescript/wasm
 
+      # wasm-pack writes a `.gitignore` (containing `*`) into the out-dir. npm's
+      # packlist honors nested .gitignore files, so without this the entire wasm/
+      # runtime is silently dropped from the published tarball even though it is in
+      # the package.json `files` list — leaving an unusable package.
+      - name: Drop wasm-pack's .gitignore so wasm/ ships in the tarball
+        run: rm -f typescript/wasm/.gitignore
+
       - uses: pnpm/action-setup@v4
         with:
           version: 10
