@@ -1,8 +1,10 @@
 //! ChromaHash — a compact, perceptual image placeholder (LQIP).
 //!
-//! ChromaHash encodes any image into a fixed **32-byte** code that decodes back
+//! ChromaHash encodes any image into a compact code that decodes back
 //! into a smooth, color-accurate thumbnail — the kind of blurred placeholder you
-//! show while the full image loads. It works in the perceptual
+//! show while the full image loads. The default code is **32 bytes** (tier 0); a
+//! [quality multiplier](ChromaHash::encode_with_quality) trades size for detail.
+//! It works in the perceptual
 //! [OKLab](https://bottosson.github.io/posts/oklab/) color space, supports
 //! wide-gamut sources (Display P3, Adobe RGB, BT.2020, ProPhoto RGB) and an
 //! alpha channel, and is bit-exact across platforms and languages: the same
@@ -20,12 +22,12 @@
 //!     0, 0, 255, 255, /**/ 255, 255, 0, 255,
 //! ];
 //!
-//! // Encode to a 32-byte hash, tagging the source color space.
+//! // Encode to a compact hash (tier 0 = 32 bytes), tagging the source space.
 //! let hash = ChromaHash::encode(2, 2, &rgba, Gamut::Srgb);
-//! let bytes: &[u8; 32] = hash.as_bytes(); // store or transmit these
+//! let bytes: &[u8] = hash.as_bytes(); // store or transmit these
 //!
-//! // Later: reconstruct a placeholder at its natural size, or…
-//! let (w, h, pixels) = ChromaHash::from_bytes(*bytes).decode();
+//! // Later: validate and reconstruct a placeholder at its natural size, or…
+//! let (w, h, pixels) = ChromaHash::from_bytes(bytes).unwrap().decode();
 //! assert_eq!(pixels.len(), (w * h * 4) as usize);
 //!
 //! // …grab just the average color for an instant solid-color fill.
@@ -45,22 +47,23 @@
 //!   the given bounds (a band-limited render, free of aliasing).
 //! - [`average_color`](ChromaHash::average_color) — the DC color, without a full
 //!   decode.
+//! - [`encode_with_quality`](ChromaHash::encode_with_quality) — image → hash at a
+//!   chosen quality tier (`0..=3`); higher tiers carry more detail in more bytes.
 //! - [`from_bytes`](ChromaHash::from_bytes) / [`as_bytes`](ChromaHash::as_bytes)
-//!   — round-trip the raw 32 bytes.
-//! - [`is_version_supported`](ChromaHash::is_version_supported) — see
-//!   [Versioning](#versioning).
+//!   — round-trip the raw bytes; `from_bytes` validates and is fallible.
 //!
 //! [`BatchEncoder`] amortizes setup across many images for higher throughput;
 //! its output is byte-identical to calling [`ChromaHash::encode`] per image.
 //!
 //! # Versioning
 //!
-//! This crate implements the **v0.6** bitstream. A hash carries its version
-//! in-band; [`ChromaHash::is_version_supported`] reports whether this build can
-//! decode it. Decoding an unsupported (legacy v0.2–v0.5) hash does not error —
-//! it produces unspecified output — so check the version first when handling
-//! hashes of unknown provenance. The bitstream is a pre-1.0 **draft** and is not
-//! yet guaranteed stable across releases.
+//! This crate (release 0.7.x) implements wire-format generation **v1**. A hash
+//! is self-describing: byte 0 carries the format version and quality tier, and
+//! the byte length follows from them. [`ChromaHash::from_bytes`] validates all of
+//! this and returns [`ChromaHashError`] for anything malformed — a hash that
+//! validates is guaranteed decodable. There is **no** backward compatibility with
+//! the older v0.6 bitstream. The format is a pre-1.0 **draft**, not yet
+//! guaranteed stable across releases.
 //!
 //! # Feature flags
 //!
@@ -88,18 +91,28 @@ mod transfer;
 
 pub use batch::{BatchEncoder, ImageInput};
 pub use constants::Gamut;
+/// Highest quality tier [`ChromaHash::encode_with_quality`] accepts (`0..=3`).
+pub use constants::MAX_TIER;
+
+use constants::{
+    ALPHA_FLAG_BIT, FORMAT_VERSION, PREFIX_BITS, RESERVED_FLAG_BIT, TIER_BITS, VERSION_BITS,
+    body_len_bytes,
+};
 
 // Tuning interface for the comparison harness: not part of the public API.
-// `Tunables::DEFAULT` is the v0.6 format; overrides exist solely so the
+// `Tunables::DEFAULT` is the v1 tier-0 format; overrides exist solely so the
 // corpus sweep (tools/comparison) can explore constants before they are
 // locked into the spec.
 #[doc(hidden)]
 pub use constants::{AcLayout, LAYOUT_A, LAYOUT_B, LAYOUT_C, LAYOUT_D, Tunables};
 
-/// ChromaHash: a 32-byte LQIP (Low Quality Image Placeholder).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// ChromaHash: a compact LQIP (Low Quality Image Placeholder).
+///
+/// The encoded form is variable length: 32 bytes at tier 0, and roughly 4×
+/// larger per quality tier (see [`encode_with_quality`](Self::encode_with_quality)).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChromaHash {
-    hash: [u8; 32],
+    hash: Box<[u8]>,
 }
 
 impl ChromaHash {
@@ -116,6 +129,26 @@ impl ChromaHash {
     pub fn encode(w: u32, h: u32, rgba: &[u8], gamut: Gamut) -> Self {
         Self {
             hash: encode::encode(w, h, rgba, gamut),
+        }
+    }
+
+    /// Encode an image at an explicit quality `tier` (`0..=`[`MAX_TIER`]).
+    ///
+    /// Tier 0 is the default 32-byte placeholder. Each higher tier doubles the
+    /// natural render resolution (long edge `32 · 2^tier`) and roughly
+    /// quadruples the byte length, carrying proportionally more detail.
+    /// [`encode`](Self::encode) is exactly `encode_with_quality(.., 0)`.
+    ///
+    /// Decode cost grows ~16× per tier, so tier 3 (256 px) is best reserved for
+    /// when the extra fidelity is worth the compute.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `w` or `h` is 0, if `rgba.len()` is not exactly `w * h * 4`,
+    /// or if `quality > `[`MAX_TIER`].
+    pub fn encode_with_quality(w: u32, h: u32, rgba: &[u8], gamut: Gamut, quality: u8) -> Self {
+        Self {
+            hash: encode::encode_quality(w, h, rgba, gamut, quality),
         }
     }
 
@@ -159,26 +192,61 @@ impl ChromaHash {
         decode::average_color(&self.hash)
     }
 
-    /// Create a ChromaHash from raw 32-byte data.
-    pub fn from_bytes(bytes: [u8; 32]) -> Self {
-        Self { hash: bytes }
-    }
-
-    /// Whether this hash uses the v0.6 bitstream this library implements.
+    /// Create a ChromaHash from raw encoded bytes, validating the format.
     ///
-    /// Header bit 47 is 0 for v0.6 and 1 for the legacy v0.2–v0.5 bitstreams
-    /// (which used a different coefficient selection, quantizer, and layout).
-    /// Decoding an unsupported hash produces garbage, not an error — callers
-    /// holding hashes of unknown provenance should check this first. Per spec §2.5.
-    pub fn is_version_supported(&self) -> bool {
-        (self.hash[5] >> 7) & 1 == 0
+    /// Checks the version, quality tier, reserved bits, and that the byte length
+    /// matches the length the header implies. Returns [`ChromaHashError`] for
+    /// anything malformed; an `Ok` value is guaranteed to
+    /// [`decode`](Self::decode) without error. This is the cheap, robust
+    /// "is this a usable hash?" check — there is no separate checksum (a
+    /// structurally valid hash that was corrupted into another valid hash simply
+    /// decodes to a different image). Per spec §2 (v1).
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, ChromaHashError> {
+        // Need at least the fixed descriptor + aspect + DC/scale prefix.
+        if bytes.len() < (PREFIX_BITS as usize).div_ceil(8) {
+            return Err(ChromaHashError::TooShort);
+        }
+        let b0 = bytes[0];
+        if b0 & ((1 << VERSION_BITS) - 1) != FORMAT_VERSION {
+            return Err(ChromaHashError::UnsupportedVersion);
+        }
+        let tier = (b0 >> VERSION_BITS) & ((1 << TIER_BITS) - 1);
+        if tier > MAX_TIER {
+            return Err(ChromaHashError::InvalidTier);
+        }
+        if (b0 >> RESERVED_FLAG_BIT) & 1 != 0 {
+            return Err(ChromaHashError::ReservedBitSet);
+        }
+        let has_alpha = (b0 >> ALPHA_FLAG_BIT) & 1 == 1;
+        if bytes.len() != body_len_bytes(&Tunables::DEFAULT.layout, has_alpha, tier) {
+            return Err(ChromaHashError::LengthMismatch);
+        }
+        Ok(Self {
+            hash: Box::from(bytes),
+        })
     }
 
     /// Encode with explicit tunables (comparison-harness sweep interface).
     #[doc(hidden)]
     pub fn encode_tuned(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables) -> Self {
         Self {
-            hash: encode::encode_with(w, h, rgba, gamut, t),
+            hash: encode::encode_with(w, h, rgba, gamut, t, 0),
+        }
+    }
+
+    /// Encode with explicit tunables and quality tier (harness interface — lets
+    /// the comparison/benchmark tools sweep constants *and* exercise tiers).
+    #[doc(hidden)]
+    pub fn encode_tuned_quality(
+        w: u32,
+        h: u32,
+        rgba: &[u8],
+        gamut: Gamut,
+        t: &Tunables,
+        quality: u8,
+    ) -> Self {
+        Self {
+            hash: encode::encode_with(w, h, rgba, gamut, t, quality),
         }
     }
 
@@ -212,11 +280,43 @@ impl ChromaHash {
         decode::decode_capped_to_with(&self.hash, max_w, max_h, t, output)
     }
 
-    /// Get the raw 32-byte hash data.
-    pub fn as_bytes(&self) -> &[u8; 32] {
+    /// Get the raw encoded bytes (length depends on the quality tier; 32 bytes
+    /// at tier 0).
+    pub fn as_bytes(&self) -> &[u8] {
         &self.hash
     }
 }
+
+/// Why a byte string is not a decodable v1 [`ChromaHash`] — returned by
+/// [`ChromaHash::from_bytes`]. Bytes that produce none of these are guaranteed
+/// to decode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChromaHashError {
+    /// Fewer bytes than the fixed header requires.
+    TooShort,
+    /// The `version` field names a format generation this build does not implement.
+    UnsupportedVersion,
+    /// The `tier` field is greater than [`MAX_TIER`].
+    InvalidTier,
+    /// A reserved header bit is set (must be 0 in v1).
+    ReservedBitSet,
+    /// The byte length does not match the length the header implies.
+    LengthMismatch,
+}
+
+impl core::fmt::Display for ChromaHashError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(match self {
+            ChromaHashError::TooShort => "byte string is shorter than the chromahash header",
+            ChromaHashError::UnsupportedVersion => "unsupported chromahash format version",
+            ChromaHashError::InvalidTier => "chromahash quality tier out of range",
+            ChromaHashError::ReservedBitSet => "reserved chromahash header bit is set",
+            ChromaHashError::LengthMismatch => "byte length does not match the chromahash header",
+        })
+    }
+}
+
+impl std::error::Error for ChromaHashError {}
 
 #[cfg(test)]
 mod tests {
@@ -253,20 +353,22 @@ mod tests {
 
     #[test]
     fn has_alpha_flag_set_correctly() {
-        // Opaque
+        // v1: the hasAlpha flag is bit 6 of the byte-0 descriptor.
         let rgba_opaque = solid_image(4, 4, 128, 128, 128, 255);
         let hash = ChromaHash::encode(4, 4, &rgba_opaque, Gamut::Srgb);
-        let has_alpha = (hash.as_bytes()[5] >> 6) & 1;
-        assert_eq!(has_alpha, 0, "opaque image should not have alpha flag");
+        assert_eq!(
+            (hash.as_bytes()[0] >> 6) & 1,
+            0,
+            "opaque image should not have alpha flag"
+        );
 
-        // Transparent
         let rgba_alpha = solid_image(4, 4, 128, 128, 128, 128);
         let hash = ChromaHash::encode(4, 4, &rgba_alpha, Gamut::Srgb);
-        let header: u64 = (0..6).fold(0u64, |acc, i| {
-            acc | ((hash.as_bytes()[i] as u64) << (i * 8))
-        });
-        let has_alpha = ((header >> 46) & 1) == 1;
-        assert!(has_alpha, "semi-transparent image should have alpha flag");
+        assert_eq!(
+            (hash.as_bytes()[0] >> 6) & 1,
+            1,
+            "semi-transparent image should have alpha flag"
+        );
     }
 
     #[test]
@@ -373,18 +475,48 @@ mod tests {
     }
 
     #[test]
-    fn version_support_check() {
+    fn from_bytes_validates_end_to_end() {
+        // from_bytes is the decodability check: it validates version, tier,
+        // reserved bits, and exact length, failing early — and an Ok value always
+        // decodes. (spec/test-vectors/unit-validate.json)
         let rgba = solid_image(4, 4, 128, 128, 128, 255);
-        let hash = ChromaHash::encode(4, 4, &rgba, Gamut::Srgb);
-        assert!(hash.is_version_supported(), "v0.6 hash must be supported");
+        let bytes = ChromaHash::encode(4, 4, &rgba, Gamut::Srgb)
+            .as_bytes()
+            .to_vec();
+        assert!(ChromaHash::from_bytes(&bytes).is_ok());
 
-        // Flip bit 47 to simulate a legacy v0.2–v0.5 hash.
-        let mut legacy = *hash.as_bytes();
-        legacy[5] |= 0x80;
-        assert!(
-            !ChromaHash::from_bytes(legacy).is_version_supported(),
-            "bit 47 = 1 must be reported as unsupported"
+        let mut bad_version = bytes.clone();
+        bad_version[0] = (bad_version[0] & !0b111) | 1;
+        assert_eq!(
+            ChromaHash::from_bytes(&bad_version),
+            Err(ChromaHashError::UnsupportedVersion)
         );
+
+        let mut bad_tier = bytes.clone();
+        bad_tier[0] = (bad_tier[0] & !(0b111 << 3)) | ((MAX_TIER + 1) << 3);
+        assert_eq!(
+            ChromaHash::from_bytes(&bad_tier),
+            Err(ChromaHashError::InvalidTier)
+        );
+
+        let mut reserved = bytes.clone();
+        reserved[0] |= 1 << 7;
+        assert_eq!(
+            ChromaHash::from_bytes(&reserved),
+            Err(ChromaHashError::ReservedBitSet)
+        );
+
+        let mut too_long = bytes.clone();
+        too_long.push(0);
+        assert_eq!(
+            ChromaHash::from_bytes(&too_long),
+            Err(ChromaHashError::LengthMismatch)
+        );
+        assert_eq!(ChromaHash::from_bytes(&[]), Err(ChromaHashError::TooShort));
+
+        // A validated hash always decodes.
+        let (w, h, px) = ChromaHash::from_bytes(&bytes).unwrap().decode();
+        assert_eq!(px.len(), (w * h * 4) as usize);
     }
 
     #[test]
@@ -431,10 +563,7 @@ mod tests {
             }
         }
         let hash = ChromaHash::encode(w, h, &rgba, Gamut::Srgb);
-        let header: u64 = (0..6).fold(0u64, |acc, i| {
-            acc | ((hash.as_bytes()[i] as u64) << (i * 8))
-        });
-        let has_alpha = ((header >> 46) & 1) == 1;
+        let has_alpha = (hash.as_bytes()[0] >> 6) & 1 == 1;
         assert!(has_alpha, "should detect alpha");
 
         let (dw, dh, pixels) = hash.decode();
@@ -449,8 +578,7 @@ mod tests {
     fn from_bytes_roundtrip() {
         let rgba = solid_image(4, 4, 128, 64, 32, 255);
         let hash = ChromaHash::encode(4, 4, &rgba, Gamut::Srgb);
-        let bytes = *hash.as_bytes();
-        let hash2 = ChromaHash::from_bytes(bytes);
+        let hash2 = ChromaHash::from_bytes(hash.as_bytes()).unwrap();
         assert_eq!(hash, hash2);
     }
 
@@ -485,23 +613,22 @@ mod tests {
             }
         }
         let hash = ChromaHash::encode(w, h, &rgba, Gamut::Srgb);
-        assert_eq!(
-            hash.as_bytes(),
-            &[
-                79, 97, 48, 16, 8, 32, 70, 4, 144, 72, 52, 104, 169, 132, 70, 18, 244, 156, 98,
-                102, 49, 162, 169, 8, 152, 26, 44, 105, 119, 30, 166, 89
-            ]
-        );
+        #[rustfmt::skip]
+        let expected_hash = [
+            0, 128, 79, 97, 48, 16, 136, 17, 1, 36, 18, 13, 90, 42, 161, 145, 4, 61, 167, 152, 89,
+            140, 104, 17, 48, 53, 88, 210, 238, 60, 76, 179,
+        ];
+        assert_eq!(hash.as_bytes(), &expected_hash);
 
         // Full render: the window-attenuated high-frequency coefficients carry
         // real amplitude here, so `ac · weight` (not `ac / weight`) is pinned.
         let (dw, dh, px) = hash.decode();
         assert_eq!((dw, dh), (32, 32));
         let p = |i: usize| &px[i * 4..i * 4 + 4];
-        assert_eq!(p(0), [84, 67, 0, 255]);
-        assert_eq!(p(17), [145, 122, 70, 255]);
+        assert_eq!(p(0), [86, 69, 0, 255]);
+        assert_eq!(p(17), [144, 121, 69, 255]);
         assert_eq!(p(500), [146, 139, 154, 255]);
-        assert_eq!(p(1000), [150, 135, 147, 255]);
+        assert_eq!(p(1000), [151, 136, 148, 255]);
 
         // Aggressive cap: coefficients with cx ≥ 4 or cy ≥ 4 must be dropped, not
         // kept — asserting the whole 4×4 pins the off-axis pixels where those
@@ -544,8 +671,8 @@ mod tests {
         let (ww, wh, wpx) = hash.decode_tuned(&windowed);
         assert_eq!((ww, wh), (32, 32));
         let wp = |i: usize| &wpx[i * 4..i * 4 + 4];
-        assert_eq!(wp(0), [105, 90, 0, 255]);
-        assert_eq!(wp(17), [144, 126, 93, 255]);
+        assert_eq!(wp(0), [106, 91, 0, 255]);
+        assert_eq!(wp(17), [143, 125, 93, 255]);
         assert_eq!(wp(500), [145, 137, 148, 255]);
         assert_eq!(wp(1000), [147, 134, 144, 255]);
     }

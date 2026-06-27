@@ -43,6 +43,7 @@ fn make_image(seed: usize) -> ImageInput {
         h,
         rgba: Arc::from(rgba),
         gamut,
+        quality: 0,
     }
 }
 

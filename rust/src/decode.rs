@@ -1,7 +1,11 @@
 use crate::aspect::decode_output_size;
 use crate::bitpack::read_bits;
 use crate::color::{oklab_to_linear_output, oklab_to_linear_srgb};
-use crate::constants::{ALPHA_AC_BITS, ALPHA_AC_COUNT, Gamut, Tunables};
+use crate::constants::{
+    A_DC_BITS, A_SCALE_BITS, ALPHA_AC_BITS, ALPHA_DC_BITS, ALPHA_FLAG_BIT, ALPHA_SCALE_BITS,
+    B_DC_BITS, B_SCALE_BITS, DESCRIPTOR_BITS, Gamut, L_DC_BITS, L_SCALE_BITS, PREFIX_BITS,
+    TIER_BITS, Tunables, VERSION_BITS, ac_shape,
+};
 use crate::dct::{
     dct_decode_pixel_separable, precompute_cos_table, select_coefficients, window_weights,
 };
@@ -32,13 +36,15 @@ fn linear_to_gamma8(x: f64, lut: &[u8; 4096]) -> u8 {
     lut[idx]
 }
 
-/// Extract the aspect byte from a ChromaHash (bits 38–45 of the header).
-fn read_aspect(hash: &[u8; 32]) -> u8 {
-    let header: u64 = hash[..6]
-        .iter()
-        .enumerate()
-        .fold(0u64, |acc, (i, &b)| acc | ((b as u64) << (i * 8)));
-    ((header >> 38) & 0xFF) as u8
+/// Decode the byte-0 descriptor + byte-1 aspect: (version, tier, hasAlpha,
+/// aspect). Per spec §3.1 (v1). Callers operate on hashes already validated by
+/// [`crate::ChromaHash::from_bytes`], so the fields are well-formed here.
+fn read_header_fields(hash: &[u8]) -> (u8, u8, bool, u8) {
+    let b0 = hash[0];
+    let version = b0 & ((1 << VERSION_BITS) - 1);
+    let tier = (b0 >> VERSION_BITS) & ((1 << TIER_BITS) - 1);
+    let has_alpha = (b0 >> ALPHA_FLAG_BIT) & 1 == 1;
+    (version, tier, has_alpha, hash[1])
 }
 
 /// One channel's AC data ready for rendering: windowed coefficient values and
@@ -68,24 +74,25 @@ fn prepare_channel(
 
 /// Render a ChromaHash at the given pixel dimensions, into the given output
 /// gamut (sRGB / Display P3 / Adobe RGB). Per spec §11 (v0.6).
-fn render_at_size(hash: &[u8; 32], w: usize, h: usize, t: &Tunables, output: Gamut) -> Vec<u8> {
-    // 1. Unpack header (48 bits)
-    let header: u64 = hash[..6]
-        .iter()
-        .enumerate()
-        .fold(0u64, |acc, (i, &b)| acc | ((b as u64) << (i * 8)));
+fn render_at_size(hash: &[u8], w: usize, h: usize, t: &Tunables, output: Gamut) -> Vec<u8> {
+    // 1. Header fields: byte-0 descriptor + byte-1 aspect, then DC/scale prefix
+    //    (bits 16..54). Per spec §3.1 (v1).
+    let (_version, tier, has_alpha, aspect) = read_header_fields(hash);
 
-    let l_dc_q = (header & 0x7F) as u32;
-    let a_dc_q = ((header >> 7) & 0x7F) as u32;
-    let b_dc_q = ((header >> 14) & 0x7F) as u32;
-    let l_scl_q = ((header >> 21) & 0x3F) as u32;
-    let a_scl_q = ((header >> 27) & 0x3F) as u32;
-    let b_scl_q = ((header >> 33) & 0x1F) as u32;
-    let aspect = ((header >> 38) & 0xFF) as u8;
-    let has_alpha = ((header >> 46) & 1) == 1;
-    // bit 47: version. 0 = v0.6; 1 = legacy v0.2–v0.5 (different selection,
-    // quantizer and layout — decoding it here produces garbage; the spec
-    // phase will define rejection semantics for the public API).
+    let mut bitpos = DESCRIPTOR_BITS as usize;
+    let l_dc_q = read_bits(hash, bitpos, L_DC_BITS);
+    bitpos += L_DC_BITS as usize;
+    let a_dc_q = read_bits(hash, bitpos, A_DC_BITS);
+    bitpos += A_DC_BITS as usize;
+    let b_dc_q = read_bits(hash, bitpos, B_DC_BITS);
+    bitpos += B_DC_BITS as usize;
+    let l_scl_q = read_bits(hash, bitpos, L_SCALE_BITS);
+    bitpos += L_SCALE_BITS as usize;
+    let a_scl_q = read_bits(hash, bitpos, A_SCALE_BITS);
+    bitpos += A_SCALE_BITS as usize;
+    let b_scl_q = read_bits(hash, bitpos, B_SCALE_BITS);
+    bitpos += B_SCALE_BITS as usize;
+    debug_assert_eq!(bitpos, PREFIX_BITS as usize);
 
     // 2. Decode DC values and scale factors
     let l_dc = l_dc_q as f64 / 127.0;
@@ -95,36 +102,26 @@ fn render_at_size(hash: &[u8; 32], w: usize, h: usize, t: &Tunables, output: Gam
     let a_scale = a_scl_q as f64 / 63.0 * t.max_a_scale;
     let b_scale = b_scl_q as f64 / 31.0 * t.max_b_scale;
 
-    // 3. Coefficient selection (mirrors the encoder exactly)
-    let lay = &t.layout;
-    let (l_count, c_count) = if has_alpha {
-        (lay.la_tiers[0].0 + lay.la_tiers[1].0, lay.ca_count)
-    } else {
-        (lay.l_tiers[0].0 + lay.l_tiers[1].0, lay.c_count)
-    };
-    let l_sel = select_coefficients(aspect, l_count);
-    let c_sel = select_coefficients(aspect, c_count);
+    // 3. Coefficient selection (mirrors the encoder; counts scaled by tier)
+    let shape = ac_shape(&t.layout, has_alpha, tier);
+    let l_count = shape.l_count();
+    let c_count = shape.c_count;
+    let l_sel = select_coefficients(aspect, tier, l_count);
+    let c_sel = select_coefficients(aspect, tier, c_count);
 
-    // 4. Read AC payload
-    let mut bitpos = 48usize;
-
+    // 4. Read AC payload (alpha DC/scale first in alpha mode)
     let (alpha_dc_val, alpha_scale_val) = if has_alpha {
-        let adc = read_bits(hash, bitpos, 5) as f64 / 31.0;
-        bitpos += 5;
-        let ascl = read_bits(hash, bitpos, 4) as f64 / 15.0 * t.max_alpha_scale;
-        bitpos += 4;
+        let adc = read_bits(hash, bitpos, ALPHA_DC_BITS) as f64 / 31.0;
+        bitpos += ALPHA_DC_BITS as usize;
+        let ascl = read_bits(hash, bitpos, ALPHA_SCALE_BITS) as f64 / 15.0 * t.max_alpha_scale;
+        bitpos += ALPHA_SCALE_BITS as usize;
         (adc, ascl)
     } else {
         (1.0, 0.0)
     };
 
-    let l_tiers = if has_alpha {
-        &lay.la_tiers
-    } else {
-        &lay.l_tiers
-    };
     let mut l_ac = Vec::with_capacity(l_count);
-    for &(count, bits) in l_tiers {
+    for &(count, bits) in &shape.l_tiers {
         for _ in 0..count {
             let q = read_bits(hash, bitpos, bits);
             bitpos += bits as usize;
@@ -132,7 +129,7 @@ fn render_at_size(hash: &[u8; 32], w: usize, h: usize, t: &Tunables, output: Gam
         }
     }
 
-    let c_bits = if has_alpha { lay.ca_bits } else { lay.c_bits };
+    let c_bits = shape.c_bits;
     let mut a_ac = Vec::with_capacity(c_count);
     for _ in 0..c_count {
         let q = read_bits(hash, bitpos, c_bits);
@@ -147,9 +144,9 @@ fn render_at_size(hash: &[u8; 32], w: usize, h: usize, t: &Tunables, output: Gam
     }
 
     let (alpha_ac, alpha_sel) = if has_alpha {
-        let sel = select_coefficients(aspect, ALPHA_AC_COUNT);
-        let mut aac = Vec::with_capacity(ALPHA_AC_COUNT);
-        for _ in 0..ALPHA_AC_COUNT {
+        let sel = select_coefficients(aspect, tier, shape.alpha_ac_count);
+        let mut aac = Vec::with_capacity(shape.alpha_ac_count);
+        for _ in 0..shape.alpha_ac_count {
             let q = read_bits(hash, bitpos, ALPHA_AC_BITS);
             bitpos += ALPHA_AC_BITS as usize;
             aac.push(mu_law_dequantize(q, ALPHA_AC_BITS, t.mu_alpha) * alpha_scale_val);
@@ -232,41 +229,41 @@ fn render_at_size(hash: &[u8; 32], w: usize, h: usize, t: &Tunables, output: Gam
 
 /// Decode a ChromaHash into RGBA pixel data in the given output gamut, with
 /// explicit tunables. Returns (width, height, rgba_pixels).
-pub fn decode_to_with(hash: &[u8; 32], t: &Tunables, output: Gamut) -> (u32, u32, Vec<u8>) {
-    let aspect = read_aspect(hash);
-    let (w, h) = decode_output_size(aspect);
+pub fn decode_to_with(hash: &[u8], t: &Tunables, output: Gamut) -> (u32, u32, Vec<u8>) {
+    let (_version, tier, _has_alpha, aspect) = read_header_fields(hash);
+    let (w, h) = decode_output_size(aspect, tier);
     let rgba = render_at_size(hash, w as usize, h as usize, t, output);
     (w, h, rgba)
 }
 
 /// Decode a ChromaHash into sRGB RGBA pixel data with explicit tunables.
-pub fn decode_with(hash: &[u8; 32], t: &Tunables) -> (u32, u32, Vec<u8>) {
+pub fn decode_with(hash: &[u8], t: &Tunables) -> (u32, u32, Vec<u8>) {
     decode_to_with(hash, t, Gamut::Srgb)
 }
 
 /// Decode a ChromaHash into sRGB RGBA pixel data. Per spec §11 (v0.6).
 /// Returns (width, height, rgba_pixels).
-pub fn decode(hash: &[u8; 32]) -> (u32, u32, Vec<u8>) {
+pub fn decode(hash: &[u8]) -> (u32, u32, Vec<u8>) {
     decode_to_with(hash, &Tunables::DEFAULT, Gamut::Srgb)
 }
 
 /// Decode a ChromaHash into RGBA pixel data in the given output gamut
 /// (sRGB / Display P3 / Adobe RGB; others fall back to sRGB).
-pub fn decode_to(hash: &[u8; 32], output: Gamut) -> (u32, u32, Vec<u8>) {
+pub fn decode_to(hash: &[u8], output: Gamut) -> (u32, u32, Vec<u8>) {
     decode_to_with(hash, &Tunables::DEFAULT, output)
 }
 
 /// Decode capped at the given max dimensions, in the given output gamut, with
 /// explicit tunables.
 pub fn decode_capped_to_with(
-    hash: &[u8; 32],
+    hash: &[u8],
     max_w: u32,
     max_h: u32,
     t: &Tunables,
     output: Gamut,
 ) -> (u32, u32, Vec<u8>) {
-    let aspect = read_aspect(hash);
-    let (nat_w, nat_h) = decode_output_size(aspect);
+    let (_version, tier, _has_alpha, aspect) = read_header_fields(hash);
+    let (nat_w, nat_h) = decode_output_size(aspect, tier);
     let w = nat_w.min(max_w);
     let h = nat_h.min(max_h);
     let rgba = render_at_size(hash, w as usize, h as usize, t, output);
@@ -275,7 +272,7 @@ pub fn decode_capped_to_with(
 
 /// Decode capped at the given max dimensions (sRGB output), with explicit tunables.
 pub fn decode_capped_with(
-    hash: &[u8; 32],
+    hash: &[u8],
     max_w: u32,
     max_h: u32,
     t: &Tunables,
@@ -286,32 +283,26 @@ pub fn decode_capped_with(
 /// Decode a ChromaHash into sRGB RGBA pixel data, capped at the given max
 /// dimensions. The shorter decoded dimension is also capped proportionally.
 /// Returns (width, height, rgba_pixels).
-pub fn decode_capped(hash: &[u8; 32], max_w: u32, max_h: u32) -> (u32, u32, Vec<u8>) {
+pub fn decode_capped(hash: &[u8], max_w: u32, max_h: u32) -> (u32, u32, Vec<u8>) {
     decode_capped_to_with(hash, max_w, max_h, &Tunables::DEFAULT, Gamut::Srgb)
 }
 
 /// Decode capped at the given max dimensions, in the given output gamut.
-pub fn decode_capped_to(
-    hash: &[u8; 32],
-    max_w: u32,
-    max_h: u32,
-    output: Gamut,
-) -> (u32, u32, Vec<u8>) {
+pub fn decode_capped_to(hash: &[u8], max_w: u32, max_h: u32, output: Gamut) -> (u32, u32, Vec<u8>) {
     decode_capped_to_with(hash, max_w, max_h, &Tunables::DEFAULT, output)
 }
 
 /// Extract the average color from a ChromaHash without full decode, with
 /// explicit tunables. Returns [r, g, b, a] as u8 values. Per spec §11.2.
-pub fn average_color_with(hash: &[u8; 32], t: &Tunables) -> [u8; 4] {
-    let header: u64 = hash[..6]
-        .iter()
-        .enumerate()
-        .fold(0u64, |acc, (i, &b)| acc | ((b as u64) << (i * 8)));
+pub fn average_color_with(hash: &[u8], t: &Tunables) -> [u8; 4] {
+    let (_version, _tier, has_alpha, _aspect) = read_header_fields(hash);
 
-    let l_dc_q = (header & 0x7F) as u32;
-    let a_dc_q = ((header >> 7) & 0x7F) as u32;
-    let b_dc_q = ((header >> 14) & 0x7F) as u32;
-    let has_alpha = ((header >> 46) & 1) == 1;
+    let mut bitpos = DESCRIPTOR_BITS as usize;
+    let l_dc_q = read_bits(hash, bitpos, L_DC_BITS);
+    bitpos += L_DC_BITS as usize;
+    let a_dc_q = read_bits(hash, bitpos, A_DC_BITS);
+    bitpos += A_DC_BITS as usize;
+    let b_dc_q = read_bits(hash, bitpos, B_DC_BITS);
 
     let l_dc = l_dc_q as f64 / 127.0;
     let a_dc = (a_dc_q as f64 - 64.0) / 63.0 * t.max_chroma_a;
@@ -321,8 +312,9 @@ pub fn average_color_with(hash: &[u8; 32], t: &Tunables) -> [u8; 4] {
     let rgb_linear = oklab_to_linear_srgb([l_clamped, a_dc, b_dc]);
     let gamma_lut = build_gamma_lut(Gamut::Srgb);
 
+    // Alpha DC is the first field after the 54-bit prefix, in alpha mode.
     let alpha = if has_alpha {
-        read_bits(hash, 48, 5) as f64 / 31.0
+        read_bits(hash, PREFIX_BITS as usize, ALPHA_DC_BITS) as f64 / 31.0
     } else {
         1.0
     };
@@ -337,7 +329,7 @@ pub fn average_color_with(hash: &[u8; 32], t: &Tunables) -> [u8; 4] {
 
 /// Extract the average color from a ChromaHash without full decode.
 /// Returns [r, g, b, a] as u8 values. Per spec §11.2.
-pub fn average_color(hash: &[u8; 32]) -> [u8; 4] {
+pub fn average_color(hash: &[u8]) -> [u8; 4] {
     average_color_with(hash, &Tunables::DEFAULT)
 }
 
@@ -355,6 +347,70 @@ mod tests {
         for (i, chunk) in rgba.chunks_exact(4).enumerate() {
             assert_eq!(chunk, px, "pixel {i} diverges from {px:?}");
         }
+    }
+
+    fn solid(w: u32, h: u32, r: u8, g: u8, b: u8, a: u8) -> Vec<u8> {
+        let mut rgba = vec![0u8; (w * h * 4) as usize];
+        for px in rgba.chunks_exact_mut(4) {
+            px.copy_from_slice(&[r, g, b, a]);
+        }
+        rgba
+    }
+
+    // Mirrors test_vectors::gradient_image (the gradient_* spec vectors).
+    fn gradient_image(w: u32, h: u32) -> Vec<u8> {
+        let mut rgba = vec![0u8; (w * h * 4) as usize];
+        for y in 0..h {
+            for x in 0..w {
+                let tx = x as f64 / (w - 1).max(1) as f64;
+                let ty = y as f64 / (h - 1).max(1) as f64;
+                let i = ((y * w + x) * 4) as usize;
+                rgba[i] = (tx * 255.0) as u8;
+                rgba[i + 1] = ((1.0 - tx) * ty * 255.0) as u8;
+                rgba[i + 2] = ((1.0 - ty) * 255.0) as u8;
+                rgba[i + 3] = 255;
+            }
+        }
+        rgba
+    }
+
+    fn checkerboard_alpha(w: u32, h: u32) -> Vec<u8> {
+        let mut rgba = vec![0u8; (w * h * 4) as usize];
+        for y in 0..h {
+            for x in 0..w {
+                let i = ((y * w + x) * 4) as usize;
+                if (x + y) % 2 == 0 {
+                    rgba[i..i + 4].copy_from_slice(&[255, 0, 0, 255]);
+                } else {
+                    rgba[i..i + 4].copy_from_slice(&[0, 0, 255, 0]);
+                }
+            }
+        }
+        rgba
+    }
+
+    fn alpha_gradient(w: u32, h: u32) -> Vec<u8> {
+        let mut rgba = vec![0u8; (w * h * 4) as usize];
+        for y in 0..h {
+            for x in 0..w {
+                let i = ((y * w + x) * 4) as usize;
+                let a = (x as f64 / (w - 1) as f64 * 255.0) as u8;
+                rgba[i..i + 4].copy_from_slice(&[200, 60, 40, a]);
+            }
+        }
+        rgba
+    }
+
+    fn strip_gradient(w: u32, h: u32) -> Vec<u8> {
+        let n = (w * h) as usize;
+        let mut rgba = vec![0u8; n * 4];
+        for i in 0..n {
+            let t = i as f64 / (n - 1).max(1) as f64;
+            rgba[i * 4] = (255.0 * (1.0 - t)) as u8;
+            rgba[i * 4 + 2] = (255.0 * t) as u8;
+            rgba[i * 4 + 3] = 255;
+        }
+        rgba
     }
 
     #[test]
@@ -377,79 +433,64 @@ mod tests {
 
     #[test]
     fn decode_golden_solids() {
-        // Solid hashes decode to a uniform field — pins the header unpack, the
-        // DC dequantize, and the gamut clamp. (integration-decode.json)
-        // average_color on these opaque hashes must report alpha = 255 (the
-        // has_alpha = 0 branch defaults alpha to 1.0), pinning the header-only
-        // DC path independently of the full render.
-        let gray = [
-            76, 32, 16, 0, 0, 32, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 239, 189, 247,
-            222, 123, 239, 189, 187, 187, 187, 187, 187, 187, 187, 187, 59,
-        ];
-        let (w, h, rgba) = decode(&gray);
+        // A solid encodes to all-zero AC, so it decodes to a uniform field — pins
+        // the header unpack, the DC dequantize, and the gamut clamp. average_color
+        // on opaque hashes must report alpha 255 (the header-only DC path).
+        use crate::ChromaHash;
+        let gray = ChromaHash::encode(4, 4, &solid(4, 4, 128, 128, 128, 255), Gamut::Srgb);
+        let (w, h, rgba) = gray.decode();
         assert_eq!((w, h), (32, 32));
         assert_uniform(&rgba, [128, 128, 128, 255]);
-        assert_eq!(average_color(&gray), [128, 128, 128, 255]);
+        assert_eq!(gray.average_color(), [128, 128, 128, 255]);
 
-        let blue = [
-            57, 29, 1, 0, 0, 32, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 239, 189, 247,
-            222, 123, 239, 189, 187, 187, 187, 187, 187, 187, 187, 187, 59,
-        ];
-        let (w, h, rgba) = decode(&blue);
+        let blue = ChromaHash::encode(4, 4, &solid(4, 4, 0, 0, 255, 255), Gamut::Srgb);
+        let (w, h, rgba) = blue.decode();
         assert_eq!((w, h), (32, 32));
         assert_uniform(&rgba, [0, 0, 255, 255]);
-        assert_eq!(average_color(&blue), [0, 0, 255, 255]);
+        assert_eq!(blue.average_color(), [0, 0, 255, 255]);
     }
 
     #[test]
     fn decode_golden_alpha() {
-        // Alpha hash: the 6×6 layout + alpha channel must be read at the right
-        // bit offsets, and `average_color` must report the sub-255 alpha — pins
-        // the alpha-DC read in both the full render and the header-only path.
-        let cb = [
-            208, 116, 22, 0, 0, 96, 16, 190, 239, 251, 190, 239, 123, 239, 189, 247, 222, 123, 239,
-            189, 119, 119, 119, 119, 119, 119, 119, 119, 119, 119, 231, 119,
-        ];
-        let (w, h, rgba) = decode(&cb);
+        // Alpha hash: the alpha DC/scale + alpha AC must be read at the right bit
+        // offsets, and `average_color` must report the sub-255 alpha — pins the
+        // alpha-DC read in both the full render and the header-only path.
+        use crate::ChromaHash;
+        let cb = ChromaHash::encode(8, 8, &checkerboard_alpha(8, 8), Gamut::Srgb);
+        let (w, h, rgba) = cb.decode();
         assert_eq!((w, h), (32, 32));
         assert_uniform(&rgba, [255, 0, 0, 132]);
-        assert_eq!(average_color(&cb), [255, 0, 0, 132]);
+        assert_eq!(cb.average_color(), [255, 0, 0, 132]);
     }
 
     #[test]
     fn decode_golden_gradient() {
         // A non-flat field exercises the AC read loops and the separable IDCT at
-        // every pixel. gradient_200x50 → 32×8; sampled pixels are verbatim from
-        // the spec vector.
-        let hash = [
-            197, 230, 109, 88, 237, 47, 163, 183, 80, 1, 106, 174, 73, 247, 220, 142, 245, 57, 247,
-            222, 123, 239, 65, 184, 227, 75, 187, 171, 60, 184, 186, 59,
-        ];
-        let (w, h, rgba) = decode(&hash);
+        // every pixel. gradient_200x50 → 32×8.
+        use crate::ChromaHash;
+        let hash = ChromaHash::encode(200, 50, &gradient_image(200, 50), Gamut::Srgb);
+        let (w, h, rgba) = hash.decode();
         assert_eq!((w, h), (32, 8));
         let px = |i: usize| &rgba[i * 4..i * 4 + 4];
-        assert_eq!(px(0), [44, 34, 220, 255]);
-        assert_eq!(px(31), [247, 0, 231, 255]);
+        assert_eq!(px(0), [44, 33, 220, 255]);
+        assert_eq!(px(31), [246, 0, 231, 255]);
         assert_eq!(px(128), [0, 138, 122, 255]);
-        assert_eq!(px(255), [248, 15, 0, 255]);
+        assert_eq!(px(255), [247, 14, 0, 255]);
     }
 
     #[test]
     fn decode_golden_gradient_16x16() {
-        // A 32×32 render reaches the windowed high-frequency coefficients, so the
-        // per-coefficient window weight actually shapes the output here (it's ≈1
-        // for the low frequencies the 32×8 case keeps). (integration-decode.json)
-        let hash = [
-            198, 230, 109, 104, 47, 32, 129, 128, 237, 43, 114, 175, 57, 247, 220, 172, 177, 189,
-            247, 222, 123, 206, 57, 134, 172, 51, 195, 131, 42, 203, 187, 51,
-        ];
-        let (w, h, rgba) = decode(&hash);
+        // A 32×32 render reaches the high-frequency coefficients the 32×8 case
+        // drops. (integration-decode.json)
+        use crate::ChromaHash;
+        let hash = ChromaHash::encode(16, 16, &gradient_image(16, 16), Gamut::Srgb);
+        let (w, h, rgba) = hash.decode();
         assert_eq!((w, h), (32, 32));
         let px = |i: usize| &rgba[i * 4..i * 4 + 4];
-        assert_eq!(px(0), [26, 32, 246, 255]);
+        assert_eq!(px(0), [26, 34, 246, 255]);
         assert_eq!(px(16), [140, 0, 255, 255]);
         assert_eq!(px(400), [139, 47, 156, 255]);
-        assert_eq!(px(600), [196, 37, 101, 255]);
+        assert_eq!(px(600), [195, 37, 101, 255]);
         assert_eq!(px(1000), [0, 184, 0, 255]);
     }
 
@@ -457,12 +498,9 @@ mod tests {
     fn decode_alpha_gradient_varies() {
         // Decoded alpha must ramp across the row — pins the alpha AC bit offsets
         // and scale, which a uniform-alpha vector (checkerboard) can't reach.
-        // Hash is `encode_alpha_gradient`'s output; expected pixels are its decode.
-        let hash = [
-            71, 174, 20, 0, 0, 96, 239, 190, 239, 251, 190, 239, 123, 239, 189, 247, 222, 123, 239,
-            189, 119, 119, 119, 119, 119, 119, 119, 119, 119, 119, 112, 119,
-        ];
-        let (w, h, rgba) = decode(&hash);
+        use crate::ChromaHash;
+        let hash = ChromaHash::encode(8, 8, &alpha_gradient(8, 8), Gamut::Srgb);
+        let (w, h, rgba) = hash.decode();
         assert_eq!((w, h), (32, 32));
         let px = |i: usize| &rgba[i * 4..i * 4 + 4];
         // First row: alpha climbs left→right; RGB stays put.
@@ -477,12 +515,9 @@ mod tests {
         // Capping renders at a coarser raster — pins decode_capped's size math and
         // the frequency filter that drops coefficients with cx ≥ w or cy ≥ h.
         // Sampling along the strip (not just pixel 0) makes that filter observable.
-        // (integration-decode-capped.json)
-        let strip = [
-            59, 171, 171, 232, 52, 0, 126, 191, 9, 227, 131, 15, 62, 248, 222, 123, 239, 189, 247,
-            222, 123, 239, 61, 31, 196, 187, 187, 115, 188, 187, 187, 59,
-        ];
-        let (w, h, rgba) = decode_capped(&strip, 1, 100);
+        use crate::ChromaHash;
+        let strip = ChromaHash::encode(1, 100, &strip_gradient(1, 100), Gamut::Srgb);
+        let (w, h, rgba) = strip.decode_capped(1, 100);
         assert_eq!((w, h), (1, 32));
         let px = |i: usize| &rgba[i * 4..i * 4 + 4];
         assert_eq!(px(0), [245, 23, 0, 255]);
@@ -491,13 +526,10 @@ mod tests {
         assert_eq!(px(24), [58, 0, 202, 255]);
         assert_eq!(px(31), [3, 28, 246, 255]);
 
-        let grad = [
-            198, 230, 109, 104, 47, 32, 129, 128, 237, 43, 114, 175, 57, 247, 220, 172, 177, 189,
-            247, 222, 123, 206, 57, 134, 172, 51, 195, 131, 42, 203, 187, 51,
-        ];
-        let (w, h, rgba) = decode_capped(&grad, 8, 8);
+        let grad = ChromaHash::encode(16, 16, &gradient_image(16, 16), Gamut::Srgb);
+        let (w, h, rgba) = grad.decode_capped(8, 8);
         assert_eq!((w, h), (8, 8));
-        assert_eq!(&rgba[0..4], [29, 36, 242, 255]);
+        assert_eq!(&rgba[0..4], [29, 36, 243, 255]);
     }
 
     #[test]
@@ -506,18 +538,15 @@ mod tests {
         // decode_capped_to is the gamut-aware capped entry point; the rest of the
         // in-crate suite only reaches decode_capped (sRGB), leaving this whole
         // function unexercised. Pin its sRGB output against the golden capped
-        // render and cross-check it equals decode_capped — killing whole-body
-        // replacement with a trivial tuple.
-        let grad = [
-            198, 230, 109, 104, 47, 32, 129, 128, 237, 43, 114, 175, 57, 247, 220, 172, 177, 189,
-            247, 222, 123, 206, 57, 134, 172, 51, 195, 131, 42, 203, 187, 51,
-        ];
-        let (w, h, rgba) = decode_capped_to(&grad, 8, 8, Gamut::Srgb);
+        // render and cross-check it equals decode_capped.
+        let grad = ChromaHash::encode(16, 16, &gradient_image(16, 16), Gamut::Srgb);
+        let bytes = grad.as_bytes();
+        let (w, h, rgba) = decode_capped_to(bytes, 8, 8, Gamut::Srgb);
         assert_eq!((w, h), (8, 8));
-        assert_eq!(&rgba[0..4], [29, 36, 242, 255]);
+        assert_eq!(&rgba[0..4], [29, 36, 243, 255]);
         assert_eq!(
-            decode_capped_to(&grad, 8, 8, Gamut::Srgb),
-            decode_capped(&grad, 8, 8),
+            decode_capped_to(bytes, 8, 8, Gamut::Srgb),
+            decode_capped(bytes, 8, 8),
             "decode_capped_to(Srgb) must equal decode_capped"
         );
 
@@ -525,10 +554,10 @@ mod tests {
         // clips in sRGB but not in P3, so the two capped renders differ.
         let p3_green = [0u8, 200, 80, 255].repeat(16);
         let hash = ChromaHash::encode(4, 4, &p3_green, Gamut::DisplayP3);
-        let bytes = *hash.as_bytes();
+        let bytes = hash.as_bytes();
         assert_ne!(
-            decode_capped_to(&bytes, 4, 4, Gamut::DisplayP3),
-            decode_capped_to(&bytes, 4, 4, Gamut::Srgb),
+            decode_capped_to(bytes, 4, 4, Gamut::DisplayP3),
+            decode_capped_to(bytes, 4, 4, Gamut::Srgb),
             "P3 vs sRGB capped output must differ"
         );
     }

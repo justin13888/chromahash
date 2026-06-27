@@ -14,20 +14,21 @@ pub struct Selection {
     pub p_k: u64,
 }
 
-/// Select the K lowest-spatial-frequency AC coefficients for an aspect byte.
-/// Per spec §6.1 (v0.6).
+/// Select the K lowest-spatial-frequency AC coefficients for an aspect byte at
+/// a given quality `tier`. Per spec §6.1 (v1).
 ///
 /// Candidates are all (cx, cy) in [0, W) × [0, H) except DC, where (W, H) =
-/// decodeOutputSize(aspect_byte) — exactly the frequencies representable at
-/// the natural render, which makes selecting an unrepresentable (aliasing)
+/// decodeOutputSize(aspect_byte, tier) — exactly the frequencies representable
+/// at the natural render, which makes selecting an unrepresentable (aliasing)
 /// frequency structurally impossible. Priority (cx·H)² + (cy·W)² is the
 /// squared isotropic per-pixel frequency scaled by (W·H)²; ties break by
 /// (cx, cy) ascending. Pure integer ordering ⇒ bit-exact across languages.
 ///
-/// The candidate count is ≥ 2·32 − 1 = 63 for every aspect byte, so any
-/// K ≤ 63 is always fully satisfied.
-pub fn select_coefficients(aspect_byte: u8, k: usize) -> Selection {
-    let (w, h) = decode_output_size(aspect_byte);
+/// The candidate count is ≥ 64·4^tier − 1 for every aspect byte (the 16:1
+/// extreme), and every per-channel K(tier) the format uses is < that bound, so
+/// the selection is always fully satisfied.
+pub fn select_coefficients(aspect_byte: u8, tier: u8, k: usize) -> Selection {
+    let (w, h) = decode_output_size(aspect_byte, tier);
     let (w, h) = (w as usize, h as usize);
 
     let mut entries: Vec<(u64, usize, usize)> = Vec::with_capacity(w * h - 1);
@@ -182,7 +183,7 @@ mod tests {
     fn selection_counts() {
         for byte in [0u8, 64, 128, 191, 255] {
             for k in [5usize, 9, 11, 24, 27] {
-                let sel = select_coefficients(byte, k);
+                let sel = select_coefficients(byte, 0, k);
                 assert_eq!(sel.coeffs.len(), k, "byte={byte} k={k}");
                 assert_eq!(sel.priorities.len(), k);
             }
@@ -190,9 +191,46 @@ mod tests {
     }
 
     #[test]
+    fn selection_scales_with_tier() {
+        // Priority (cx·H)² + (cy·W)² scales uniformly by 4^tier when the grid
+        // doubles, so the *same* K returns the *same* low frequencies at any
+        // tier. The higher tier's larger grid is what lets K itself scale by
+        // 4^tier and reach genuinely higher frequencies — always satisfiable.
+        assert_eq!(
+            select_coefficients(128, 0, 26).coeffs,
+            select_coefficients(128, 2, 26).coeffs,
+            "same K ⇒ same low frequencies across tiers"
+        );
+        for tier in 0u8..=3 {
+            let k = 26usize << (2 * tier as usize); // 26·4^tier
+            assert_eq!(
+                select_coefficients(255, tier, k).coeffs.len(),
+                k,
+                "K(tier) must be fully satisfied even at 16:1, tier={tier}"
+            );
+        }
+        let max0 = select_coefficients(128, 0, 26)
+            .coeffs
+            .iter()
+            .map(|&(cx, cy)| cx.max(cy))
+            .max()
+            .unwrap();
+        let max3 = select_coefficients(128, 3, 26 << 6)
+            .coeffs
+            .iter()
+            .map(|&(cx, cy)| cx.max(cy))
+            .max()
+            .unwrap();
+        assert!(
+            max3 > max0,
+            "tier 3 must reach higher frequencies: {max3} vs {max0}"
+        );
+    }
+
+    #[test]
     fn selection_square_is_radial_l2_ball() {
         // byte=128 → (W,H) = (32,32); priority ∝ cx² + cy².
-        let sel = select_coefficients(128, 9);
+        let sel = select_coefficients(128, 0, 9);
         let expected = vec![
             (0, 1), // 1
             (1, 0), // 1 (tie broken by cx? no: (0,1) has cx=0 < 1)
@@ -212,7 +250,7 @@ mod tests {
         // The ℓ2 ball (v0.6) should include (3,4)/(4,3) (priority 25) and
         // exclude (6,0)/(0,6) (priority 36) at K=27 — the opposite of the
         // v0.5 ℓ1 triangle.
-        let sel = select_coefficients(128, 27);
+        let sel = select_coefficients(128, 0, 27);
         assert!(sel.coeffs.contains(&(3, 4)));
         assert!(sel.coeffs.contains(&(4, 3)));
         assert!(!sel.coeffs.contains(&(6, 0)));
@@ -222,7 +260,7 @@ mod tests {
     #[test]
     fn selection_priorities_ascending() {
         for byte in [0u8, 100, 128, 200, 255] {
-            let sel = select_coefficients(byte, 24);
+            let sel = select_coefficients(byte, 0, 24);
             for pair in sel.priorities.windows(2) {
                 assert!(pair[0] <= pair[1], "priorities must be ascending");
             }
@@ -234,8 +272,8 @@ mod tests {
     fn selection_bounded_by_output_size() {
         // No selected frequency may equal or exceed the natural render dims.
         for byte in 0u8..=255 {
-            let (w, h) = decode_output_size(byte);
-            let sel = select_coefficients(byte, 27);
+            let (w, h) = decode_output_size(byte, 0);
+            let sel = select_coefficients(byte, 0, 27);
             for &(cx, cy) in &sel.coeffs {
                 assert!(cx < w as usize, "cx={cx} ≥ W={w} for byte={byte}");
                 assert!(cy < h as usize, "cy={cy} ≥ H={h} for byte={byte}");
@@ -247,21 +285,21 @@ mod tests {
     fn selection_extreme_landscape_prefers_long_axis() {
         // byte=255 → (W,H)=(32,2): cy is twice as expensive as 16·cx,
         // so the selection should be dominated by (cx, 0) terms.
-        let sel = select_coefficients(255, 24);
+        let sel = select_coefficients(255, 0, 24);
         let cy0 = sel.coeffs.iter().filter(|&&(_, cy)| cy == 0).count();
         assert!(cy0 >= 15, "expected mostly cy=0 terms, got {cy0}");
     }
 
     #[test]
     fn window_weights_disabled_at_one() {
-        let sel = select_coefficients(128, 24);
+        let sel = select_coefficients(128, 0, 24);
         let w = window_weights(&sel, 1.0, 1);
         assert!(w.iter().all(|&x| x == 1.0));
     }
 
     #[test]
     fn window_weights_monotone_and_bounded() {
-        let sel = select_coefficients(128, 24);
+        let sel = select_coefficients(128, 0, 24);
         let w = window_weights(&sel, 0.3, 1);
         for pair in w.windows(2) {
             assert!(
@@ -280,7 +318,7 @@ mod tests {
         let h = 4;
         let val = 0.7;
         let channel = vec![val; w * h];
-        let sel = select_coefficients(128, 9);
+        let sel = select_coefficients(128, 0, 9);
         let cos_x = precompute_cos_table(w, 8);
         let cos_y = precompute_cos_table(h, 8);
         let (dc, _, _) = dct_encode_selected(&channel, w, h, &sel.coeffs, &cos_x, &cos_y);
@@ -295,7 +333,7 @@ mod tests {
         let w = 4;
         let h = 4;
         let channel = vec![0.5; w * h];
-        let sel = select_coefficients(128, 9);
+        let sel = select_coefficients(128, 0, 9);
         let cos_x = precompute_cos_table(w, 8);
         let cos_y = precompute_cos_table(h, 8);
         let (_, ac, scale) = dct_encode_selected(&channel, w, h, &sel.coeffs, &cos_x, &cos_y);
@@ -310,7 +348,7 @@ mod tests {
         let w = 1;
         let h = 16;
         let channel: Vec<f64> = (0..h).map(|y| y as f64 / 15.0).collect();
-        let sel = select_coefficients(0, 24); // byte 0 → (W,H)=(2,32)
+        let sel = select_coefficients(0, 0, 24); // byte 0, tier 0 → (W,H)=(2,32)
         let cos_x = precompute_cos_table(w, 2);
         let cos_y = precompute_cos_table(h, 32);
         let (_, ac, scale) = dct_encode_selected(&channel, w, h, &sel.coeffs, &cos_x, &cos_y);
@@ -330,7 +368,7 @@ mod tests {
         let h = 8;
         let val = 0.42;
         let channel = vec![val; w * h];
-        let sel = select_coefficients(128, 9);
+        let sel = select_coefficients(128, 0, 9);
         let cos_x = precompute_cos_table(w, 8);
         let cos_y = precompute_cos_table(h, 8);
         let (dc, ac, _) = dct_encode_selected(&channel, w, h, &sel.coeffs, &cos_x, &cos_y);
@@ -356,7 +394,7 @@ mod tests {
                 channel[x + y * w] = (x as f64 / w as f64 + y as f64 / h as f64) / 2.0;
             }
         }
-        let sel = select_coefficients(128, 27);
+        let sel = select_coefficients(128, 0, 27);
         let cos_x = precompute_cos_table(w, 32);
         let cos_y = precompute_cos_table(h, 32);
         let (dc, ac, _) = dct_encode_selected(&channel, w, h, &sel.coeffs, &cos_x, &cos_y);

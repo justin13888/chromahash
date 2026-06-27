@@ -26,6 +26,10 @@ const DECODE_CAPPED_VECTORS: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../spec/test-vectors/integration-decode-capped.json"
 ));
+const VALIDATE_VECTORS: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../spec/test-vectors/unit-validate.json"
+));
 
 fn gamut_from_str(s: &str) -> Gamut {
     match s {
@@ -47,9 +51,7 @@ fn bytes(v: &Value) -> Vec<u8> {
 }
 
 fn hash_from_bytes(v: &Value) -> ChromaHash {
-    let raw = bytes(v);
-    let arr: [u8; 32] = raw.as_slice().try_into().expect("hash must be 32 bytes");
-    ChromaHash::from_bytes(arr)
+    ChromaHash::from_bytes(&bytes(v)).expect("spec-vector hash must be a valid v1 hash")
 }
 
 #[test]
@@ -64,9 +66,10 @@ fn integration_encode_vectors() {
         let w = input["width"].as_u64().expect("width") as u32;
         let h = input["height"].as_u64().expect("height") as u32;
         let gamut = gamut_from_str(input["gamut"].as_str().expect("gamut"));
+        let tier = input["tier"].as_u64().expect("tier") as u8;
         let rgba = bytes(&input["rgba"]);
 
-        let hash = ChromaHash::encode(w, h, &rgba, gamut);
+        let hash = ChromaHash::encode_with_quality(w, h, &rgba, gamut, tier);
 
         assert_eq!(
             hash.as_bytes().to_vec(),
@@ -82,9 +85,10 @@ fn integration_encode_vectors() {
             );
         }
 
+        // A freshly encoded hash must round-trip through the validating parser.
         assert!(
-            hash.is_version_supported(),
-            "{name}: freshly encoded hash must report v0.6 supported"
+            ChromaHash::from_bytes(hash.as_bytes()).is_ok(),
+            "{name}: freshly encoded hash must validate"
         );
     }
 }
@@ -163,6 +167,7 @@ fn batch_encode_matches_spec_vectors() {
                 h: input["height"].as_u64().unwrap() as u32,
                 rgba: Arc::from(bytes(&input["rgba"]).into_boxed_slice()),
                 gamut: gamut_from_str(input["gamut"].as_str().unwrap()),
+                quality: input["tier"].as_u64().unwrap() as u8,
             }
         })
         .collect();
@@ -178,5 +183,27 @@ fn batch_encode_matches_spec_vectors() {
             bytes(&case["expected"]["hash"]),
             "{name}: batch hash mismatch"
         );
+    }
+}
+
+#[test]
+fn unit_validate_vectors() {
+    // from_bytes is the decodability check: each vector pins whether a byte
+    // string is accepted ("ok") or rejected (the ChromaHashError variant name).
+    let cases: Value = serde_json::from_str(VALIDATE_VECTORS).expect("parse validate vectors");
+    let cases = cases
+        .as_array()
+        .expect("validate vectors should be an array");
+    assert!(!cases.is_empty(), "no validate vectors found");
+
+    for case in cases {
+        let name = case["name"].as_str().unwrap_or("<unnamed>");
+        let input = bytes(&case["input"]["bytes"]);
+        let expected = case["expected"]["result"].as_str().expect("result");
+        let got = match ChromaHash::from_bytes(&input) {
+            Ok(_) => "ok".to_string(),
+            Err(e) => format!("{e:?}"),
+        };
+        assert_eq!(got, expected, "{name}: validation result mismatch");
     }
 }

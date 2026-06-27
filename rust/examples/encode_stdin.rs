@@ -1,4 +1,4 @@
-use chromahash::{BatchEncoder, ChromaHash, Gamut, ImageInput, Tunables};
+use chromahash::{BatchEncoder, ChromaHash, Gamut, ImageInput, MAX_TIER, Tunables};
 use std::io::{self, Read, Write};
 use std::sync::Arc;
 
@@ -10,10 +10,43 @@ fn usage() -> ! {
     eprintln!("  encode_stdin batch-encode <width> <height> <gamut> <count>");
     eprintln!("  encode_stdin batch-decode <count>");
     eprintln!();
+    eprintln!("Quality: set CHROMAHASH_TIER=0..=3 to pick the quality multiplier");
+    eprintln!("(0 = 32-byte default; each tier doubles the render resolution).");
     eprintln!("Sweep interface: set CHROMAHASH_TUNE to space-separated key=value");
-    eprintln!("pairs to override v0.6 format constants, e.g.");
+    eprintln!("pairs to override v1 format constants, e.g.");
     eprintln!("  CHROMAHASH_TUNE=\"layout=B w_min_l=1.0 mu_c=8\"");
     std::process::exit(1);
+}
+
+/// Quality tier from `CHROMAHASH_TIER` (default 0). Kept separate from the
+/// `CHROMAHASH_TUNE` parser so positional CLI args stay stable for the harness.
+fn tier_from_env() -> u8 {
+    match std::env::var("CHROMAHASH_TIER") {
+        Ok(s) => {
+            let tier: u8 = s.parse().unwrap_or_else(|_| {
+                eprintln!("CHROMAHASH_TIER: invalid tier '{s}'");
+                std::process::exit(1);
+            });
+            if tier > MAX_TIER {
+                eprintln!("CHROMAHASH_TIER: tier {tier} exceeds MAX_TIER {MAX_TIER}");
+                std::process::exit(1);
+            }
+            tier
+        }
+        Err(_) => 0,
+    }
+}
+
+/// Read a whole variable-length hash from stdin and validate it.
+fn read_hash_from_stdin() -> ChromaHash {
+    let mut buf = Vec::new();
+    io::stdin()
+        .read_to_end(&mut buf)
+        .expect("failed to read hash from stdin");
+    ChromaHash::from_bytes(&buf).unwrap_or_else(|e| {
+        eprintln!("invalid chromahash on stdin: {e}");
+        std::process::exit(1);
+    })
 }
 
 /// Parse CHROMAHASH_TUNE overrides on top of the v0.6 defaults.
@@ -116,7 +149,14 @@ fn main() {
                 .read_exact(&mut rgba)
                 .expect("failed to read RGBA from stdin");
 
-            let hash = ChromaHash::encode_tuned(w, h, &rgba, gamut, &tunables_from_env());
+            let hash = ChromaHash::encode_tuned_quality(
+                w,
+                h,
+                &rgba,
+                gamut,
+                &tunables_from_env(),
+                tier_from_env(),
+            );
             io::stdout()
                 .write_all(hash.as_bytes())
                 .expect("failed to write hash");
@@ -126,11 +166,7 @@ fn main() {
                 eprintln!("Usage: encode_stdin decode [max_width max_height]");
                 std::process::exit(1);
             }
-            let mut hash = [0u8; 32];
-            io::stdin()
-                .read_exact(&mut hash)
-                .expect("failed to read hash from stdin");
-            let ch = ChromaHash::from_bytes(hash);
+            let ch = read_hash_from_stdin();
             let t = tunables_from_env();
             // Output gamut via env (keeps positional args stable for the
             // comparison harness): srgb (default) | displayp3 | adobergb.
@@ -153,11 +189,7 @@ fn main() {
             io::stdout().write_all(&rgba).expect("failed to write RGBA");
         }
         "average-color" => {
-            let mut hash = [0u8; 32];
-            io::stdin()
-                .read_exact(&mut hash)
-                .expect("failed to read hash from stdin");
-            let rgba = ChromaHash::from_bytes(hash).average_color();
+            let rgba = read_hash_from_stdin().average_color();
             io::stdout()
                 .write_all(&rgba)
                 .expect("failed to write average color");
@@ -180,6 +212,7 @@ fn main() {
                 .read_exact(&mut rgba)
                 .expect("failed to read RGBA from stdin");
             let rgba: Arc<[u8]> = Arc::from(rgba);
+            let tier = tier_from_env();
 
             let items: Vec<ImageInput> = (0..count)
                 .map(|_| ImageInput {
@@ -187,6 +220,7 @@ fn main() {
                     h,
                     rgba: Arc::clone(&rgba),
                     gamut,
+                    quality: tier,
                 })
                 .collect();
 
@@ -204,11 +238,7 @@ fn main() {
                 std::process::exit(1);
             }
             let count: usize = args[2].parse().expect("invalid count");
-            let mut hash = [0u8; 32];
-            io::stdin()
-                .read_exact(&mut hash)
-                .expect("failed to read hash from stdin");
-            let ch = ChromaHash::from_bytes(hash);
+            let ch = read_hash_from_stdin();
             let mut acc = 0u8;
             for _ in 0..count {
                 let (_w, _h, rgba) = ch.decode();

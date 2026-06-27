@@ -27,6 +27,8 @@ pub struct ImageInput {
     pub rgba: Arc<[u8]>,
     /// Source color space.
     pub gamut: Gamut,
+    /// Quality tier (`0..=`[`crate::MAX_TIER`]); 0 is the default 32-byte hash.
+    pub quality: u8,
 }
 
 /// A unit of work handed to a worker: which item it is, the image to encode,
@@ -49,6 +51,7 @@ struct Job {
 ///     h: 2,
 ///     rgba: Arc::from(vec![128u8; 2 * 2 * 4]),
 ///     gamut: Gamut::Srgb,
+///     quality: 0,
 /// }];
 /// let hashes = encoder.encode_batch(&items);
 /// assert_eq!(hashes.len(), 1);
@@ -88,11 +91,12 @@ impl BatchEncoder {
                     let message = job_rx.lock().unwrap().recv();
                     match message {
                         Ok(job) => {
-                            let hash = ChromaHash::encode(
+                            let hash = ChromaHash::encode_with_quality(
                                 job.input.w,
                                 job.input.h,
                                 &job.input.rgba,
                                 job.input.gamut,
+                                job.input.quality,
                             );
                             // The receiver is dropped once the batch has
                             // collected all results; a failed send is benign.
@@ -119,7 +123,7 @@ impl BatchEncoder {
     ///
     /// # Panics
     /// Panics, identifying the offending index, if any item has `w < 1`,
-    /// `h < 1`, or `rgba.len() != w * h * 4`.
+    /// `h < 1`, `rgba.len() != w * h * 4`, or `quality > `[`crate::MAX_TIER`].
     #[must_use]
     pub fn encode_batch(&self, items: &[ImageInput]) -> Vec<ChromaHash> {
         for (i, item) in items.iter().enumerate() {
@@ -128,6 +132,11 @@ impl BatchEncoder {
             assert!(
                 item.rgba.len() == (item.w as usize) * (item.h as usize) * 4,
                 "item {i}: rgba length mismatch"
+            );
+            assert!(
+                item.quality <= crate::MAX_TIER,
+                "item {i}: quality tier must be <= {}",
+                crate::MAX_TIER
             );
         }
 
@@ -152,13 +161,16 @@ impl BatchEncoder {
         // Drop our sender so the only remaining ones live inside in-flight jobs.
         drop(result_tx);
 
-        // Placeholder is overwritten by every index exactly once.
-        let mut out = vec![ChromaHash::from_bytes([0u8; 32]); items.len()];
+        // Each index is filled exactly once; `None` is a transient placeholder
+        // (a variable-length ChromaHash has no cheap fixed dummy value).
+        let mut out: Vec<Option<ChromaHash>> = vec![None; items.len()];
         for _ in 0..items.len() {
             let (index, hash) = result_rx.recv().expect("every job reports a result");
-            out[index] = hash;
+            out[index] = Some(hash);
         }
-        out
+        out.into_iter()
+            .map(|h| h.expect("every index filled exactly once"))
+            .collect()
     }
 }
 
@@ -218,30 +230,35 @@ mod tests {
                 h: 4,
                 rgba: solid_image(4, 4, 200, 100, 50, 255),
                 gamut: Gamut::Srgb,
+                quality: 0,
             },
             ImageInput {
                 w: 8,
                 h: 4,
                 rgba: horizontal_gradient(8, 4),
                 gamut: Gamut::DisplayP3,
+                quality: 0,
             },
             ImageInput {
                 w: 4,
                 h: 8,
                 rgba: solid_image(4, 8, 30, 200, 120, 128), // semi-transparent
                 gamut: Gamut::AdobeRgb,
+                quality: 0,
             },
             ImageInput {
                 w: 16,
                 h: 16,
                 rgba: horizontal_gradient(16, 16),
                 gamut: Gamut::Bt2020,
+                quality: 0,
             },
             ImageInput {
                 w: 1,
                 h: 1,
                 rgba: solid_image(1, 1, 255, 0, 0, 255),
                 gamut: Gamut::ProPhotoRgb,
+                quality: 0,
             },
         ]
     }
@@ -249,7 +266,7 @@ mod tests {
     fn encode_serial(items: &[ImageInput]) -> Vec<ChromaHash> {
         items
             .iter()
-            .map(|it| ChromaHash::encode(it.w, it.h, &it.rgba, it.gamut))
+            .map(|it| ChromaHash::encode_with_quality(it.w, it.h, &it.rgba, it.gamut, it.quality))
             .collect()
     }
 
@@ -263,6 +280,18 @@ mod tests {
     }
 
     #[test]
+    fn batch_matches_serial_at_mixed_tiers() {
+        // Per-item quality must flow through the worker pool: a batch of mixed
+        // tiers must still equal encoding each item serially at its own tier.
+        let mut items = mixed_items();
+        for (i, item) in items.iter_mut().enumerate() {
+            item.quality = (i % 3) as u8; // tiers 0, 1, 2, …
+        }
+        let batch = BatchEncoder::new().encode_batch(&items);
+        assert_eq!(batch, encode_serial(&items));
+    }
+
+    #[test]
     fn batch_preserves_order() {
         // Many same-shape items to exercise out-of-order completion.
         let items: Vec<ImageInput> = (0..64)
@@ -271,6 +300,7 @@ mod tests {
                 h: 8,
                 rgba: solid_image(8, 8, i as u8, (255 - i) as u8, (i * 3) as u8, 255),
                 gamut: Gamut::Srgb,
+                quality: 0,
             })
             .collect();
         let batch = BatchEncoder::new().encode_batch(&items);
@@ -310,12 +340,14 @@ mod tests {
                 h: 2,
                 rgba: solid_image(2, 2, 0, 0, 0, 255),
                 gamut: Gamut::Srgb,
+                quality: 0,
             },
             ImageInput {
                 w: 2,
                 h: 2,
                 rgba: Arc::from(vec![0u8; 3]), // wrong length
                 gamut: Gamut::Srgb,
+                quality: 0,
             },
         ];
         let _ = BatchEncoder::new().encode_batch(&items);

@@ -2,14 +2,14 @@
 /// Run with: cargo test --manifest-path rust/Cargo.toml -- generate_test_vectors --nocapture --ignored
 #[cfg(test)]
 mod tests {
-    use crate::ChromaHash;
     use crate::aspect::{decode_aspect, decode_output_size, encode_aspect};
     use crate::bitpack::{read_bits, write_bits};
     use crate::color::{gamma_rgb_to_oklab, linear_rgb_to_oklab, oklab_to_linear_srgb};
-    use crate::constants::{Gamut, Tunables};
+    use crate::constants::{Gamut, Tunables, ac_shape};
     use crate::dct::select_coefficients;
     use crate::math_utils::{cbrt_halley, cbrt_signed};
     use crate::mulaw::{mu_compress, mu_expand, mu_law_dequantize, mu_law_quantize};
+    use crate::{ChromaHash, MAX_TIER};
 
     fn solid_image(w: u32, h: u32, r: u8, g: u8, b: u8, a: u8) -> Vec<u8> {
         let n = (w * h) as usize;
@@ -175,18 +175,23 @@ mod tests {
             std::fs::write(spec_dir.join("unit-mulaw.json"), json).unwrap();
         }
 
-        // --- unit-selection.json (v0.6: replaces deriveGrid + scan order) ---
-        // Enumerate unique (W, H, K) selections across all 256 aspect bytes for
-        // every K the format uses, derived from the shipped layout so the list
-        // cannot drift: chroma (9), alpha (5), L alpha-mode (20), L (27).
+        // --- unit-selection.json (v1: top-K isotropic selection) ---
+        // Enumerate unique (W, H, K) selections across all 256 aspect bytes at
+        // tier 0 for every K the format uses, derived from the tier-0 shape so
+        // the list cannot drift: chroma (9), alpha (5), L alpha-mode (20), L (26).
+        // Higher tiers reuse the same priority ordering on a larger grid; that
+        // grid scaling is pinned by unit-aspect, and higher-tier selection is
+        // exercised end-to-end by the integration-decode-capped vectors.
         {
             let lay = Tunables::DEFAULT.layout;
+            let s0 = ac_shape(&lay, false, 0);
+            let sa = ac_shape(&lay, true, 0);
             let mut ks: Vec<usize> = vec![
-                crate::constants::ALPHA_AC_COUNT,
-                lay.c_count,
-                lay.ca_count,
-                lay.la_tiers[0].0 + lay.la_tiers[1].0,
-                lay.l_tiers[0].0 + lay.l_tiers[1].0,
+                sa.alpha_ac_count,
+                s0.c_count,
+                sa.c_count,
+                sa.l_count(),
+                s0.l_count(),
             ];
             ks.sort_unstable();
             ks.dedup();
@@ -195,11 +200,11 @@ mod tests {
             let mut seen = std::collections::BTreeSet::new();
 
             for byte in 0u8..=255 {
-                let (dw, dh) = decode_output_size(byte);
+                let (dw, dh) = decode_output_size(byte, 0);
                 for &k in &ks {
                     let key = (dw, dh, k);
                     if seen.insert(key) {
-                        let sel = select_coefficients(byte, k);
+                        let sel = select_coefficients(byte, 0, k);
                         let pairs: Vec<String> = sel
                             .coeffs
                             .iter()
@@ -208,7 +213,7 @@ mod tests {
                         cases.push(format!(
                             r#"  {{
     "name": "selection_w{dw}h{dh}_k{k}",
-    "input": {{ "aspect_byte": {byte}, "k": {k} }},
+    "input": {{ "aspect_byte": {byte}, "tier": 0, "k": {k} }},
     "expected": {{ "coeffs": [{}], "p_k": {} }}
   }}"#,
                             pairs.join(","),
@@ -237,11 +242,13 @@ mod tests {
             ] {
                 let byte = encode_aspect(w, h);
                 let decoded_ratio = decode_aspect(byte);
-                let (dw, dh) = decode_output_size(byte);
-                cases.push(format!(
-                    r#"  {{
-    "name": "aspect_{label}",
-    "input": {{ "width": {w}, "height": {h} }},
+                // Natural size scales by 2^tier on each axis (long edge 32·2^tier).
+                for tier in 0..=MAX_TIER {
+                    let (dw, dh) = decode_output_size(byte, tier);
+                    cases.push(format!(
+                        r#"  {{
+    "name": "aspect_{label}_t{tier}",
+    "input": {{ "width": {w}, "height": {h}, "tier": {tier} }},
     "expected": {{
       "byte": {byte},
       "decoded_ratio": {decoded_ratio},
@@ -249,7 +256,8 @@ mod tests {
       "output_height": {dh}
     }}
   }}"#,
-                ));
+                    ));
+                }
             }
             let json = format!("[\n{}\n]\n", cases.join(",\n"));
             std::fs::write(spec_dir.join("unit-aspect.json"), json).unwrap();
@@ -449,10 +457,22 @@ mod tests {
                 ),
             ];
 
+            // Every image is pinned at tier 0; a representative subset (gradients,
+            // alpha, a solid) is also pinned at tiers 1..=3 so the quality
+            // multiplier's encode path is exercised end to end. The subset uses
+            // only small sources — the hash size is tier-driven, so there is no
+            // need to re-emit a large RGBA input once per tier.
+            let higher_tier_images = [
+                "gradient_16x16",
+                "gradient_8x4",
+                "checkerboard_alpha_8x8",
+                "solid_red_4x4",
+            ];
             for (name, w, h, rgba, gamut) in &test_images {
-                let hash = ChromaHash::encode(*w, *h, rgba, *gamut);
-                let bytes: Vec<String> = hash.as_bytes().iter().map(|b| b.to_string()).collect();
-                let avg = hash.average_color();
+                let mut tiers = vec![0u8];
+                if higher_tier_images.contains(name) {
+                    tiers.extend(1..=MAX_TIER);
+                }
                 let rgba_str: Vec<String> = rgba.iter().map(|b| b.to_string()).collect();
                 let gamut_name = match gamut {
                     Gamut::Srgb => "sRGB",
@@ -461,19 +481,25 @@ mod tests {
                     Gamut::Bt2020 => "BT.2020",
                     Gamut::ProPhotoRgb => "ProPhoto RGB",
                 };
-                cases.push(format!(
-                    r#"  {{
-    "name": "{name}",
-    "input": {{ "width": {w}, "height": {h}, "gamut": "{gamut_name}", "rgba": [{rgba_list}] }},
+                for tier in tiers {
+                    let hash = ChromaHash::encode_with_quality(*w, *h, rgba, *gamut, tier);
+                    let bytes: Vec<String> =
+                        hash.as_bytes().iter().map(|b| b.to_string()).collect();
+                    let avg = hash.average_color();
+                    cases.push(format!(
+                        r#"  {{
+    "name": "{name}_t{tier}",
+    "input": {{ "width": {w}, "height": {h}, "gamut": "{gamut_name}", "tier": {tier}, "rgba": [{rgba_list}] }},
     "expected": {{ "hash": [{hash_list}], "average_color": [{},{},{},{}] }}
   }}"#,
-                    avg[0],
-                    avg[1],
-                    avg[2],
-                    avg[3],
-                    rgba_list = rgba_str.join(","),
-                    hash_list = bytes.join(","),
-                ));
+                        avg[0],
+                        avg[1],
+                        avg[2],
+                        avg[3],
+                        rgba_list = rgba_str.join(","),
+                        hash_list = bytes.join(","),
+                    ));
+                }
             }
             let json = format!("[\n{}\n]\n", cases.join(",\n"));
             std::fs::write(spec_dir.join("integration-encode.json"), json).unwrap();
@@ -565,13 +591,19 @@ mod tests {
         {
             let mut cases = Vec::new();
 
-            let capped_cases: Vec<(&str, u32, u32, Vec<u8>, Gamut, u32, u32)> = vec![
+            // (name, w, h, rgba, gamut, tier, max_w, max_h). Higher-tier hashes
+            // are capped to small rasters: the decode still reads the whole
+            // tier-scaled AC payload (pinning higher-tier selection + bit offsets
+            // cross-language) while keeping the pixel output small.
+            #[allow(clippy::type_complexity)]
+            let capped_cases: Vec<(&str, u32, u32, Vec<u8>, Gamut, u8, u32, u32)> = vec![
                 (
                     "strip_1x100_capped_1x100",
                     1,
                     100,
                     strip_gradient(1, 100),
                     Gamut::Srgb,
+                    0,
                     1,
                     100,
                 ),
@@ -581,6 +613,7 @@ mod tests {
                     1,
                     strip_gradient(100, 1),
                     Gamut::Srgb,
+                    0,
                     100,
                     1,
                 ),
@@ -590,6 +623,7 @@ mod tests {
                     1,
                     solid_image(1, 1, 200, 100, 50, 255),
                     Gamut::Srgb,
+                    0,
                     1,
                     1,
                 ),
@@ -599,6 +633,7 @@ mod tests {
                     16,
                     gradient_image(16, 16),
                     Gamut::Srgb,
+                    0,
                     8,
                     8,
                 ),
@@ -608,6 +643,7 @@ mod tests {
                     50,
                     gradient_image(200, 50),
                     Gamut::Srgb,
+                    0,
                     16,
                     4,
                 ),
@@ -618,13 +654,45 @@ mod tests {
                     16,
                     gradient_image(16, 16),
                     Gamut::Srgb,
+                    0,
                     64,
                     64,
                 ),
+                // Higher tiers, capped small: exercise the tier-scaled AC read.
+                (
+                    "gradient_16x16_t2_capped_16x16",
+                    16,
+                    16,
+                    gradient_image(16, 16),
+                    Gamut::Srgb,
+                    2,
+                    16,
+                    16,
+                ),
+                (
+                    "checkerboard_alpha_8x8_t1_capped_16x16",
+                    8,
+                    8,
+                    checkerboard_alpha(8, 8),
+                    Gamut::Srgb,
+                    1,
+                    16,
+                    16,
+                ),
+                (
+                    "gradient_200x50_t3_capped_16x4",
+                    200,
+                    50,
+                    gradient_image(200, 50),
+                    Gamut::Srgb,
+                    3,
+                    16,
+                    4,
+                ),
             ];
 
-            for (name, w, h, rgba, gamut, max_w, max_h) in &capped_cases {
-                let hash = ChromaHash::encode(*w, *h, rgba, *gamut);
+            for (name, w, h, rgba, gamut, tier, max_w, max_h) in &capped_cases {
+                let hash = ChromaHash::encode_with_quality(*w, *h, rgba, *gamut, *tier);
                 let (dw, dh, decoded_rgba) = hash.decode_capped(*max_w, *max_h);
                 let bytes: Vec<String> = hash.as_bytes().iter().map(|b| b.to_string()).collect();
                 let decoded_str: Vec<String> = decoded_rgba.iter().map(|b| b.to_string()).collect();
@@ -640,6 +708,64 @@ mod tests {
             }
             let json = format!("[\n{}\n]\n", cases.join(",\n"));
             std::fs::write(spec_dir.join("integration-decode-capped.json"), json).unwrap();
+        }
+
+        // --- unit-validate.json (v1: from_bytes is the decodability check) ---
+        // A structurally valid hash is guaranteed decodable; from_bytes rejects
+        // anything malformed early. Pin the accept/reject decision (the Debug name
+        // of ChromaHashError, or "ok") for representative valid and corrupt inputs
+        // so every language's validation agrees.
+        {
+            let mut cases = Vec::new();
+            let valid =
+                ChromaHash::encode(4, 4, &solid_image(4, 4, 128, 128, 128, 255), Gamut::Srgb);
+            let valid_alpha =
+                ChromaHash::encode(4, 4, &solid_image(4, 4, 200, 60, 40, 128), Gamut::Srgb);
+            let valid_t2 =
+                ChromaHash::encode_with_quality(16, 16, &gradient_image(16, 16), Gamut::Srgb, 2);
+
+            let base: Vec<u8> = valid.as_bytes().to_vec();
+            let mut bad_version = base.clone();
+            bad_version[0] = (bad_version[0] & !0b111) | 1; // version 1 (unsupported)
+            let mut bad_tier = base.clone();
+            bad_tier[0] = (bad_tier[0] & !(0b111 << 3)) | ((MAX_TIER + 1) << 3); // tier out of range
+            let mut reserved = base.clone();
+            reserved[0] |= 1 << 7; // reserved bit set
+            let mut too_long = base.clone();
+            too_long.push(0); // one byte too many
+            let truncated = base[..base.len() - 1].to_vec(); // one byte short
+            let tiny = base[..3].to_vec(); // shorter than the fixed header
+
+            let inputs: Vec<(&str, Vec<u8>)> = vec![
+                ("valid_tier0", base.clone()),
+                ("valid_tier0_alpha", valid_alpha.as_bytes().to_vec()),
+                ("valid_tier2", valid_t2.as_bytes().to_vec()),
+                ("empty", Vec::new()),
+                ("tiny", tiny),
+                ("truncated_by_one", truncated),
+                ("one_byte_too_long", too_long),
+                ("bad_version", bad_version),
+                ("bad_tier", bad_tier),
+                ("reserved_bit_set", reserved),
+            ];
+
+            for (name, bytes) in &inputs {
+                let result = match ChromaHash::from_bytes(bytes) {
+                    Ok(_) => "ok".to_string(),
+                    Err(e) => format!("{e:?}"),
+                };
+                let list: Vec<String> = bytes.iter().map(|b| b.to_string()).collect();
+                cases.push(format!(
+                    r#"  {{
+    "name": "{name}",
+    "input": {{ "bytes": [{}] }},
+    "expected": {{ "result": "{result}" }}
+  }}"#,
+                    list.join(","),
+                ));
+            }
+            let json = format!("[\n{}\n]\n", cases.join(",\n"));
+            std::fs::write(spec_dir.join("unit-validate.json"), json).unwrap();
         }
 
         eprintln!("Test vectors generated in {:?}", spec_dir);

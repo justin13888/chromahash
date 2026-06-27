@@ -8,13 +8,69 @@ pub enum Gamut {
     ProPhotoRgb,
 }
 
-/// AC bit layout (v0.6): how the 208-bit AC block is split between channels.
+// ── v1 wire format ─────────────────────────────────────────────────────────
+//
+// chromahash ships as release 0.7.0, but the on-wire format carries its own
+// generation number, independent of the package semver. This is wire-format
+// generation **v1**. Every framing parameter below is a named constant so the
+// encoder, decoder, and `spec/constants.py` agree without scattered literals.
+
+/// Wire-format generation, stored in the 3-bit `version` field of byte 0.
+///
+/// `0` is format **v1** (this redesign; chromahash 0.7.x). Future incompatible
+/// formats increment the field: `1` → v2, `2` → v3, `3` → v4, … A decoder MUST
+/// reject any value it does not implement.
+pub const FORMAT_VERSION: u8 = 0;
+
+/// Width of the byte-0 `version` field (bits 0..3).
+pub const VERSION_BITS: u32 = 3;
+/// Width of the byte-0 `tier` field (bits 3..6).
+pub const TIER_BITS: u32 = 3;
+/// Bit position of the `hasAlpha` flag within byte 0.
+pub const ALPHA_FLAG_BIT: u32 = 6;
+/// Bit position of the reserved flag within byte 0 (MUST be 0 in v1).
+pub const RESERVED_FLAG_BIT: u32 = 7;
+
+/// Highest quality tier the v1 format defines. Tiers `0..=MAX_TIER` are valid;
+/// `4..=7` are reserved and MUST be rejected by a v1 decoder.
+pub const MAX_TIER: u8 = 3;
+
+/// Natural render long-edge in pixels at tier 0. The natural render size scales
+/// to `BASE_LONG_EDGE << tier` on the long edge (32 / 64 / 128 / 256 px).
+pub const BASE_LONG_EDGE: u32 = 32;
+
+/// DC code bit widths (L, a, b) — identical quantization to v0.6.
+pub const L_DC_BITS: u32 = 7;
+pub const A_DC_BITS: u32 = 7;
+pub const B_DC_BITS: u32 = 7;
+/// AC scale code bit widths (L, a, b).
+pub const L_SCALE_BITS: u32 = 6;
+pub const A_SCALE_BITS: u32 = 6;
+pub const B_SCALE_BITS: u32 = 5;
+/// Alpha DC / scale code bit widths (present only in alpha mode).
+pub const ALPHA_DC_BITS: u32 = 5;
+pub const ALPHA_SCALE_BITS: u32 = 4;
+
+/// Byte 0 (descriptor) + byte 1 (aspect) = 16 bits.
+pub const DESCRIPTOR_BITS: u32 = 16;
+/// DC + scale prefix after the descriptor/aspect bytes
+/// (L/a/b DC = 21 bits, L/a/b scale = 17 bits).
+pub const DC_SCALE_BITS: u32 =
+    L_DC_BITS + A_DC_BITS + B_DC_BITS + L_SCALE_BITS + A_SCALE_BITS + B_SCALE_BITS;
+/// Fixed prefix before the AC payload: descriptor + aspect + DC + scales = 54 bits.
+pub const PREFIX_BITS: u32 = DESCRIPTOR_BITS + DC_SCALE_BITS;
+/// Extra prefix bits present only in alpha mode (alpha DC 5 + alpha scale 4).
+pub const ALPHA_PREFIX_BITS: u32 = ALPHA_DC_BITS + ALPHA_SCALE_BITS;
+
+/// AC bit layout: how the per-channel AC budget is split. Counts are the
+/// **tier-0 base**; tier `m` scales every count by `4^m` (bits per coefficient
+/// stay constant — higher tiers carry *more* coefficients, not finer ones).
 ///
 /// L coefficients are written in selection order through up to two precision
 /// tiers (a tier with count 0 is unused). Chroma a/b each get `c_count`
 /// coefficients at `c_bits`. The `la_*`/`ca_*` fields are the alpha-mode
-/// equivalents (alpha mode additionally stores alpha DC 5b + scale 4b + 5×4b
-/// alpha AC). Remaining bits up to 256 are padding zeros.
+/// equivalents (alpha mode additionally stores alpha DC 5b + scale 4b + scaled
+/// alpha AC). Trailing bits to the final byte boundary are padding zeros.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AcLayout {
     pub l_tiers: [(usize, u32); 2],
@@ -35,12 +91,15 @@ pub const LAYOUT_A: AcLayout = AcLayout {
     ca_bits: 4,
 };
 
-/// Layout B: v0.5 channel split (isolates structural v0.6 gains in sweeps).
+/// Layout B: the **v1 tier-0 base** (the shipped default). Sized so a tier-0
+/// hash is exactly 32 bytes — the v0.6 footprint — for equal-budget comparison:
+/// no-alpha = 54 prefix + 26·5 L + 2·9·4 chroma = 256 bits; alpha = 54 + 9 +
+/// 20·5 L + 2·9·4 chroma + 5·4 alpha = 255 bits (both → 32 bytes).
 pub const LAYOUT_B: AcLayout = AcLayout {
-    l_tiers: [(27, 5), (0, 5)],
+    l_tiers: [(26, 5), (0, 5)],
     c_count: 9,
     c_bits: 4,
-    la_tiers: [(7, 6), (13, 5)],
+    la_tiers: [(20, 5), (0, 5)],
     ca_count: 9,
     ca_bits: 4,
 };
@@ -65,10 +124,86 @@ pub const LAYOUT_D: AcLayout = AcLayout {
     ca_bits: 5,
 };
 
-/// Number of alpha-channel AC coefficients (alpha mode only).
+/// Number of alpha-channel AC coefficients at tier 0 (alpha mode only).
 pub const ALPHA_AC_COUNT: usize = 5;
 /// Bits per alpha AC coefficient.
 pub const ALPHA_AC_BITS: u32 = 4;
+
+/// Per-channel AC counts/bit-widths resolved for one (alpha mode, tier). The
+/// base [`AcLayout`] describes tier 0; tier `m` scales every coefficient *count*
+/// by `4^m` while bit widths stay fixed.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct AcShape {
+    /// L coefficient precision tiers (count, bits), in write order.
+    pub l_tiers: [(usize, u32); 2],
+    /// Chroma a/b coefficient count (each channel) and bit width.
+    pub c_count: usize,
+    pub c_bits: u32,
+    /// Alpha AC coefficient count (0 when not in alpha mode).
+    pub alpha_ac_count: usize,
+}
+
+impl AcShape {
+    /// Total L coefficient count across both precision tiers.
+    pub fn l_count(&self) -> usize {
+        self.l_tiers[0].0 + self.l_tiers[1].0
+    }
+}
+
+/// `4^tier` — the count multiplier for a quality tier (1, 4, 16, 64).
+#[inline]
+pub(crate) fn tier_count_scale(tier: u8) -> usize {
+    1usize << (2 * tier as usize)
+}
+
+/// Resolve the base [`AcLayout`] for a (alpha mode, tier): pick the alpha or
+/// no-alpha base counts, then scale them by `4^tier`.
+pub(crate) fn ac_shape(layout: &AcLayout, has_alpha: bool, tier: u8) -> AcShape {
+    let s = tier_count_scale(tier);
+    if has_alpha {
+        AcShape {
+            l_tiers: [
+                (layout.la_tiers[0].0 * s, layout.la_tiers[0].1),
+                (layout.la_tiers[1].0 * s, layout.la_tiers[1].1),
+            ],
+            c_count: layout.ca_count * s,
+            c_bits: layout.ca_bits,
+            alpha_ac_count: ALPHA_AC_COUNT * s,
+        }
+    } else {
+        AcShape {
+            l_tiers: [
+                (layout.l_tiers[0].0 * s, layout.l_tiers[0].1),
+                (layout.l_tiers[1].0 * s, layout.l_tiers[1].1),
+            ],
+            c_count: layout.c_count * s,
+            c_bits: layout.c_bits,
+            alpha_ac_count: 0,
+        }
+    }
+}
+
+/// AC payload bits for a resolved shape: L tiers + both chroma channels + alpha
+/// AC. Excludes the prefix and the alpha DC/scale (see [`body_len_bytes`]).
+pub(crate) fn ac_payload_bits(shape: &AcShape) -> usize {
+    let l_bits: usize = shape.l_tiers.iter().map(|&(n, b)| n * b as usize).sum();
+    l_bits
+        + 2 * shape.c_count * shape.c_bits as usize
+        + shape.alpha_ac_count * ALPHA_AC_BITS as usize
+}
+
+/// Total encoded length in bytes for a (layout, alpha mode, tier): the fixed
+/// prefix (+ alpha DC/scale in alpha mode) plus the AC payload, rounded up to a
+/// whole number of bytes. This is the deterministic length formula a decoder
+/// recomputes to validate a hash.
+pub(crate) fn body_len_bytes(layout: &AcLayout, has_alpha: bool, tier: u8) -> usize {
+    let shape = ac_shape(layout, has_alpha, tier);
+    let mut bits = PREFIX_BITS as usize + ac_payload_bits(&shape);
+    if has_alpha {
+        bits += ALPHA_PREFIX_BITS as usize;
+    }
+    bits.div_ceil(8)
+}
 
 /// All v0.6 format parameters. The shipped format uses [`Tunables::DEFAULT`];
 /// the comparison harness can override these while sweeping the corpus to lock
