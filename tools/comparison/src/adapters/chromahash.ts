@@ -21,11 +21,15 @@ function encodeViaRust(
   h: number,
   rgba: Uint8Array,
   gamut: string,
+  tier: number,
 ): Uint8Array {
   const output = execFileSync(binary, ["encode", String(w), String(h), gamut], {
     input: Buffer.from(rgba),
     encoding: "buffer",
     timeout: 30_000,
+    // The quality tier is read from the environment (decode recovers it from the
+    // hash, so only encode needs it).
+    env: { ...process.env, CHROMAHASH_TIER: String(tier) },
   });
   return new Uint8Array(output);
 }
@@ -76,6 +80,8 @@ export class ChromaHashAdapter implements FormatAdapter {
   private readonly binaryPath: string;
   /** Cap the decode to source dims (true), or decode uncapped (false). */
   private readonly capToSource: boolean;
+  /** Quality tier (0..=3); higher tiers carry more detail in more bytes. */
+  private readonly tier: number;
 
   /**
    * @param opts.name        Display name (default "ChromaHash").
@@ -90,10 +96,12 @@ export class ChromaHashAdapter implements FormatAdapter {
     name?: string;
     binaryPath?: string;
     capToSource?: boolean;
+    tier?: number;
   }) {
     this.name = opts?.name ?? "ChromaHash";
     this.binaryPath = opts?.binaryPath ?? RUST_CLI;
     this.capToSource = opts?.capToSource ?? true;
+    this.tier = opts?.tier ?? 0;
   }
 
   async process(input: ImageInput, iterations: number): Promise<FormatResult> {
@@ -102,9 +110,9 @@ export class ChromaHashAdapter implements FormatAdapter {
     const bin = this.binaryPath;
 
     // Encode once to get result, then time the operation
-    const encoded = encodeViaRust(bin, w, h, rgba, gamut);
+    const encoded = encodeViaRust(bin, w, h, rgba, gamut, this.tier);
     const encodeTimeMs = await timeMs(() => {
-      encodeViaRust(bin, w, h, rgba, gamut);
+      encodeViaRust(bin, w, h, rgba, gamut, this.tier);
     }, iterations);
 
     const encodedSizeBytes = encoded.length;

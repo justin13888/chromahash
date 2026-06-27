@@ -275,13 +275,12 @@ export async function runAllHarnesses(
     try {
       const output = await runHarness(config, w, h, gamut, rgba);
 
-      if (output.length !== 32) {
-        console.warn(
-          `${config.language}: expected 32 bytes, got ${output.length}`,
-        );
+      // v1 hashes are variable-length (tier-driven); just require non-empty.
+      if (output.length === 0) {
+        console.warn(`${config.language}: encode returned no bytes`);
         results.push({
           language: config.language,
-          hash: new Uint8Array(32),
+          hash: new Uint8Array(),
           matches: false,
           dataUri: "",
         });
@@ -311,19 +310,20 @@ export async function runAllHarnesses(
       );
       results.push({
         language: config.language,
-        hash: new Uint8Array(32),
+        hash: new Uint8Array(),
         matches: false,
         dataUri: "",
       });
     }
   }
 
-  // Compare all hashes against reference (Rust)
+  // Compare all hashes against reference (Rust) — byte-identical at any length.
   if (referenceHash) {
+    const ref = referenceHash;
     for (const result of results) {
       result.matches =
-        result.hash.length === 32 &&
-        referenceHash.every((b, i) => b === result.hash[i]);
+        result.hash.length === ref.length &&
+        ref.every((b, i) => b === result.hash[i]);
     }
   } else {
     // No reference hash available — mark all as non-matching

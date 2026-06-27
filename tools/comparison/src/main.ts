@@ -211,6 +211,14 @@ async function main(): Promise<void> {
   // otherwise it's the cross-format LQIP line-up.
   let adapters: FormatAdapter[];
   let activeFormatNames: string[];
+  // chromahash quality tier (0..=3) for the ChromaHash column, from the
+  // environment so `CHROMAHASH_TIER=2 just compare` evaluates a higher-fidelity
+  // build under a more generous size budget (the encoded-bytes column shows the
+  // size–quality trade-off). Matches the encode_stdin / benchmark convention.
+  const chromaTier = Number.parseInt(process.env.CHROMAHASH_TIER ?? "0", 10) || 0;
+  if (chromaTier !== 0) {
+    console.log(`ChromaHash quality tier: ${chromaTier}`);
+  }
   if (versionList) {
     console.log("Preparing chromahash version binaries...");
     const bins = orderVersions(prepareVersionBinaries(versionList));
@@ -223,6 +231,7 @@ async function main(): Promise<void> {
           // Decode uncapped so every version is framed identically (the oldest
           // tags lack capped decode); metrics resample to source regardless.
           capToSource: false,
+          tier: chromaTier,
         }),
     );
     if (adapters.length === 0) {
@@ -233,7 +242,7 @@ async function main(): Promise<void> {
     console.log(`Version comparison: ${activeFormatNames.join(", ")}`);
   } else {
     adapters = [
-      new ChromaHashAdapter(),
+      new ChromaHashAdapter({ tier: chromaTier }),
       new ThumbHashAdapter(),
       new BlurHashAdapter(),
       new LqipModernAdapter(),

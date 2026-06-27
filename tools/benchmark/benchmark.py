@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shlex
 import subprocess
 import sys
@@ -151,12 +152,15 @@ def make_gradient_rgba(w: int, h: int) -> bytes:
     return bytes(buf)
 
 
-def run_harness(config: dict, sub_args: list[str], stdin_bytes: bytes) -> bytes:
+def run_harness(
+    config: dict, sub_args: list[str], stdin_bytes: bytes, env: dict | None = None
+) -> bytes:
     """Run a harness once with sub_args, feeding stdin_bytes; return stdout."""
     parts = shlex.split(config["cmd"]) + sub_args
     result = subprocess.run(
         parts,
         input=stdin_bytes,
+        env={**os.environ, **env} if env else None,
         capture_output=True,
         cwd=config.get("cwd"),
         timeout=60,
@@ -166,7 +170,7 @@ def run_harness(config: dict, sub_args: list[str], stdin_bytes: bytes) -> bytes:
     return result.stdout
 
 
-def prepare_fixtures(tmp_dir: Path) -> dict:
+def prepare_fixtures(tmp_dir: Path, tier: int) -> dict:
     """Write the gradient and the decode-hash fixtures to tmp_dir.
 
     Returns {"gradient": Path, "chroma_hash": Path, "thumb_hash": {name: Path}}.
@@ -181,10 +185,14 @@ def prepare_fixtures(tmp_dir: Path) -> dict:
     gradient_file.write_bytes(gradient)
 
     chroma_hash = run_harness(
-        HARNESSES["Rust"], ["encode", str(GRADIENT_W), str(GRADIENT_H), GAMUT], gradient
+        HARNESSES["Rust"],
+        ["encode", str(GRADIENT_W), str(GRADIENT_H), GAMUT],
+        gradient,
+        env={"CHROMAHASH_TIER": str(tier)},
     )
-    if len(chroma_hash) != 32:
-        print(f"ERROR: Rust encode returned {len(chroma_hash)} bytes (expected 32)")
+    # Variable length at tier > 0; tier 0 is 32 bytes. Just require non-empty.
+    if not chroma_hash:
+        print("ERROR: Rust encode returned no bytes")
         sys.exit(1)
     chroma_hash_file = tmp_dir / "chroma.hash"
     chroma_hash_file.write_bytes(chroma_hash)
@@ -210,12 +218,15 @@ def prepare_fixtures(tmp_dir: Path) -> dict:
 
 
 def harness_command(
-    name: str, config: dict, operation: str, mode: str, count: int, files: dict
+    name: str, config: dict, operation: str, mode: str, count: int, files: dict, tier: int
 ) -> str:
     """Build the shell command for one (harness, operation, mode) cell."""
     cmd = config["cmd"]
     is_thumb = config.get("thumbhash", False)
     gamut_arg = "" if is_thumb else f" {GAMUT}"
+    # chromahash harnesses read the quality tier from the environment; ThumbHash
+    # baselines have no tier concept.
+    env_prefix = "" if is_thumb else f"CHROMAHASH_TIER={tier} "
 
     if operation == "encode":
         verb = "encode" if mode == "single" else "batch-encode"
@@ -226,7 +237,7 @@ def harness_command(
         sub = "decode" if mode == "single" else f"batch-decode {count}"
         redirect = files["thumb_hash"][name] if is_thumb else files["chroma_hash"]
 
-    full = f"{cmd} {sub} < {redirect}"
+    full = f"{env_prefix}{cmd} {sub} < {redirect}"
     cwd = config.get("cwd")
     if cwd:
         full = f"cd {cwd} && {full}"
@@ -240,6 +251,7 @@ def run_benchmarks(
     min_runs: int,
     count: int,
     timeout: int,
+    tier: int,
 ) -> list[dict]:
     """Run one hyperfine comparison per (operation, mode) across all harnesses."""
     results_dir = output_dir / "json"
@@ -265,7 +277,9 @@ def run_benchmarks(
                 str(json_file),
             ]
             for name, config in HARNESSES.items():
-                cmd.extend(["-n", name, harness_command(name, config, operation, mode, count, files)])
+                cmd.extend(
+                    ["-n", name, harness_command(name, config, operation, mode, count, files, tier)]
+                )
 
             try:
                 subprocess.run(cmd, check=True, capture_output=True, timeout=timeout)
@@ -415,6 +429,18 @@ def main() -> None:
         ),
     )
     parser.add_argument("--skip-build", action="store_true", help="Skip building harnesses")
+    parser.add_argument(
+        "--tier",
+        type=int,
+        default=0,
+        choices=range(0, 4),
+        help=(
+            "chromahash quality tier (0-3) to benchmark — higher tiers carry more "
+            "detail in more bytes (~4x per tier). Run once at 0 and again at e.g. 2 "
+            "to see how encode/decode scale under a more generous size budget. "
+            "ThumbHash baselines ignore this."
+        ),
+    )
     args = parser.parse_args()
 
     output_dir: Path = args.output_dir
@@ -423,13 +449,13 @@ def main() -> None:
     if not args.skip_build:
         build_harnesses()
 
-    print("\nPreparing fixtures (100×100 gradient + decode hashes)...")
+    print(f"\nPreparing fixtures (100×100 gradient + decode hashes, tier {args.tier})...")
     with tempfile.TemporaryDirectory(prefix="chromahash-bench-") as tmp_dir:
-        files = prepare_fixtures(Path(tmp_dir))
+        files = prepare_fixtures(Path(tmp_dir), args.tier)
 
         print(f"\nRunning benchmarks ({len(OPERATIONS)} operations × {len(MODES)} modes)...")
         all_results = run_benchmarks(
-            files, output_dir, args.warmup, args.min_runs, args.bulk_count, args.timeout
+            files, output_dir, args.warmup, args.min_runs, args.bulk_count, args.timeout, args.tier
         )
 
     if not all_results:
