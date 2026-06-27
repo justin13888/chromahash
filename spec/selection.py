@@ -1,48 +1,43 @@
 #!/usr/bin/env python3
-"""Generate canonical coefficient selection tables for ChromaHash v0.6.
+"""Generate canonical coefficient selection tables for ChromaHash (format v1).
 
-v0.6 replaces v0.4's deriveGrid + triangular mask + scan-order sort with a
-single deterministic top-K selection over the natural-decode frequency domain
-(spec §6.2):
+v1 keeps v0.6's single deterministic top-K selection over the natural-decode
+frequency domain (spec §6.1), now parameterized by quality tier:
 
-  1. (W, H) = decodeOutputSize(aspect_byte)   # long side 32, short side ≥ 2
+  1. (W, H) = decodeOutputSize(aspect_byte, tier)   # long edge 32·2^tier
   2. Candidates: all (cx, cy) in [0, W) × [0, H) except DC (0, 0).
      The bound makes selecting a frequency unrepresentable at the natural
      render structurally impossible.
-  3. priority = (cx·H)² + (cy·W)²             # integer, fits in uint32
+  3. priority = (cx·H)² + (cy·W)²             # integer, bit-exact across langs
   4. Sort ascending by (priority, cx, cy); take the first K.
 
 p_k (the priority of the K-th selected pair) is emitted alongside each
 selection; it is reserved for frequency-normalized decoder extensions and
 pinned by the test vectors.
 
-K per channel (constants.py): L = 27 (no-alpha) / 20 (alpha mode),
-chroma a/b = 9, alpha = 5.
+K per channel at tier 0 (constants.py LAYOUT_B): L = 26 (no-alpha) /
+20 (alpha mode), chroma a/b = 9, alpha = 5. Tier m scales every K by 4^m, and
+the larger grid keeps the higher K satisfiable (candidates ≥ 64·4^m − 1).
 
 Usage:
-    python3 spec/selection.py           # pretty-print
-    python3 spec/selection.py --json    # JSON output
+    python3 spec/selection.py           # pretty-print (tier 0)
+    python3 spec/selection.py --json    # JSON output (tier 0)
 """
 
 import json
 import math
 import sys
 
-from constants import (
-    ALPHA_AC_COUNT,
-    C_AC_COUNT,
-    L_AC_COUNT,
-    LA_TIER1_COUNT,
-    LA_TIER2_COUNT,
-)
+from constants import ALPHA_AC_COUNT, BASE_LONG_EDGE, LAYOUT_B
 
-# Every K the format uses, in ascending order.
+# Every per-channel K the format uses at tier 0, in ascending order. Tier m
+# uses each of these scaled by 4^m.
 FORMAT_KS = sorted(
     {
         ALPHA_AC_COUNT,
-        C_AC_COUNT,
-        LA_TIER1_COUNT + LA_TIER2_COUNT,
-        L_AC_COUNT,
+        LAYOUT_B.c_count,
+        LAYOUT_B.la_tiers[0][0] + LAYOUT_B.la_tiers[1][0],
+        LAYOUT_B.l_tiers[0][0] + LAYOUT_B.l_tiers[1][0],
     }
 )
 
@@ -54,25 +49,41 @@ def round_half_away_from_zero(x: float) -> int:
     return math.ceil(x - 0.5)
 
 
-def decode_output_size(aspect_byte: int) -> tuple[int, int]:
-    """Decode (W, H) from aspect byte. Longer side = 32px. Per spec §8.2."""
+def base_output_size(aspect_byte: int) -> tuple[int, int]:
+    """Tier-0 (W, H) from an aspect byte. Longer side = BASE_LONG_EDGE (32px),
+    shorter side ≥ 1. Per spec §8.2."""
     ratio = math.pow(2.0, aspect_byte / 255.0 * 8.0 - 4.0)
     if ratio > 1.0:
-        h = max(round_half_away_from_zero(32.0 / ratio), 1)
-        return (32, h)
-    w = max(round_half_away_from_zero(32.0 * ratio), 1)
-    return (w, 32)
+        h = max(round_half_away_from_zero(BASE_LONG_EDGE / ratio), 1)
+        return (BASE_LONG_EDGE, h)
+    w = max(round_half_away_from_zero(BASE_LONG_EDGE * ratio), 1)
+    return (w, BASE_LONG_EDGE)
+
+
+def decode_output_size(aspect_byte: int, tier: int) -> tuple[int, int]:
+    """Natural output size for an aspect byte at a quality tier. Per spec §8.2 (v1).
+
+    The tier-0 size is scaled by a power of two — (w << tier, h << tier) — so the
+    long edge is 32·2^tier (32 / 64 / 128 / 256 px). Scaling the already-rounded
+    base size by a bit shift (rather than re-rounding 32·2^tier/ratio) is
+    mandatory: the two disagree for non-power-of-two ratios (round(64/3) = 21 vs
+    round(32/3) << 1 = 22), and the encoder and decoder MUST derive identical
+    grids or the reconstruction desynchronizes.
+    """
+    w, h = base_output_size(aspect_byte)
+    return (w << tier, h << tier)
 
 
 def select_coefficients(
-    aspect_byte: int, k: int
+    aspect_byte: int, tier: int, k: int
 ) -> tuple[list[tuple[int, int]], int]:
-    """Return (selected (cx, cy) pairs in transmission order, p_k). Per spec §6.2.
+    """Return (selected (cx, cy) pairs in transmission order, p_k). Per §6.1 (v1).
 
-    The candidate count is ≥ 2·32 − 1 = 63 for every aspect byte, so any
-    K ≤ 63 is always fully satisfied.
+    The candidate count is ≥ 64·4^tier − 1 for every aspect byte (the 16:1
+    extreme), and every per-channel K(tier) the format uses is < that bound, so
+    the selection is always fully satisfied.
     """
-    w, h = decode_output_size(aspect_byte)
+    w, h = decode_output_size(aspect_byte, tier)
     entries = []
     for cy in range(h):
         for cx in range(w):
@@ -88,19 +99,20 @@ def select_coefficients(
 
 def main() -> None:
     use_json = "--json" in sys.argv
+    tier = 0  # the canonical table is dumped at tier 0
 
     # Enumerate all unique (W, H, K) selections across all 256 aspect bytes.
     seen: set[tuple[int, int, int]] = set()
     entries = []
 
     for byte in range(256):
-        w, h = decode_output_size(byte)
+        w, h = decode_output_size(byte, tier)
         for k in FORMAT_KS:
             key = (w, h, k)
             if key in seen:
                 continue
             seen.add(key)
-            coeffs, p_k = select_coefficients(byte, k)
+            coeffs, p_k = select_coefficients(byte, tier, k)
             assert len(coeffs) == k, f"byte={byte} k={k}: got {len(coeffs)}"
             assert all(cx < w and cy < h for cx, cy in coeffs), (
                 f"byte={byte} k={k}: frequency out of bounds"
@@ -108,6 +120,7 @@ def main() -> None:
             entries.append(
                 {
                     "aspect_byte": byte,
+                    "tier": tier,
                     "w": w,
                     "h": h,
                     "k": k,

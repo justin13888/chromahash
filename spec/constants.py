@@ -10,6 +10,8 @@ matrices are computed as M_LMS × M_XYZ[gamut], where M_LMS is derived
 from M1[sRGB] and the sRGB XYZ matrix. Run validate.py to verify.
 """
 
+from dataclasses import dataclass
+
 # =========================================================================
 # Scalar Parameters (v0.6 — locked by the 2026-06 comparison-corpus sweep)
 # =========================================================================
@@ -44,21 +46,167 @@ MAX_A_ALPHA_SCALE = 0.5    # Max alpha AC amplitude
 # clipping in linear sRGB (§12.6) — no separate clamp constant is needed.
 
 # =========================================================================
+# Wire Format v1 — Framing (§2, §3)
+# =========================================================================
+# chromahash ships as release 0.7.0, but the on-wire format carries its own
+# generation number, independent of the package semver. This is wire-format
+# generation v1. Every framing parameter is a named constant so the encoder,
+# decoder, and this file agree without scattered literals.
+
+FORMAT_VERSION = 0      # 3-bit byte-0 version field; 0 = format v1. A decoder
+#                         MUST reject any version it does not implement.
+VERSION_BITS = 3        # Width of the byte-0 version field (bits 0..3)
+TIER_BITS = 3           # Width of the byte-0 tier field (bits 3..6)
+ALPHA_FLAG_BIT = 6      # Bit position of the hasAlpha flag within byte 0
+RESERVED_FLAG_BIT = 7   # Bit position of the reserved flag (MUST be 0 in v1)
+
+# Highest quality tier v1 defines: tiers 0..=MAX_TIER are valid; 4..=7 are
+# reserved and MUST be rejected by a v1 decoder.
+MAX_TIER = 3
+# Tier-0 natural-render long edge (px). The long edge scales to
+# BASE_LONG_EDGE << tier (32 / 64 / 128 / 256 px).
+BASE_LONG_EDGE = 32
+
+# DC code bit widths (L, a, b) — identical quantization to v0.6.
+L_DC_BITS = 7
+A_DC_BITS = 7
+B_DC_BITS = 7
+# AC scale code bit widths (L, a, b).
+L_SCALE_BITS = 6
+A_SCALE_BITS = 6
+B_SCALE_BITS = 5
+# Alpha DC / scale code bit widths (present only in alpha mode).
+ALPHA_DC_BITS = 5
+ALPHA_SCALE_BITS = 4
+
+# Byte 0 (descriptor) + byte 1 (aspect) = 16 bits.
+DESCRIPTOR_BITS = 16
+# DC + scale prefix after the descriptor/aspect bytes
+# (L/a/b DC = 21 bits, L/a/b scale = 17 bits).
+DC_SCALE_BITS = (
+    L_DC_BITS + A_DC_BITS + B_DC_BITS + L_SCALE_BITS + A_SCALE_BITS + B_SCALE_BITS
+)
+# Fixed prefix before the AC payload: descriptor + aspect + DC + scales = 54 bits.
+PREFIX_BITS = DESCRIPTOR_BITS + DC_SCALE_BITS
+# Extra prefix bits present only in alpha mode (alpha DC 5 + alpha scale 4).
+ALPHA_PREFIX_BITS = ALPHA_DC_BITS + ALPHA_SCALE_BITS
+
+# =========================================================================
 # AC Layout (§3.2, §6.4)
 # =========================================================================
-# Coefficient counts (K per channel) and bit depths. The selection of WHICH
-# K coefficients is defined in §6 (see selection.py).
+# How the per-channel AC budget is split. Counts are the TIER-0 BASE; tier m
+# scales every count by 4^m (bits per coefficient stay constant — higher tiers
+# carry MORE coefficients, not finer ones). L coefficients are written in
+# selection order through up to two precision tiers (a tier with count 0 is
+# unused). Chroma a/b each get c_count coefficients at c_bits. The la_*/ca_*
+# fields are the alpha-mode equivalents (alpha mode additionally stores alpha
+# DC 5b + scale 4b + scaled alpha AC). Which K coefficients are chosen is
+# defined in §6 (see selection.py).
 
-L_AC_COUNT = 27            # No-alpha mode: L AC coefficients × 5 bits
-L_AC_BITS = 5
-C_AC_COUNT = 9             # Chroma a/b AC coefficients each (both modes)
-C_AC_BITS = 4
-LA_TIER1_COUNT = 7         # Alpha mode: first 7 L AC at 6 bits
-LA_TIER1_BITS = 6
-LA_TIER2_COUNT = 13        # Alpha mode: remaining 13 L AC at 5 bits
-LA_TIER2_BITS = 5
-ALPHA_AC_COUNT = 5         # Alpha mode: alpha AC coefficients × 4 bits
+
+@dataclass(frozen=True)
+class AcLayout:
+    """AC bit layout: tier-0 base counts and bit widths (mirrors Rust AcLayout)."""
+
+    l_tiers: tuple[tuple[int, int], tuple[int, int]]   # no-alpha L (count, bits) ×2
+    c_count: int                                       # no-alpha chroma a/b count
+    c_bits: int
+    la_tiers: tuple[tuple[int, int], tuple[int, int]]  # alpha-mode L (count, bits) ×2
+    ca_count: int                                      # alpha-mode chroma a/b count
+    ca_bits: int
+
+
+# Layout B: the v1 tier-0 base (the shipped default). Sized so a tier-0 hash is
+# exactly 32 bytes for both alpha modes (the v0.6 footprint, for equal-budget
+# comparison):
+#   no-alpha = 54 prefix + 26·5 L + 2·9·4 chroma                  = 256 bits
+#   alpha    = 54 + 9 + 20·5 L + 2·9·4 chroma + 5·4 alpha         = 255 bits
+# (both round up to 32 bytes).
+LAYOUT_B = AcLayout(
+    l_tiers=((26, 5), (0, 5)),
+    c_count=9,
+    c_bits=4,
+    la_tiers=((20, 5), (0, 5)),
+    ca_count=9,
+    ca_bits=4,
+)
+
+# The shipped default layout (Tunables::DEFAULT.layout in the Rust reference).
+DEFAULT_LAYOUT = LAYOUT_B
+
+# Alpha-channel AC coefficients at tier 0 (alpha mode only) and their bit width.
+ALPHA_AC_COUNT = 5
 ALPHA_AC_BITS = 4
+
+
+@dataclass(frozen=True)
+class AcShape:
+    """Per-channel AC counts/bit-widths resolved for one (alpha mode, tier).
+
+    The base AcLayout describes tier 0; tier m scales every coefficient COUNT
+    by 4^m while bit widths stay fixed.
+    """
+
+    l_tiers: tuple[tuple[int, int], tuple[int, int]]   # L precision tiers (count, bits)
+    c_count: int                                       # chroma a/b count (each channel)
+    c_bits: int
+    alpha_ac_count: int                                # 0 when not in alpha mode
+
+    def l_count(self) -> int:
+        """Total L coefficient count across both precision tiers."""
+        return self.l_tiers[0][0] + self.l_tiers[1][0]
+
+
+def tier_count_scale(tier: int) -> int:
+    """4^tier — the count multiplier for a quality tier (1, 4, 16, 64)."""
+    return 1 << (2 * tier)
+
+
+def ac_shape(layout: AcLayout, has_alpha: bool, tier: int) -> AcShape:
+    """Resolve the base layout for a (alpha mode, tier): pick the alpha or
+    no-alpha base counts, then scale every count by 4^tier."""
+    s = tier_count_scale(tier)
+    if has_alpha:
+        return AcShape(
+            l_tiers=(
+                (layout.la_tiers[0][0] * s, layout.la_tiers[0][1]),
+                (layout.la_tiers[1][0] * s, layout.la_tiers[1][1]),
+            ),
+            c_count=layout.ca_count * s,
+            c_bits=layout.ca_bits,
+            alpha_ac_count=ALPHA_AC_COUNT * s,
+        )
+    return AcShape(
+        l_tiers=(
+            (layout.l_tiers[0][0] * s, layout.l_tiers[0][1]),
+            (layout.l_tiers[1][0] * s, layout.l_tiers[1][1]),
+        ),
+        c_count=layout.c_count * s,
+        c_bits=layout.c_bits,
+        alpha_ac_count=0,
+    )
+
+
+def ac_payload_bits(shape: AcShape) -> int:
+    """AC payload bits for a resolved shape: L tiers + both chroma channels +
+    alpha AC. Excludes the prefix and the alpha DC/scale (see body_len_bytes)."""
+    l_bits = sum(n * b for (n, b) in shape.l_tiers)
+    return (
+        l_bits
+        + 2 * shape.c_count * shape.c_bits
+        + shape.alpha_ac_count * ALPHA_AC_BITS
+    )
+
+
+def body_len_bytes(layout: AcLayout, has_alpha: bool, tier: int) -> int:
+    """Total encoded length in bytes for a (layout, alpha mode, tier): the fixed
+    prefix (+ alpha DC/scale in alpha mode) plus the AC payload, rounded up to a
+    whole number of bytes. The deterministic length a decoder recomputes to
+    validate a hash."""
+    bits = PREFIX_BITS + ac_payload_bits(ac_shape(layout, has_alpha, tier))
+    if has_alpha:
+        bits += ALPHA_PREFIX_BITS
+    return (bits + 7) // 8
 
 # =========================================================================
 # OKLAB Core Matrices (Björn Ottosson)

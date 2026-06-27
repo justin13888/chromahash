@@ -35,16 +35,17 @@ from constants import (
     MU_ALPHA,
     MU_C,
     MU_L,
-    ALPHA_AC_BITS,
-    ALPHA_AC_COUNT,
-    C_AC_BITS,
-    C_AC_COUNT,
-    L_AC_BITS,
-    L_AC_COUNT,
-    LA_TIER1_BITS,
-    LA_TIER1_COUNT,
-    LA_TIER2_BITS,
-    LA_TIER2_COUNT,
+    DEFAULT_LAYOUT,
+    FORMAT_VERSION,
+    MAX_TIER,
+    DESCRIPTOR_BITS,
+    DC_SCALE_BITS,
+    PREFIX_BITS,
+    ALPHA_PREFIX_BITS,
+    ac_shape,
+    ac_payload_bits,
+    body_len_bytes,
+    tier_count_scale,
 )
 from selection import FORMAT_KS, decode_output_size, select_coefficients
 
@@ -316,8 +317,9 @@ def validate_mu_law():
         check(abs(c_max - 1.0) < 1e-12, f"{mu_name}: µ-law(1.0) ≈ 1.0")
         check(abs(c_min + 1.0) < 1e-12, f"{mu_name}: µ-law(-1.0) ≈ -1.0")
 
-        # v0.6 exact-zero property: with 2^bits − 1 levels, the center index
-        # dequantizes to exactly 0.0 at every bit width the format uses.
+        # Exact-zero property (v1, unchanged from v0.6): with 2^bits − 1 levels,
+        # the center index dequantizes to exactly 0.0 at every AC bit width the
+        # format uses (4-bit chroma/alpha, 5-bit luma) plus 6-bit headroom.
         for bits in [4, 5, 6]:
             max_idx = (1 << bits) - 2
             center = max_idx // 2
@@ -357,50 +359,84 @@ def validate_aspect_ratio():
 
 
 def validate_selection():
-    """Check top-K coefficient selection properties for all aspect bytes. Per spec §6.2 (v0.6)."""
-    print("\n9. Coefficient selection (top-K per-pixel frequency)")
+    """Check top-K coefficient selection properties across tiers. Per spec §6.1 (v1)."""
+    print("\n9. Coefficient selection (top-K per-pixel frequency, all tiers)")
 
-    # Structural invariants over every aspect byte and every format K
-    all_ok = True
-    min_candidates = 1 << 30
-    for byte in range(256):
-        w, h = decode_output_size(byte)
-        min_candidates = min(min_candidates, w * h - 1)
-        for k in FORMAT_KS:
-            coeffs, p_k = select_coefficients(byte, k)
-            if len(coeffs) != k:
-                all_ok = False
-            if (0, 0) in coeffs:
-                all_ok = False
-            if any(cx >= w or cy >= h for cx, cy in coeffs):
-                all_ok = False
-            priorities = [(cx * h) ** 2 + (cy * w) ** 2 for cx, cy in coeffs]
-            if priorities != sorted(priorities):
-                all_ok = False
-            if p_k != priorities[-1] or p_k <= 0:
-                all_ok = False
-    check(all_ok, "All 256 bytes × all K: count, DC excluded, in-bounds, "
-                  "ascending priority, p_k consistent")
-    check(min_candidates >= max(FORMAT_KS),
-          f"Min candidate count {min_candidates} ≥ max K {max(FORMAT_KS)} "
-          "(selection always fully satisfied)")
+    representative = [0, 64, 100, 128, 159, 191, 255]
+
+    def check_invariants(byte_iter, tier):
+        """Return (invariants_ok, fully_satisfied) for the bytes at this tier."""
+        ok = True
+        satisfied = True
+        for byte in byte_iter:
+            w, h = decode_output_size(byte, tier)
+            candidates = w * h - 1
+            for base_k in FORMAT_KS:
+                k = base_k << (2 * tier)  # every K scales by 4^tier
+                if k > candidates:
+                    satisfied = False
+                coeffs, p_k = select_coefficients(byte, tier, k)
+                if len(coeffs) != k:
+                    ok = False
+                if (0, 0) in coeffs:
+                    ok = False
+                if any(cx >= w or cy >= h for cx, cy in coeffs):
+                    ok = False
+                priorities = [(cx * h) ** 2 + (cy * w) ** 2 for cx, cy in coeffs]
+                if priorities != sorted(priorities):
+                    ok = False
+                if p_k != priorities[-1] or p_k <= 0:
+                    ok = False
+        return ok, satisfied
+
+    # Tier 0: exhaustive over all 256 aspect bytes (preserves v0.6 coverage).
+    ok0, sat0 = check_invariants(range(256), 0)
+    check(ok0, "Tier 0, all 256 bytes × all K: count, DC excluded, in-bounds, "
+               "ascending priority, p_k consistent")
+    check(sat0, "Tier 0: every K ≤ candidate count (selection fully satisfied)")
+
+    # Tiers 1..MAX_TIER: representative aspect bytes, K scaled by 4^tier.
+    okN, satN = True, True
+    for tier in range(1, MAX_TIER + 1):
+        o, s = check_invariants(representative, tier)
+        okN = okN and o
+        satN = satN and s
+    check(okN, f"Tiers 1..{MAX_TIER} (representative bytes): same invariants with "
+               "K(tier) = K·4^tier")
+    check(satN, f"Tiers 1..{MAX_TIER}: every K(tier) ≤ candidate count")
 
     # Square at byte=128 (W=H=32): radial order, ℓ2 ball
-    coeffs_9, _ = select_coefficients(128, 9)
+    coeffs_9, _ = select_coefficients(128, 0, 9)
     check(coeffs_9[0] == (0, 1) and coeffs_9[1] == (1, 0),
           "Square K=9: first two slots are (0,1),(1,0) — tied priority, lex tiebreak")
     check(coeffs_9[2] == (1, 1), "Square K=9: third slot is (1,1)")
 
-    coeffs_27, _ = select_coefficients(128, 27)
-    check((3, 4) in coeffs_27 and (4, 3) in coeffs_27,
-          "Square K=27: ℓ2 ball includes diagonals (3,4)/(4,3)")
-    check((6, 0) not in coeffs_27 and (0, 6) not in coeffs_27,
-          "Square K=27: ℓ2 ball excludes axis extremes (6,0)/(0,6)")
+    coeffs_26, _ = select_coefficients(128, 0, 26)
+    check((3, 4) in coeffs_26 and (4, 3) in coeffs_26,
+          "Square K=26: ℓ2 ball includes diagonals (3,4)/(4,3)")
+    check((6, 0) not in coeffs_26 and (0, 6) not in coeffs_26,
+          "Square K=26: ℓ2 ball excludes axis extremes (6,0)/(0,6)")
+
+    # Same K returns the same low frequencies at any tier: priority (cx·H)² +
+    # (cy·W)² scales uniformly by 4^tier when the grid doubles. Per spec §6.1.
+    same_across_tiers = all(
+        select_coefficients(128, t, 26)[0] == coeffs_26 for t in range(MAX_TIER + 1)
+    )
+    check(same_across_tiers,
+          f"Same K=26 ⇒ identical low frequencies across tiers 0..{MAX_TIER}")
+    # The larger high-tier grid is what lets K itself scale to reach genuinely
+    # higher frequencies (always satisfiable).
+    max0 = max(max(cx, cy) for cx, cy in coeffs_26)
+    coeffs_hi, _ = select_coefficients(128, MAX_TIER, 26 << (2 * MAX_TIER))
+    max_hi = max(max(cx, cy) for cx, cy in coeffs_hi)
+    check(max_hi > max0,
+          f"tier {MAX_TIER} with K·4^tier reaches higher frequencies "
+          f"({max_hi} > {max0})")
 
     # Extreme landscape at byte=255 (W=32, H=2): long axis dominates
-    coeffs_land, _ = select_coefficients(255, 27)
+    coeffs_land, _ = select_coefficients(255, 0, 26)
     cy0 = sum(1 for _, cy in coeffs_land if cy == 0)
-    check(cy0 >= 15, f"16:1 landscape K=27: {cy0} ≥ 15 slots on the long axis")
+    check(cy0 >= 15, f"16:1 landscape K=26: {cy0} ≥ 15 slots on the long axis")
     check(all(cy < 2 for _, cy in coeffs_land),
           "16:1 landscape: no cy ≥ H=2 frequency ever selected")
 
@@ -408,16 +444,16 @@ def validate_selection():
     # (W, H), so the selected priority multisets are identical. The exact
     # coefficient sets may differ within an equal-priority tie group cut at
     # the K boundary (the (priority, cx, cy) tiebreak is not swap-invariant);
-    # this is benign and affects 5 of 512 (byte, K) mirror pairs.
+    # this is benign — the priority multiset and p_k stay swap-invariant.
     sym_ok = True
     for b in range(128):
-        w_lo, h_lo = decode_output_size(b)
-        w_hi, h_hi = decode_output_size(255 - b)
+        w_lo, h_lo = decode_output_size(b, 0)
+        w_hi, h_hi = decode_output_size(255 - b, 0)
         if (w_lo, h_lo) != (h_hi, w_hi):
             sym_ok = False
         for k in FORMAT_KS:
-            lo, pk_lo = select_coefficients(b, k)
-            hi, pk_hi = select_coefficients(255 - b, k)
+            lo, pk_lo = select_coefficients(b, 0, k)
+            hi, pk_hi = select_coefficients(255 - b, 0, k)
             pri_lo = sorted((cx * h_lo) ** 2 + (cy * w_lo) ** 2 for cx, cy in lo)
             pri_hi = sorted((cx * h_hi) ** 2 + (cy * w_hi) ** 2 for cx, cy in hi)
             if pri_lo != pri_hi or pk_lo != pk_hi:
@@ -426,25 +462,85 @@ def validate_selection():
                   "multisets and p_k across all K")
 
 
-def validate_bit_budget():
-    """Check the AC layout fits the 208-bit block exactly. Per spec §3.2 (v0.6)."""
-    print("\n10. AC bit budget")
+def validate_length_formula():
+    """Check the v1 deterministic length formula and tier scaling. Per spec §3 (v1).
 
-    no_alpha = L_AC_COUNT * L_AC_BITS + 2 * C_AC_COUNT * C_AC_BITS
-    check(no_alpha <= 208, f"No-alpha AC payload {no_alpha} ≤ 208 bits")
-    check(208 - no_alpha == 1, f"No-alpha padding = {208 - no_alpha} bit (spec §2.6)")
+    v1 drops v0.6's fixed 256-bit/32-byte frame. The encoded length is
+    body_len_bytes(layout, has_alpha, tier) =
+        ceil((PREFIX_BITS [+ ALPHA_PREFIX_BITS] + ac_payload_bits) / 8).
+    Tier 0 is 32 bytes for BOTH alpha modes (the v0.6 footprint, for equal-budget
+    comparison); each higher tier scales every AC count by 4^tier and grows the
+    body toward 4× as the fixed prefix becomes negligible. There is no CRC.
+    """
+    print("\n10. v1 length formula and tier scaling")
 
-    alpha = (
-        5 + 4  # alpha DC + alpha scale
-        + LA_TIER1_COUNT * LA_TIER1_BITS
-        + LA_TIER2_COUNT * LA_TIER2_BITS
-        + 2 * C_AC_COUNT * C_AC_BITS
-        + ALPHA_AC_COUNT * ALPHA_AC_BITS
-    )
-    check(alpha == 208, f"Alpha-mode AC payload {alpha} = 208 bits (no padding)")
+    layout = DEFAULT_LAYOUT
 
-    check(LA_TIER1_COUNT + LA_TIER2_COUNT == 20,
-          "Alpha-mode L coefficient count = 20")
+    # Version / tier descriptor constants are consistent.
+    check(FORMAT_VERSION == 0, f"FORMAT_VERSION = {FORMAT_VERSION} (format v1)")
+    check(MAX_TIER == 3,
+          f"MAX_TIER = {MAX_TIER} (tiers 0..=3 valid, 4..=7 reserved)")
+
+    # Fixed prefix framing: 16-bit descriptor/aspect + 38-bit DC/scale = 54 bits.
+    check(PREFIX_BITS == 54, f"PREFIX_BITS = {PREFIX_BITS} (= 54)")
+    check(PREFIX_BITS == DESCRIPTOR_BITS + DC_SCALE_BITS,
+          f"PREFIX_BITS = DESCRIPTOR_BITS({DESCRIPTOR_BITS}) + "
+          f"DC_SCALE_BITS({DC_SCALE_BITS})")
+    check(ALPHA_PREFIX_BITS == 9,
+          f"ALPHA_PREFIX_BITS = {ALPHA_PREFIX_BITS} (= 9: alpha DC 5 + scale 4)")
+
+    # Tier 0 is exactly 32 bytes for both alpha modes.
+    for has_alpha in (False, True):
+        label = "alpha" if has_alpha else "no-alpha"
+        n = body_len_bytes(layout, has_alpha, 0)
+        check(n == 32, f"tier-0 {label} length = {n} bytes (= 32)")
+
+    # Tier-0 bit accounting matches the spec's stated split.
+    no_alpha_bits = PREFIX_BITS + ac_payload_bits(ac_shape(layout, False, 0))
+    check(no_alpha_bits == 256,
+          f"tier-0 no-alpha = {no_alpha_bits} bits (54 prefix + 130 L + 72 chroma)")
+    alpha_bits = (PREFIX_BITS + ALPHA_PREFIX_BITS
+                  + ac_payload_bits(ac_shape(layout, True, 0)))
+    check(alpha_bits == 255,
+          f"tier-0 alpha = {alpha_bits} bits (54 + 9 + 100 L + 72 chroma + 20 alpha)")
+
+    # Higher tiers: positive, strictly growing, and approaching 4× per tier.
+    for has_alpha in (False, True):
+        label = "alpha" if has_alpha else "no-alpha"
+        prev = body_len_bytes(layout, has_alpha, 0)
+        for tier in range(1, MAX_TIER + 1):
+            n = body_len_bytes(layout, has_alpha, tier)
+            ratio = n / prev
+            check(n > 0 and n > prev,
+                  f"{label} tier {tier} length {n} bytes > tier {tier - 1} ({prev})")
+            check(3.0 <= ratio <= 4.0,
+                  f"{label} tier {tier}/{tier - 1} length ratio {ratio:.3f} ≈ 4×")
+            prev = n
+
+    # AC payload scales by EXACTLY 4^tier; bit widths stay constant per tier.
+    for has_alpha in (False, True):
+        label = "alpha" if has_alpha else "no-alpha"
+        base = ac_shape(layout, has_alpha, 0)
+        base_payload = ac_payload_bits(base)
+        for tier in range(MAX_TIER + 1):
+            s = tier_count_scale(tier)
+            check(s == 4 ** tier, f"tier_count_scale({tier}) = {s} (= 4^{tier})")
+            shape = ac_shape(layout, has_alpha, tier)
+            check(ac_payload_bits(shape) == base_payload * s,
+                  f"{label} tier {tier} AC payload scales ×{s} "
+                  f"(= {base_payload * s} bits)")
+            check(shape.l_count() == base.l_count() * s,
+                  f"{label} tier {tier} L count {shape.l_count()} "
+                  f"= {base.l_count()}·4^{tier}")
+            check(shape.c_count == base.c_count * s,
+                  f"{label} tier {tier} chroma count {shape.c_count} "
+                  f"= {base.c_count}·4^{tier}")
+            check(shape.alpha_ac_count == base.alpha_ac_count * s,
+                  f"{label} tier {tier} alpha-AC count = {shape.alpha_ac_count}")
+            check(shape.c_bits == base.c_bits
+                  and shape.l_tiers[0][1] == base.l_tiers[0][1],
+                  f"{label} tier {tier} bit widths constant "
+                  f"(L={shape.l_tiers[0][1]}, C={shape.c_bits})")
 
 
 # =========================================================================
@@ -464,7 +560,7 @@ if __name__ == "__main__":
     validate_mu_law()
     validate_aspect_ratio()
     validate_selection()
-    validate_bit_budget()
+    validate_length_formula()
 
     print(f"\n{'=' * 60}")
     print(f"Results: {passed} passed, {failed} failed")
