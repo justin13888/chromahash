@@ -25,7 +25,7 @@ let ffiTarget: Target =
         .binaryTarget(
             name: "chromahash_uniffiFFI",
             url: "https://github.com/justin13888/chromahash/releases/download/v0.6.0/ChromaHashFFI.xcframework.zip",
-            checksum: "0000000000000000000000000000000000000000000000000000000000000000"
+            checksum: "f83add6a9ddac32d182148e7096a758650f6395a9af9b29cf6afe664ec823a63"
         )
     }
 
