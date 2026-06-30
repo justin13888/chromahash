@@ -69,17 +69,25 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Platform cdylib (the wheel payload). Linux uses cargo-zigbuild pinned to
+          # glibc 2.17 for manylinux2014 compatibility.
           if [ "${{ matrix.zig }}" = "true" ]; then
             cargo zigbuild --release --manifest-path bindings/uniffi/Cargo.toml --target ${{ matrix.target }}.2.17
           else
             cargo build --release --manifest-path bindings/uniffi/Cargo.toml --target ${{ matrix.target }}
           fi
+          cp "bindings/uniffi/target/${{ matrix.target }}/release/${{ matrix.lib }}" python/chromahash/
+          # Platform-independent ctypes bindings: generate from a HOST-NATIVE build
+          # (mirrors `just python-cbuild`). uniffi-bindgen reads the namespace from the
+          # library's embedded metadata, which cross-compiled (zigbuild / cross-arch)
+          # libs can omit — so bindgen must run against a native build, never the
+          # cross-compiled payload above. The .py is identical across platforms.
+          cargo build --release --manifest-path bindings/uniffi/Cargo.toml
           gen="$(mktemp -d)"
           ( cd bindings/uniffi && cargo run --release --quiet --bin uniffi-bindgen -- \
-              generate --library "target/${{ matrix.target }}/release/${{ matrix.lib }}" \
+              generate --library "target/release/${{ matrix.lib }}" \
               --language python --out-dir "$gen" )
           cp "$gen/chromahash_uniffi.py" python/chromahash/_uniffi.py
-          cp "bindings/uniffi/target/${{ matrix.target }}/release/${{ matrix.lib }}" python/chromahash/
 
       - name: Build + re-tag wheel
         working-directory: python

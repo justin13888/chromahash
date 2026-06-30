@@ -151,6 +151,17 @@ tasks.named("processResources") {
     dependsOn(if (nativeLibsDir != null) stageNativeLibs else stageNativeLib)
 }
 
+// The default sources jar packages main.allSource, which spans both generated
+// source dirs (the Kotlin bindings and the staged JNA native libs). Declare the
+// producing tasks as dependencies — Gradle 9 fails the build when a task consumes
+// another's output without an explicit dependency. The maven-publish plugin
+// registers `sourcesJar` lazily (after this script body runs), so match it on the
+// live task collection rather than resolving the name eagerly.
+tasks.matching { it.name == "sourcesJar" }.configureEach {
+    dependsOn(generateUniffiBindings)
+    dependsOn(if (nativeLibsDir != null) stageNativeLibs else stageNativeLib)
+}
+
 tasks.test {
     useJUnitPlatform()
     // Belt-and-suspenders alongside the bundled resource: expose the freshly
