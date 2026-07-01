@@ -55,6 +55,7 @@ func gamutFromName(_ name: String) -> Gamut {
       let width = input["width"] as? Int,
       let height = input["height"] as? Int,
       let gamutName = input["gamut"] as? String,
+      let tier = input["tier"] as? Int,
       let rgbaNums = input["rgba"] as? [Int],
       let expected = tc["expected"] as? [String: Any],
       let hashNums = expected["hash"] as? [Int]
@@ -62,15 +63,15 @@ func gamutFromName(_ name: String) -> Gamut {
       Issue.record("malformed integration-encode entry: \(name)")
       continue
     }
-    let hash = ChromaHash.encode(
-      width: width, height: height, rgba: rgbaNums.map { UInt8($0) }, gamut: gamutFromName(gamutName)
+    let hash = ChromaHash.encodeWithQuality(
+      width: width, height: height, rgba: rgbaNums.map { UInt8($0) },
+      gamut: gamutFromName(gamutName), quality: UInt8(tier)
     )
     #expect(hash.hash == hashNums.map { UInt8($0) }, "\(name): encoded hash mismatch")
     if let avg = expected["average_color"] as? [Int], avg.count == 4 {
       let got = hash.averageColor()
       #expect([Int(got.r), Int(got.g), Int(got.b), Int(got.a)] == avg, "\(name): average_color")
     }
-    #expect(hash.isVersionSupported(), "\(name): fresh hash must report v0.6 supported")
   }
 }
 
@@ -140,13 +141,4 @@ func gamutFromName(_ name: String) -> Gamut {
   let rgba: [UInt8] = Array(repeating: [128, 64, 32, 255], count: 16).flatMap { $0 }
   let hash = ChromaHash.encode(width: 4, height: 4, rgba: rgba, gamut: .sRGB)
   #expect(ChromaHash.fromBytes(hash.hash) == hash)
-}
-
-@Test func versionSupportedDetectsLegacy() {
-  let rgba: [UInt8] = Array(repeating: [128, 128, 128, 255], count: 16).flatMap { $0 }
-  let hash = ChromaHash.encode(width: 4, height: 4, rgba: rgba, gamut: .sRGB)
-  #expect(hash.isVersionSupported())
-  var legacy = hash.hash
-  legacy[5] |= 0x80  // flip header bit 47 to simulate a legacy v0.2–v0.5 hash
-  #expect(!ChromaHash.fromBytes(legacy).isVersionSupported())
 }

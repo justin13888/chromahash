@@ -61,25 +61,13 @@ case "encode":
   FileHandle.standardOutput.write(Data(hash.hash))
 
 case "decode":
-  let stdinData = FileHandle.standardInput.readDataToEndOfFile()
-  let hashBytes = [UInt8](stdinData)
-  guard hashBytes.count == 32 else {
-    FileHandle.standardError.write(
-      Data("expected 32 bytes, got \(hashBytes.count)\n".utf8))
-    exit(1)
-  }
+  let hashBytes = [UInt8](FileHandle.standardInput.readDataToEndOfFile())
   let ch = ChromaHash.fromBytes(hashBytes)
   let (_, _, rgba) = ch.decode()
   FileHandle.standardOutput.write(Data(rgba))
 
 case "average-color":
-  let stdinData = FileHandle.standardInput.readDataToEndOfFile()
-  let hashBytes = [UInt8](stdinData)
-  guard hashBytes.count == 32 else {
-    FileHandle.standardError.write(
-      Data("expected 32 bytes, got \(hashBytes.count)\n".utf8))
-    exit(1)
-  }
+  let hashBytes = [UInt8](FileHandle.standardInput.readDataToEndOfFile())
   let ch = ChromaHash.fromBytes(hashBytes)
   let avg = ch.averageColor()
   FileHandle.standardOutput.write(Data([avg.r, avg.g, avg.b, avg.a]))

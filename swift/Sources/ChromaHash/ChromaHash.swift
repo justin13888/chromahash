@@ -21,16 +21,17 @@ public enum Gamut: Sendable {
     }
 }
 
-/// ChromaHash: a 32-byte LQIP (Low Quality Image Placeholder).
+/// ChromaHash: a compact LQIP (Low Quality Image Placeholder).
 ///
 /// A thin facade over the UniFFI-generated bindings to the Rust core; output is
-/// byte-identical to every other ChromaHash implementation. The hash is held as a
-/// 32-byte value and native objects are created transiently per operation.
+/// byte-identical to every other ChromaHash implementation. The hash is variable
+/// length (32 bytes at quality tier 0) and native objects are created transiently
+/// per operation.
 public struct ChromaHash: Sendable, Equatable {
-    /// The raw 32-byte hash data.
+    /// The raw hash bytes (32 at tier 0, more at higher tiers).
     public let hash: [UInt8]
 
-    /// Encode an image into a ChromaHash.
+    /// Encode an image into a tier-0 (32-byte) ChromaHash.
     ///
     /// - Parameters:
     ///   - width: image width (must be >= 1)
@@ -38,11 +39,20 @@ public struct ChromaHash: Sendable, Equatable {
     ///   - rgba: pixel data in RGBA format (4 bytes per pixel)
     ///   - gamut: source color space
     public static func encode(width: Int, height: Int, rgba: [UInt8], gamut: Gamut) -> ChromaHash {
+        return encodeWithQuality(width: width, height: height, rgba: rgba, gamut: gamut, quality: 0)
+    }
+
+    /// Encode an image at an explicit quality tier (0...3). Tier 0 is the 32-byte
+    /// default; each higher tier carries more detail in a larger hash.
+    public static func encodeWithQuality(
+        width: Int, height: Int, rgba: [UInt8], gamut: Gamut, quality: UInt8
+    ) -> ChromaHash {
         precondition(width >= 1, "width must be >= 1")
         precondition(height >= 1, "height must be >= 1")
         precondition(rgba.count == width * height * 4, "rgba length mismatch")
-        let obj = ChromaHashBindings.ChromaHash.encode(
-            w: UInt32(width), h: UInt32(height), rgba: Data(rgba), gamut: gamut.binding)
+        let obj = ChromaHashBindings.ChromaHash.encodeWithQuality(
+            w: UInt32(width), h: UInt32(height), rgba: Data(rgba), gamut: gamut.binding,
+            quality: quality)
         return ChromaHash(hash: [UInt8](obj.asBytes()))
     }
 
@@ -70,20 +80,14 @@ public struct ChromaHash: Sendable, Equatable {
         return (UInt8(c.r), UInt8(c.g), UInt8(c.b), UInt8(c.a))
     }
 
-    /// Whether this hash uses the v0.6 bitstream this library implements. Decoding
-    /// an unsupported (legacy) hash produces garbage, not an error.
-    public func isVersionSupported() -> Bool {
-        return binding().isVersionSupported()
-    }
-
-    /// Create a ChromaHash from raw 32-byte data.
+    /// Create a ChromaHash from raw hash bytes. The bytes are validated lazily
+    /// when the hash is used (`decode` / `averageColor` reconstruct and validate).
     public static func fromBytes(_ bytes: [UInt8]) -> ChromaHash {
-        precondition(bytes.count == 32, "ChromaHash must be exactly 32 bytes")
         return ChromaHash(hash: bytes)
     }
 
-    /// Reconstruct the UniFFI object from the stored bytes. The 32-byte value is
-    /// always valid, so the fallible `fromBytes` cannot fail here.
+    /// Reconstruct the UniFFI object from the stored bytes, validating the v1
+    /// header. Traps if the stored bytes are not a valid ChromaHash.
     private func binding() -> ChromaHashBindings.ChromaHash {
         // swiftlint:disable:next force_try
         try! ChromaHashBindings.ChromaHash.fromBytes(bytes: Data(hash))
