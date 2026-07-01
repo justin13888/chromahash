@@ -480,10 +480,17 @@ lint-swift: format-check-swift
 lint-fix-swift: format-swift
 
 # Build the UniFFI static lib, generate Swift bindings, and assemble the
-# ChromaHashFFI.xcframework the Swift package consumes. macOS-only (xcframework).
+# ChromaHashFFI.xcframework the Swift package consumes. The xcframework step is
+# macOS-only (xcodebuild); on other platforms this skips with a warning so the
+# recipes that depend on it (compare, build-benchmark) still run — the Swift
+# harness is simply absent there.
 swift-cbuild:
     #!/usr/bin/env bash
     set -euo pipefail
+    if [ "$(uname)" != "Darwin" ]; then
+        echo "swift-cbuild: skipping — the xcframework build needs macOS/xcodebuild." >&2
+        exit 0
+    fi
     cargo build --release --manifest-path bindings/uniffi/Cargo.toml
     gen="$(mktemp -d)"
     ( cd bindings/uniffi && cargo run --release --quiet --bin uniffi-bindgen -- \
