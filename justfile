@@ -87,8 +87,9 @@ lint-fix-gamutref:
     cargo clippy --manifest-path tools/gamut-ref-stdin/Cargo.toml --fix --allow-staged --allow-dirty
     cargo clippy --manifest-path tools/gamut-ref-stdin/Cargo.toml -- -D warnings
 
-# Build the comparison tool
+# Build the comparison tool (installs node deps first so a clean checkout works)
 build-compare:
+    mise exec -- pnpm --prefix tools/comparison install --frozen-lockfile
     mise exec -- pnpm --prefix tools/comparison run build
 
 # Install iqa-cli (the iqa-rs metrics CLI) — prerequisite for `compare`'s quality
