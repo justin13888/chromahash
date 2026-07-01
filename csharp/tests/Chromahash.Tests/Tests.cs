@@ -109,17 +109,6 @@ public class ChromaHashTests
         Assert.Equal(hash, CH.FromBytes(hash.AsBytes()));
     }
 
-    [Fact]
-    public void VersionSupported()
-    {
-        CH hash = CH.Encode(4, 4, Helpers.SolidImage(4, 4, 128, 128, 128, 255), Gamut.Srgb);
-        Assert.True(hash.IsVersionSupported(), "v0.6 hash must be supported");
-
-        byte[] legacy = hash.AsBytes();
-        legacy[5] |= 0x80; // flip header bit 47 to simulate a legacy v0.2–v0.5 hash
-        Assert.False(CH.FromBytes(legacy).IsVersionSupported());
-    }
-
     [Theory]
     [InlineData(0u, 4u)]
     [InlineData(4u, 0u)]
@@ -157,9 +146,10 @@ public class SpecVectorTests
             uint w = (uint)input.GetProperty("width").GetInt32();
             uint h = (uint)input.GetProperty("height").GetInt32();
             Gamut gamut = Helpers.GamutFromString(input.GetProperty("gamut").GetString()!);
+            byte tier = (byte)input.GetProperty("tier").GetInt32();
             byte[] rgba = Bytes(input.GetProperty("rgba"));
 
-            CH ch = CH.Encode(w, h, rgba, gamut);
+            CH ch = CH.EncodeWithQuality(w, h, rgba, gamut, tier);
             Assert.True(ch.AsBytes().SequenceEqual(Bytes(tc.GetProperty("expected").GetProperty("hash"))), $"{name}: hash mismatch");
             Assert.True(ch.AverageColor().SequenceEqual(Bytes(tc.GetProperty("expected").GetProperty("average_color"))), $"{name}: average_color mismatch");
         }

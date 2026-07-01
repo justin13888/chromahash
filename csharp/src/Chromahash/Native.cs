@@ -20,6 +20,7 @@ internal static partial class Native
         InvalidLength = 2,
         InvalidDimensions = 3,
         Internal = 4,
+        InvalidData = 5,
     }
 
     /// <summary>Mirror of the C <c>ChromaHashImage</c> (library-owned RGBA buffer).</summary>
@@ -53,6 +54,17 @@ internal static partial class Native
     );
 
     [LibraryImport(Lib)]
+    internal static partial Status chromahash_encode_with_quality(
+        uint width,
+        uint height,
+        [In] byte[] rgba,
+        nuint rgbaLen,
+        Gamut gamut,
+        byte quality,
+        out IntPtr outHash
+    );
+
+    [LibraryImport(Lib)]
     internal static partial Status chromahash_from_bytes(
         [In] byte[] bytes,
         nuint len,
@@ -63,11 +75,10 @@ internal static partial class Native
     internal static partial void chromahash_free(IntPtr hash);
 
     [LibraryImport(Lib)]
-    internal static partial Status chromahash_as_bytes(IntPtr hash, [Out] byte[] outBuf, nuint outCap);
+    internal static partial nuint chromahash_byte_len(IntPtr hash);
 
     [LibraryImport(Lib)]
-    [return: MarshalAs(UnmanagedType.U1)]
-    internal static partial bool chromahash_is_version_supported(IntPtr hash);
+    internal static partial Status chromahash_as_bytes(IntPtr hash, [Out] byte[] outBuf, nuint outCap);
 
     [LibraryImport(Lib)]
     internal static partial Status chromahash_average_color(IntPtr hash, out Color outColor);

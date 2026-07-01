@@ -29,6 +29,13 @@ static byte[] ReadExact(Stream stream, int count)
     return buf;
 }
 
+static byte[] ReadAll(Stream stream)
+{
+    using var ms = new MemoryStream();
+    stream.CopyTo(ms);
+    return ms.ToArray();
+}
+
 if (args.Length < 1)
 {
     Console.Error.WriteLine("Usage:");
@@ -65,7 +72,7 @@ switch (args[0])
     case "decode":
         {
             using var stdin = Console.OpenStandardInput();
-            byte[] hashBytes = ReadExact(stdin, 32);
+            byte[] hashBytes = ReadAll(stdin);
 
             var ch = ChromaHash.ChromaHash.FromBytes(hashBytes);
             var (_, _, rgba) = ch.Decode();
@@ -76,7 +83,7 @@ switch (args[0])
     case "average-color":
         {
             using var stdin = Console.OpenStandardInput();
-            byte[] hashBytes = ReadExact(stdin, 32);
+            byte[] hashBytes = ReadAll(stdin);
 
             var ch = ChromaHash.ChromaHash.FromBytes(hashBytes);
             byte[] avg = ch.AverageColor();
@@ -124,7 +131,7 @@ switch (args[0])
             }
             int count = int.Parse(args[1]);
             using var stdin = Console.OpenStandardInput();
-            byte[] hashBytes = ReadExact(stdin, 32);
+            byte[] hashBytes = ReadAll(stdin);
 
             var ch = ChromaHash.ChromaHash.FromBytes(hashBytes);
             byte acc = 0;
