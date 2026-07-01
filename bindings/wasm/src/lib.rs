@@ -54,7 +54,8 @@ impl DecodeResult {
     }
 }
 
-/// A 32-byte ChromaHash placeholder. Mirrors [`chromahash::ChromaHash`].
+/// A ChromaHash placeholder (variable length — 32 bytes at tier 0).
+/// Mirrors [`chromahash::ChromaHash`].
 #[wasm_bindgen]
 pub struct ChromaHash {
     inner: CoreHash,
@@ -62,23 +63,34 @@ pub struct ChromaHash {
 
 #[wasm_bindgen]
 impl ChromaHash {
-    /// Encode an RGBA image (4 bytes/pixel) into a 32-byte ChromaHash.
+    /// Encode an RGBA image (4 bytes/pixel) into a tier-0 (32-byte) ChromaHash.
     pub fn encode(w: u32, h: u32, rgba: &[u8], gamut: Gamut) -> ChromaHash {
         ChromaHash {
             inner: CoreHash::encode(w, h, rgba, gamut.into()),
         }
     }
 
-    /// Reconstruct from a raw 32-byte hash. Throws if `bytes` is not exactly 32
-    /// bytes long.
+    /// Encode at an explicit quality tier (0..=3). Tier 0 is the 32-byte default;
+    /// each higher tier carries more detail in a larger hash.
+    #[wasm_bindgen(js_name = encodeWithQuality)]
+    pub fn encode_with_quality(
+        w: u32,
+        h: u32,
+        rgba: &[u8],
+        gamut: Gamut,
+        quality: u8,
+    ) -> ChromaHash {
+        ChromaHash {
+            inner: CoreHash::encode_with_quality(w, h, rgba, gamut.into(), quality),
+        }
+    }
+
+    /// Reconstruct from raw hash bytes. Throws if `bytes` is not a valid v1
+    /// ChromaHash.
     #[wasm_bindgen(js_name = fromBytes)]
     pub fn from_bytes(bytes: &[u8]) -> Result<ChromaHash, JsError> {
-        let arr: [u8; 32] = bytes
-            .try_into()
-            .map_err(|_| JsError::new("expected a 32-byte ChromaHash"))?;
-        Ok(ChromaHash {
-            inner: CoreHash::from_bytes(arr),
-        })
+        let inner = CoreHash::from_bytes(bytes).map_err(|e| JsError::new(&e.to_string()))?;
+        Ok(ChromaHash { inner })
     }
 
     /// Decode into an sRGB RGBA image (≤ 32×32 px).
@@ -121,16 +133,9 @@ impl ChromaHash {
         self.inner.average_color().to_vec()
     }
 
-    /// The raw 32-byte hash data.
+    /// The raw hash bytes (32 at tier 0, more at higher tiers).
     #[wasm_bindgen(js_name = asBytes)]
     pub fn as_bytes(&self) -> Vec<u8> {
         self.inner.as_bytes().to_vec()
-    }
-
-    /// Whether this hash uses the v0.6 bitstream this library implements. Decoding
-    /// an unsupported (legacy v0.2–v0.5) hash produces garbage, not an error.
-    #[wasm_bindgen(js_name = isVersionSupported)]
-    pub fn is_version_supported(&self) -> bool {
-        self.inner.is_version_supported()
     }
 }
