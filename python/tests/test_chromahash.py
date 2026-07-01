@@ -40,13 +40,14 @@ def test_integration_encode():
         name = tc["name"]
         inp = tc["input"]
         rgba = bytes(inp["rgba"])
-        ch = ChromaHash.encode(inp["width"], inp["height"], rgba, gamut_from_name(inp["gamut"]))
+        ch = ChromaHash.encode_with_quality(
+            inp["width"], inp["height"], rgba, gamut_from_name(inp["gamut"]), inp["tier"]
+        )
         assert list(ch.as_bytes()) == tc["expected"]["hash"], f"{name}: hash mismatch"
         if "average_color" in tc["expected"]:
             assert list(ch.average_color()) == tc["expected"]["average_color"], (
                 f"{name}: average_color mismatch"
             )
-        assert ch.is_version_supported(), f"{name}: fresh hash must report v0.6 supported"
 
 
 def test_integration_decode():
@@ -90,11 +91,3 @@ def test_decode_valid_dimensions():
 def test_from_bytes_roundtrip():
     ch = ChromaHash.encode(4, 4, solid_image(4, 4, 128, 64, 32, 255), Gamut.SRGB)
     assert ChromaHash.from_bytes(ch.as_bytes()) == ch
-
-
-def test_version_supported_detects_legacy():
-    ch = ChromaHash.encode(4, 4, solid_image(4, 4, 128, 128, 128, 255), Gamut.SRGB)
-    assert ch.is_version_supported()
-    legacy = bytearray(ch.as_bytes())
-    legacy[5] |= 0x80  # flip header bit 47 to simulate a legacy v0.2-v0.5 hash
-    assert not ChromaHash.from_bytes(bytes(legacy)).is_version_supported()

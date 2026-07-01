@@ -16,16 +16,15 @@ _GAMUT_TO_CORE = {
 
 
 class ChromaHash:
-    """ChromaHash: a 32-byte LQIP (Low Quality Image Placeholder).
+    """ChromaHash: a compact LQIP (Low Quality Image Placeholder).
 
     A thin facade over the UniFFI-generated bindings to the Rust core. Output is
-    byte-identical to every other ChromaHash implementation. The hash is held as a
-    32-byte value; native objects are created transiently per operation.
+    byte-identical to every other ChromaHash implementation. The hash is variable
+    length (32 bytes at quality tier 0); native objects are created transiently
+    per operation.
     """
 
     def __init__(self, hash_bytes: bytes) -> None:
-        if len(hash_bytes) != 32:
-            raise ValueError("hash_bytes must be exactly 32 bytes")
         self._hash = bytes(hash_bytes)
 
     @classmethod
@@ -36,7 +35,7 @@ class ChromaHash:
         rgba: bytes | bytearray,
         gamut: Gamut = Gamut.SRGB,
     ) -> "ChromaHash":
-        """Encode an image into a ChromaHash.
+        """Encode an image into a tier-0 ChromaHash.
 
         Args:
             w: image width (>= 1)
@@ -45,6 +44,23 @@ class ChromaHash:
             gamut: source color space
         """
         obj = _CoreHash.encode(w, h, bytes(rgba), _GAMUT_TO_CORE[gamut])
+        return cls(obj.as_bytes())
+
+    @classmethod
+    def encode_with_quality(
+        cls,
+        w: int,
+        h: int,
+        rgba: bytes | bytearray,
+        gamut: Gamut = Gamut.SRGB,
+        quality: int = 0,
+    ) -> "ChromaHash":
+        """Encode an image at an explicit quality tier (0..=3).
+
+        Tier 0 is the 32-byte default; each higher tier carries more detail in a
+        larger hash. See :meth:`encode` for the argument contract.
+        """
+        obj = _CoreHash.encode_with_quality(w, h, bytes(rgba), _GAMUT_TO_CORE[gamut], quality)
         return cls(obj.as_bytes())
 
     def decode(self, output: Gamut = Gamut.SRGB) -> tuple[int, int, bytes]:
@@ -78,20 +94,17 @@ class ChromaHash:
         c = _CoreHash.from_bytes(self._hash).average_color()
         return (c.r, c.g, c.b, c.a)
 
-    def is_version_supported(self) -> bool:
-        """Whether this hash uses the v0.6 bitstream this library implements.
-
-        Decoding an unsupported (legacy) hash produces garbage, not an error.
-        """
-        return _CoreHash.from_bytes(self._hash).is_version_supported()
-
     @classmethod
     def from_bytes(cls, hash_bytes: bytes) -> "ChromaHash":
-        """Create a ChromaHash from raw 32-byte data."""
+        """Create a ChromaHash from raw hash bytes.
+
+        The bytes are validated lazily when the hash is used (``decode`` /
+        ``average_color`` reconstruct and validate it).
+        """
         return cls(hash_bytes)
 
     def as_bytes(self) -> bytes:
-        """Get the raw 32-byte hash data."""
+        """Get the raw hash bytes (32 at tier 0, more at higher tiers)."""
         return self._hash
 
     def __eq__(self, other: object) -> bool:

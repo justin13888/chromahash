@@ -54,21 +54,13 @@ def main() -> None:
         sys.stdout.buffer.write(ch.as_bytes())
 
     elif subcommand == "decode":
-        hash_bytes = sys.stdin.buffer.read(32)
-        if len(hash_bytes) != 32:
-            sys.stderr.write(f"expected 32 bytes, got {len(hash_bytes)}\n")
-            sys.exit(1)
-
+        hash_bytes = sys.stdin.buffer.read()
         ch = ChromaHash.from_bytes(hash_bytes)
         _w, _h, rgba = ch.decode()
         sys.stdout.buffer.write(rgba)
 
     elif subcommand == "average-color":
-        hash_bytes = sys.stdin.buffer.read(32)
-        if len(hash_bytes) != 32:
-            sys.stderr.write(f"expected 32 bytes, got {len(hash_bytes)}\n")
-            sys.exit(1)
-
+        hash_bytes = sys.stdin.buffer.read()
         ch = ChromaHash.from_bytes(hash_bytes)
         r, g, b, a = ch.average_color()
         sys.stdout.buffer.write(bytes([r, g, b, a]))
@@ -103,7 +95,7 @@ def main() -> None:
             sys.exit(1)
 
         count = int(sys.argv[2])
-        hash_bytes = sys.stdin.buffer.read(32)
+        hash_bytes = sys.stdin.buffer.read()
         ch = ChromaHash.from_bytes(hash_bytes)
         acc = 0
         for _ in range(count):
