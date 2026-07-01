@@ -56,6 +56,7 @@ class ChromaHashTest {
             val width = input.getInt("width")
             val height = input.getInt("height")
             val gamut = gamutFromName(input.getString("gamut"))
+            val tier = input.getInt("tier")
             val rgbaArr = input.getJSONArray("rgba")
             val rgba = ByteArray(rgbaArr.length()) { (rgbaArr.getInt(it) and 0xFF).toByte() }
             val expected = tc.getJSONObject("expected")
@@ -63,7 +64,7 @@ class ChromaHashTest {
             val expectedHash =
                 ByteArray(expectedHashArr.length()) { (expectedHashArr.getInt(it) and 0xFF).toByte() }
 
-            ChromaHash.encode(width.toUInt(), height.toUInt(), rgba, gamut).use { hash ->
+            ChromaHash.encodeWithQuality(width.toUInt(), height.toUInt(), rgba, gamut, tier.toUByte()).use { hash ->
                 assertContentEquals(expectedHash, hash.asBytes(), "$name: hash mismatch")
                 if (expected.has("average_color")) {
                     val avgArr = expected.getJSONArray("average_color")
@@ -161,19 +162,6 @@ class ChromaHashTest {
             assertTrue(result.width in 1..32)
             assertTrue(result.height in 1..32)
             assertEquals(result.width * result.height * 4, result.rgba.size)
-        }
-    }
-
-    @Test
-    fun `version support reflects header bit`() {
-        val rgba = ByteArray(64) { if (it % 4 == 3) 255.toByte() else 128.toByte() }
-        ChromaHash.encode(4u, 4u, rgba, Gamut.SRGB).use { hash ->
-            assertTrue(hash.isVersionSupported(), "v0.6 hash must be supported")
-            val legacy = hash.asBytes()
-            legacy[5] = (legacy[5].toInt() or 0x80).toByte()
-            ChromaHash.fromBytes(legacy).use { legacyHash ->
-                assertTrue(!legacyHash.isVersionSupported(), "bit 47 = 1 must be unsupported")
-            }
         }
     }
 }

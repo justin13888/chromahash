@@ -57,21 +57,13 @@ fun main(args: Array<String>) {
             System.out.flush()
         }
         "decode" -> {
-            val hashBytes = System.`in`.readNBytes(32)
-            if (hashBytes.size != 32) {
-                System.err.println("expected 32 bytes, got ${hashBytes.size}")
-                System.exit(1)
-            }
+            val hashBytes = System.`in`.readBytes()
             val result = ChromaHash.fromBytes(hashBytes).decode()
             System.out.write(result.rgba)
             System.out.flush()
         }
         "average-color" -> {
-            val hashBytes = System.`in`.readNBytes(32)
-            if (hashBytes.size != 32) {
-                System.err.println("expected 32 bytes, got ${hashBytes.size}")
-                System.exit(1)
-            }
+            val hashBytes = System.`in`.readBytes()
             val color = ChromaHash.fromBytes(hashBytes).averageColor()
             System.out.write(
                 byteArrayOf(color.r.toByte(), color.g.toByte(), color.b.toByte(), color.a.toByte()),
@@ -104,7 +96,7 @@ fun main(args: Array<String>) {
                 System.exit(1)
             }
             val count = args[1].toInt()
-            val hashBytes = System.`in`.readNBytes(32)
+            val hashBytes = System.`in`.readBytes()
             val ch = ChromaHash.fromBytes(hashBytes)
             var acc = 0
             repeat(count) { acc = acc xor (ch.decode().rgba[0].toInt() and 0xFF) }
