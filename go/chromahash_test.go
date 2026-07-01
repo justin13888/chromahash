@@ -1,6 +1,7 @@
 package chromahash
 
 import (
+	"bytes"
 	"encoding/json"
 	"math"
 	"os"
@@ -78,6 +79,7 @@ type encodeTestCase struct {
 		Width  int    `json:"width"`
 		Height int    `json:"height"`
 		Gamut  string `json:"gamut"`
+		Tier   int    `json:"tier"`
 		RGBA   []int  `json:"rgba"`
 	} `json:"input"`
 	Expected struct {
@@ -104,7 +106,10 @@ func TestIntegrationEncode(t *testing.T) {
 			for i, v := range tc.Input.RGBA {
 				rgba[i] = byte(v)
 			}
-			ch := Encode(tc.Input.Width, tc.Input.Height, rgba, gamutFromString(tc.Input.Gamut))
+			ch := EncodeWithQuality(tc.Input.Width, tc.Input.Height, rgba, gamutFromString(tc.Input.Gamut), uint8(tc.Input.Tier))
+			if len(ch.Hash) != len(tc.Expected.Hash) {
+				t.Fatalf("hash length = %d, want %d", len(ch.Hash), len(tc.Expected.Hash))
+			}
 			for i, want := range tc.Expected.Hash {
 				if int(ch.Hash[i]) != want {
 					t.Errorf("hash[%d] = %d, want %d", i, ch.Hash[i], want)
@@ -116,9 +121,6 @@ func TestIntegrationEncode(t *testing.T) {
 				if avg[i] != tc.Expected.AverageColor[i] {
 					t.Errorf("average_color[%d] = %d, want %d", i, avg[i], tc.Expected.AverageColor[i])
 				}
-			}
-			if !ch.IsVersionSupported() {
-				t.Error("freshly encoded hash must report v0.6 supported")
 			}
 		})
 	}
@@ -152,7 +154,7 @@ func TestIntegrationDecode(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.Name, func(t *testing.T) {
-			var hashBytes [32]byte
+			hashBytes := make([]byte, len(tc.Input.Hash))
 			for i, v := range tc.Input.Hash {
 				hashBytes[i] = byte(v)
 			}
@@ -202,7 +204,7 @@ func TestIntegrationDecodeCapped(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.Name, func(t *testing.T) {
-			var hashBytes [32]byte
+			hashBytes := make([]byte, len(tc.Input.Hash))
 			for i, v := range tc.Input.Hash {
 				hashBytes[i] = byte(v)
 			}
@@ -233,7 +235,7 @@ func TestEncodeProduces32Bytes(t *testing.T) {
 
 func TestFromBytesRoundtrip(t *testing.T) {
 	ch := Encode(4, 4, solidImage(4, 4, 128, 64, 32, 255), GamutSRGB)
-	if FromBytes(ch.Hash).Hash != ch.Hash {
+	if !bytes.Equal(FromBytes(ch.Hash).Hash, ch.Hash) {
 		t.Error("FromBytes roundtrip failed")
 	}
 }
@@ -246,18 +248,5 @@ func TestValidDecodeDimensions(t *testing.T) {
 	}
 	if len(pixels) != w*h*4 {
 		t.Errorf("pixel length %d, want %d", len(pixels), w*h*4)
-	}
-}
-
-func TestVersionSupportedForLegacyHash(t *testing.T) {
-	ch := Encode(4, 4, solidImage(4, 4, 128, 128, 128, 255), GamutSRGB)
-	if !ch.IsVersionSupported() {
-		t.Error("v0.6 hash must be supported")
-	}
-	// Flip header bit 47 to simulate a legacy v0.2–v0.5 hash.
-	legacy := ch.Hash
-	legacy[5] |= 0x80
-	if FromBytes(legacy).IsVersionSupported() {
-		t.Error("bit 47 = 1 must be reported as unsupported")
 	}
 }

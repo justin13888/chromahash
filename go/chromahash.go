@@ -1,5 +1,6 @@
 // Package chromahash implements the ChromaHash LQIP (Low Quality Image
-// Placeholder) format — a fixed 32-byte representation of an image.
+// Placeholder) format — a compact, variable-length representation of an image
+// (32 bytes at quality tier 0, larger at higher tiers).
 //
 // This package is a thin cgo wrapper over the chromahash-c C ABI, which exposes
 // the zero-dependency Rust core. Output is byte-identical to every other
@@ -21,9 +22,10 @@ import (
 	"unsafe"
 )
 
-// ChromaHash is a 32-byte LQIP representation of an image.
+// ChromaHash is a variable-length LQIP representation of an image (32 bytes at
+// tier 0; the length is self-describing via the header).
 type ChromaHash struct {
-	Hash [32]byte
+	Hash []byte
 }
 
 // Encode encodes an RGBA image into a ChromaHash.
@@ -44,13 +46,31 @@ func Encode(w, h int, rgba []byte, gamut Gamut) ChromaHash {
 		panic("chromahash: rgba length mismatch")
 	}
 
+	return EncodeWithQuality(w, h, rgba, gamut, 0)
+}
+
+// EncodeWithQuality encodes an RGBA image at an explicit quality tier (0..=3).
+// Tier 0 is the 32-byte default; each higher tier carries more detail in a
+// larger hash. See Encode for the argument contract.
+func EncodeWithQuality(w, h int, rgba []byte, gamut Gamut, quality uint8) ChromaHash {
+	if w < 1 {
+		panic("chromahash: width must be >= 1")
+	}
+	if h < 1 {
+		panic("chromahash: height must be >= 1")
+	}
+	if len(rgba) != w*h*4 {
+		panic("chromahash: rgba length mismatch")
+	}
+
 	var handle *C.ChromaHash
-	status := C.chromahash_encode(
+	status := C.chromahash_encode_with_quality(
 		C.uint32_t(w),
 		C.uint32_t(h),
 		(*C.uint8_t)(unsafe.Pointer(&rgba[0])),
 		C.size_t(len(rgba)),
 		C.ChromaHashGamut(gamut),
+		C.uint8_t(quality),
 		&handle,
 	)
 	runtime.KeepAlive(rgba)
@@ -59,21 +79,33 @@ func Encode(w, h int, rgba []byte, gamut Gamut) ChromaHash {
 	}
 	defer C.chromahash_free(handle)
 
-	var out ChromaHash
-	if C.chromahash_as_bytes(handle, (*C.uint8_t)(unsafe.Pointer(&out.Hash[0])), C.size_t(len(out.Hash))) != C.CHROMA_HASH_STATUS_OK {
-		panic("chromahash: as_bytes failed")
+	return readHash(handle)
+}
+
+// readHash copies a handle's variable-length bytes into a ChromaHash.
+func readHash(handle *C.ChromaHash) ChromaHash {
+	n := int(C.chromahash_byte_len(handle))
+	out := ChromaHash{Hash: make([]byte, n)}
+	if n > 0 {
+		if C.chromahash_as_bytes(handle, (*C.uint8_t)(unsafe.Pointer(&out.Hash[0])), C.size_t(n)) != C.CHROMA_HASH_STATUS_OK {
+			panic("chromahash: as_bytes failed")
+		}
 	}
 	return out
 }
 
-// FromBytes creates a ChromaHash directly from a raw 32-byte array.
-func FromBytes(b [32]byte) ChromaHash {
+// FromBytes creates a ChromaHash from raw hash bytes. Validation happens lazily
+// when the hash is used (Decode / AverageColor reconstruct and validate it).
+func FromBytes(b []byte) ChromaHash {
 	return ChromaHash{Hash: b}
 }
 
-// handle reconstructs an opaque C handle from the 32-byte hash. The caller must
-// free it with C.chromahash_free.
+// handle reconstructs an opaque C handle from the hash bytes, validating the
+// v1 header. The caller must free it with C.chromahash_free.
 func (ch *ChromaHash) handle() *C.ChromaHash {
+	if len(ch.Hash) == 0 {
+		panic("chromahash: from_bytes failed")
+	}
 	var handle *C.ChromaHash
 	status := C.chromahash_from_bytes(
 		(*C.uint8_t)(unsafe.Pointer(&ch.Hash[0])),
@@ -143,13 +175,4 @@ func (ch ChromaHash) AverageColor() (r, g, b, a uint8) {
 		panic("chromahash: average_color failed")
 	}
 	return uint8(color.r), uint8(color.g), uint8(color.b), uint8(color.a)
-}
-
-// IsVersionSupported reports whether this hash uses the v0.6 bitstream this
-// library implements. Decoding an unsupported (legacy) hash produces garbage,
-// not an error — check this first for hashes of unknown provenance.
-func (ch ChromaHash) IsVersionSupported() bool {
-	handle := ch.handle()
-	defer C.chromahash_free(handle)
-	return bool(C.chromahash_is_version_supported(handle))
 }

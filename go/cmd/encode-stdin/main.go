@@ -73,8 +73,7 @@ func main() {
 		os.Stdout.Write(hash.Hash[:])
 
 	case "decode":
-		var hash [32]byte
-		_, err := io.ReadFull(os.Stdin, hash[:])
+		hash, err := io.ReadAll(os.Stdin)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "failed to read hash from stdin: %v\n", err)
 			os.Exit(1)
@@ -84,8 +83,7 @@ func main() {
 		os.Stdout.Write(rgba)
 
 	case "average-color":
-		var hash [32]byte
-		_, err := io.ReadFull(os.Stdin, hash[:])
+		hash, err := io.ReadAll(os.Stdin)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "failed to read hash from stdin: %v\n", err)
 			os.Exit(1)
@@ -147,8 +145,8 @@ func main() {
 			fmt.Fprintf(os.Stderr, "invalid count: %v\n", err)
 			os.Exit(1)
 		}
-		var hash [32]byte
-		if _, err := io.ReadFull(os.Stdin, hash[:]); err != nil {
+		hash, err := io.ReadAll(os.Stdin)
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "failed to read hash from stdin: %v\n", err)
 			os.Exit(1)
 		}

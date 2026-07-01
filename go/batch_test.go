@@ -1,6 +1,9 @@
 package chromahash
 
-import "testing"
+import (
+	"bytes"
+	"testing"
+)
 
 // mixedBatchItems is a spread of dimensions, gamuts, and alpha, mirroring the
 // bulk-migration use case.
@@ -25,7 +28,7 @@ func TestBatchEncodeMatchesSerial(t *testing.T) {
 	}
 	for i, it := range items {
 		want := Encode(it.W, it.H, it.Rgba, it.Gamut)
-		if got[i] != want {
+		if !bytes.Equal(got[i].Hash, want.Hash) {
 			t.Errorf("item %d: batch hash != serial hash", i)
 		}
 	}
@@ -47,7 +50,7 @@ func TestBatchEncodePreservesOrder(t *testing.T) {
 
 	got := be.EncodeBatch(items)
 	for i, it := range items {
-		if got[i] != Encode(it.W, it.H, it.Rgba, it.Gamut) {
+		if !bytes.Equal(got[i].Hash, Encode(it.W, it.H, it.Rgba, it.Gamut).Hash) {
 			t.Errorf("item %d out of order", i)
 		}
 	}
@@ -61,7 +64,7 @@ func TestBatchEncodeReusable(t *testing.T) {
 	first := be.EncodeBatch(items)
 	second := be.EncodeBatch(items)
 	for i := range items {
-		if first[i] != second[i] {
+		if !bytes.Equal(first[i].Hash, second[i].Hash) {
 			t.Errorf("item %d differs across reuse", i)
 		}
 	}
