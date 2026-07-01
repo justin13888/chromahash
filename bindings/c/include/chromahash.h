@@ -59,8 +59,8 @@ enum ChromaHashStatus
      */
     CHROMA_HASH_STATUS_NULL_POINTER = 1,
     /**
-     * A buffer length was wrong (rgba != width*height*4, or hash != 32 bytes,
-     * or an output capacity was too small).
+     * A buffer length was wrong (rgba != width*height*4, or an output capacity
+     * was smaller than the hash's byte length).
      */
     CHROMA_HASH_STATUS_INVALID_LENGTH = 2,
     /**
@@ -71,15 +71,21 @@ enum ChromaHashStatus
      * The core panicked or an allocation failed — caught at the boundary.
      */
     CHROMA_HASH_STATUS_INTERNAL = 4,
+    /**
+     * The bytes are not a valid v1 ChromaHash (bad version, tier, reserved bit,
+     * or the length does not match the self-describing header).
+     */
+    CHROMA_HASH_STATUS_INVALID_DATA = 5,
 };
 #ifndef __cplusplus
 typedef int32_t ChromaHashStatus;
 #endif // __cplusplus
 
 /**
- * A 32-byte ChromaHash placeholder. Opaque handle; create with
- * [`chromahash_encode`] or [`chromahash_from_bytes`], release with
- * [`chromahash_free`].
+ * A ChromaHash placeholder. Opaque handle; create with [`chromahash_encode`]
+ * or [`chromahash_from_bytes`], release with [`chromahash_free`]. The encoded
+ * form is variable length (32 bytes at tier 0); query it with
+ * [`chromahash_byte_len`].
  */
 typedef struct ChromaHash ChromaHash;
 
@@ -128,8 +134,8 @@ extern "C" {
 #endif // __cplusplus
 
 /**
- * Encode an RGBA image (4 bytes/pixel) into a 32-byte ChromaHash. On success
- * `*out_hash` receives a new handle to free with [`chromahash_free`].
+ * Encode an RGBA image (4 bytes/pixel) into a tier-0 (32-byte) ChromaHash. On
+ * success `*out_hash` receives a new handle to free with [`chromahash_free`].
  */
 ChromaHashStatus chromahash_encode(uint32_t width,
                                    uint32_t height,
@@ -139,8 +145,24 @@ ChromaHashStatus chromahash_encode(uint32_t width,
                                    ChromaHash **out_hash);
 
 /**
- * Reconstruct a handle from a raw 32-byte hash. `bytes` must be exactly 32 bytes.
- * On success `*out_hash` receives a new handle to free with [`chromahash_free`].
+ * Encode an RGBA image at an explicit quality tier (`0..=3`; 0 is the 32-byte
+ * default, each higher tier ~4× larger). Rejects an out-of-range tier with
+ * [`ChromaHashStatus::InvalidData`]. On success `*out_hash` receives a new
+ * handle to free with [`chromahash_free`].
+ */
+ChromaHashStatus chromahash_encode_with_quality(uint32_t width,
+                                                uint32_t height,
+                                                const uint8_t *rgba,
+                                                size_t rgba_len,
+                                                ChromaHashGamut gamut,
+                                                uint8_t quality,
+                                                ChromaHash **out_hash);
+
+/**
+ * Reconstruct a handle from a raw v1 hash of `len` bytes. The header is
+ * self-describing, so `len` may be any tier's byte length; malformed bytes are
+ * rejected with [`ChromaHashStatus::InvalidData`]. On success `*out_hash`
+ * receives a new handle to free with [`chromahash_free`].
  */
 ChromaHashStatus chromahash_from_bytes(const uint8_t *bytes, size_t len, ChromaHash **out_hash);
 
@@ -151,16 +173,17 @@ ChromaHashStatus chromahash_from_bytes(const uint8_t *bytes, size_t len, ChromaH
 void chromahash_free(ChromaHash *hash);
 
 /**
- * Copy the raw 32-byte hash into `out_buf`. `out_cap` must be ≥ 32.
+ * The length in bytes of this hash's encoded form (32 at tier 0, more at higher
+ * tiers or when an alpha channel is present). Returns 0 for a NULL handle. Use
+ * it to size the buffer for [`chromahash_as_bytes`].
  */
-ChromaHashStatus chromahash_as_bytes(const ChromaHash *hash, uint8_t *out_buf, size_t out_cap);
+size_t chromahash_byte_len(const ChromaHash *hash);
 
 /**
- * Whether this hash uses the v0.6 bitstream this library implements. Decoding an
- * unsupported hash produces garbage, not an error — check this for hashes of
- * unknown provenance. Returns `false` for a NULL handle.
+ * Copy the raw hash bytes into `out_buf`. `out_cap` must be ≥ the hash's byte
+ * length ([`chromahash_byte_len`]); otherwise [`ChromaHashStatus::InvalidLength`].
  */
-bool chromahash_is_version_supported(const ChromaHash *hash);
+ChromaHashStatus chromahash_as_bytes(const ChromaHash *hash, uint8_t *out_buf, size_t out_cap);
 
 /**
  * Extract the average color without a full decode.

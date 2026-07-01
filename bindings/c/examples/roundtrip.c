@@ -34,17 +34,15 @@ int main(void) {
         return 1;
     }
 
-    uint8_t bytes[32];
-    if (chromahash_as_bytes(hash, bytes, sizeof(bytes)) != CHROMA_HASH_STATUS_OK) {
+    size_t nbytes = chromahash_byte_len(hash);
+    uint8_t *bytes = (uint8_t *)malloc(nbytes);
+    if (bytes == NULL || chromahash_as_bytes(hash, bytes, nbytes) != CHROMA_HASH_STATUS_OK) {
         fprintf(stderr, "as_bytes failed\n");
+        free(bytes);
         return 1;
     }
-    printf("hash[0..4] = %02x %02x %02x %02x\n", bytes[0], bytes[1], bytes[2], bytes[3]);
-
-    if (!chromahash_is_version_supported(hash)) {
-        fprintf(stderr, "version reported unsupported\n");
-        return 1;
-    }
+    printf("hash is %zu bytes; hash[0..4] = %02x %02x %02x %02x\n", nbytes, bytes[0], bytes[1],
+           bytes[2], bytes[3]);
 
     ChromaHashColor avg;
     if (chromahash_average_color(hash, &avg) != CHROMA_HASH_STATUS_OK) {
@@ -65,11 +63,12 @@ int main(void) {
     }
 
     ChromaHash *hash2 = NULL;
-    if (chromahash_from_bytes(bytes, sizeof(bytes), &hash2) != CHROMA_HASH_STATUS_OK ||
-        hash2 == NULL) {
+    if (chromahash_from_bytes(bytes, nbytes, &hash2) != CHROMA_HASH_STATUS_OK || hash2 == NULL) {
         fprintf(stderr, "from_bytes failed\n");
+        free(bytes);
         return 1;
     }
+    free(bytes);
 
     chromahash_image_free(&img);
     chromahash_free(hash);

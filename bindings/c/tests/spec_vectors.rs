@@ -7,9 +7,9 @@ use std::ptr;
 
 use chromahash_c::{
     chromahash_as_bytes, chromahash_average_color, chromahash_batch_encode,
-    chromahash_batch_encoder_free, chromahash_batch_encoder_new, chromahash_decode,
-    chromahash_decode_capped, chromahash_encode, chromahash_free, chromahash_from_bytes,
-    chromahash_image_free, chromahash_is_version_supported, ChromaHash, ChromaHashColor,
+    chromahash_batch_encoder_free, chromahash_batch_encoder_new, chromahash_byte_len,
+    chromahash_decode, chromahash_decode_capped, chromahash_encode, chromahash_encode_with_quality,
+    chromahash_free, chromahash_from_bytes, chromahash_image_free, ChromaHash, ChromaHashColor,
     ChromaHashGamut, ChromaHashImage, ChromaHashImageInput, ChromaHashStatus,
 };
 use serde_json::Value;
@@ -46,17 +46,21 @@ fn bytes(v: &Value) -> Vec<u8> {
         .collect()
 }
 
-/// Encode through the C ABI and return the resulting handle (caller frees).
-fn encode(w: u32, h: u32, rgba: &[u8], gamut: ChromaHashGamut) -> *mut ChromaHash {
+/// Encode through the C ABI at the given quality tier and return the resulting
+/// handle (caller frees).
+fn encode(w: u32, h: u32, rgba: &[u8], gamut: ChromaHashGamut, tier: u8) -> *mut ChromaHash {
     let mut handle: *mut ChromaHash = ptr::null_mut();
-    let status = unsafe { chromahash_encode(w, h, rgba.as_ptr(), rgba.len(), gamut, &mut handle) };
+    let status = unsafe {
+        chromahash_encode_with_quality(w, h, rgba.as_ptr(), rgba.len(), gamut, tier, &mut handle)
+    };
     assert_eq!(status, ChromaHashStatus::Ok, "encode returned an error");
     assert!(!handle.is_null(), "encode produced a null handle");
     handle
 }
 
-fn hash_bytes(handle: *mut ChromaHash) -> [u8; 32] {
-    let mut out = [0u8; 32];
+fn hash_bytes(handle: *mut ChromaHash) -> Vec<u8> {
+    let len = unsafe { chromahash_byte_len(handle) };
+    let mut out = vec![0u8; len];
     let status = unsafe { chromahash_as_bytes(handle, out.as_mut_ptr(), out.len()) };
     assert_eq!(status, ChromaHashStatus::Ok, "as_bytes returned an error");
     out
@@ -74,12 +78,13 @@ fn integration_encode_vectors() {
         let w = input["width"].as_u64().expect("width") as u32;
         let h = input["height"].as_u64().expect("height") as u32;
         let gamut = gamut_from_str(input["gamut"].as_str().expect("gamut"));
+        let tier = input["tier"].as_u64().expect("tier") as u8;
         let rgba = bytes(&input["rgba"]);
 
-        let handle = encode(w, h, &rgba, gamut);
+        let handle = encode(w, h, &rgba, gamut, tier);
 
         assert_eq!(
-            hash_bytes(handle).to_vec(),
+            hash_bytes(handle),
             bytes(&case["expected"]["hash"]),
             "{name}: hash mismatch"
         );
@@ -99,11 +104,6 @@ fn integration_encode_vectors() {
                 "{name}: average_color mismatch"
             );
         }
-
-        assert!(
-            unsafe { chromahash_is_version_supported(handle) },
-            "{name}: freshly encoded hash must report v0.6 supported"
-        );
 
         unsafe { chromahash_free(handle) };
     }
@@ -208,17 +208,19 @@ fn integration_decode_capped_vectors() {
 
 #[test]
 fn from_bytes_rejects_wrong_length() {
+    // v1 self-describing validation: a tier-0 header implies exactly 32 bytes, so
+    // any other length is InvalidData (the length does not match the header).
     let mut handle: *mut ChromaHash = ptr::null_mut();
     let buf = [0u8; 16];
     assert_eq!(
         unsafe { chromahash_from_bytes(buf.as_ptr(), buf.len(), &mut handle) },
-        ChromaHashStatus::InvalidLength,
+        ChromaHashStatus::InvalidData,
         "from_bytes should reject a 16-byte buffer"
     );
     let buf = [0u8; 33];
     assert_eq!(
         unsafe { chromahash_from_bytes(buf.as_ptr(), buf.len(), &mut handle) },
-        ChromaHashStatus::InvalidLength,
+        ChromaHashStatus::InvalidData,
         "from_bytes should reject a 33-byte buffer"
     );
 }
@@ -304,7 +306,8 @@ fn batch_encode_matches_single_encode() {
     assert_eq!(status, ChromaHashStatus::Ok, "batch_encode error");
 
     for (i, (w, h, rgba, gamut)) in owned.iter().enumerate() {
-        let single = encode(*w, *h, rgba, *gamut);
+        // The batch API encodes at tier 0, so compare against a tier-0 single encode.
+        let single = encode(*w, *h, rgba, *gamut, 0);
         assert_eq!(
             hash_bytes(out[i]),
             hash_bytes(single),

@@ -27,6 +27,7 @@ use std::sync::Arc;
 
 use chromahash::{
     BatchEncoder as CoreBatch, ChromaHash as CoreHash, Gamut as CoreGamut, ImageInput as CoreInput,
+    MAX_TIER,
 };
 
 /// Source/target color space. Mirrors [`chromahash::Gamut`].
@@ -60,18 +61,22 @@ pub enum ChromaHashStatus {
     Ok = 0,
     /// A required pointer argument was NULL.
     NullPointer = 1,
-    /// A buffer length was wrong (rgba != width*height*4, or hash != 32 bytes,
-    /// or an output capacity was too small).
+    /// A buffer length was wrong (rgba != width*height*4, or an output capacity
+    /// was smaller than the hash's byte length).
     InvalidLength = 2,
     /// A dimension was zero.
     InvalidDimensions = 3,
     /// The core panicked or an allocation failed — caught at the boundary.
     Internal = 4,
+    /// The bytes are not a valid v1 ChromaHash (bad version, tier, reserved bit,
+    /// or the length does not match the self-describing header).
+    InvalidData = 5,
 }
 
-/// A 32-byte ChromaHash placeholder. Opaque handle; create with
-/// [`chromahash_encode`] or [`chromahash_from_bytes`], release with
-/// [`chromahash_free`].
+/// A ChromaHash placeholder. Opaque handle; create with [`chromahash_encode`]
+/// or [`chromahash_from_bytes`], release with [`chromahash_free`]. The encoded
+/// form is variable length (32 bytes at tier 0); query it with
+/// [`chromahash_byte_len`].
 pub struct ChromaHash {
     inner: CoreHash,
 }
@@ -143,8 +148,8 @@ fn boxed_handle(inner: CoreHash) -> *mut ChromaHash {
 
 // ─── construct ────────────────────────────────────────────────────────────────
 
-/// Encode an RGBA image (4 bytes/pixel) into a 32-byte ChromaHash. On success
-/// `*out_hash` receives a new handle to free with [`chromahash_free`].
+/// Encode an RGBA image (4 bytes/pixel) into a tier-0 (32-byte) ChromaHash. On
+/// success `*out_hash` receives a new handle to free with [`chromahash_free`].
 #[no_mangle]
 pub unsafe extern "C" fn chromahash_encode(
     width: u32,
@@ -176,8 +181,55 @@ pub unsafe extern "C" fn chromahash_encode(
     }
 }
 
-/// Reconstruct a handle from a raw 32-byte hash. `bytes` must be exactly 32 bytes.
-/// On success `*out_hash` receives a new handle to free with [`chromahash_free`].
+/// Encode an RGBA image at an explicit quality tier (`0..=3`; 0 is the 32-byte
+/// default, each higher tier ~4× larger). Rejects an out-of-range tier with
+/// [`ChromaHashStatus::InvalidData`]. On success `*out_hash` receives a new
+/// handle to free with [`chromahash_free`].
+#[no_mangle]
+pub unsafe extern "C" fn chromahash_encode_with_quality(
+    width: u32,
+    height: u32,
+    rgba: *const u8,
+    rgba_len: usize,
+    gamut: ChromaHashGamut,
+    quality: u8,
+    out_hash: *mut *mut ChromaHash,
+) -> ChromaHashStatus {
+    if rgba.is_null() || out_hash.is_null() {
+        return ChromaHashStatus::NullPointer;
+    }
+    if width == 0 || height == 0 {
+        return ChromaHashStatus::InvalidDimensions;
+    }
+    if expected_rgba_len(width, height) != Some(rgba_len) {
+        return ChromaHashStatus::InvalidLength;
+    }
+    if quality > MAX_TIER {
+        return ChromaHashStatus::InvalidData;
+    }
+    let slice = std::slice::from_raw_parts(rgba, rgba_len);
+    let result = panic::catch_unwind(AssertUnwindSafe(|| {
+        boxed_handle(CoreHash::encode_with_quality(
+            width,
+            height,
+            slice,
+            gamut.into(),
+            quality,
+        ))
+    }));
+    match result {
+        Ok(handle) => {
+            *out_hash = handle;
+            ChromaHashStatus::Ok
+        }
+        Err(_) => ChromaHashStatus::Internal,
+    }
+}
+
+/// Reconstruct a handle from a raw v1 hash of `len` bytes. The header is
+/// self-describing, so `len` may be any tier's byte length; malformed bytes are
+/// rejected with [`ChromaHashStatus::InvalidData`]. On success `*out_hash`
+/// receives a new handle to free with [`chromahash_free`].
 #[no_mangle]
 pub unsafe extern "C" fn chromahash_from_bytes(
     bytes: *const u8,
@@ -187,18 +239,14 @@ pub unsafe extern "C" fn chromahash_from_bytes(
     if bytes.is_null() || out_hash.is_null() {
         return ChromaHashStatus::NullPointer;
     }
-    if len != 32 {
-        return ChromaHashStatus::InvalidLength;
-    }
-    let slice = std::slice::from_raw_parts(bytes, 32);
-    let mut arr = [0u8; 32];
-    arr.copy_from_slice(slice);
-    let result = panic::catch_unwind(AssertUnwindSafe(|| boxed_handle(CoreHash::from_bytes(arr))));
+    let slice = std::slice::from_raw_parts(bytes, len);
+    let result = panic::catch_unwind(AssertUnwindSafe(|| CoreHash::from_bytes(slice)));
     match result {
-        Ok(handle) => {
-            *out_hash = handle;
+        Ok(Ok(inner)) => {
+            *out_hash = boxed_handle(inner);
             ChromaHashStatus::Ok
         }
+        Ok(Err(_)) => ChromaHashStatus::InvalidData,
         Err(_) => ChromaHashStatus::Internal,
     }
 }
@@ -214,7 +262,19 @@ pub unsafe extern "C" fn chromahash_free(hash: *mut ChromaHash) {
 
 // ─── inspect / serialize ──────────────────────────────────────────────────────
 
-/// Copy the raw 32-byte hash into `out_buf`. `out_cap` must be ≥ 32.
+/// The length in bytes of this hash's encoded form (32 at tier 0, more at higher
+/// tiers or when an alpha channel is present). Returns 0 for a NULL handle. Use
+/// it to size the buffer for [`chromahash_as_bytes`].
+#[no_mangle]
+pub unsafe extern "C" fn chromahash_byte_len(hash: *const ChromaHash) -> usize {
+    if hash.is_null() {
+        return 0;
+    }
+    (*hash).inner.as_bytes().len()
+}
+
+/// Copy the raw hash bytes into `out_buf`. `out_cap` must be ≥ the hash's byte
+/// length ([`chromahash_byte_len`]); otherwise [`ChromaHashStatus::InvalidLength`].
 #[no_mangle]
 pub unsafe extern "C" fn chromahash_as_bytes(
     hash: *const ChromaHash,
@@ -224,30 +284,19 @@ pub unsafe extern "C" fn chromahash_as_bytes(
     if hash.is_null() || out_buf.is_null() {
         return ChromaHashStatus::NullPointer;
     }
-    if out_cap < 32 {
+    let handle = &*hash;
+    let bytes = handle.inner.as_bytes();
+    if out_cap < bytes.len() {
         return ChromaHashStatus::InvalidLength;
     }
-    let handle = &*hash;
     let result = panic::catch_unwind(AssertUnwindSafe(|| {
         // Inside the closure (a safe context) the raw copy needs its own block.
-        unsafe { ptr::copy_nonoverlapping(handle.inner.as_bytes().as_ptr(), out_buf, 32) };
+        unsafe { ptr::copy_nonoverlapping(bytes.as_ptr(), out_buf, bytes.len()) };
     }));
     match result {
         Ok(()) => ChromaHashStatus::Ok,
         Err(_) => ChromaHashStatus::Internal,
     }
-}
-
-/// Whether this hash uses the v0.6 bitstream this library implements. Decoding an
-/// unsupported hash produces garbage, not an error — check this for hashes of
-/// unknown provenance. Returns `false` for a NULL handle.
-#[no_mangle]
-pub unsafe extern "C" fn chromahash_is_version_supported(hash: *const ChromaHash) -> bool {
-    if hash.is_null() {
-        return false;
-    }
-    let handle = &*hash;
-    panic::catch_unwind(AssertUnwindSafe(|| handle.inner.is_version_supported())).unwrap_or(false)
 }
 
 /// Extract the average color without a full decode.
@@ -451,6 +500,9 @@ pub unsafe extern "C" fn chromahash_batch_encode(
             h: it.height,
             rgba: Arc::from(slice),
             gamut: it.gamut.into(),
+            // Batch mirrors chromahash_encode: tier 0. Higher tiers are a future
+            // additive API (chromahash_batch_encode_quality).
+            quality: 0,
         });
     }
 

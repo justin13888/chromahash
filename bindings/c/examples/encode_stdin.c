@@ -2,9 +2,9 @@
  * encode_stdin — stdin/stdout CLI for the cross-language comparison harness,
  * mirroring the other languages' `encode-stdin`. Exercises the C ABI end to end.
  *
- *   encode_stdin encode <width> <height> <gamut>   # rgba on stdin -> 32-byte hash
- *   encode_stdin decode                            # 32-byte hash on stdin -> rgba
- *   encode_stdin average-color                     # 32-byte hash on stdin -> 4 bytes
+ *   encode_stdin encode <width> <height> <gamut>   # rgba on stdin -> hash bytes
+ *   encode_stdin decode                            # hash bytes on stdin -> rgba
+ *   encode_stdin average-color                     # hash bytes on stdin -> 4 bytes
  *
  * <gamut> is one of: srgb displayp3 adobergb bt2020 prophoto
  */
@@ -29,19 +29,6 @@ static int parse_gamut(const char *s, ChromaHashGamut *out) {
         *out = CHROMA_HASH_GAMUT_PRO_PHOTO_RGB;
     } else {
         return -1;
-    }
-    return 0;
-}
-
-/* Read exactly `len` bytes from stdin into `buf`; returns 0 on success. */
-static int read_exact(uint8_t *buf, size_t len) {
-    size_t got = 0;
-    while (got < len) {
-        size_t n = fread(buf + got, 1, len - got, stdin);
-        if (n == 0) {
-            return -1;
-        }
-        got += n;
     }
     return 0;
 }
@@ -104,28 +91,40 @@ static int cmd_encode(int argc, char **argv) {
     }
     free(rgba);
 
-    uint8_t out[32];
-    int rc = chromahash_as_bytes(hash, out, sizeof out);
+    size_t out_len = chromahash_byte_len(hash);
+    uint8_t *out = (uint8_t *)malloc(out_len);
+    if (out == NULL) {
+        chromahash_free(hash);
+        fprintf(stderr, "out of memory\n");
+        return 1;
+    }
+    int rc = chromahash_as_bytes(hash, out, out_len);
     chromahash_free(hash);
     if (rc != CHROMA_HASH_STATUS_OK) {
+        free(out);
         fprintf(stderr, "as_bytes failed\n");
         return 1;
     }
-    fwrite(out, 1, sizeof out, stdout);
+    fwrite(out, 1, out_len, stdout);
+    free(out);
     return 0;
 }
 
 static int cmd_decode(void) {
-    uint8_t bytes[32];
-    if (read_exact(bytes, sizeof bytes) != 0) {
-        fprintf(stderr, "expected 32 bytes\n");
+    uint8_t *bytes = NULL;
+    long n = read_all(&bytes);
+    if (n < 0) {
+        fprintf(stderr, "failed to read hash\n");
+        free(bytes);
         return 1;
     }
     ChromaHash *hash = NULL;
-    if (chromahash_from_bytes(bytes, sizeof bytes, &hash) != CHROMA_HASH_STATUS_OK) {
+    if (chromahash_from_bytes(bytes, (size_t)n, &hash) != CHROMA_HASH_STATUS_OK) {
         fprintf(stderr, "from_bytes failed\n");
+        free(bytes);
         return 1;
     }
+    free(bytes);
     ChromaHashImage image;
     int rc = chromahash_decode(hash, &image);
     chromahash_free(hash);
@@ -139,16 +138,20 @@ static int cmd_decode(void) {
 }
 
 static int cmd_average_color(void) {
-    uint8_t bytes[32];
-    if (read_exact(bytes, sizeof bytes) != 0) {
-        fprintf(stderr, "expected 32 bytes\n");
+    uint8_t *bytes = NULL;
+    long n = read_all(&bytes);
+    if (n < 0) {
+        fprintf(stderr, "failed to read hash\n");
+        free(bytes);
         return 1;
     }
     ChromaHash *hash = NULL;
-    if (chromahash_from_bytes(bytes, sizeof bytes, &hash) != CHROMA_HASH_STATUS_OK) {
+    if (chromahash_from_bytes(bytes, (size_t)n, &hash) != CHROMA_HASH_STATUS_OK) {
         fprintf(stderr, "from_bytes failed\n");
+        free(bytes);
         return 1;
     }
+    free(bytes);
     ChromaHashColor color;
     int rc = chromahash_average_color(hash, &color);
     chromahash_free(hash);
