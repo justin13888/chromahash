@@ -7,7 +7,8 @@
 //! The generated Kotlin lives in package `io.chromahash.ffi` (see `uniffi.toml`) and
 //! mirrors the pure-JVM `chromahash` API 1:1, with two deliberate differences at the
 //! FFI boundary:
-//!   - [`ChromaHash::from_bytes`] is **fallible** (throws on a non-32-byte input)
+//!   - [`ChromaHash::from_bytes`] is **fallible** (throws on malformed input — bad
+//!     version, tier, reserved bit, or a length that disagrees with the header)
 //!     rather than panicking — a panic across FFI is unsafe.
 //!   - Integer record fields are signed (`i32` → Kotlin `Int`), matching the
 //!     pure-Kotlin `DecodeResult`/`RgbaColor` types and Android's `Bitmap`/ARGB APIs.
@@ -45,16 +46,16 @@ impl From<Gamut> for CoreGamut {
 /// Errors surfaced across the FFI boundary. Maps to a thrown Kotlin exception.
 #[derive(Debug, uniffi::Error)]
 pub enum ChromaHashError {
-    /// `from_bytes` was called with a buffer that was not exactly 32 bytes long.
-    InvalidLength { got: u32 },
+    /// `from_bytes` was given bytes that are not a valid v1 ChromaHash (bad
+    /// version, tier, reserved bit, or a length that disagrees with the header).
+    /// `reason` carries the core's precise message.
+    InvalidData { reason: String },
 }
 
 impl std::fmt::Display for ChromaHashError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ChromaHashError::InvalidLength { got } => {
-                write!(f, "expected a 32-byte ChromaHash, got {got} bytes")
-            }
+            ChromaHashError::InvalidData { reason } => write!(f, "{reason}"),
         }
     }
 }
@@ -78,7 +79,8 @@ pub struct RgbaColor {
     pub a: i32,
 }
 
-/// A 32-byte ChromaHash placeholder. Mirrors [`chromahash::ChromaHash`].
+/// A ChromaHash placeholder (variable length — 32 bytes at tier 0).
+/// Mirrors [`chromahash::ChromaHash`].
 #[derive(Debug, uniffi::Object)]
 pub struct ChromaHash {
     inner: CoreHash,
@@ -86,7 +88,7 @@ pub struct ChromaHash {
 
 #[uniffi::export]
 impl ChromaHash {
-    /// Encode an image (RGBA, 4 bytes/pixel) into a 32-byte ChromaHash.
+    /// Encode an image (RGBA, 4 bytes/pixel) into a tier-0 (32-byte) ChromaHash.
     #[uniffi::constructor]
     pub fn encode(w: u32, h: u32, rgba: Vec<u8>, gamut: Gamut) -> Arc<Self> {
         Arc::new(Self {
@@ -94,20 +96,29 @@ impl ChromaHash {
         })
     }
 
-    /// Reconstruct from a raw 32-byte hash. Throws [`ChromaHashError::InvalidLength`]
-    /// if `bytes` is not exactly 32 bytes long.
+    /// Encode at an explicit quality tier (0..=3). Tier 0 is the 32-byte default;
+    /// each higher tier carries more detail in a larger hash.
+    #[uniffi::constructor]
+    pub fn encode_with_quality(
+        w: u32,
+        h: u32,
+        rgba: Vec<u8>,
+        gamut: Gamut,
+        quality: u8,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            inner: CoreHash::encode_with_quality(w, h, &rgba, gamut.into(), quality),
+        })
+    }
+
+    /// Reconstruct from raw hash bytes. Throws [`ChromaHashError::InvalidData`] if
+    /// `bytes` is not a valid v1 ChromaHash.
     #[uniffi::constructor]
     pub fn from_bytes(bytes: Vec<u8>) -> Result<Arc<Self>, ChromaHashError> {
-        let arr: [u8; 32] =
-            bytes
-                .as_slice()
-                .try_into()
-                .map_err(|_| ChromaHashError::InvalidLength {
-                    got: bytes.len() as u32,
-                })?;
-        Ok(Arc::new(Self {
-            inner: CoreHash::from_bytes(arr),
-        }))
+        let inner = CoreHash::from_bytes(&bytes).map_err(|e| ChromaHashError::InvalidData {
+            reason: e.to_string(),
+        })?;
+        Ok(Arc::new(Self { inner }))
     }
 
     /// Decode into an sRGB RGBA image (≤ 32×32 px).
@@ -152,16 +163,9 @@ impl ChromaHash {
         }
     }
 
-    /// The raw 32-byte hash data.
+    /// The raw hash bytes (32 at tier 0, more at higher tiers).
     pub fn as_bytes(&self) -> Vec<u8> {
         self.inner.as_bytes().to_vec()
-    }
-
-    /// Whether this hash uses the v0.6 bitstream this library implements. Decoding
-    /// an unsupported (legacy v0.2–v0.5) hash produces garbage, not an error —
-    /// check this first for hashes of unknown provenance. Per spec §2.5.
-    pub fn is_version_supported(&self) -> bool {
-        self.inner.is_version_supported()
     }
 }
 
@@ -214,6 +218,9 @@ impl BatchEncoder {
                 h: it.h,
                 rgba: Arc::from(it.rgba),
                 gamut: it.gamut.into(),
+                // Batch mirrors ChromaHash::encode: tier 0. Higher tiers are a
+                // future additive API.
+                quality: 0,
             })
             .collect();
         let guard = self.inner.lock().expect("batch encoder mutex poisoned");

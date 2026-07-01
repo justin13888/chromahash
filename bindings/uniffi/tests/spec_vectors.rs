@@ -49,9 +49,10 @@ fn integration_encode_vectors() {
         let w = input["width"].as_u64().expect("width") as u32;
         let h = input["height"].as_u64().expect("height") as u32;
         let gamut = gamut_from_str(input["gamut"].as_str().expect("gamut"));
+        let tier = input["tier"].as_u64().expect("tier") as u8;
         let rgba = bytes(&input["rgba"]);
 
-        let hash = ChromaHash::encode(w, h, rgba, gamut);
+        let hash = ChromaHash::encode_with_quality(w, h, rgba, gamut, tier);
 
         assert_eq!(
             hash.as_bytes(),
@@ -68,11 +69,6 @@ fn integration_encode_vectors() {
                 "{name}: average_color mismatch"
             );
         }
-
-        assert!(
-            hash.is_version_supported(),
-            "{name}: freshly encoded hash must report v0.6 supported"
-        );
     }
 }
 
