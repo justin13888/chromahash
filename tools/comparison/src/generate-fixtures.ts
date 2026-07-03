@@ -95,6 +95,63 @@ function lcg(seed: number): () => number {
   };
 }
 
+/** An opaque RGB color. */
+type Rgb = [number, number, number];
+
+/** Fill an axis-aligned rectangle (clipped to the image bounds) with a color. */
+function fillRect(
+  rgba: Uint8Array,
+  imgW: number,
+  imgH: number,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  [r, g, b]: Rgb,
+): void {
+  const x1 = Math.min(x + w, imgW);
+  const y1 = Math.min(y + h, imgH);
+  for (let py = Math.max(y, 0); py < y1; py++) {
+    for (let px = Math.max(x, 0); px < x1; px++) {
+      const idx = (py * imgW + px) * 4;
+      rgba[idx] = r;
+      rgba[idx + 1] = g;
+      rgba[idx + 2] = b;
+      rgba[idx + 3] = 255;
+    }
+  }
+}
+
+/** Fill a hard-edged circle (clipped to the image bounds) with a color. */
+function fillCircle(
+  rgba: Uint8Array,
+  imgW: number,
+  imgH: number,
+  cx: number,
+  cy: number,
+  radius: number,
+  color: Rgb,
+): void {
+  const r2 = radius * radius;
+  for (
+    let py = Math.max(Math.floor(cy - radius), 0);
+    py <= Math.min(Math.ceil(cy + radius), imgH - 1);
+    py++
+  ) {
+    for (
+      let px = Math.max(Math.floor(cx - radius), 0);
+      px <= Math.min(Math.ceil(cx + radius), imgW - 1);
+      px++
+    ) {
+      const dx = px - cx;
+      const dy = py - cy;
+      if (dx * dx + dy * dy <= r2) {
+        fillRect(rgba, imgW, imgH, px, py, 1, 1, color);
+      }
+    }
+  }
+}
+
 export async function generateFixtures(): Promise<void> {
   await fs.mkdir(FIXTURES_DIR, { recursive: true });
   console.log(`Generating synthetic fixtures in ${FIXTURES_DIR}...`);
@@ -347,6 +404,149 @@ export async function generateFixtures(): Promise<void> {
       }
     }
     fixtures.push({ name: "monochrome", w, h, rgba });
+  }
+
+  // === Axis 6: Text / UI (screenshot-like content; hard edges, no photography) ===
+  // Drawn with raw pixel rects — no font rendering, so output is deterministic
+  // across platforms. Sized well above the encoder input so the
+  // display-resolution reference differs from what the encoder sees.
+
+  // textui-window: window-chrome mock — title bar with traffic-light buttons,
+  // a sidebar, and content placeholder bars.
+  {
+    const w = 320;
+    const h = 240;
+    const rgba = new Uint8Array(w * h * 4);
+    fillRect(rgba, w, h, 0, 0, w, h, [236, 236, 240]); // window background
+    fillRect(rgba, w, h, 0, 0, w, 28, [58, 58, 70]); // title bar
+    fillCircle(rgba, w, h, 16, 14, 6, [255, 95, 86]); // close
+    fillCircle(rgba, w, h, 36, 14, 6, [255, 189, 46]); // minimize
+    fillCircle(rgba, w, h, 56, 14, 6, [39, 201, 63]); // zoom
+    fillRect(rgba, w, h, 0, 28, 88, h - 28, [210, 212, 220]); // sidebar
+    // Sidebar nav items: the first is "selected" (accent), the rest neutral.
+    for (let i = 0; i < 5; i++) {
+      const color: Rgb = i === 0 ? [74, 74, 255] : [160, 162, 176];
+      fillRect(rgba, w, h, 10, 42 + i * 26, 68, 12, color);
+    }
+    // Content placeholder bars of varying (deterministic) widths.
+    const rng = lcg(7);
+    for (let i = 0; i < 9; i++) {
+      const barW = 90 + Math.floor(rng() * 120);
+      fillRect(rgba, w, h, 104, 44 + i * 20, barW, 10, [120, 122, 136]);
+    }
+    fixtures.push({ name: "textui-window", w, h, rgba });
+  }
+
+  // textui-terminal: terminal-like grid of light glyph-ish dashes on a dark
+  // background — the high-contrast, character-cell structure of a console.
+  {
+    const w = 320;
+    const h = 220;
+    const rgba = new Uint8Array(w * h * 4);
+    fillRect(rgba, w, h, 0, 0, w, h, [16, 16, 24]);
+    const rng = lcg(1337);
+    for (let row = 0; row < 12; row++) {
+      const y = 10 + row * 16;
+      // Prompt-colored first cell on every other row, then a run of "words".
+      let x = 8;
+      if (row % 2 === 0) {
+        fillRect(rgba, w, h, x, y, 14, 8, [80, 250, 123]);
+        x += 22;
+      }
+      while (x < w - 40) {
+        const wordW = 10 + Math.floor(rng() * 34);
+        const shade = 150 + Math.floor(rng() * 90);
+        fillRect(rgba, w, h, x, y, wordW, 8, [shade, shade, shade]);
+        x += wordW + 8;
+      }
+    }
+    // Block cursor on the last line.
+    fillRect(rgba, w, h, 8, 10 + 12 * 16, 10, 12, [220, 220, 230]);
+    fixtures.push({ name: "textui-terminal", w, h, rgba });
+  }
+
+  // textui-form: form/button layout — labels, input fields with borders, and
+  // a filled primary button next to an outlined secondary one.
+  {
+    const w = 280;
+    const h = 320;
+    const rgba = new Uint8Array(w * h * 4);
+    fillRect(rgba, w, h, 0, 0, w, h, [250, 250, 252]);
+    const border: Rgb = [148, 150, 162];
+    const field: Rgb = [255, 255, 255];
+    for (let i = 0; i < 3; i++) {
+      const y = 28 + i * 68;
+      fillRect(rgba, w, h, 24, y, 80, 10, [96, 98, 110]); // label
+      fillRect(rgba, w, h, 24, y + 18, 232, 32, border); // input border
+      fillRect(rgba, w, h, 26, y + 20, 228, 28, field); // input interior
+    }
+    fillRect(rgba, w, h, 24, 244, 108, 36, [74, 74, 255]); // primary button
+    fillRect(rgba, w, h, 52, 258, 52, 8, [235, 235, 255]); // its label bar
+    fillRect(rgba, w, h, 148, 244, 108, 36, border); // secondary border
+    fillRect(rgba, w, h, 150, 246, 104, 32, [250, 250, 252]); // its interior
+    fillRect(rgba, w, h, 176, 258, 52, 8, [96, 98, 110]); // its label bar
+    fixtures.push({ name: "textui-form", w, h, rgba });
+  }
+
+  // === Axis 7: Illustration (flat fills, hard edges, limited palettes) ===
+
+  // illust-landscape: simple flat-color landscape — sky, sun, two hill layers,
+  // and a foreground strip. Five colors, no gradients.
+  {
+    const w = 360;
+    const h = 240;
+    const rgba = new Uint8Array(w * h * 4);
+    fillRect(rgba, w, h, 0, 0, w, h, [140, 200, 240]); // sky
+    fillCircle(rgba, w, h, 280, 60, 34, [255, 205, 60]); // sun
+    // Back hill: a wide flat dome overlapping the horizon.
+    fillCircle(rgba, w, h, 90, 250, 130, [110, 170, 90]);
+    // Front hill: darker, offset right.
+    fillCircle(rgba, w, h, 300, 280, 150, [70, 130, 60]);
+    fillRect(rgba, w, h, 0, 200, w, 40, [92, 70, 50]); // foreground
+    fixtures.push({ name: "illust-landscape", w, h, rgba });
+  }
+
+  // illust-icon: icon-like glyph — a white play triangle on a flat circular
+  // badge, the archetypal two-color app icon.
+  {
+    const w = 256;
+    const h = 256;
+    const rgba = new Uint8Array(w * h * 4);
+    fillRect(rgba, w, h, 0, 0, w, h, [245, 245, 248]);
+    fillCircle(rgba, w, h, 128, 128, 104, [74, 74, 255]);
+    // Play triangle: scanline fill, apex pointing right.
+    for (let py = 88; py < 168; py++) {
+      const dist = Math.abs(py - 128); // 0 at the center row, 40 at the edges
+      const rowW = Math.round(72 * (1 - dist / 40));
+      fillRect(rgba, w, h, 104, py, rowW, 1, [255, 255, 255]);
+    }
+    fixtures.push({ name: "illust-icon", w, h, rgba });
+  }
+
+  // illust-comic: comic-panel-ish composition — black gutters dividing three
+  // flat-color panels, a speech bubble, and a halftone dot grid.
+  {
+    const w = 320;
+    const h = 240;
+    const rgba = new Uint8Array(w * h * 4);
+    fillRect(rgba, w, h, 0, 0, w, h, [20, 20, 20]); // gutters/borders
+    // Panel 1 (top left): orange scene with a character silhouette.
+    fillRect(rgba, w, h, 6, 6, 150, 110, [240, 150, 50]);
+    fillRect(rgba, w, h, 56, 56, 40, 60, [40, 40, 60]); // body
+    fillCircle(rgba, w, h, 76, 44, 16, [40, 40, 60]); // head
+    // Panel 2 (top right): blue scene with a white speech bubble.
+    fillRect(rgba, w, h, 164, 6, 150, 110, [70, 120, 200]);
+    fillCircle(rgba, w, h, 238, 48, 30, [255, 255, 255]);
+    fillRect(rgba, w, h, 214, 48, 48, 22, [255, 255, 255]);
+    fillRect(rgba, w, h, 226, 74, 10, 16, [255, 255, 255]); // bubble tail
+    // Panel 3 (bottom): yellow scene with a halftone dot grid.
+    fillRect(rgba, w, h, 6, 124, 308, 110, [250, 215, 80]);
+    for (let gy = 0; gy < 7; gy++) {
+      for (let gx = 0; gx < 21; gx++) {
+        fillCircle(rgba, w, h, 16 + gx * 14, 134 + gy * 14, 3, [200, 60, 40]);
+      }
+    }
+    fixtures.push({ name: "illust-comic", w, h, rgba });
   }
 
   // === Axis 2: Gamut (same pixel data, different gamut interpretation) ===

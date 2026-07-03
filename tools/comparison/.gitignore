@@ -11,6 +11,7 @@ pnpm-debug.log*
 output/
 fixtures/synthetic/
 fixtures/natural/
+fixtures/holdout/*.png
 
 # Per-version git worktrees + their build artifacts (just compare-versions).
 .versions/

@@ -37,10 +37,13 @@ import {
   computeFormatStats,
   FORMAT_NAMES,
   LANGUAGES,
+  PHOTO_CATEGORIES,
 } from "./report.ts";
 import type { ReportMeta } from "./report.ts";
 import { generateFixtures } from "./generate-fixtures.ts";
 import { ensureNaturalImages } from "./natural-images.ts";
+import { ensureHoldoutImages } from "./holdout-images.ts";
+import { splitFor } from "./corpus.ts";
 import { gamutToSrgbReference } from "./gamut.ts";
 import type {
   ComparisonImageJson,
@@ -64,6 +67,9 @@ const { values } = parseArgs({
     "skip-harnesses": { type: "boolean", default: false },
     "generate-fixtures": { type: "boolean", default: true },
     "skip-natural": { type: "boolean", default: false },
+    // Skip downloading the Kodak holdout suite (mirrors --skip-natural; the
+    // holdout images live in fixtures/holdout/ and are cached the same way).
+    "skip-holdout": { type: "boolean", default: false },
     // Preview-only escape hatch: metrics degrade to N/A instead of failing the
     // run when iqa-cli is unavailable. Never use for published comparisons.
     "allow-missing-iqa": { type: "boolean", default: false },
@@ -91,6 +97,7 @@ const skipHarnesses =
   (values["skip-harnesses"] ?? false) || Boolean(values.versions);
 const shouldGenerateFixtures = values["generate-fixtures"] ?? true;
 const skipNatural = values["skip-natural"] ?? false;
+const skipHoldout = values["skip-holdout"] ?? false;
 /** Upscale policy: "browser" → gamma-space Mitchell, "linear" → linear-light Lanczos-3. */
 const upscalePolicy: UpscalePolicy =
   (values["upscale-policy"] ?? "browser") === "linear"
@@ -217,6 +224,17 @@ async function main(): Promise<void> {
       console.log(`${naturalPaths.length} natural image(s) available.`);
     } else {
       console.warn("No natural images available (network may be offline).");
+    }
+  }
+
+  // Fetch the Kodak holdout suite (on-demand with local cache)
+  if (!skipHoldout) {
+    console.log("Ensuring holdout images are cached...");
+    const holdoutPaths = await ensureHoldoutImages();
+    if (holdoutPaths.length > 0) {
+      console.log(`${holdoutPaths.length} holdout image(s) available.`);
+    } else {
+      console.warn("No holdout images available (network may be offline).");
     }
   }
 
@@ -503,6 +521,7 @@ async function main(): Promise<void> {
     jsonImages.push({
       name: entry.name,
       category: entry.category,
+      split: splitFor(entry.name),
       originalWidth: entry.originalWidth,
       originalHeight: entry.originalHeight,
       original: entry.originalDataUri,
@@ -516,9 +535,21 @@ async function main(): Promise<void> {
 
   // Summary stats are reused by both the JSON output and the console summary.
   const naturalStats = computeFormatStats(entries, activeFormatNames, (e) =>
-    (["Natural", "Realistic"] as ImageCategory[]).includes(e.category),
+    PHOTO_CATEGORIES.includes(e.category),
   );
   const allStats = computeFormatStats(entries, activeFormatNames);
+  // Tune/holdout split summaries so sweep tooling can compare generalization
+  // without re-deriving the split (see corpus.ts).
+  const tuneStats = computeFormatStats(
+    entries,
+    activeFormatNames,
+    (e) => splitFor(e.name) === "tune",
+  );
+  const holdoutStats = computeFormatStats(
+    entries,
+    activeFormatNames,
+    (e) => splitFor(e.name) === "holdout",
+  );
 
   const harnessesSkipped = entries.every((e) => e.harnessResults.length === 0);
   const crossLanguage = LANGUAGES.map((language) => {
@@ -544,7 +575,12 @@ async function main(): Promise<void> {
     repoUrl: meta.repoUrl,
     formats: activeFormatNames,
     languages: LANGUAGES,
-    summary: { naturalAndRealistic: naturalStats, all: allStats },
+    summary: {
+      naturalAndRealistic: naturalStats,
+      all: allStats,
+      tune: tuneStats,
+      holdout: holdoutStats,
+    },
     crossLanguage,
     images: jsonImages,
   };
@@ -576,11 +612,11 @@ async function main(): Promise<void> {
   ) => {
     console.log(`\n=== Format Summary (${label}) ===`);
     console.log(
-      `  ${"Format".padEnd(14)} ${"Size(B)".padStart(8)} ${"ΔE00".padStart(8)} ${"DSSIM".padStart(8)} ${"MS-SSIM".padStart(8)} ${"SSIM2".padStart(8)} ${"Butter".padStart(8)} ${"PSNR(dB)".padStart(9)}`,
+      `  ${"Format".padEnd(14)} ${"Size(B)".padStart(8)} ${"ΔE00".padStart(8)} ${"MedΔE00".padStart(8)} ${"DSSIM".padStart(8)} ${"MS-SSIM".padStart(8)} ${"SSIM2".padStart(8)} ${"Butter".padStart(8)} ${"PSNR(dB)".padStart(9)}`,
     );
     for (const s of stats) {
       console.log(
-        `  ${s.name.padEnd(14)} ${s.avgSize.toFixed(0).padStart(8)} ${cell(s.avgCiede, 2, 8)} ${cell(s.avgDssim, 4, 8)} ${cell(s.avgMsSsim, 4, 8)} ${cell(s.avgSsimulacra2, 1, 8)} ${cell(s.avgButteraugli, 2, 8)} ${cell(s.avgPsnr, 1, 9)}`,
+        `  ${s.name.padEnd(14)} ${s.avgSize.toFixed(0).padStart(8)} ${cell(s.avgCiede, 2, 8)} ${cell(s.medianCiede, 2, 8)} ${cell(s.avgDssim, 4, 8)} ${cell(s.avgMsSsim, 4, 8)} ${cell(s.avgSsimulacra2, 1, 8)} ${cell(s.avgButteraugli, 2, 8)} ${cell(s.avgPsnr, 1, 9)}`,
       );
     }
   };

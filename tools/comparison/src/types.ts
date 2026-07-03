@@ -1,3 +1,5 @@
+import type { CorpusSplit } from "./corpus.ts";
+
 /** Represents a loaded and downscaled image ready for encoding. */
 export interface ImageInput {
   /** Original file path. */
@@ -114,7 +116,11 @@ export type ImageCategory =
   | "Color Distribution"
   | "Quantization"
   | "Gamut"
+  | "Text/UI"
+  | "Illustration"
   | "Natural"
+  | "Portrait"
+  | "Night"
   | "Realistic";
 
 /** Per-format summary statistics, averaged across a set of images. */
@@ -133,6 +139,12 @@ export interface FormatStat {
   avgPsnr: number | null;
   /** Mean blurred "as-rendered" ΔE00; null unless --blurred-scoring ran. */
   avgCiedeBlurred: number | null;
+  /** Median ΔE00 across the set (robust to outlier images). */
+  medianCiede: number | null;
+  /** 90th-percentile ΔE00 — the tail behaviour a mean hides. */
+  p90Ciede: number | null;
+  /** 95% bootstrap confidence interval of the mean ΔE00 (see stats.ts). */
+  ciCiede: [number, number] | null;
 }
 
 /**
@@ -171,6 +183,8 @@ export interface ImplementationJson {
 export interface ComparisonImageJson {
   name: string;
   category: ImageCategory;
+  /** Corpus split (see corpus.ts) so downstream tools never re-derive it. */
+  split: CorpusSplit;
   originalWidth: number;
   originalHeight: number;
   /** Relative path to the standalone original (display-sized) image. */
@@ -218,8 +232,16 @@ export interface ComparisonJson {
   formats: string[];
   /** Language implementation names, in report order. */
   languages: string[];
-  /** Summary statistics for natural/realistic images (primary) and all images. */
-  summary: { naturalAndRealistic: FormatStat[]; all: FormatStat[] };
+  /**
+   * Summary statistics: photographic images (primary), all images, and the
+   * tune/holdout corpus splits (see corpus.ts).
+   */
+  summary: {
+    naturalAndRealistic: FormatStat[];
+    all: FormatStat[];
+    tune: FormatStat[];
+    holdout: FormatStat[];
+  };
   /** Cross-language pass/fail; pass is null when harnesses were skipped. */
   crossLanguage: { language: string; pass: boolean | null }[];
   images: ComparisonImageJson[];

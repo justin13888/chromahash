@@ -1,3 +1,5 @@
+import { splitFor } from "./corpus.ts";
+import { bootstrapCI, quantile } from "./stats.ts";
 import type {
   FormatResult,
   FormatStat,
@@ -69,6 +71,8 @@ function avgBlurredMetric(
 
 /**
  * Compute summary statistics for each format, optionally filtered to a subset of entries.
+ * The primary metric (ΔE00) additionally gets a median, p90, and a 95%
+ * bootstrap CI of the mean — a mean alone hides tail behaviour.
  */
 export function computeFormatStats(
   entries: ImageEntry[],
@@ -88,6 +92,11 @@ export function computeFormatStats(
     const avgDecode =
       results.reduce((s, r) => s + r.decodeTimeMs, 0) / (results.length || 1);
 
+    const ciedeValues = results
+      .map((r) => r.metrics.ciede2000)
+      .filter((v): v is number => v !== null && Number.isFinite(v));
+    const ciedeSorted = [...ciedeValues].sort((a, b) => a - b);
+
     return {
       name,
       avgSize,
@@ -101,6 +110,9 @@ export function computeFormatStats(
       avgButteraugli: avgMetric(results, (m) => m.butteraugli),
       avgPsnr: avgMetric(results, (m) => m.psnrDb),
       avgCiedeBlurred: avgBlurredMetric(results, (m) => m.ciede2000),
+      medianCiede: ciedeSorted.length > 0 ? quantile(ciedeSorted, 0.5) : null,
+      p90Ciede: ciedeSorted.length > 0 ? quantile(ciedeSorted, 0.9) : null,
+      ciCiede: ciedeValues.length > 0 ? bootstrapCI(ciedeValues) : null,
     };
   });
 }
@@ -123,11 +135,18 @@ function gradeCell(
   return `<span class="${cls}">${v.toFixed(digits)}</span>`;
 }
 
+/** Format a [lo, hi] confidence interval, or "N/A". */
+function fmtCi(ci: [number, number] | null, digits: number): string {
+  return ci !== null
+    ? `${ci[0].toFixed(digits)}&ndash;${ci[1].toFixed(digits)}`
+    : "N/A";
+}
+
 function formatStatsTable(stats: FormatStat[]): string {
   // The blurred "as-rendered" column only appears when the run computed it.
   const hasBlurred = stats.some((s) => s.avgCiedeBlurred !== null);
   return `<table>
-<tr><th>Format</th><th>Avg Size (B)</th><th>Encode (ms)</th><th>Decode (ms)</th><th>Avg ΔE00 ↓</th>${hasBlurred ? "<th>Avg ΔE00 (blur) ↓</th>" : ""}<th>Avg DSSIM ↓</th><th>Avg MS-SSIM ↑</th><th>Avg PSNR-HVS-M ↑</th><th>Avg SSIMULACRA2 ↑</th><th>Avg Butteraugli ↓</th><th>Avg PSNR (dB) ↑</th></tr>
+<tr><th>Format</th><th>Avg Size (B)</th><th>Encode (ms)</th><th>Decode (ms)</th><th>Avg ΔE00 ↓</th><th>Median ΔE00 ↓</th><th>p90 ΔE00 ↓</th><th>95% CI ΔE00</th>${hasBlurred ? "<th>Avg ΔE00 (blur) ↓</th>" : ""}<th>Avg DSSIM ↓</th><th>Avg MS-SSIM ↑</th><th>Avg PSNR-HVS-M ↑</th><th>Avg SSIMULACRA2 ↑</th><th>Avg Butteraugli ↓</th><th>Avg PSNR (dB) ↑</th></tr>
 ${stats
   .map(
     (s) => `<tr>
@@ -136,6 +155,9 @@ ${stats
   <td>${s.avgEncode.toFixed(3)}</td>
   <td>${s.avgDecode.toFixed(3)}</td>
   <td>${gradeCell(s.avgCiede, 2, 2, 5)}</td>
+  <td>${gradeCell(s.medianCiede, 2, 2, 5)}</td>
+  <td>${gradeCell(s.p90Ciede, 2, 2, 5)}</td>
+  <td>${fmtCi(s.ciCiede, 2)}</td>
   ${hasBlurred ? `<td>${gradeCell(s.avgCiedeBlurred, 2, 2, 5)}</td>\n  ` : ""}<td>${gradeCell(s.avgDssim, 4, 0.1, 0.25)}</td>
   <td>${fmt(s.avgMsSsim, 4)}</td>
   <td>${fmt(s.avgPsnrHvsM, 1)}</td>
@@ -147,6 +169,18 @@ ${stats
   .join("\n")}
 </table>`;
 }
+
+/**
+ * Photographic categories: the primary "natural & realistic" summary. Portrait
+ * and Night are natural photographs too — they only carry their own category
+ * so the report can break them out.
+ */
+export const PHOTO_CATEGORIES: ImageCategory[] = [
+  "Natural",
+  "Portrait",
+  "Night",
+  "Realistic",
+];
 
 /** Canonical LQIP format order, shared by the HTML report and the JSON output. */
 export const FORMAT_NAMES = [
@@ -185,11 +219,25 @@ export function generateReport(
   // report; the version-comparison report (one chromahash build per column) hides it.
   const showImplementations = opts?.showImplementations ?? true;
 
-  // Compute summary stats: natural/realistic only (primary), and all images
+  // Compute summary stats: photographic images (primary), and all images
   const naturalFilter = (e: ImageEntry) =>
-    (["Natural", "Realistic"] as ImageCategory[]).includes(e.category);
+    PHOTO_CATEGORIES.includes(e.category);
   const naturalStats = computeFormatStats(entries, formatNames, naturalFilter);
   const allStats = computeFormatStats(entries, formatNames);
+
+  // Tune/holdout split summaries (see corpus.ts); the holdout tables only
+  // render when holdout entries were actually part of the run.
+  const hasHoldout = entries.some((e) => splitFor(e.name) === "holdout");
+  const tuneStats = computeFormatStats(
+    entries,
+    formatNames,
+    (e) => splitFor(e.name) === "tune",
+  );
+  const holdoutStats = computeFormatStats(
+    entries,
+    formatNames,
+    (e) => splitFor(e.name) === "holdout",
+  );
 
   // Check cross-language consistency
   const harnessesSkipped = entries.every((e) => e.harnessResults.length === 0);
@@ -211,7 +259,11 @@ export function generateReport(
     "Color Distribution",
     "Quantization",
     "Gamut",
+    "Text/UI",
+    "Illustration",
     "Natural",
+    "Portrait",
+    "Night",
     "Realistic",
   ];
 
@@ -342,13 +394,38 @@ ${
 <div id="tab-formats" class="tab-content active">
 <h2 style="margin-bottom:12px">Cross-Format Comparison</h2>
 
-<h3 style="margin:16px 0 4px;font-size:0.95rem">Natural &amp; Realistic Images Only</h3>
+<h3 style="margin:16px 0 4px;font-size:0.95rem">Photographic Images Only (Natural, Portrait, Night &amp; Realistic)</h3>
 ${formatStatsTable(naturalStats)}
 
 <details class="methodology">
 <summary>All Images (including synthetic test cases)</summary>
 <div class="inner">
 ${formatStatsTable(allStats)}
+</div>
+</details>
+${
+  hasHoldout
+    ? `
+<h3 style="margin:16px 0 4px;font-size:0.95rem">Tune vs holdout</h3>
+<p class="section-note">Constants sweeps tune on the <strong>tune</strong> split only; the untouched <strong>holdout</strong> split (Kodak True Color suite + held-out curated photos) checks that tuned constants generalize instead of overfitting the corpus.</p>
+<h4 style="margin:12px 0 4px;font-size:0.9rem">Tune split</h4>
+${formatStatsTable(tuneStats)}
+<h4 style="margin:12px 0 4px;font-size:0.9rem">Holdout split</h4>
+${formatStatsTable(holdoutStats)}
+`
+    : ""
+}
+<details class="methodology">
+<summary>Per-category statistics</summary>
+<div class="inner">
+${categories
+  .map((category) => {
+    const catFilter = (e: ImageEntry) => e.category === category;
+    if (!entries.some(catFilter)) return "";
+    return `<h4 style="margin:12px 0 4px;font-size:0.9rem">${category}</h4>
+${formatStatsTable(computeFormatStats(entries, formatNames, catFilter))}`;
+  })
+  .join("\n")}
 </div>
 </details>
 
@@ -463,6 +540,17 @@ export function categorizeImage(fileName: string): ImageCategory {
   )
     return "Quantization";
   if (base.startsWith("gamut-")) return "Gamut";
-  if (base.startsWith("natural-")) return "Natural";
+  if (base.startsWith("textui-")) return "Text/UI";
+  if (base.startsWith("illust-")) return "Illustration";
+  if (base.startsWith("portrait-")) return "Portrait";
+  if (base.startsWith("night-")) return "Night";
+  // High-chroma curated photos and the Kodak holdout suite are ordinary
+  // photographs — they belong to Natural, not a category of their own.
+  if (
+    base.startsWith("natural-") ||
+    base.startsWith("chroma-") ||
+    base.startsWith("kodak")
+  )
+    return "Natural";
   return "Realistic";
 }
