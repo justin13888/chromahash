@@ -211,7 +211,12 @@ export const LANGUAGES = [
 export function generateReport(
   entries: ImageEntry[],
   meta: ReportMeta,
-  opts?: { formatNames?: string[]; showImplementations?: boolean },
+  opts?: {
+    formatNames?: string[];
+    showImplementations?: boolean;
+    /** Extra HTML injected at the top of the formats tab (the R-D section). */
+    preludeHtml?: string;
+  },
 ): string {
   const formatNames = opts?.formatNames ?? FORMAT_NAMES;
   const languages = LANGUAGES;
@@ -392,7 +397,7 @@ ${
 
 <!-- Tab 1: LQIP Formats -->
 <div id="tab-formats" class="tab-content active">
-<h2 style="margin-bottom:12px">Cross-Format Comparison</h2>
+${opts?.preludeHtml ?? ""}<h2 style="margin-bottom:12px">Cross-Format Comparison</h2>
 
 <h3 style="margin:16px 0 4px;font-size:0.95rem">Photographic Images Only (Natural, Portrait, Night &amp; Realistic)</h3>
 ${formatStatsTable(naturalStats)}

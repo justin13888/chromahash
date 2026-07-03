@@ -217,6 +217,39 @@ export interface ScoringMetaJson {
   alphaBackdrop: [number, number, number];
 }
 
+/**
+ * One point on a rate–distortion curve: a single variant (e.g. "ChromaHash t2",
+ * "WebP@411B") aggregated as the MEAN over the images processed in the run.
+ */
+export interface RdPointJson {
+  /** Variant name, unique within the run (doubles as the formatName). */
+  variant: string;
+  /** Mean encoded size in bytes across the processed images. */
+  bytes: number;
+  /** Mean ΔE00 (lower is better), or null when never computed. */
+  ciede2000: number | null;
+  /** Mean SSIMULACRA2 (higher is better), or null when never computed. */
+  ssimulacra2: number | null;
+  /** Mean Butteraugli distance (lower is better), or null when never computed. */
+  butteraugli: number | null;
+  /** How many images contributed (variants can be unrepresentable per-image). */
+  imageCount: number;
+}
+
+/** A format family's rate–distortion curve (points sorted by mean bytes). */
+export interface RdCurveJson {
+  /** Family name the variants sweep (e.g. "ChromaHash", "BlurHash", "WebP"). */
+  format: string;
+  points: RdPointJson[];
+}
+
+/** Rate–distortion sweep results (present only in `--rd` runs). */
+export interface RdJson {
+  /** Canonical equal-byte anchors: the four ChromaHash tier sizes (no-alpha). */
+  anchors: number[];
+  curves: RdCurveJson[];
+}
+
 export interface ComparisonJson {
   /** Schema version, bumped on breaking changes to this structure. */
   schemaVersion: number;
@@ -245,4 +278,6 @@ export interface ComparisonJson {
   /** Cross-language pass/fail; pass is null when harnesses were skipped. */
   crossLanguage: { language: string; pass: boolean | null }[];
   images: ComparisonImageJson[];
+  /** Rate–distortion sweep (only written by `--rd` runs). */
+  rd?: RdJson;
 }

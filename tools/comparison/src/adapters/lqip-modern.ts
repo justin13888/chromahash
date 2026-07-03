@@ -4,7 +4,21 @@ import type { FormatAdapter, FormatResult, ImageInput } from "../types.ts";
 import { computeAllMetrics, timeMs } from "../metrics.ts";
 
 export class LqipModernAdapter implements FormatAdapter {
-  readonly name = "lqip-modern";
+  readonly name: string;
+  /** Max output dimension passed to lqip-modern (library default 16). */
+  private readonly resize: number;
+  /** Output codec passed to lqip-modern (library default webp, quality 20). */
+  private readonly outputFormat: "webp" | "jpeg";
+
+  constructor(opts?: {
+    name?: string;
+    resize?: number;
+    outputFormat?: "webp" | "jpeg";
+  }) {
+    this.name = opts?.name ?? "lqip-modern";
+    this.resize = opts?.resize ?? 16;
+    this.outputFormat = opts?.outputFormat ?? "webp";
+  }
 
   async process(input: ImageInput, iterations: number): Promise<FormatResult> {
     const { smallWidth: w, smallHeight: h, smallRgba: rgba } = input;
@@ -17,14 +31,18 @@ export class LqipModernAdapter implements FormatAdapter {
       .png()
       .toBuffer();
 
-    const result = await lqip(pngBuffer);
+    const lqipOpts = { resize: this.resize, outputFormat: this.outputFormat };
+    const result = await lqip(pngBuffer, lqipOpts);
     const encodeTimeMs = await timeMs(async () => {
-      await lqip(pngBuffer);
+      await lqip(pngBuffer, lqipOpts);
     }, iterations);
 
-    const metadata = result.metadata;
     const encodedSizeBytes = result.content.length;
-    const dataUri = metadata.dataURIBase64;
+    // Built here rather than taken from result.metadata.dataURIBase64: the
+    // library hard-codes the webp mime type even for jpeg output (byte-identical
+    // for webp, correct for jpeg).
+    const mime = this.outputFormat === "jpeg" ? "image/jpeg" : "image/webp";
+    const dataUri = `data:${mime};base64,${result.content.toString("base64")}`;
 
     // Decode the lqip output back to RGBA for metric computation
     const lqipImage = sharp(result.content);

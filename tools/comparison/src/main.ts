@@ -43,6 +43,8 @@ import type { ReportMeta } from "./report.ts";
 import { generateFixtures } from "./generate-fixtures.ts";
 import { ensureNaturalImages } from "./natural-images.ts";
 import { ensureHoldoutImages } from "./holdout-images.ts";
+import { buildRdLineup, type RdVariant } from "./rd/lineup.ts";
+import { computeRdCurves, generateRdSection } from "./rd/report.ts";
 import { splitFor } from "./corpus.ts";
 import { gamutToSrgbReference } from "./gamut.ts";
 import type {
@@ -83,18 +85,32 @@ const { values } = parseArgs({
     formats: { type: "string" },
     versions: { type: "string" },
     commit: { type: "string" },
+    // Rate–distortion mode: sweep every format's quality knob on the
+    // photographic corpus and chart quality vs bytes (see rd/lineup.ts).
+    rd: { type: "boolean", default: false },
   },
 });
 
 const imagesGlob = values.images ?? "fixtures/**/*.{png,jpg}";
+const rdMode = values.rd ?? false;
+if (rdMode && values.versions) {
+  console.error("--rd and --versions are mutually exclusive.");
+  process.exit(1);
+}
+// Each mode gets its own default report name so runs never clobber each other.
 const outputPath =
   values.output ??
-  (values.versions ? "output/versions-report.html" : "output/report.html");
+  (rdMode
+    ? "output/rd-report.html"
+    : values.versions
+      ? "output/versions-report.html"
+      : "output/report.html");
 const iterations = Number.parseInt(values.iterations ?? "10", 10);
-// Version-comparison mode compares chromahash builds only, so the cross-language
-// harness verification is irrelevant there and is always skipped.
+// Version-comparison mode compares chromahash builds only, and R-D mode sweeps
+// format variants, so the cross-language harness verification is irrelevant in
+// both and is always skipped.
 const skipHarnesses =
-  (values["skip-harnesses"] ?? false) || Boolean(values.versions);
+  (values["skip-harnesses"] ?? false) || Boolean(values.versions) || rdMode;
 const shouldGenerateFixtures = values["generate-fixtures"] ?? true;
 const skipNatural = values["skip-natural"] ?? false;
 const skipHoldout = values["skip-holdout"] ?? false;
@@ -240,7 +256,7 @@ async function main(): Promise<void> {
 
   // Find all image files
   const resolvedGlob = path.resolve(toolRoot, imagesGlob);
-  const imagePaths: string[] = [];
+  let imagePaths: string[] = [];
   for await (const entry of glob(resolvedGlob)) {
     if (entry.endsWith(".png") || entry.endsWith(".jpg")) {
       imagePaths.push(entry);
@@ -248,8 +264,19 @@ async function main(): Promise<void> {
   }
   imagePaths.sort();
 
+  // R-D mode answers "which format wins at equal byte cost" for real
+  // photographs — synthetic fixture categories would only add noise, so the
+  // sweep processes the photo-class categories only.
+  if (rdMode) {
+    imagePaths = imagePaths.filter((p) =>
+      PHOTO_CATEGORIES.includes(categorizeImage(path.basename(p))),
+    );
+  }
+
   if (imagePaths.length === 0) {
-    console.error(`No images found matching: ${resolvedGlob}`);
+    console.error(
+      `No ${rdMode ? "photographic " : ""}images found matching: ${resolvedGlob}`,
+    );
     process.exit(1);
   }
 
@@ -276,7 +303,17 @@ async function main(): Promise<void> {
   if (chromaTier !== 0) {
     console.log(`ChromaHash quality tier: ${chromaTier}`);
   }
-  if (versionList) {
+  // R-D variant lineup (null outside --rd mode); kept for curve aggregation.
+  let rdVariants: RdVariant[] | null = null;
+  if (rdMode) {
+    rdVariants = buildRdLineup();
+    adapters = rdVariants.map((v) => v.adapter);
+    activeFormatNames = adapters.map((a) => a.name);
+    const families = [...new Set(rdVariants.map((v) => v.family))];
+    console.log(
+      `R-D lineup: ${adapters.length} variants across ${families.length} families (${families.join(", ")})`,
+    );
+  } else if (versionList) {
     console.log("Preparing chromahash version binaries...");
     const bins = orderVersions(prepareVersionBinaries(versionList));
     adapters = bins.map(
@@ -449,8 +486,9 @@ async function main(): Promise<void> {
   // Materialize every image as a standalone file under <output dir>/images/, and
   // rewrite each entry's inline data URIs to relative paths so the HTML and JSON
   // both reference the same assets. The directory is recreated each run so no
-  // stale images linger.
-  const imagesSubdir = "images";
+  // stale images linger. R-D mode uses its own subdirectory so an --rd run never
+  // wipes the standard report's assets (both default into output/).
+  const imagesSubdir = rdMode ? "rd-images" : "images";
   const imagesDir = path.join(path.dirname(absOutput), imagesSubdir);
   await fs.rm(imagesDir, { recursive: true, force: true });
   await fs.mkdir(imagesDir, { recursive: true });
@@ -561,6 +599,9 @@ async function main(): Promise<void> {
     return { language, pass };
   });
 
+  // R-D aggregation: per-family curves of per-variant means (see rd/report.ts).
+  const rdJson = rdVariants ? computeRdCurves(entries, rdVariants) : null;
+
   const json: ComparisonJson = {
     schemaVersion: 2,
     generatedAt: meta.generatedAt,
@@ -583,17 +624,27 @@ async function main(): Promise<void> {
     },
     crossLanguage,
     images: jsonImages,
+    ...(rdJson ? { rd: rdJson } : {}),
   };
   await fs.mkdir(path.dirname(absJson), { recursive: true });
   await fs.writeFile(absJson, `${JSON.stringify(json, null, 2)}\n`);
 
   // Render the HTML report (now referencing the standalone images by path).
+  // R-D and version modes both narrow the format columns to their own lineup
+  // and hide the (skipped) cross-language tab; R-D additionally injects the
+  // rate–distortion charts and anchor table at the top.
   const html = generateReport(
     entries,
     meta,
-    versionList
-      ? { formatNames: activeFormatNames, showImplementations: false }
-      : undefined,
+    rdJson
+      ? {
+          formatNames: activeFormatNames,
+          showImplementations: false,
+          preludeHtml: generateRdSection(rdJson, entries.length),
+        }
+      : versionList
+        ? { formatNames: activeFormatNames, showImplementations: false }
+        : undefined,
   );
   await fs.writeFile(absOutput, html);
 

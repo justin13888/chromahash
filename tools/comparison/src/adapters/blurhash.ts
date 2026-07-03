@@ -4,17 +4,33 @@ import { rgbaToDataUri } from "../image-loader.ts";
 import { computeAllMetrics, timeMs } from "../metrics.ts";
 
 export class BlurHashAdapter implements FormatAdapter {
-  readonly name = "BlurHash";
+  readonly name: string;
+  /** DCT components along X (1..=9); 4x4 is the library's recommended default. */
+  private readonly componentsX: number;
+  /** DCT components along Y (1..=9). */
+  private readonly componentsY: number;
+
+  constructor(opts?: {
+    name?: string;
+    componentsX?: number;
+    componentsY?: number;
+  }) {
+    this.name = opts?.name ?? "BlurHash";
+    this.componentsX = opts?.componentsX ?? 4;
+    this.componentsY = opts?.componentsY ?? 4;
+  }
 
   async process(input: ImageInput, iterations: number): Promise<FormatResult> {
     const { smallWidth: w, smallHeight: h, smallRgba: rgba } = input;
+    const cx = this.componentsX;
+    const cy = this.componentsY;
 
     // BlurHash encode expects Uint8ClampedArray of RGBA
     const pixels = new Uint8ClampedArray(rgba);
 
-    const hashStr = encode(pixels, w, h, 4, 4);
+    const hashStr = encode(pixels, w, h, cx, cy);
     const encodeTimeMs = await timeMs(() => {
-      encode(pixels, w, h, 4, 4);
+      encode(pixels, w, h, cx, cy);
     }, iterations);
 
     const encodedSizeBytes = new TextEncoder().encode(hashStr).length;

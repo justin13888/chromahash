@@ -114,6 +114,16 @@ compare: build-compare go-cbuild swift-cbuild ts-cbuild python-cbuild csharp-cbu
 compare-versions: build-compare
     mise exec -- node tools/comparison/dist/main.js --versions v0.2,v0.3,v0.4,v0.5,current
 
+# Rate–distortion comparison: sweep every format's quality knob (ChromaHash
+# tiers 0–3, BlurHash components, lqip-modern sizes) plus equal-byte WebP/JPEG/
+# AVIF (+JXL when cjxl/djxl are on PATH) and raw-RGB565 baselines at the four
+# ChromaHash tier byte anchors (32/108/411/1623 B), on the photographic corpus
+# only. Requires iqa-cli on PATH (run `just install-iqa` once). Writes
+# output/rd-report.{html,json} — never clobbers the standard report.
+compare-rd: build-compare
+    cargo build --manifest-path rust/Cargo.toml --release --example encode_stdin
+    mise exec -- node tools/comparison/dist/main.js --rd
+
 # ─── Benchmark ──────────────────────────────────────────────────────────────
 
 # Build benchmark harnesses (release mode), incl. both ThumbHash baselines (native Rust + JS)
