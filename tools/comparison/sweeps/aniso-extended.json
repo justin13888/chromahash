@@ -1,0 +1,12 @@
+{
+  "name": "aniso-extended",
+  "description": "Follow-up: aniso=0.8 improved ΔE00 −1.19% with improved guards and the trend was monotonic — find the plateau.",
+  "variants": [
+    { "label": "default (isotropic)" },
+    { "label": "aniso=0.8", "tune": "aniso=0.8" },
+    { "label": "aniso=1.2", "tune": "aniso=1.2" },
+    { "label": "aniso=1.6", "tune": "aniso=1.6" },
+    { "label": "aniso=2.4", "tune": "aniso=2.4" },
+    { "label": "aniso=4.0", "tune": "aniso=4.0" }
+  ]
+}

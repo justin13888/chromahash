@@ -10,6 +10,6 @@
       "tier": 1,
       "tune": "l1=18:5 c=14:4"
     },
-    { "label": "t1 finer C 26:5/7:5", "tier": 1, "tune": "c=7:5" }
+    { "label": "t1 L mostly-6b 20:6+2:5", "tier": 1, "tune": "l1=20:6 l2=2:5" }
   ]
 }
