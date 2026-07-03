@@ -124,6 +124,21 @@ compare-rd: build-compare
     cargo build --manifest-path rust/Cargo.toml --release --example encode_stdin
     mise exec -- node tools/comparison/dist/main.js --rd
 
+# Score CHROMAHASH_TUNE variants over the tune split and emit a decision table
+# (config = a name under tools/comparison/sweeps/, e.g. `just sweep companding-family`;
+# results → output/sweeps/<name>.json). Pass `--split holdout` only to validate a
+# finished winner against the pre-registered rule — never to tune.
+sweep config *args: build-compare
+    cargo build --manifest-path rust/Cargo.toml --release --example encode_stdin
+    mise exec -- node tools/comparison/dist/sweep.js tools/comparison/sweeps/{{config}}.json {{args}}
+
+# Train Lloyd-Max codebooks and run the chroma VQ probe on the tune split's
+# dumped coefficients (→ output/sweeps/tables.json with ready-to-paste
+# CHROMAHASH_TUNE fragments for the companding-family sweep).
+train-tables *args: build-compare
+    cargo build --manifest-path rust/Cargo.toml --release --example encode_stdin
+    mise exec -- node tools/comparison/dist/train-tables.js {{args}}
+
 # ─── Benchmark ──────────────────────────────────────────────────────────────
 
 # Build benchmark harnesses (release mode), incl. both ThumbHash baselines (native Rust + JS)

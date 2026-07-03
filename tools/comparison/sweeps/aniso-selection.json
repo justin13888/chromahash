@@ -1,0 +1,11 @@
+{
+  "name": "aniso-selection",
+  "description": "CSF oblique-effect selection weighting: sort candidates by priority·(1 + aniso·sin²2θ), penalizing diagonal frequencies the way JPEG's quantization tables do (~2× on the diagonal).",
+  "variants": [
+    { "label": "default (isotropic)" },
+    { "label": "aniso=0.15", "tune": "aniso=0.15" },
+    { "label": "aniso=0.3", "tune": "aniso=0.3" },
+    { "label": "aniso=0.5", "tune": "aniso=0.5" },
+    { "label": "aniso=0.8", "tune": "aniso=0.8" }
+  ]
+}

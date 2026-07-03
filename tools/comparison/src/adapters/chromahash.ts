@@ -1,12 +1,17 @@
 import { execFileSync } from "node:child_process";
 import path from "node:path";
-import type { FormatAdapter, FormatResult, ImageInput } from "../types.ts";
 import { rgbaToDataUri } from "../image-loader.ts";
 import { computeAllMetrics, timeMs } from "../metrics.ts";
+import type { FormatAdapter, FormatResult, ImageInput } from "../types.ts";
 
 const ROOT = path.resolve(import.meta.dirname, "../../../..");
 // Release build: published timings must not measure debug-profile overhead.
-const RUST_CLI = path.join(ROOT, "rust/target/release/examples/encode_stdin");
+// Exported for the sweep runner and codebook trainer, which drive the same
+// binary with CHROMAHASH_TUNE overrides.
+export const RUST_CLI = path.join(
+  ROOT,
+  "rust/target/release/examples/encode_stdin",
+);
 
 const GAMUT_MAP: Record<string, string> = {
   srgb: "srgb",
@@ -16,13 +21,27 @@ const GAMUT_MAP: Record<string, string> = {
   prophoto: "prophoto",
 };
 
-function encodeViaRust(
+/** Env for a chromahash subprocess: quality tier + optional TUNE overrides. */
+function rustEnv(tier: number, tune?: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    CHROMAHASH_TIER: String(tier),
+  };
+  // Never inherit a stray TUNE from the shell — a silent override would
+  // corrupt every non-sweep result. (undefined-valued keys are dropped by
+  // child_process.)
+  env.CHROMAHASH_TUNE = tune;
+  return env;
+}
+
+export function encodeViaRust(
   binary: string,
   w: number,
   h: number,
   rgba: Uint8Array,
   gamut: string,
   tier: number,
+  tune?: string,
 ): Uint8Array {
   const output = execFileSync(binary, ["encode", String(w), String(h), gamut], {
     input: Buffer.from(rgba),
@@ -30,9 +49,50 @@ function encodeViaRust(
     timeout: 30_000,
     // The quality tier is read from the environment (decode recovers it from the
     // hash, so only encode needs it).
-    env: { ...process.env, CHROMAHASH_TIER: String(tier) },
+    env: rustEnv(tier, tune),
   });
   return new Uint8Array(output);
+}
+
+/**
+ * Dump the encoder's scale-normalized AC coefficients per channel group
+ * (`dump-coeffs` subcommand). Used by the codebook trainer on the tune split.
+ */
+export function dumpCoefficientsViaRust(
+  binary: string,
+  w: number,
+  h: number,
+  rgba: Uint8Array,
+  gamut: string,
+  tier: number,
+): { l: number[]; a: number[]; b: number[]; alpha: number[] } {
+  const output = execFileSync(
+    binary,
+    ["dump-coeffs", String(w), String(h), gamut],
+    {
+      input: Buffer.from(rgba),
+      encoding: "utf8",
+      timeout: 60_000,
+      maxBuffer: 64 * 1024 * 1024,
+      env: rustEnv(tier),
+    },
+  );
+  const dump: { l: number[]; a: number[]; b: number[]; alpha: number[] } = {
+    l: [],
+    a: [],
+    b: [],
+    alpha: [],
+  };
+  for (const line of output.split("\n")) {
+    if (!line) continue;
+    const space = line.indexOf(" ");
+    const group = line.slice(0, space) as keyof typeof dump;
+    const value = Number.parseFloat(line.slice(space + 1));
+    if (dump[group] && Number.isFinite(value)) {
+      dump[group].push(value);
+    }
+  }
+  return dump;
 }
 
 /**
@@ -52,7 +112,7 @@ function benchViaRust(
     input: Buffer.from(input),
     encoding: "utf8",
     timeout: 120_000,
-    env: { ...process.env, CHROMAHASH_TIER: String(tier) },
+    env: rustEnv(tier),
   });
   const nsPerOp = Number.parseInt(output.trim(), 10);
   if (!Number.isFinite(nsPerOp)) {
@@ -71,12 +131,13 @@ const PREVIEW_OUTPUT: Record<string, { out: string; icc?: string }> = {
   displayp3: { out: "displayp3", icc: "p3" },
 };
 
-function decodeViaRust(
+export function decodeViaRust(
   binary: string,
   hash: Uint8Array,
   outGamut: string,
   maxW?: number,
   maxH?: number,
+  tune?: string,
 ): {
   w: number;
   h: number;
@@ -90,7 +151,7 @@ function decodeViaRust(
     input: Buffer.from(hash),
     encoding: "buffer",
     timeout: 30_000,
-    env: { ...process.env, CHROMAHASH_OUT: outGamut },
+    env: { ...rustEnv(0, tune), CHROMAHASH_OUT: outGamut },
   });
   const newline = output.indexOf(0x0a);
   const header = output.subarray(0, newline).toString("ascii");

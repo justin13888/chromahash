@@ -1,0 +1,337 @@
+/**
+ * Constants sweep runner: score CHROMAHASH_TUNE variants over the TUNE split
+ * of the corpus and emit a decision table.
+ *
+ * Usage: node dist/sweep.js <config.json> [--split tune|holdout] [--max-images N]
+ *
+ * A config declares explicit variants (label + TUNE string + optional tier /
+ * capToTier0). The first variant is the incumbent: every other variant's guard
+ * metrics (SSIMULACRA2 / Butteraugli / DSSIM) are checked against it, mirroring
+ * the §12.1 sweep discipline — a candidate only "wins" if it improves mean
+ * ΔE00 without regressing the perceptual guards.
+ *
+ * Sweeps read the TUNE split only (src/corpus.ts); `--split holdout` exists
+ * solely to validate a finished winner against the pre-registered rule
+ * (≥3% holdout mean ΔE00 improvement, no guard regressions) — never to tune.
+ */
+
+import fs from "node:fs/promises";
+import { glob } from "node:fs/promises";
+import path from "node:path";
+import { parseArgs } from "node:util";
+import {
+  RUST_CLI,
+  decodeViaRust,
+  encodeViaRust,
+} from "./adapters/chromahash.ts";
+import { type CorpusSplit, splitFor } from "./corpus.ts";
+import { gamutToSrgbReference } from "./gamut.ts";
+import { generateFixtures } from "./generate-fixtures.ts";
+import { ensureHoldoutImages } from "./holdout-images.ts";
+import { loadImage } from "./image-loader.ts";
+import { computeAllMetrics, setScoringConfig } from "./metrics.ts";
+import { ensureIqaAvailable } from "./metrics/iqa.ts";
+import { ensureNaturalImages } from "./natural-images.ts";
+import { quantile } from "./stats.ts";
+import type { ImageInput } from "./types.ts";
+
+/** One TUNE variant to score. */
+interface SweepVariant {
+  /** Display label, e.g. "mu_l=6" or "pow:0.75". */
+  label: string;
+  /** CHROMAHASH_TUNE string; omit for the shipped defaults. */
+  tune?: string;
+  /** Quality tier (default 0). */
+  tier?: number;
+  /**
+   * Decode capped to the image's tier-0 natural render size — the
+   * embedded-tiers experiment: what would a tier-0-sized rendering of this
+   * variant's hash look like?
+   */
+  capToTier0?: boolean;
+}
+
+interface SweepConfig {
+  name: string;
+  description?: string;
+  /** First variant is the incumbent the guards compare against. */
+  variants: SweepVariant[];
+  /** Restrict to photo categories (Natural/Portrait/Night/Realistic). */
+  photoOnly?: boolean;
+}
+
+/** Per-variant aggregate row of the decision table. */
+interface SweepRow {
+  label: string;
+  tune: string | null;
+  tier: number;
+  images: number;
+  bytes: number;
+  meanCiede: number | null;
+  medianCiede: number | null;
+  meanSsimulacra2: number | null;
+  meanButteraugli: number | null;
+  meanDssim: number | null;
+  /** ΔE00 change vs the incumbent, in percent (negative = better). */
+  ciedeDeltaPct: number | null;
+  /** All guard metrics within tolerance of the incumbent. */
+  guardsOk: boolean | null;
+}
+
+/** Guard tolerances vs the incumbent (absolute for SSIM2, relative otherwise). */
+const GUARD_SSIM2_DROP = 1.0;
+const GUARD_REL_RISE = 0.02;
+
+const { values, positionals } = parseArgs({
+  allowPositionals: true,
+  options: {
+    split: { type: "string", default: "tune" },
+    "max-images": { type: "string" },
+  },
+});
+
+const configPathArg = positionals[0];
+if (!configPathArg) {
+  console.error(
+    "Usage: node dist/sweep.js <config.json> [--split tune|holdout] [--max-images N]",
+  );
+  process.exit(1);
+}
+// Narrowed copy: the guard above doesn't flow into function bodies.
+const configPath: string = configPathArg;
+const split = (values.split ?? "tune") as CorpusSplit;
+if (split !== "tune" && split !== "holdout") {
+  console.error(`invalid --split: ${values.split}`);
+  process.exit(1);
+}
+const maxImages = values["max-images"]
+  ? Number.parseInt(values["max-images"], 10)
+  : null;
+
+const PHOTO_PREFIXES = ["natural-", "portrait-", "night-", "chroma-", "kodak"];
+
+function isPhoto(name: string): boolean {
+  return PHOTO_PREFIXES.some((p) => name.startsWith(p));
+}
+
+/** Mean of the non-null values, or null. */
+function mean(values: (number | null)[]): number | null {
+  const xs = values.filter(
+    (v): v is number => v !== null && Number.isFinite(v),
+  );
+  return xs.length > 0 ? xs.reduce((s, v) => s + v, 0) / xs.length : null;
+}
+
+/** Median of the non-null values, or null. */
+function median(values: (number | null)[]): number | null {
+  const xs = values
+    .filter((v): v is number => v !== null && Number.isFinite(v))
+    .sort((a, b) => a - b);
+  return xs.length > 0 ? quantile(xs, 0.5) : null;
+}
+
+async function loadCorpus(): Promise<ImageInput[]> {
+  const toolRoot = path.resolve(import.meta.dirname, "..");
+  const syntheticDir = path.join(toolRoot, "fixtures/synthetic");
+  try {
+    const files = await fs.readdir(syntheticDir);
+    if (files.length === 0) await generateFixtures();
+  } catch {
+    await generateFixtures();
+  }
+  await ensureNaturalImages();
+  if (split === "holdout") {
+    await ensureHoldoutImages();
+  }
+
+  const paths: string[] = [];
+  for await (const entry of glob(
+    path.join(toolRoot, "fixtures/**/*.{png,jpg}"),
+  )) {
+    if (entry.endsWith(".png") || entry.endsWith(".jpg")) paths.push(entry);
+  }
+  paths.sort();
+
+  const inputs: ImageInput[] = [];
+  for (const filePath of paths) {
+    const name = path.basename(filePath).replace(/\.[^.]+$/, "");
+    if (splitFor(name) !== split) continue;
+    const input = await loadImage(filePath);
+    // Mirror main.ts: gamut fixtures carry their gamut in the filename and are
+    // scored against their color-managed sRGB appearance.
+    const gamutMap: Record<string, string> = {
+      "gamut-srgb": "srgb",
+      "gamut-p3": "displayp3",
+      "gamut-adobe-rgb": "adobergb",
+      "gamut-bt2020": "bt2020",
+      "gamut-prophoto": "prophoto",
+    };
+    input.gamut = gamutMap[name] ?? "srgb";
+    input.metricReferenceRgba = gamutToSrgbReference(
+      input.referenceRgba,
+      input.gamut,
+    );
+    inputs.push(input);
+  }
+  return inputs;
+}
+
+async function scoreVariant(
+  variant: SweepVariant,
+  inputs: ImageInput[],
+): Promise<SweepRow> {
+  const tier = variant.tier ?? 0;
+  const ciedes: (number | null)[] = [];
+  const ssim2s: (number | null)[] = [];
+  const butters: (number | null)[] = [];
+  const dssims: (number | null)[] = [];
+  let bytesSum = 0;
+
+  for (const input of inputs) {
+    const { smallWidth: w, smallHeight: h, smallRgba: rgba } = input;
+    const gamut = input.gamut ?? "srgb";
+    const hash = encodeViaRust(RUST_CLI, w, h, rgba, gamut, tier, variant.tune);
+    bytesSum += hash.length;
+
+    let capW = w;
+    let capH = h;
+    if (variant.capToTier0) {
+      // The image's tier-0 natural render size, from an uncapped tier-0 decode
+      // of the incumbent (dimensions depend only on the aspect byte).
+      const t0 = encodeViaRust(RUST_CLI, w, h, rgba, gamut, 0, variant.tune);
+      const t0dec = decodeViaRust(
+        RUST_CLI,
+        t0,
+        "srgb",
+        undefined,
+        undefined,
+        variant.tune,
+      );
+      capW = t0dec.w;
+      capH = t0dec.h;
+    }
+    const decoded = decodeViaRust(
+      RUST_CLI,
+      hash,
+      "srgb",
+      capW,
+      capH,
+      variant.tune,
+    );
+
+    const reference = input.metricReferenceRgba ?? input.referenceRgba;
+    const { metrics } = await computeAllMetrics(
+      reference,
+      input.referenceWidth,
+      input.referenceHeight,
+      decoded.rgba,
+      decoded.w,
+      decoded.h,
+    );
+    ciedes.push(metrics.ciede2000);
+    ssim2s.push(metrics.ssimulacra2);
+    butters.push(metrics.butteraugli);
+    dssims.push(metrics.dssim);
+  }
+
+  return {
+    label: variant.label,
+    tune: variant.tune ?? null,
+    tier,
+    images: inputs.length,
+    bytes: bytesSum / (inputs.length || 1),
+    meanCiede: mean(ciedes),
+    medianCiede: median(ciedes),
+    meanSsimulacra2: mean(ssim2s),
+    meanButteraugli: mean(butters),
+    meanDssim: mean(dssims),
+    ciedeDeltaPct: null,
+    guardsOk: null,
+  };
+}
+
+/** Fill ciedeDeltaPct/guardsOk on every row from the incumbent (row 0). */
+function applyGuards(rows: SweepRow[]): void {
+  const base = rows[0];
+  if (!base) return;
+  for (const row of rows.slice(1)) {
+    if (row.meanCiede !== null && base.meanCiede !== null) {
+      row.ciedeDeltaPct =
+        ((row.meanCiede - base.meanCiede) / base.meanCiede) * 100;
+    }
+    const ssim2Ok =
+      row.meanSsimulacra2 === null ||
+      base.meanSsimulacra2 === null ||
+      row.meanSsimulacra2 >= base.meanSsimulacra2 - GUARD_SSIM2_DROP;
+    const butterOk =
+      row.meanButteraugli === null ||
+      base.meanButteraugli === null ||
+      row.meanButteraugli <= base.meanButteraugli * (1 + GUARD_REL_RISE);
+    const dssimOk =
+      row.meanDssim === null ||
+      base.meanDssim === null ||
+      row.meanDssim <= base.meanDssim * (1 + GUARD_REL_RISE);
+    row.guardsOk = ssim2Ok && butterOk && dssimOk;
+  }
+}
+
+async function main(): Promise<void> {
+  ensureIqaAvailable();
+  setScoringConfig({ upscalePolicy: "browser-gamma", blurredScoring: false });
+
+  const raw = await fs.readFile(configPath, "utf8");
+  const config = JSON.parse(raw) as SweepConfig;
+  if (!config.variants?.length) {
+    throw new Error(`config ${config.name} declares no variants`);
+  }
+
+  let inputs = await loadCorpus();
+  if (config.photoOnly) {
+    inputs = inputs.filter((i) => isPhoto(path.basename(i.filePath)));
+  }
+  if (maxImages !== null) {
+    inputs = inputs.slice(0, maxImages);
+  }
+  console.log(
+    `Sweep ${config.name}: ${config.variants.length} variants × ${inputs.length} ${split}-split images`,
+  );
+
+  const rows: SweepRow[] = [];
+  for (const variant of config.variants) {
+    const started = performance.now();
+    const row = await scoreVariant(variant, inputs);
+    rows.push(row);
+    console.log(
+      `  ${variant.label.padEnd(28)} ΔE00 ${row.meanCiede?.toFixed(3) ?? "N/A"} (${((performance.now() - started) / 1000).toFixed(0)}s)`,
+    );
+  }
+  applyGuards(rows);
+
+  const toolRoot = path.resolve(import.meta.dirname, "..");
+  const outDir = path.join(toolRoot, "output/sweeps");
+  await fs.mkdir(outDir, { recursive: true });
+  const suffix = split === "holdout" ? "-holdout" : "";
+  const outPath = path.join(outDir, `${config.name}${suffix}.json`);
+  await fs.writeFile(
+    outPath,
+    `${JSON.stringify({ name: config.name, description: config.description ?? null, split, images: inputs.length, guardTolerances: { ssimulacra2Drop: GUARD_SSIM2_DROP, relativeRise: GUARD_REL_RISE }, rows }, null, 2)}\n`,
+  );
+
+  console.log(`\nDecision table (${split} split) → ${outPath}`);
+  console.log(
+    `  ${"Variant".padEnd(28)} ${"Bytes".padStart(6)} ${"ΔE00".padStart(8)} ${"Δ%".padStart(7)} ${"Med".padStart(8)} ${"SSIM2".padStart(8)} ${"Butter".padStart(8)} ${"DSSIM".padStart(8)} Guards`,
+  );
+  const cell = (v: number | null, d: number, w: number) =>
+    (v !== null ? v.toFixed(d) : "N/A").padStart(w);
+  for (const r of rows) {
+    const guards = r.guardsOk === null ? "(base)" : r.guardsOk ? "ok" : "FAIL";
+    console.log(
+      `  ${r.label.padEnd(28)} ${r.bytes.toFixed(0).padStart(6)} ${cell(r.meanCiede, 3, 8)} ${cell(r.ciedeDeltaPct, 2, 7)} ${cell(r.medianCiede, 3, 8)} ${cell(r.meanSsimulacra2, 1, 8)} ${cell(r.meanButteraugli, 2, 8)} ${cell(r.meanDssim, 4, 8)} ${guards}`,
+    );
+  }
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
