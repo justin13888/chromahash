@@ -4,8 +4,17 @@ import sharp from "sharp";
 import type { ImageInput } from "./types.ts";
 
 /**
- * Load an image file and downscale to fit within 100x100 for encoding.
- * Returns both original metadata and downscaled pixel data.
+ * Long-edge cap (px) for the display-resolution metric reference. Placeholders
+ * are judged at the size they are displayed, so quality is scored against the
+ * original at (up to) this resolution rather than against the tiny encoder
+ * input. 512 keeps the perceptual metrics (butteraugli/ssimulacra2) tractable
+ * across the corpus; natural sources are ~5000 px, synthetic fixtures smaller.
+ */
+export const REFERENCE_CAP = 512;
+
+/**
+ * Load an image file, downscale to fit within 100x100 for encoding, and decode
+ * a display-resolution reference (REFERENCE_CAP long edge) for scoring.
  */
 export async function loadImage(filePath: string): Promise<ImageInput> {
   const fileBuffer = await fs.readFile(filePath);
@@ -30,6 +39,24 @@ export async function loadImage(filePath: string): Promise<ImageInput> {
     .raw()
     .toBuffer({ resolveWithObject: true });
 
+  // Display-resolution reference: the original capped to REFERENCE_CAP on the
+  // long edge (Lanczos3, never enlarged). This is the scoring target.
+  const refScale = Math.min(
+    REFERENCE_CAP / originalWidth,
+    REFERENCE_CAP / originalHeight,
+    1,
+  );
+  const referenceWidth = Math.max(1, Math.round(originalWidth * refScale));
+  const referenceHeight = Math.max(1, Math.round(originalHeight * refScale));
+  const { data: refData, info: refInfo } = await sharp(fileBuffer)
+    .resize(referenceWidth, referenceHeight, {
+      kernel: "lanczos3",
+      fit: "fill",
+    })
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
   return {
     filePath: path.resolve(filePath),
     originalWidth,
@@ -37,6 +64,9 @@ export async function loadImage(filePath: string): Promise<ImageInput> {
     smallWidth: info.width,
     smallHeight: info.height,
     smallRgba: new Uint8Array(data),
+    referenceWidth: refInfo.width,
+    referenceHeight: refInfo.height,
+    referenceRgba: new Uint8Array(refData),
     fileBuffer,
   };
 }

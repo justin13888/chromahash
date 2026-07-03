@@ -56,6 +56,17 @@ function avgMetric(
   return vals.length > 0 ? vals.reduce((s, v) => s + v, 0) / vals.length : null;
 }
 
+/** Average a nullable field of the blurred metric set (null when not computed). */
+function avgBlurredMetric(
+  results: FormatResult[],
+  pick: (m: MetricResult) => number | null,
+): number | null {
+  const vals = results
+    .map((r) => (r.metricsBlurred ? pick(r.metricsBlurred) : null))
+    .filter((v): v is number => v !== null && Number.isFinite(v));
+  return vals.length > 0 ? vals.reduce((s, v) => s + v, 0) / vals.length : null;
+}
+
 /**
  * Compute summary statistics for each format, optionally filtered to a subset of entries.
  */
@@ -89,6 +100,7 @@ export function computeFormatStats(
       avgSsimulacra2: avgMetric(results, (m) => m.ssimulacra2),
       avgButteraugli: avgMetric(results, (m) => m.butteraugli),
       avgPsnr: avgMetric(results, (m) => m.psnrDb),
+      avgCiedeBlurred: avgBlurredMetric(results, (m) => m.ciede2000),
     };
   });
 }
@@ -112,8 +124,10 @@ function gradeCell(
 }
 
 function formatStatsTable(stats: FormatStat[]): string {
+  // The blurred "as-rendered" column only appears when the run computed it.
+  const hasBlurred = stats.some((s) => s.avgCiedeBlurred !== null);
   return `<table>
-<tr><th>Format</th><th>Avg Size (B)</th><th>Encode (ms)</th><th>Decode (ms)</th><th>Avg ΔE00 ↓</th><th>Avg DSSIM ↓</th><th>Avg MS-SSIM ↑</th><th>Avg PSNR-HVS-M ↑</th><th>Avg SSIMULACRA2 ↑</th><th>Avg Butteraugli ↓</th><th>Avg PSNR (dB) ↑</th></tr>
+<tr><th>Format</th><th>Avg Size (B)</th><th>Encode (ms)</th><th>Decode (ms)</th><th>Avg ΔE00 ↓</th>${hasBlurred ? "<th>Avg ΔE00 (blur) ↓</th>" : ""}<th>Avg DSSIM ↓</th><th>Avg MS-SSIM ↑</th><th>Avg PSNR-HVS-M ↑</th><th>Avg SSIMULACRA2 ↑</th><th>Avg Butteraugli ↓</th><th>Avg PSNR (dB) ↑</th></tr>
 ${stats
   .map(
     (s) => `<tr>
@@ -122,7 +136,7 @@ ${stats
   <td>${s.avgEncode.toFixed(3)}</td>
   <td>${s.avgDecode.toFixed(3)}</td>
   <td>${gradeCell(s.avgCiede, 2, 2, 5)}</td>
-  <td>${gradeCell(s.avgDssim, 4, 0.1, 0.25)}</td>
+  ${hasBlurred ? `<td>${gradeCell(s.avgCiedeBlurred, 2, 2, 5)}</td>\n  ` : ""}<td>${gradeCell(s.avgDssim, 4, 0.1, 0.25)}</td>
   <td>${fmt(s.avgMsSsim, 4)}</td>
   <td>${fmt(s.avgPsnrHvsM, 1)}</td>
   <td>${fmt(s.avgSsimulacra2, 1)}</td>
@@ -341,7 +355,7 @@ ${formatStatsTable(allStats)}
 <details class="methodology">
 <summary>Methodology</summary>
 <div class="inner">
-<p><strong>Identical-dimension comparison</strong>: every format's decoded preview is Lanczos-3 resampled to the encoder-input (source) resolution and compared against that input, so all formats are scored at the same W×H per image. <strong>CIEDE2000 (ΔE00) is the primary metric</strong> — color accuracy dominates perceived quality for low-fidelity placeholders, where PSNR correlates poorly. All metrics are computed by <a href="https://crates.io/crates/iqa-cli"><code>iqa-cli</code></a> (the iqa-rs crate); window-based metrics are omitted (N/A) for images below their minimum size.</p>
+<p><strong>Display-resolution comparison</strong>: placeholders are judged at the size they are shown, so every format's decode is upscaled to a display-resolution reference — the original image capped to 512&nbsp;px on the long edge — and scored there. The upscale policy is stamped into the report: <em>browser</em> (gamma-space Mitchell, modeling how a browser stretches an <code>&lt;img&gt;</code>; the default) or <em>linear</em> (linear-light Lanczos-3, the signal-processing-correct resample). Both sides are composited over a white backdrop before scoring, so alpha semantics are defined. An optional <em>blurred</em> metric set scores both sides after a Gaussian blur (σ = longEdge/32), modeling the blur-up presentation. <strong>CIEDE2000 (ΔE00) is the primary metric</strong> — color accuracy dominates perceived quality for low-fidelity placeholders, where PSNR correlates poorly; SSIMULACRA2 and Butteraugli are co-reported as perceptual guards. All metrics are computed by <a href="https://crates.io/crates/iqa-cli"><code>iqa-cli</code></a> (the iqa-rs crate); window-based metrics are omitted (N/A) for images below their minimum size.</p>
 <table style="margin:10px 0">
 <tr><th>Metric</th><th>What it measures</th><th>Direction</th></tr>
 <tr><td><strong>ΔE00 (CIEDE2000)</strong></td><td><strong>Primary.</strong> Mean perceptual color difference over sRGB→CIELAB (D65)</td><td>lower; JND ≈ 1</td></tr>

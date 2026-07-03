@@ -34,6 +34,7 @@ export class UnpicAdapter implements FormatAdapter {
       decodeTimeMs: 0,
       dataUri,
       metrics: NULL_METRICS,
+      metricsBlurred: null,
     };
   }
 }

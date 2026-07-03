@@ -14,6 +14,7 @@ import {
 } from "./version-builds.ts";
 import {
   loadImage,
+  REFERENCE_CAP,
   rgbaToDataUri,
   fileBufferToDisplayDataUri,
   writeImageFile,
@@ -24,6 +25,12 @@ import {
   IqaError,
   setAllowMissingIqa,
 } from "./metrics/iqa.ts";
+import {
+  ALPHA_BACKDROP,
+  BLUR_SIGMA_RULE,
+  setScoringConfig,
+} from "./metrics.ts";
+import type { UpscalePolicy } from "./upscale.ts";
 import {
   generateReport,
   categorizeImage,
@@ -60,6 +67,13 @@ const { values } = parseArgs({
     // Preview-only escape hatch: metrics degrade to N/A instead of failing the
     // run when iqa-cli is unavailable. Never use for published comparisons.
     "allow-missing-iqa": { type: "boolean", default: false },
+    // How decodes are brought to display resolution for scoring:
+    // "browser" (gamma-space Mitchell, models what a browser shows — primary)
+    // or "linear" (linear-light Lanczos-3, signal-processing-correct).
+    "upscale-policy": { type: "string", default: "browser" },
+    // Also score both sides after a Gaussian blur (sigma = longEdge/32),
+    // modeling the blur-up presentation placeholders are displayed with.
+    "blurred-scoring": { type: "boolean", default: false },
     formats: { type: "string" },
     versions: { type: "string" },
     commit: { type: "string" },
@@ -77,6 +91,12 @@ const skipHarnesses =
   (values["skip-harnesses"] ?? false) || Boolean(values.versions);
 const shouldGenerateFixtures = values["generate-fixtures"] ?? true;
 const skipNatural = values["skip-natural"] ?? false;
+/** Upscale policy: "browser" → gamma-space Mitchell, "linear" → linear-light Lanczos-3. */
+const upscalePolicy: UpscalePolicy =
+  (values["upscale-policy"] ?? "browser") === "linear"
+    ? "linear-lanczos"
+    : "browser-gamma";
+const blurredScoring = values["blurred-scoring"] ?? false;
 /** Optional comma-separated format filter (case-insensitive), e.g. --formats ChromaHash,ThumbHash. */
 const formatFilter = values.formats
   ? values.formats.split(",").map((f) => f.trim().toLowerCase())
@@ -170,6 +190,11 @@ async function main(): Promise<void> {
   // complete but supports no conclusions (this happened: see commit history).
   setAllowMissingIqa(values["allow-missing-iqa"] ?? false);
   ensureIqaAvailable();
+
+  setScoringConfig({ upscalePolicy, blurredScoring });
+  console.log(
+    `Scoring: reference cap ${REFERENCE_CAP}px, upscale=${upscalePolicy}${blurredScoring ? ", blurred set enabled" : ""}`,
+  );
 
   // Generate synthetic fixtures if needed
   if (shouldGenerateFixtures) {
@@ -315,8 +340,15 @@ async function main(): Promise<void> {
     const gamut = gamutMap[name] ?? "srgb";
     input.gamut = gamut;
     // Color-managed metric reference: all formats are scored against the
-    // image's true sRGB appearance, not the raw gamut-encoded bytes.
-    input.metricReferenceRgba = gamutToSrgbReference(input.smallRgba, gamut);
+    // image's true sRGB appearance at display (reference) resolution, not the
+    // raw gamut-encoded bytes.
+    input.metricReferenceRgba = gamutToSrgbReference(
+      input.referenceRgba,
+      gamut,
+    );
+    // The report previews stay at encoder-input resolution; gamut fixtures
+    // need their own small-res sRGB conversion for display.
+    const displaySmallRgba = gamutToSrgbReference(input.smallRgba, gamut);
 
     // Gamut fixtures store raw bytes tagged with a wide gamut and carry no ICC
     // profile, so rendering them as plain sRGB misrepresents the source (#39).
@@ -330,9 +362,7 @@ async function main(): Promise<void> {
     const p3 = gamut === "displayp3";
     const previewIcc = p3 ? "p3" : undefined;
     // P3: the raw source bytes are already P3-encoded — tag, don't convert.
-    const displayRgba = p3
-      ? input.smallRgba
-      : (input.metricReferenceRgba ?? input.smallRgba);
+    const displayRgba = p3 ? input.smallRgba : displaySmallRgba;
     const originalDataUri = colorManaged
       ? await rgbaToDataUri(
           displayRgba,
@@ -444,6 +474,7 @@ async function main(): Promise<void> {
           preview,
           css,
           metrics: r.metrics,
+          metricsBlurred: r.metricsBlurred,
         };
       }),
     );
@@ -500,8 +531,15 @@ async function main(): Promise<void> {
   });
 
   const json: ComparisonJson = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     generatedAt: meta.generatedAt,
+    scoring: {
+      referenceCap: REFERENCE_CAP,
+      upscalePolicy,
+      blurredScoring,
+      blurSigmaRule: BLUR_SIGMA_RULE,
+      alphaBackdrop: ALPHA_BACKDROP,
+    },
     commit: meta.commit,
     repoUrl: meta.repoUrl,
     formats: activeFormatNames,

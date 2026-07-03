@@ -17,7 +17,14 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import sharp from "sharp";
@@ -111,6 +118,53 @@ function warnUnavailable(reason: string): void {
 
 type IqaJson = Record<string, number | null>;
 
+/**
+ * Content-addressed metric memo cache. iqa-cli at display resolution dominates
+ * a run's wall clock (and sweeps re-score unchanged pairs constantly); results
+ * are pure functions of the two pixel buffers, so cache them by content hash.
+ * Lives under output/.metric-cache/ (gitignored with the rest of output/).
+ */
+const CACHE_DIR = path.resolve(
+  import.meta.dirname,
+  "../../output/.metric-cache",
+);
+let cacheDirReady = false;
+
+function cacheKey(
+  refRgba: Uint8Array,
+  distRgba: Uint8Array,
+  width: number,
+  height: number,
+): string {
+  return createHash("sha256")
+    .update(`${width}x${height}:`)
+    .update(refRgba)
+    .update(":")
+    .update(distRgba)
+    .digest("hex");
+}
+
+function cacheRead(key: string): IqaMetrics | null {
+  try {
+    const raw = readFileSync(path.join(CACHE_DIR, `${key}.json`), "utf8");
+    return JSON.parse(raw) as IqaMetrics;
+  } catch {
+    return null;
+  }
+}
+
+function cacheWrite(key: string, metrics: IqaMetrics): void {
+  try {
+    if (!cacheDirReady) {
+      mkdirSync(CACHE_DIR, { recursive: true });
+      cacheDirReady = true;
+    }
+    writeFileSync(path.join(CACHE_DIR, `${key}.json`), JSON.stringify(metrics));
+  } catch {
+    // Cache writes are best-effort; a failed write only costs a recompute.
+  }
+}
+
 function runIqa(refPath: string, distPath: string, metrics: string[]): IqaJson {
   const stdout = execFileSync(
     IQA_CLI,
@@ -154,6 +208,10 @@ export async function computeIqaMetrics(
   width: number,
   height: number,
 ): Promise<IqaMetrics> {
+  const key = cacheKey(refRgba, distRgba, width, height);
+  const cached = cacheRead(key);
+  if (cached) return cached;
+
   const dir = mkdtempSync(path.join(tmpdir(), "chromahash-iqa-"));
   const refPath = path.join(dir, "ref.png");
   const distPath = path.join(dir, "dist.png");
@@ -185,7 +243,7 @@ export async function computeIqaMetrics(
       }
     }
 
-    return {
+    const metrics: IqaMetrics = {
       ciede2000: numOrNull(json.ciede2000),
       psnrDb: numOrNull(json.psnr),
       dssim: numOrNull(json.dssim),
@@ -194,6 +252,8 @@ export async function computeIqaMetrics(
       ssimulacra2: numOrNull(json.ssimulacra2),
       butteraugli: numOrNull(json.butteraugli),
     };
+    cacheWrite(key, metrics);
+    return metrics;
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

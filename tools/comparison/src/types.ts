@@ -10,24 +10,36 @@ export interface ImageInput {
   smallWidth: number;
   /** Downscaled height (<=100px). */
   smallHeight: number;
-  /** Downscaled raw RGBA pixel data. */
+  /** Downscaled raw RGBA pixel data (the encoder input). */
   smallRgba: Uint8Array;
+  /**
+   * Display-resolution reference width (original capped to REFERENCE_CAP px on
+   * the long edge). Quality is judged at this scale — the resolution a
+   * placeholder is actually shown at — not at the encoder-input scale.
+   */
+  referenceWidth: number;
+  /** Display-resolution reference height. */
+  referenceHeight: number;
+  /** Display-resolution reference RGBA (original decoded at the capped size). */
+  referenceRgba: Uint8Array;
   /** Original file as a Buffer. */
   fileBuffer: Buffer;
   /** Source gamut identifier (e.g. "srgb", "displayp3"). */
   gamut?: string;
   /**
-   * Color-managed metric reference: smallRgba converted from its tagged gamut
-   * to sRGB appearance. Metrics for every format compare against this (not the
-   * raw gamut-encoded bytes). Equals smallRgba when gamut is sRGB.
+   * Color-managed metric reference: referenceRgba converted from its tagged
+   * gamut to sRGB appearance, at reference resolution. Metrics for every format
+   * compare against this (not the raw gamut-encoded bytes). Equals
+   * referenceRgba when gamut is sRGB.
    */
   metricReferenceRgba?: Uint8Array;
 }
 
 /**
  * Per-format quality metrics, computed by `iqa-cli` between the decoded preview
- * and the encoder input, both resampled to identical (source) dimensions.
- * All fields are null for CSS-only formats (e.g. unpic) or when iqa-cli is unavailable.
+ * (upscaled to display resolution by the configured policy) and the
+ * display-resolution reference. All fields are null for formats that produce no
+ * raster output, or when running with --allow-missing-iqa.
  */
 export interface MetricResult {
   /**
@@ -67,6 +79,12 @@ export interface FormatResult {
   dataUri: string;
   /** Quality metrics (all null for CSS-only formats like unpic). */
   metrics: MetricResult;
+  /**
+   * "As-rendered" metrics: both sides Gaussian-blurred before scoring, modeling
+   * the blur-up presentation LQIPs are typically displayed with. Null unless the
+   * run enables --blurred-scoring.
+   */
+  metricsBlurred: MetricResult | null;
 }
 
 /** An adapter that processes an image through a specific LQIP format. */
@@ -113,6 +131,8 @@ export interface FormatStat {
   avgSsimulacra2: number | null;
   avgButteraugli: number | null;
   avgPsnr: number | null;
+  /** Mean blurred "as-rendered" ΔE00; null unless --blurred-scoring ran. */
+  avgCiedeBlurred: number | null;
 }
 
 /**
@@ -132,6 +152,8 @@ export interface FormatJson {
   /** CSS gradient string for CSS-only formats (e.g. unpic), else null. */
   css: string | null;
   metrics: MetricResult;
+  /** Blurred "as-rendered" metrics; null unless --blurred-scoring ran. */
+  metricsBlurred: MetricResult | null;
 }
 
 /** A single language implementation's result as serialized into the JSON report. */
@@ -167,11 +189,27 @@ export interface ComparisonImageJson {
  * The full machine-readable comparison report. Written alongside the HTML and
  * referencing the same standalone images under `images/`.
  */
+/** How the run scored quality — stamped into the JSON so results are interpretable. */
+export interface ScoringMetaJson {
+  /** Long-edge cap (px) of the display-resolution reference. */
+  referenceCap: number;
+  /** Upscale policy used to bring decodes to reference resolution. */
+  upscalePolicy: string;
+  /** Whether the blurred "as-rendered" metric set was computed. */
+  blurredScoring: boolean;
+  /** Gaussian sigma rule for blurred scoring (informational). */
+  blurSigmaRule: string;
+  /** Backdrop RGB both sides are composited over before scoring. */
+  alphaBackdrop: [number, number, number];
+}
+
 export interface ComparisonJson {
   /** Schema version, bumped on breaking changes to this structure. */
   schemaVersion: number;
   /** Pre-formatted generation timestamp (matches the HTML footer). */
   generatedAt: string;
+  /** Scoring configuration for this run. */
+  scoring: ScoringMetaJson;
   /** Full commit SHA the report was built from, or null when unknown. */
   commit: string | null;
   /** Base repository URL, or null. */

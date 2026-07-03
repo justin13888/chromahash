@@ -24,11 +24,11 @@ export class ThumbHashAdapter implements FormatAdapter {
 
     const { w: dw, h: dh, rgba: decodedRgba } = decoded;
     const dataUri = await rgbaToDataUri(decodedRgba, dw, dh);
-    const reference = input.metricReferenceRgba ?? rgba;
-    const metrics = await computeAllMetrics(
+    const reference = input.metricReferenceRgba ?? input.referenceRgba;
+    const scores = await computeAllMetrics(
       reference,
-      w,
-      h,
+      input.referenceWidth,
+      input.referenceHeight,
       decodedRgba,
       dw,
       dh,
@@ -42,7 +42,7 @@ export class ThumbHashAdapter implements FormatAdapter {
       encodeTimeMs,
       decodeTimeMs,
       dataUri,
-      metrics,
+      ...scores,
     };
   }
 }

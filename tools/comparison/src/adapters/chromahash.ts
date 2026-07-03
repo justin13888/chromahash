@@ -159,9 +159,9 @@ export class ChromaHashAdapter implements FormatAdapter {
 
     const encodedSizeBytes = encoded.length;
 
-    // Decode (capped to source dims so metrics are computed at source resolution,
-    // which avoids penalising ChromaHash for synthesising detail beyond the source).
-    // `computeAllMetrics` resamples the decode to source either way.
+    // Decode capped to the encoder-input dims (never upscaling past the source,
+    // and never synthesising detail beyond it); `computeAllMetrics` upscales
+    // every format's decode to the display-resolution reference for scoring.
     const capW = this.capToSource ? w : undefined;
     const capH = this.capToSource ? h : undefined;
     // Metrics are always scored in sRGB against the color-managed sRGB reference,
@@ -198,11 +198,11 @@ export class ChromaHashAdapter implements FormatAdapter {
       preview?.icc,
     );
 
-    const reference = input.metricReferenceRgba ?? rgba;
-    const metrics = await computeAllMetrics(
+    const reference = input.metricReferenceRgba ?? input.referenceRgba;
+    const scores = await computeAllMetrics(
       reference,
-      w,
-      h,
+      input.referenceWidth,
+      input.referenceHeight,
       decodedRgba,
       dw,
       dh,
@@ -216,7 +216,7 @@ export class ChromaHashAdapter implements FormatAdapter {
       encodeTimeMs,
       decodeTimeMs,
       dataUri,
-      metrics,
+      ...scores,
     };
   }
 }

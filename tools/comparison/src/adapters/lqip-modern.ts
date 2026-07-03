@@ -47,11 +47,11 @@ export class LqipModernAdapter implements FormatAdapter {
         .toBuffer({ resolveWithObject: true });
     }, iterations);
 
-    const reference = input.metricReferenceRgba ?? rgba;
-    const metrics = await computeAllMetrics(
+    const reference = input.metricReferenceRgba ?? input.referenceRgba;
+    const scores = await computeAllMetrics(
       reference,
-      w,
-      h,
+      input.referenceWidth,
+      input.referenceHeight,
       decodedRgba,
       dw,
       dh,
@@ -65,7 +65,7 @@ export class LqipModernAdapter implements FormatAdapter {
       encodeTimeMs,
       decodeTimeMs,
       dataUri,
-      metrics,
+      ...scores,
     };
   }
 }
