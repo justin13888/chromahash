@@ -60,8 +60,8 @@ layout precision, and wide-gamut support matter more than minimizing byte count.
 | µ-law companding with exact zero | Non-linear quantization matching natural image DCT coefficient distributions; zero coefficients decode exactly. |
 | Decode-aware DC selection | The encoder picks the DC codes whose *decoded* color is closest to the true average — gamut-corner solids round-trip nearly exactly. |
 | Multi-gamut encode | Accepts sRGB, Display P3, Adobe RGB, BT.2020, or ProPhoto RGB sources. |
-| Single decode target | Always sRGB output. One set of matrices, zero ambiguity. |
-| Alpha support | Transparent images supported within the fixed 32-byte size. |
+| Display-gamut decode | sRGB by default; decoders MAY render to Display P3 or Adobe RGB (§11). OKLAB is absolute, so no gamut flag is stored. |
+| Alpha support | Transparent images supported within the same tier byte budget (32 bytes at tier 0). |
 
 ### Design Priorities (ordered)
 
@@ -69,7 +69,7 @@ layout precision, and wide-gamut support matter more than minimizing byte count.
 2. **Layout precision** — decoded aspect ratio must closely match the original.
 3. **Wide-gamut correctness** — colors from P3/Adobe RGB/BT.2020 sources preserved accurately.
 4. **Decode simplicity and speed** — trivially implementable, fast (<1ms in JavaScript).
-5. **Fixed size** — predictable storage and zero parsing complexity.
+5. **Predictable size** — the byte length is deterministic from byte 0 (§3.5); no length framing to parse.
 
 ---
 
@@ -337,7 +337,7 @@ The resulting OKLAB values are **absolute** — the same physical color produces
 absolute OKLAB to a caller-chosen **output gamut** (§11), so the same hash can be shown
 correctly on an sRGB, Display P3, or Adobe RGB display.
 
-> **Note (v0.6):** DC chroma quantization ranges are sized to the OKLAB hull of the
+> **Note:** DC chroma quantization ranges are sized to the OKLAB hull of the
 > display-output gamuts — the union of sRGB, Display P3 and Adobe RGB (§7.1) — so colors
 > within any of those gamuts are stored faithfully and render at full saturation on a
 > matching display. Source colors more saturated than that union (e.g. some BT.2020 /
@@ -348,10 +348,12 @@ correctly on an sRGB, Display P3, or Adobe RGB display.
 ### 5.2 Decoding Pipeline
 
 ```
-OKLAB → LMS_cbrt (M2_inv) → LMS (cube) → sRGB linear (M1_inv[sRGB]) → sRGB gamma → clamp → 8-bit RGBA
+OKLAB → LMS_cbrt (M2_inv) → LMS (cube) → linear RGB (M1_inv[output gamut]) → clamp → gamma → 8-bit RGBA
 ```
 
-Decode target is always sRGB.
+The default decode target is sRGB. Decoders MAY render to Display P3 or Adobe RGB on
+request (§11); requests for BT.2020 or ProPhoto output fall back to sRGB, and
+`averageColor` (§11.2) is always sRGB.
 
 ### 5.3 Transfer Functions
 
@@ -458,12 +460,12 @@ natural images. Properties:
 `p_k` (the K-th priority) is deterministic from the selection and is reserved for
 frequency-normalized decoder extensions; it is pinned by the test vectors.
 
-**K per channel:**
+**K per channel (tier-0 base; every count scales ×`4^tier`, §3.5):**
 
 | Channel | Mode | K | Bits |
 |---|---|---|---|
-| L luminance | no-alpha | 27 | 5 each |
-| L luminance | alpha | 20 | first 7 × 6, remaining 13 × 5 |
+| L luminance | no-alpha | 26 | 5 each |
+| L luminance | alpha | 20 | 5 each |
 | a chroma | both | 9 | 4 each |
 | b chroma | both | 9 | 4 each |
 | Alpha | alpha | 5 | 4 each |
@@ -1397,25 +1399,26 @@ ChromaHash is directly inspired by [ThumbHash](https://evanw.github.io/thumbhash
 Evan Wallace. Key inherited ideas: DCT-based placeholder encoding, alpha compositing
 over average color, and average color extraction from the header.
 
-| Feature | ThumbHash | ChromaHash v0.6 |
+| Feature | ThumbHash | ChromaHash v1 (tier 0) |
 |---------|-----------|------------|
-| **Size** | 5–25 bytes (variable) | 32 bytes (fixed) |
+| **Size** | 5–25 bytes (variable, length must be probed) | 32 bytes at tier 0; opt-in tiers to ~108/411/1623 bytes (self-describing length) |
 | **Color space** | LPQA (gamma sRGB) | OKLAB (perceptually uniform) |
 | **L DC / Chroma DC** | 6 / 6 bits | 7 / 7 bits |
 | **Coefficient selection** | ℓ1 triangle over adaptive grid | Top-K ℓ2 ball over the decode raster |
-| **L AC budget** | up to 27 coeff, 4-bit linear | 27 coeff, 5-bit µ-law (exact zero) |
+| **L AC budget** | up to 27 coeff, 4-bit linear | 26 coeff, 5-bit µ-law (exact zero) |
 | **Chroma AC budget** | 5 coeff × 4-bit each | 9 coeff × 4-bit µ-law (µ=8) each |
 | **DC fidelity** | rounded | decode-aware search (gamut-corner solids near-exact) |
 | **Aspect ratio** | 3-bit (~7% error) | 8-bit log₂ (~1.1% error) |
 | **Aspect range** | up to ~7:1 | up to 16:1 |
 | **Source gamuts** | sRGB only | sRGB, P3, Adobe RGB, BT.2020, ProPhoto |
-| **Gamut clamping** | Hard per-channel | Soft segment bisection (hue-preserving, L-blended) |
+| **Gamut clamping** | Hard per-channel | Relative-colorimetric per-channel clip in the output gamut (§12.6) |
 | **Input dimensions** | Any (library resizes) | Any (full-resolution DCT) |
-| **Memory alignment** | No (variable length) | 32-byte aligned |
+| **Quality scaling** | None | 3-bit tier: ×4^tier coefficients, 2^tier render resolution |
 
-On the reference corpus (52 images, identical color-managed metrics), ChromaHash v0.6
-leads ThumbHash on every metric — mean ΔE00 4.62 vs 7.56, SSIMULACRA2 56.6 vs 47.6,
-Butteraugli 9.78 vs 14.90 — in exchange for the larger fixed size.
+On the reference corpus (52 images, identical color-managed metrics), ChromaHash v0.6 —
+whose tier-0 layout differs from v1 only in the smaller pre-tier header and a 27th L
+coefficient — led ThumbHash on every metric: mean ΔE00 4.62 vs 7.56, SSIMULACRA2 56.6
+vs 47.6, Butteraugli 9.78 vs 14.90, in exchange for the larger size.
 
 ---
 

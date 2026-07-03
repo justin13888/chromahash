@@ -17,6 +17,8 @@ from constants import (
     M1_ADOBE_RGB,
     M1_BT2020,
     M1_DISPLAY_P3,
+    M1_INV_ADOBE_RGB,
+    M1_INV_DISPLAY_P3,
     M1_INV_SRGB,
     M1_PROPHOTO_RGB,
     M1_SRGB,
@@ -186,21 +188,29 @@ def derive_m1(gamut_name: str) -> list:
 # =========================================================================
 
 def validate_matrix_inverses():
-    """Check M2 × M2_inv ≈ I and M1[sRGB] × M1_inv[sRGB] ≈ I."""
+    """Check M2 × M2_inv ≈ I and M1[g] × M1_inv[g] ≈ I for each output gamut."""
     print("\n1. Matrix inverse relationships")
 
     product = matmul(M2, M2_INV)
     err = identity_error(product)
     check(err < IDENTITY_TOL, f"M2 × M2_inv ≈ I (err={err:.2e})")
 
-    product = matmul(M1_SRGB, M1_INV_SRGB)
-    err = identity_error(product)
-    check(err < IDENTITY_TOL, f"M1[sRGB] × M1_inv[sRGB] ≈ I (err={err:.2e})")
+    # Every display-output gamut the decoder supports (§11.1) must ship a
+    # stored inverse that (a) multiplies with its M1 to identity and
+    # (b) matches the inverse computed from M1 from first principles.
+    output_gamuts = [
+        ("sRGB", M1_SRGB, M1_INV_SRGB),
+        ("Display P3", M1_DISPLAY_P3, M1_INV_DISPLAY_P3),
+        ("Adobe RGB", M1_ADOBE_RGB, M1_INV_ADOBE_RGB),
+    ]
+    for name, m1, m1_inv in output_gamuts:
+        product = matmul(m1, m1_inv)
+        err = identity_error(product)
+        check(err < IDENTITY_TOL, f"M1[{name}] × M1_inv[{name}] ≈ I (err={err:.2e})")
 
-    # Also check the inverse computed from M1[sRGB] matches the stored one
-    M1_inv_computed = mat_inv_3x3(M1_SRGB)
-    diff = mat_max_diff(M1_inv_computed, M1_INV_SRGB)
-    check(diff < 1e-8, f"M1_inv[sRGB] matches inv(M1[sRGB]) (diff={diff:.2e})")
+        m1_inv_computed = mat_inv_3x3(m1)
+        diff = mat_max_diff(m1_inv_computed, m1_inv)
+        check(diff < 1e-8, f"M1_inv[{name}] matches inv(M1[{name}]) (diff={diff:.2e})")
 
 
 def validate_white_point():

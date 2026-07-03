@@ -13,7 +13,8 @@ from M1[sRGB] and the sRGB XYZ matrix. Run validate.py to verify.
 from dataclasses import dataclass
 
 # =========================================================================
-# Scalar Parameters (v0.6 — locked by the 2026-06 comparison-corpus sweep)
+# Scalar Parameters (locked by the 2026-06 comparison-corpus sweep;
+# carried unchanged into wire-format v1)
 # =========================================================================
 
 # µ-law companding parameters, per channel group (§7.3). Chroma uses a higher
@@ -26,14 +27,16 @@ MU_ALPHA = 5     # Alpha AC
 # =========================================================================
 # Quantization Range Maximums (§7.1, §7.2, §12.1)
 # =========================================================================
-# Values exceeding these are clamped at encode. v0.6 sizes the chroma DC
-# ranges to the sRGB OKLAB hull (decode always clamps to sRGB, so range
-# beyond the hull is unreachable and only wastes precision):
-#   sRGB hull: a ∈ [−0.2339, +0.2746], b ∈ [−0.3115, +0.1986]
-# The AC scale maximums are sized to measured signal: across the reference
-# corpus the chroma AC scale never exceeds 0.113 (v0.5's 0.5 range wasted
-# two bits of precision and caused the characteristic chroma banding and
-# desaturation).
+# Values exceeding these are clamped at encode. The chroma DC ranges are
+# sized to the union OKLAB hull of the display-output gamuts
+# (sRGB ∪ Display P3 ∪ Adobe RGB: max |a| ≈ 0.347, max |b| ≈ 0.321), so
+# wide-gamut colors are stored faithfully for rendering to a P3/Adobe
+# display (§5.1) instead of being truncated to the sRGB hull. Range beyond
+# the union hull is unreachable by any supported output and only wastes
+# precision. The AC scale maximums are sized to measured signal: across the
+# reference corpus the chroma AC scale never exceeds 0.113 (v0.5's 0.5
+# range wasted two bits of precision and caused the characteristic chroma
+# banding and desaturation).
 
 MAX_CHROMA_A = 0.35        # Max absolute OKLAB 'a' DC (sRGB∪P3∪Adobe hull max |a| ≈ 0.347)
 MAX_CHROMA_B = 0.33        # Max absolute OKLAB 'b' DC (sRGB∪P3∪Adobe hull max |b| ≈ 0.321)
@@ -278,14 +281,30 @@ M1_PROPHOTO_RGB = [
 ]
 
 # =========================================================================
-# M1_inv: OKLAB LMS → Linear sRGB (Decoder Matrix)
+# M1_inv: OKLAB LMS → Linear RGB (Decoder Matrices)
 # =========================================================================
-# This is the ONLY M1 inverse the decoder needs. Ottosson's published values.
+# One inverse per supported display-output gamut (§11.1): sRGB (the default
+# and the fallback for BT.2020/ProPhoto output requests), Display P3, and
+# Adobe RGB. sRGB values are Ottosson's published constants; the others are
+# the inverses of the corresponding M1 matrices above (verified by
+# validate.py).
 
 M1_INV_SRGB = [
     [ 4.0767416621, -3.3077115913,  0.2309699292],
     [-1.2684380046,  2.6097574011, -0.3413193965],
     [-0.0041960863, -0.7034186147,  1.7076147010],
+]
+
+M1_INV_DISPLAY_P3 = [
+    [ 3.1277689869, -2.2571357957,  0.1293668089],
+    [-1.0910090475,  2.4133317585, -0.3223227108],
+    [-0.0260108130, -0.5080413260,  1.5340521389],
+]
+
+M1_INV_ADOBE_RGB = [
+    [ 2.5540368478, -1.6219762024,  0.0679393544],
+    [-1.2684380042,  2.6097574007, -0.3413193963],
+    [-0.0562347471, -0.5670418342,  1.6232765812],
 ]
 
 # =========================================================================

@@ -9,7 +9,7 @@ cargo test --manifest-path rust/Cargo.toml -- generate_test_vectors --nocapture 
 
 ## Files
 
-### Unit tests (v0.6)
+### Unit tests (wire-format v1)
 
 - `unit-color.json` — OKLAB color space transforms (RGB ↔ OKLAB)
 - `unit-mulaw.json` — µ-law companding round-trips for both format µ values
@@ -21,18 +21,21 @@ cargo test --manifest-path rust/Cargo.toml -- generate_test_vectors --nocapture 
 - `unit-aspect.json` — Aspect ratio encoding/decoding and output sizes
 - `unit-bitpack.json` — Bit packing `readBits`/`writeBits` operations
 - `unit-cbrt.json` — Halley cube root accuracy
+- `unit-validate.json` — `from_bytes` accept/reject cases: version, tier,
+  reserved-bit, and length validation (spec §2.6)
 
-### Integration tests (v0.6)
+### Integration tests (wire-format v1)
 
-- `integration-encode.json` — Full encode: input RGBA → 32-byte hash.
-  Includes degenerate dimensions (`strip_1x100`, `strip_100x1`, `solid_1x1`),
-  gamut-corner solids, wide-gamut solids (Display P3, ProPhoto), and the
-  16:1 aspect clamp boundary.
-- `integration-decode.json` — Full decode: 32-byte hash → output RGBA at the
-  natural size (long side 32 px)
+- `integration-encode.json` — Full encode: input RGBA → hash, across quality
+  tiers 0–3 (32/108/411/1623 bytes no-alpha). Includes degenerate dimensions
+  (`strip_1x100`, `strip_100x1`, `solid_1x1`), gamut-corner solids,
+  wide-gamut solids (Display P3, ProPhoto), and the 16:1 aspect clamp
+  boundary.
+- `integration-decode.json` — Full decode: hash → output RGBA at the
+  natural size (long edge `32·2^tier` px)
 - `integration-decode-capped.json` — Capped decode: hash + `max_width`/
   `max_height` → output RGBA. Covers sub-natural rendering (the band-limited
-  frequency skip of spec §11.4), including the 1×N strips that rendered
+  frequency skip of spec §11.3), including the 1×N strips that rendered
   solid white under v0.5, and caps larger than natural (no upscaling).
 
 ## Schema
