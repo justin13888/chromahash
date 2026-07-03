@@ -378,8 +378,30 @@ The decoder always applies the **sRGB inverse EOTF** (linear → gamma):
 gamma(x) = x ≤ 0.0031308 ? 12.92 × x : 1.055 × x^(1/2.4) − 0.055
 ```
 
-For HDR PQ content, the encoder MUST tone-map to SDR before OKLAB conversion. The
-specific tone-mapping algorithm is implementation-defined.
+For HDR PQ content, the encoder MUST tone-map to SDR before OKLAB conversion,
+using the canonical Reinhard operator below. An implementation-defined tone map
+would contradict the byte-identical cross-implementation requirement (§2.3) —
+two conforming encoders MUST produce the same hash for the same PQ input.
+
+```
+pqToSdr(x):                       // x = PQ-encoded channel value in [0, 1]
+    m1 = 0.1593017578125          // ST 2084 constants
+    m2 = 78.84375
+    c1 = 0.8359375
+    c2 = 18.8515625
+    c3 = 18.6875
+    n = x^(1/m2)
+    yLinear = (max(n − c1, 0) / (c2 − c3·n))^(1/m1)
+    yNits = yLinear × 10000       // PQ codes absolute luminance up to 10000 cd/m²
+    l = yNits / 203               // SDR reference white = 203 cd/m² (BT.2408)
+    return l / (1 + l)            // Reinhard: compresses highlights, preserves midtones
+```
+
+Reinhard at a 203-nit reference white is deliberately simple: a placeholder needs
+a stable, deterministic SDR appearance, not a display-adaptive HDR rendering.
+Fancier operators (BT.2390 EETF, ACES) produce different bytes per parameterization
+and would need their parameters pinned in the spec for no perceptual benefit at
+placeholder fidelity.
 
 ---
 
