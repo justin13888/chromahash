@@ -353,6 +353,7 @@ ${formatStatsTable(allStats)}
 <tr><td><strong>PSNR</strong></td><td>Classic pixel MSE metric; penalises intentional LQIP blur</td><td>higher; reference only</td></tr>
 </table>
 <p style="margin-top:8px"><em>ΔE00 colour coding: good &lt; 2, warn &lt; 5, bad ≥ 5. DSSIM: good &lt; 0.10, warn &lt; 0.25.</em></p>
+<p style="margin-top:8px"><strong>Timing</strong>: per-operation averages over the run's iteration count. ChromaHash is measured <em>in-process</em> inside its release-built native binary (<code>bench-encode</code>/<code>bench-decode</code> subcommands; process-spawn cost excluded); the npm formats run in-process in Node. Native vs JS runtimes differ, so compare timings as "native Rust" vs "Node/JS" columns rather than as a single ranking. The version report times all builds by spawn loop instead (old tags predate the bench subcommands) — comparable within that report, not with this one.</p>
 </div>
 </details>
 

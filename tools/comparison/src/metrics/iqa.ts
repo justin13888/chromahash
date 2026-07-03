@@ -7,8 +7,13 @@
  * (e.g. PSNR of identical images) come back as JSON `null`.
  *
  * Install with `just install-iqa` (or `cargo install iqa-cli`). Override the binary
- * path with the `IQA_CLI` environment variable. When the binary is missing or fails,
- * metrics degrade to `null` so the report still builds (thumbnails + timings).
+ * path with the `IQA_CLI` environment variable.
+ *
+ * A missing or broken iqa-cli is a hard error: a report with all-null quality
+ * metrics looks superficially complete but supports no conclusions, so the run
+ * fails up front (`ensureIqaAvailable`) and again on any per-pair failure.
+ * `--allow-missing-iqa` (see main.ts) opts into the old degrade-to-null behavior
+ * for preview-only runs.
  */
 
 import { execFileSync } from "node:child_process";
@@ -47,6 +52,40 @@ export const NULL_IQA_METRICS: IqaMetrics = {
 };
 
 const IQA_CLI = process.env.IQA_CLI ?? "iqa-cli";
+
+/**
+ * Metric-infrastructure failure (iqa-cli missing/broken). Distinct from ordinary
+ * per-adapter errors so the orchestrator can abort the run instead of logging
+ * and continuing with a hollow all-N/A report.
+ */
+export class IqaError extends Error {}
+
+/** When true, metric failures degrade to null instead of aborting the run. */
+let allowMissingIqa = false;
+
+/** Opt into degrade-to-null metrics (preview-only runs). */
+export function setAllowMissingIqa(allow: boolean): void {
+  allowMissingIqa = allow;
+}
+
+/**
+ * Fail fast when iqa-cli is not runnable. Called once at startup so a run
+ * never silently produces an all-N/A report.
+ */
+export function ensureIqaAvailable(): void {
+  if (allowMissingIqa) return;
+  try {
+    execFileSync(IQA_CLI, ["--version"], { encoding: "utf8", timeout: 30_000 });
+  } catch (err) {
+    const reason =
+      err instanceof Error
+        ? (err.message.split("\n")[0] ?? err.message)
+        : String(err);
+    throw new IqaError(
+      `iqa-cli is not available (${reason}). Quality metrics are required for a meaningful report — install with \`just install-iqa\` or set IQA_CLI, or pass --allow-missing-iqa for a preview-only run with N/A metrics.`,
+    );
+  }
+}
 
 /**
  * iqa-cli aborts the entire run if any requested metric errors, and several metrics
@@ -107,7 +146,7 @@ function numOrNull(v: number | null | undefined): number | null {
 
 /**
  * Compute iqa-cli quality metrics between two RGBA buffers of identical dimensions.
- * Returns all-null on any failure (e.g. iqa-cli not installed).
+ * Throws on failure unless `setAllowMissingIqa(true)` opted into null degradation.
  */
 export async function computeIqaMetrics(
   refRgba: Uint8Array,
@@ -136,6 +175,11 @@ export async function computeIqaMetrics(
           err instanceof Error
             ? (err.message.split("\n")[0] ?? err.message)
             : String(err);
+        if (!allowMissingIqa) {
+          throw new IqaError(
+            `iqa-cli failed for a ${width}×${height} pair (${reason}). Pass --allow-missing-iqa to degrade metrics to N/A instead.`,
+          );
+        }
         warnUnavailable(reason);
         return { ...NULL_IQA_METRICS };
       }

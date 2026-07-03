@@ -9,6 +9,8 @@ fn usage() -> ! {
     eprintln!("  encode_stdin average-color");
     eprintln!("  encode_stdin batch-encode <width> <height> <gamut> <count>");
     eprintln!("  encode_stdin batch-decode <count>");
+    eprintln!("  encode_stdin bench-encode <width> <height> <gamut> <iters>");
+    eprintln!("  encode_stdin bench-decode <iters> [max_width max_height]");
     eprintln!();
     eprintln!("Quality: set CHROMAHASH_TIER=0..=3 to pick the quality multiplier");
     eprintln!("(0 = 32-byte default; each tier doubles the render resolution).");
@@ -230,6 +232,77 @@ fn main() {
             io::stdout()
                 .write_all(&[hashes[0].as_bytes()[0]])
                 .expect("failed to write checksum");
+        }
+        "bench-encode" => {
+            // In-process encode timing: read one image, loop `iters` times, print
+            // the mean nanoseconds per encode to stdout. The comparison harness
+            // uses this so ChromaHash timing excludes process-spawn overhead and
+            // is measured on the same terms as the in-process npm formats.
+            if args.len() != 6 {
+                eprintln!("Usage: encode_stdin bench-encode <width> <height> <gamut> <iters>");
+                std::process::exit(1);
+            }
+            let w: u32 = args[2].parse().expect("invalid width");
+            let h: u32 = args[3].parse().expect("invalid height");
+            let gamut = parse_gamut(&args[4]);
+            let iters: u32 = args[5].parse().expect("invalid iters");
+
+            let expected_len = (w as usize) * (h as usize) * 4;
+            let mut rgba = vec![0u8; expected_len];
+            io::stdin()
+                .read_exact(&mut rgba)
+                .expect("failed to read RGBA from stdin");
+            let t = tunables_from_env();
+            let tier = tier_from_env();
+
+            // Warmup (also validates the input before the timed loop).
+            std::hint::black_box(ChromaHash::encode_tuned_quality(
+                w, h, &rgba, gamut, &t, tier,
+            ));
+            let start = std::time::Instant::now();
+            for _ in 0..iters {
+                std::hint::black_box(ChromaHash::encode_tuned_quality(
+                    w, h, &rgba, gamut, &t, tier,
+                ));
+            }
+            let ns_per_op = start.elapsed().as_nanos() / u128::from(iters.max(1));
+            println!("{ns_per_op}");
+        }
+        "bench-decode" => {
+            // In-process decode timing: read one hash, loop `iters` times, print
+            // the mean nanoseconds per decode to stdout. Optional max dims use the
+            // capped decode path (same as `decode [max_w max_h]`).
+            if args.len() != 3 && args.len() != 5 {
+                eprintln!("Usage: encode_stdin bench-decode <iters> [max_width max_height]");
+                std::process::exit(1);
+            }
+            let iters: u32 = args[2].parse().expect("invalid iters");
+            let ch = read_hash_from_stdin();
+            let t = tunables_from_env();
+            let out_gamut = match std::env::var("CHROMAHASH_OUT").as_deref() {
+                Ok("displayp3") => Gamut::DisplayP3,
+                Ok("adobergb") => Gamut::AdobeRgb,
+                _ => Gamut::Srgb,
+            };
+            let cap = if args.len() == 5 {
+                let max_w: u32 = args[3].parse().expect("invalid max_width");
+                let max_h: u32 = args[4].parse().expect("invalid max_height");
+                Some((max_w, max_h))
+            } else {
+                None
+            };
+            let run = || match cap {
+                Some((mw, mh)) => ch.decode_capped_to_tuned(mw, mh, out_gamut, &t),
+                None => ch.decode_to_tuned(out_gamut, &t),
+            };
+
+            std::hint::black_box(run());
+            let start = std::time::Instant::now();
+            for _ in 0..iters {
+                std::hint::black_box(run());
+            }
+            let ns_per_op = start.elapsed().as_nanos() / u128::from(iters.max(1));
+            println!("{ns_per_op}");
         }
         "batch-decode" => {
             // No batch decode API exists; loop the single decode `count` times.

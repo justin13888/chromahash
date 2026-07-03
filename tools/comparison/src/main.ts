@@ -20,6 +20,11 @@ import {
 } from "./image-loader.ts";
 import { buildHarnesses, runAllHarnesses } from "./harness-runner.ts";
 import {
+  ensureIqaAvailable,
+  IqaError,
+  setAllowMissingIqa,
+} from "./metrics/iqa.ts";
+import {
   generateReport,
   categorizeImage,
   computeFormatStats,
@@ -52,6 +57,9 @@ const { values } = parseArgs({
     "skip-harnesses": { type: "boolean", default: false },
     "generate-fixtures": { type: "boolean", default: true },
     "skip-natural": { type: "boolean", default: false },
+    // Preview-only escape hatch: metrics degrade to N/A instead of failing the
+    // run when iqa-cli is unavailable. Never use for published comparisons.
+    "allow-missing-iqa": { type: "boolean", default: false },
     formats: { type: "string" },
     versions: { type: "string" },
     commit: { type: "string" },
@@ -158,6 +166,11 @@ function orderVersions(bins: VersionBinary[]): VersionBinary[] {
 async function main(): Promise<void> {
   const toolRoot = path.resolve(import.meta.dirname, "..");
 
+  // Fail fast if quality metrics can't be computed — an all-N/A report looks
+  // complete but supports no conclusions (this happened: see commit history).
+  setAllowMissingIqa(values["allow-missing-iqa"] ?? false);
+  ensureIqaAvailable();
+
   // Generate synthetic fixtures if needed
   if (shouldGenerateFixtures) {
     const syntheticDir = path.join(toolRoot, "fixtures/synthetic");
@@ -215,7 +228,8 @@ async function main(): Promise<void> {
   // environment so `CHROMAHASH_TIER=2 just compare` evaluates a higher-fidelity
   // build under a more generous size budget (the encoded-bytes column shows the
   // size–quality trade-off). Matches the encode_stdin / benchmark convention.
-  const chromaTier = Number.parseInt(process.env.CHROMAHASH_TIER ?? "0", 10) || 0;
+  const chromaTier =
+    Number.parseInt(process.env.CHROMAHASH_TIER ?? "0", 10) || 0;
   if (chromaTier !== 0) {
     console.log(`ChromaHash quality tier: ${chromaTier}`);
   }
@@ -232,6 +246,9 @@ async function main(): Promise<void> {
           // tags lack capped decode); metrics resample to source regardless.
           capToSource: false,
           tier: chromaTier,
+          // Old tag binaries predate the bench subcommands; spawn-loop timing
+          // keeps every version column measured the same way.
+          benchTiming: false,
         }),
     );
     if (adapters.length === 0) {
@@ -338,6 +355,9 @@ async function main(): Promise<void> {
         const result = await adapter.process(input, iterations);
         formatResults.push(result);
       } catch (err) {
+        // Metric-infrastructure failures abort the whole run — a report where
+        // one format silently lost its metrics is not a comparison.
+        if (err instanceof IqaError) throw err;
         console.warn(
           `  ${adapter.name} failed: ${err instanceof Error ? err.message : err}`,
         );

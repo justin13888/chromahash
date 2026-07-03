@@ -4,7 +4,7 @@ import type { HarnessResult, ImageInput } from "./types.ts";
 import { rgbaToDataUri } from "./image-loader.ts";
 
 const ROOT = path.resolve(import.meta.dirname, "../../..");
-const RUST_CLI = path.join(ROOT, "rust/target/debug/examples/encode_stdin");
+const RUST_CLI = path.join(ROOT, "rust/target/release/examples/encode_stdin");
 // The C harness links the chromahash-c cdylib, which must be on the loader path.
 const C_LIB_DIR = path.join(ROOT, "bindings/c/target/debug");
 const C_HARNESS = path.join(ROOT, "bindings/c/target/encode_stdin");
@@ -40,7 +40,7 @@ function getHarnesses(): HarnessConfig[] {
   return [
     {
       language: "Rust",
-      command: path.join(ROOT, "rust/target/debug/examples/encode_stdin"),
+      command: path.join(ROOT, "rust/target/release/examples/encode_stdin"),
       args: [],
       cwd: ROOT,
     },
@@ -124,6 +124,7 @@ export function buildHarnesses(): void {
       command: "cargo",
       args: [
         "build",
+        "--release",
         "--manifest-path",
         path.join(ROOT, "rust/Cargo.toml"),
         "--example",

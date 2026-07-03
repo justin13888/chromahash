@@ -26,7 +26,7 @@ export class LqipModernAdapter implements FormatAdapter {
     const encodedSizeBytes = result.content.length;
     const dataUri = metadata.dataURIBase64;
 
-    // Decode the lqip output back to RGBA for PSNR computation
+    // Decode the lqip output back to RGBA for metric computation
     const lqipImage = sharp(result.content);
     const { data: decodedRaw, info } = await lqipImage
       .ensureAlpha()
@@ -37,8 +37,15 @@ export class LqipModernAdapter implements FormatAdapter {
     const dw = info.width;
     const dh = info.height;
 
-    // Decode timing: negligible since it's just displaying a tiny image
-    const decodeTimeMs = 0;
+    // Decode timing: the real WebP → RGBA decode, measured like every other
+    // format (previously hard-coded to 0, which misrepresented the format as
+    // having a free decode).
+    const decodeTimeMs = await timeMs(async () => {
+      await sharp(result.content)
+        .ensureAlpha()
+        .raw()
+        .toBuffer({ resolveWithObject: true });
+    }, iterations);
 
     const reference = input.metricReferenceRgba ?? rgba;
     const metrics = await computeAllMetrics(
