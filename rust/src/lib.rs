@@ -104,7 +104,11 @@ use constants::{
 // corpus sweep (tools/comparison) can explore constants before they are
 // locked into the spec.
 #[doc(hidden)]
-pub use constants::{AcLayout, LAYOUT_A, LAYOUT_B, LAYOUT_C, LAYOUT_D, Tunables};
+pub use constants::{
+    AcLayout, Companding, LAYOUT_A, LAYOUT_B, LAYOUT_C, LAYOUT_D, QuantTable, Tunables,
+};
+#[doc(hidden)]
+pub use encode::{CoeffDump, encode_debug_coefficients};
 
 /// ChromaHash: a compact LQIP (Low Quality Image Placeholder).
 ///

@@ -1,4 +1,7 @@
-use chromahash::{BatchEncoder, ChromaHash, Gamut, ImageInput, MAX_TIER, Tunables};
+use chromahash::{
+    BatchEncoder, ChromaHash, Companding, Gamut, ImageInput, MAX_TIER, QuantTable, Tunables,
+    encode_debug_coefficients,
+};
 use std::io::{self, Read, Write};
 use std::sync::Arc;
 
@@ -11,6 +14,7 @@ fn usage() -> ! {
     eprintln!("  encode_stdin batch-decode <count>");
     eprintln!("  encode_stdin bench-encode <width> <height> <gamut> <iters>");
     eprintln!("  encode_stdin bench-decode <iters> [max_width max_height]");
+    eprintln!("  encode_stdin dump-coeffs <width> <height> <gamut>");
     eprintln!();
     eprintln!("Quality: set CHROMAHASH_TIER=0..=3 to pick the quality multiplier");
     eprintln!("(0 = 32-byte default; each tier doubles the render resolution).");
@@ -106,6 +110,36 @@ fn tunables_from_env() -> Tunables {
             "w_min_c" => t.w_min_c = parse_f64(),
             "w_exp_c" => t.w_exp_c = parse_u32(),
             "dc_search" => t.dc_search = value == "1" || value == "true",
+            // Companding family per group: mulaw | alaw:<a> | pow:<gamma> | table
+            "compand_l" => t.compand_l = parse_companding(key, value),
+            "compand_c" => t.compand_c = parse_companding(key, value),
+            "compand_alpha" => t.compand_alpha = parse_companding(key, value),
+            // Trained codebooks (positive half, comma-separated ascending levels)
+            "table_l" => t.table_l = parse_table(key, value),
+            "table_c" => t.table_c = parse_table(key, value),
+            "table_alpha" => t.table_alpha = parse_table(key, value),
+            "deadzone_l" => t.deadzone_l = parse_f64(),
+            "deadzone_c" => t.deadzone_c = parse_f64(),
+            "deadzone_alpha" => t.deadzone_alpha = parse_f64(),
+            "band_split" => t.band_split = parse_f64(),
+            "band_gain_l" => t.band_gain_l = parse_f64(),
+            "band_gain_c" => t.band_gain_c = parse_f64(),
+            "aniso" => t.aniso_oblique = parse_f64(),
+            // Raw AcLayout overrides ("count:bits"), applied on top of `layout`
+            "l1" => t.layout.l_tiers[0] = parse_count_bits(key, value),
+            "l2" => t.layout.l_tiers[1] = parse_count_bits(key, value),
+            "c" => {
+                let (count, bits) = parse_count_bits(key, value);
+                t.layout.c_count = count;
+                t.layout.c_bits = bits;
+            }
+            "la1" => t.layout.la_tiers[0] = parse_count_bits(key, value),
+            "la2" => t.layout.la_tiers[1] = parse_count_bits(key, value),
+            "ca" => {
+                let (count, bits) = parse_count_bits(key, value);
+                t.layout.ca_count = count;
+                t.layout.ca_bits = bits;
+            }
             _ => {
                 eprintln!("CHROMAHASH_TUNE: unknown key '{key}'");
                 std::process::exit(1);
@@ -113,6 +147,61 @@ fn tunables_from_env() -> Tunables {
         }
     }
     t
+}
+
+/// Parse a companding family spec: `mulaw`, `alaw:<a>`, `pow:<gamma>`, `table`.
+fn parse_companding(key: &str, value: &str) -> Companding {
+    let bad = || -> ! {
+        eprintln!("CHROMAHASH_TUNE: invalid companding for {key}: '{value}'");
+        std::process::exit(1);
+    };
+    match value.split_once(':') {
+        None => match value {
+            "mulaw" => Companding::MuLaw,
+            "table" => Companding::Table,
+            _ => bad(),
+        },
+        Some((family, param)) => {
+            let p: f64 = param.parse().unwrap_or_else(|_| bad());
+            match family {
+                "alaw" => Companding::ALaw { a: p },
+                "pow" => Companding::Power { gamma: p },
+                _ => bad(),
+            }
+        }
+    }
+}
+
+/// Parse a trained codebook: comma-separated ascending positive levels.
+fn parse_table(key: &str, value: &str) -> QuantTable {
+    let mut table = QuantTable::EMPTY;
+    for (i, part) in value.split(',').enumerate() {
+        if i >= table.levels.len() {
+            eprintln!("CHROMAHASH_TUNE: too many levels for {key} (max 31)");
+            std::process::exit(1);
+        }
+        table.levels[i] = part.parse().unwrap_or_else(|_| {
+            eprintln!("CHROMAHASH_TUNE: invalid level for {key}: '{part}'");
+            std::process::exit(1);
+        });
+        table.len = (i + 1) as u8;
+    }
+    table
+}
+
+/// Parse a "count:bits" AcLayout override.
+fn parse_count_bits(key: &str, value: &str) -> (usize, u32) {
+    let bad = || -> ! {
+        eprintln!("CHROMAHASH_TUNE: invalid count:bits for {key}: '{value}'");
+        std::process::exit(1);
+    };
+    let Some((count, bits)) = value.split_once(':') else {
+        bad();
+    };
+    (
+        count.parse().unwrap_or_else(|_| bad()),
+        bits.parse().unwrap_or_else(|_| bad()),
+    )
 }
 
 fn parse_gamut(s: &str) -> Gamut {
@@ -303,6 +392,50 @@ fn main() {
             }
             let ns_per_op = start.elapsed().as_nanos() / u128::from(iters.max(1));
             println!("{ns_per_op}");
+        }
+        "dump-coeffs" => {
+            // Print the encoder's scale-normalized AC coefficients, one per
+            // line as "<group> <value>" (groups l/a/b/alpha). The harness pools
+            // these across the tuning corpus to train Lloyd-Max codebooks.
+            if args.len() != 5 {
+                eprintln!("Usage: encode_stdin dump-coeffs <width> <height> <gamut>");
+                std::process::exit(1);
+            }
+            let w: u32 = args[2].parse().expect("invalid width");
+            let h: u32 = args[3].parse().expect("invalid height");
+            let gamut = parse_gamut(&args[4]);
+
+            let expected_len = (w as usize) * (h as usize) * 4;
+            let mut rgba = vec![0u8; expected_len];
+            io::stdin()
+                .read_exact(&mut rgba)
+                .expect("failed to read RGBA from stdin");
+
+            let dump = encode_debug_coefficients(
+                w,
+                h,
+                &rgba,
+                gamut,
+                &tunables_from_env(),
+                tier_from_env(),
+            );
+            let mut out = String::new();
+            for (group, values) in [
+                ("l", &dump.l),
+                ("a", &dump.a),
+                ("b", &dump.b),
+                ("alpha", &dump.alpha),
+            ] {
+                for v in values {
+                    out.push_str(group);
+                    out.push(' ');
+                    out.push_str(&format!("{v:.17}"));
+                    out.push('\n');
+                }
+            }
+            io::stdout()
+                .write_all(out.as_bytes())
+                .expect("failed to write coefficients");
         }
         "batch-decode" => {
             // No batch decode API exists; loop the single decode `count` times.

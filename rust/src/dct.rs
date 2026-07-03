@@ -30,7 +30,44 @@ pub struct Selection {
 pub fn select_coefficients(aspect_byte: u8, tier: u8, k: usize) -> Selection {
     let (w, h) = decode_output_size(aspect_byte, tier);
     let (w, h) = (w as usize, h as usize);
+    let mut entries = candidate_entries(w, h);
+    entries.sort_unstable_by_key(|&(p, cx, cy)| (p, cx, cy));
+    build_selection(entries, k)
+}
 
+/// [`select_coefficients`] with an anisotropic (CSF oblique-effect) weight —
+/// sweep-only. Human contrast sensitivity is lower for diagonal frequencies,
+/// so candidates sort by `priority · (1 + aniso · sin²2θ)` (sin²2θ = 0 on the
+/// axes, 1 on the diagonal), spending the budget on axis-aligned detail first.
+///
+/// `aniso = 0.0` takes the shipped pure-integer path bit-exactly. The weighted
+/// order compares f64 keys (`total_cmp`), which is fine for a doc-hidden
+/// experiment but would need an integer reformulation before entering the
+/// spec. `priorities`/`p_k` always report the unweighted integer priorities.
+pub fn select_coefficients_weighted(aspect_byte: u8, tier: u8, k: usize, aniso: f64) -> Selection {
+    if aniso == 0.0 {
+        return select_coefficients(aspect_byte, tier, k);
+    }
+    let (w, h) = decode_output_size(aspect_byte, tier);
+    let (w, h) = (w as usize, h as usize);
+    let mut entries = candidate_entries(w, h);
+    entries.sort_unstable_by(|&(pa, cxa, cya), &(pb, cxb, cyb)| {
+        let key = |p: u64, cx: usize, cy: usize| -> f64 {
+            let px = (cx * h) as f64;
+            let py = (cy * w) as f64;
+            // sin²2θ = (2·px·py)² / (px²+py²)²; p = px²+py².
+            let sin2_2theta = (2.0 * px * py) * (2.0 * px * py) / (p as f64 * p as f64);
+            p as f64 * (1.0 + aniso * sin2_2theta)
+        };
+        key(pa, cxa, cya)
+            .total_cmp(&key(pb, cxb, cyb))
+            .then_with(|| (cxa, cya).cmp(&(cxb, cyb)))
+    });
+    build_selection(entries, k)
+}
+
+/// Every non-DC (priority, cx, cy) candidate on the natural render grid.
+fn candidate_entries(w: usize, h: usize) -> Vec<(u64, usize, usize)> {
     let mut entries: Vec<(u64, usize, usize)> = Vec::with_capacity(w * h - 1);
     for cy in 0..h {
         for cx in 0..w {
@@ -42,9 +79,12 @@ pub fn select_coefficients(aspect_byte: u8, tier: u8, k: usize) -> Selection {
             entries.push((px * px + py * py, cx, cy));
         }
     }
-    entries.sort_unstable_by_key(|&(p, cx, cy)| (p, cx, cy));
-    entries.truncate(k);
+    entries
+}
 
+/// Truncate sorted candidates to K and package them as a [`Selection`].
+fn build_selection(mut entries: Vec<(u64, usize, usize)>, k: usize) -> Selection {
+    entries.truncate(k);
     let p_k = entries.last().map(|&(p, _, _)| p).unwrap_or(1);
     Selection {
         coeffs: entries.iter().map(|&(_, cx, cy)| (cx, cy)).collect(),
@@ -188,6 +228,36 @@ mod tests {
                 assert_eq!(sel.priorities.len(), k);
             }
         }
+    }
+
+    #[test]
+    fn weighted_selection_zero_matches_integer_path() {
+        // aniso = 0.0 must be the shipped selection, coefficient for coefficient.
+        for byte in [0u8, 64, 128, 191, 255] {
+            for tier in [0u8, 1] {
+                let base = select_coefficients(byte, tier, 26);
+                let weighted = select_coefficients_weighted(byte, tier, 26, 0.0);
+                assert_eq!(base.coeffs, weighted.coeffs, "byte={byte} tier={tier}");
+                assert_eq!(base.priorities, weighted.priorities);
+                assert_eq!(base.p_k, weighted.p_k);
+            }
+        }
+    }
+
+    #[test]
+    fn weighted_selection_penalizes_diagonals() {
+        // Square grid: (1,1) has priority 2·32² = 2048 and sin²2θ = 1, while
+        // (2,0)/(0,2) have priority 4096 and sin²2θ = 0. With aniso = 1.5 the
+        // diagonal's weighted key (5120) exceeds the axis pair's (4096), so the
+        // axis frequencies must now be selected first.
+        let sel = select_coefficients_weighted(128, 0, 4, 1.5);
+        let first_four = &sel.coeffs[..4];
+        assert!(first_four.contains(&(2, 0)), "got {first_four:?}");
+        assert!(first_four.contains(&(0, 2)), "got {first_four:?}");
+        assert!(!first_four.contains(&(1, 1)), "got {first_four:?}");
+        // The unweighted order keeps (1,1) ahead of (2,0).
+        let base = select_coefficients(128, 0, 4);
+        assert!(base.coeffs[..3].contains(&(1, 1)));
     }
 
     #[test]

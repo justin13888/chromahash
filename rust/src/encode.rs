@@ -7,9 +7,11 @@ use crate::constants::{
     L_SCALE_BITS, MAX_TIER, PREFIX_BITS, Tunables, VERSION_BITS, ac_payload_bits, ac_shape,
     body_len_bytes,
 };
-use crate::dct::{Selection, dct_encode_selected, precompute_cos_table, select_coefficients};
+use crate::dct::{
+    Selection, dct_encode_selected, precompute_cos_table, select_coefficients_weighted,
+};
 use crate::math_utils::{clamp_neg1_1, clamp01, round_half_away_from_zero};
-use crate::mulaw::mu_law_quantize;
+use crate::mulaw::compand_quantize;
 use crate::transfer::{adobe_rgb_eotf, bt2020_pq_eotf, prophoto_rgb_eotf, srgb_eotf, srgb_gamma};
 
 /// Build a 256-entry EOTF lookup table for the given gamut. Per spec §5.2.
@@ -92,10 +94,29 @@ fn select_dc_codes(l_mean: f64, a_mean: f64, b_mean: f64, t: &Tunables) -> (u32,
     best
 }
 
-/// Encode an image into a ChromaHash body with explicit tunables and quality
-/// `tier`. Per spec §10 (v1). Returns the variable-length encoded bytes
-/// (tier 0 = 32 bytes; each higher tier roughly quadruples the length).
-pub fn encode_with(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables, tier: u8) -> Box<[u8]> {
+/// First selection index of the scalefactor high band: `floor(count·split)`.
+/// Encoder and decoder compute this identically (same f64 expression).
+pub(crate) fn band_split_index(count: usize, split: f64) -> usize {
+    (count as f64 * split) as usize
+}
+
+/// Everything the encoder derives from the pixels before quantization: the
+/// alpha/aspect geometry, the resolved AC shape, and each channel's
+/// (dc, ac-in-selection-order, scale) DCT result.
+struct Analysis {
+    has_alpha: bool,
+    aspect: u8,
+    shape: crate::constants::AcShape,
+    l: (f64, Vec<f64>, f64),
+    a: (f64, Vec<f64>, f64),
+    b: (f64, Vec<f64>, f64),
+    alpha: (f64, Vec<f64>, f64),
+}
+
+/// Signal-path front half of the encoder (spec §10 steps 1–7): color
+/// conversion, alpha handling, coefficient selection, and the forward DCT.
+/// Shared by [`encode_with`] and the sweep-only coefficient dump.
+fn analyze(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables, tier: u8) -> Analysis {
     assert!(w >= 1, "width must be >= 1");
     assert!(h >= 1, "height must be >= 1");
     assert!(
@@ -170,10 +191,10 @@ pub fn encode_with(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables, tier
     let shape = ac_shape(&t.layout, has_alpha, tier);
     let l_count = shape.l_count();
     let c_count = shape.c_count;
-    let l_sel: Selection = select_coefficients(aspect, tier, l_count);
-    let c_sel: Selection = select_coefficients(aspect, tier, c_count);
+    let l_sel: Selection = select_coefficients_weighted(aspect, tier, l_count, t.aniso_oblique);
+    let c_sel: Selection = select_coefficients_weighted(aspect, tier, c_count, t.aniso_oblique);
     let alpha_sel = if has_alpha {
-        select_coefficients(aspect, tier, shape.alpha_ac_count)
+        select_coefficients_weighted(aspect, tier, shape.alpha_ac_count, t.aniso_oblique)
     } else {
         Selection {
             coeffs: vec![],
@@ -205,14 +226,39 @@ pub fn encode_with(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables, tier
     let cos_y = precompute_cos_table(h, (max_cy + 1).min(h.max(1)));
 
     // 7. DCT encode each channel (frequency clamp to source dims built in)
-    let (l_dc, l_ac, l_scale) = dct_encode_selected(&l_chan, w, h, &l_sel.coeffs, &cos_x, &cos_y);
-    let (a_dc, a_ac, a_scale) = dct_encode_selected(&a_chan, w, h, &c_sel.coeffs, &cos_x, &cos_y);
-    let (b_dc, b_ac, b_scale) = dct_encode_selected(&b_chan, w, h, &c_sel.coeffs, &cos_x, &cos_y);
-    let (alpha_dc, alpha_ac, alpha_scale) = if has_alpha {
+    let l = dct_encode_selected(&l_chan, w, h, &l_sel.coeffs, &cos_x, &cos_y);
+    let a = dct_encode_selected(&a_chan, w, h, &c_sel.coeffs, &cos_x, &cos_y);
+    let b = dct_encode_selected(&b_chan, w, h, &c_sel.coeffs, &cos_x, &cos_y);
+    let alpha = if has_alpha {
         dct_encode_selected(&alpha_pixels, w, h, &alpha_sel.coeffs, &cos_x, &cos_y)
     } else {
         (0.0, vec![], 0.0)
     };
+
+    Analysis {
+        has_alpha,
+        aspect,
+        shape,
+        l,
+        a,
+        b,
+        alpha,
+    }
+}
+
+/// Encode an image into a ChromaHash body with explicit tunables and quality
+/// `tier`. Per spec §10 (v1). Returns the variable-length encoded bytes
+/// (tier 0 = 32 bytes; each higher tier roughly quadruples the length).
+pub fn encode_with(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables, tier: u8) -> Box<[u8]> {
+    let Analysis {
+        has_alpha,
+        aspect,
+        shape,
+        l: (l_dc, l_ac, l_scale),
+        a: (a_dc, a_ac, a_scale),
+        b: (b_dc, b_ac, b_scale),
+        alpha: (alpha_dc, alpha_ac, alpha_scale),
+    } = analyze(w, h, rgba, gamut, t, tier);
 
     // 8. Quantize header values (decode-aware DC code search, v0.6)
     let (l_dc_q, a_dc_q, b_dc_q) = select_dc_codes(l_dc, a_dc, b_dc, t);
@@ -244,14 +290,25 @@ pub fn encode_with(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables, tier
     bitpos += B_SCALE_BITS as usize;
     debug_assert_eq!(bitpos, PREFIX_BITS as usize);
 
-    // 11. AC payload with µ-law companding.
-    let quantize_ac = |value: f64, scale: f64, bits: u32, mu: f64| -> u32 {
+    // 11. AC payload with companded quantization (µ-law by default; the
+    //     family/deadzone/band knobs are sweep-only and default to no-ops).
+    let quantize_ac = |value: f64,
+                       scale: f64,
+                       bits: u32,
+                       family: crate::constants::Companding,
+                       mu: f64,
+                       table: &crate::constants::QuantTable,
+                       deadzone: f64|
+     -> u32 {
         if scale == 0.0 {
-            mu_law_quantize(0.0, bits, mu)
+            compand_quantize(0.0, bits, family, mu, table, deadzone)
         } else {
-            mu_law_quantize(value / scale, bits, mu)
+            compand_quantize(value / scale, bits, family, mu, table, deadzone)
         }
     };
+    // Scalefactor-band split points (index ≥ split uses scale·band_gain).
+    let l_split = band_split_index(shape.l_count(), t.band_split);
+    let c_split = band_split_index(shape.c_count, t.band_split);
 
     if has_alpha {
         let alpha_dc_q = round_half_away_from_zero(31.0 * clamp01(alpha_dc)) as u32;
@@ -267,7 +324,16 @@ pub fn encode_with(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables, tier
     let mut l_idx = 0usize;
     for &(count, bits) in &shape.l_tiers {
         for _ in 0..count {
-            let q = quantize_ac(l_ac[l_idx], l_scale, bits, t.mu_l);
+            let gain = if l_idx >= l_split { t.band_gain_l } else { 1.0 };
+            let q = quantize_ac(
+                l_ac[l_idx],
+                l_scale * gain,
+                bits,
+                t.compand_l,
+                t.mu_l,
+                &t.table_l,
+                t.deadzone_l,
+            );
             write_bits(&mut hash, bitpos, bits, q);
             bitpos += bits as usize;
             l_idx += 1;
@@ -276,20 +342,46 @@ pub fn encode_with(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables, tier
 
     // Chroma AC
     let c_bits = shape.c_bits;
-    for ac_val in &a_ac {
-        let q = quantize_ac(*ac_val, a_scale, c_bits, t.mu_c);
+    for (i, ac_val) in a_ac.iter().enumerate() {
+        let gain = if i >= c_split { t.band_gain_c } else { 1.0 };
+        let q = quantize_ac(
+            *ac_val,
+            a_scale * gain,
+            c_bits,
+            t.compand_c,
+            t.mu_c,
+            &t.table_c,
+            t.deadzone_c,
+        );
         write_bits(&mut hash, bitpos, c_bits, q);
         bitpos += c_bits as usize;
     }
-    for ac_val in &b_ac {
-        let q = quantize_ac(*ac_val, b_scale, c_bits, t.mu_c);
+    for (i, ac_val) in b_ac.iter().enumerate() {
+        let gain = if i >= c_split { t.band_gain_c } else { 1.0 };
+        let q = quantize_ac(
+            *ac_val,
+            b_scale * gain,
+            c_bits,
+            t.compand_c,
+            t.mu_c,
+            &t.table_c,
+            t.deadzone_c,
+        );
         write_bits(&mut hash, bitpos, c_bits, q);
         bitpos += c_bits as usize;
     }
 
     if has_alpha {
         for ac_val in &alpha_ac {
-            let q = quantize_ac(*ac_val, alpha_scale, ALPHA_AC_BITS, t.mu_alpha);
+            let q = quantize_ac(
+                *ac_val,
+                alpha_scale,
+                ALPHA_AC_BITS,
+                t.compand_alpha,
+                t.mu_alpha,
+                &t.table_alpha,
+                t.deadzone_alpha,
+            );
             write_bits(&mut hash, bitpos, ALPHA_AC_BITS, q);
             bitpos += ALPHA_AC_BITS as usize;
         }
@@ -308,6 +400,45 @@ pub fn encode_with(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables, tier
     debug_assert_eq!(body_len, bitpos.div_ceil(8));
 
     hash.into_boxed_slice()
+}
+
+/// Scale-normalized AC coefficients per channel group, for quantizer training
+/// (sweep-only). Values are `coefficient / scale` in [-1, 1]; a channel whose
+/// scale floored to zero contributes nothing.
+#[doc(hidden)]
+pub struct CoeffDump {
+    pub l: Vec<f64>,
+    pub a: Vec<f64>,
+    pub b: Vec<f64>,
+    pub alpha: Vec<f64>,
+}
+
+/// Dump the encoder's normalized AC coefficients without quantizing them.
+/// Sweep-only: the comparison harness pools these across the tuning corpus to
+/// train Lloyd-Max codebooks for [`crate::Companding::Table`].
+#[doc(hidden)]
+pub fn encode_debug_coefficients(
+    w: u32,
+    h: u32,
+    rgba: &[u8],
+    gamut: Gamut,
+    t: &Tunables,
+    tier: u8,
+) -> CoeffDump {
+    let analysis = analyze(w, h, rgba, gamut, t, tier);
+    let normalize = |(_, ac, scale): (f64, Vec<f64>, f64)| -> Vec<f64> {
+        if scale == 0.0 {
+            vec![]
+        } else {
+            ac.iter().map(|v| v / scale).collect()
+        }
+    };
+    CoeffDump {
+        l: normalize(analysis.l),
+        a: normalize(analysis.a),
+        b: normalize(analysis.b),
+        alpha: normalize(analysis.alpha),
+    }
 }
 
 /// Encode an image into a ChromaHash at tier 0. Per spec §10 (v1).

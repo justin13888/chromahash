@@ -205,6 +205,43 @@ pub(crate) fn body_len_bytes(layout: &AcLayout, has_alpha: bool, tier: u8) -> us
     bits.div_ceil(8)
 }
 
+/// Experimental AC companding family (sweep-only). The shipped v1 format uses
+/// [`Companding::MuLaw`]; the alternatives exist so the corpus sweep can compare
+/// the µ-law choice against its audio-codec siblings on equal footing:
+/// A-law (G.711's other half, linear near zero), power-law (AAC/MP3 quantize
+/// |x|^0.75), and trained Lloyd-Max codebooks ([`Companding::Table`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Companding {
+    /// µ-law (the shipped quantizer); uses the group's `mu_*` parameter.
+    MuLaw,
+    /// A-law with parameter `a` (G.711 uses 87.6).
+    ALaw { a: f64 },
+    /// Power-law |x|^gamma (AAC/MP3 use gamma = 0.75).
+    Power { gamma: f64 },
+    /// Trained codebook: the group's [`QuantTable`] holds the positive half of
+    /// a symmetric odd-level quantizer with the center pinned at exactly 0.
+    Table,
+}
+
+/// Positive half of a symmetric odd-level codebook for [`Companding::Table`]:
+/// `len` ascending reconstruction levels for indices center+1..=center+len
+/// (mirrored for the negative side; the center index decodes to exactly 0).
+/// 31 slots cover up to 6-bit fields (2^5 − 1 positive levels). Fixed-size so
+/// [`Tunables`] stays `Copy`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct QuantTable {
+    pub levels: [f64; 31],
+    pub len: u8,
+}
+
+impl QuantTable {
+    /// No trained levels (must not be used with `Companding::Table`).
+    pub const EMPTY: QuantTable = QuantTable {
+        levels: [0.0; 31],
+        len: 0,
+    };
+}
+
 /// All v0.6 format parameters. The shipped format uses [`Tunables::DEFAULT`];
 /// the comparison harness can override these while sweeping the corpus to lock
 /// the final constants, via the `CHROMAHASH_TUNE` env parser in the
@@ -239,6 +276,31 @@ pub struct Tunables {
     /// Encoder-only: search the ±1 neighborhood of the DC codes for the
     /// triple minimizing post-clip sRGB error (off only for ablation).
     pub dc_search: bool,
+    /// AC companding family per channel group (sweep-only; defaults reproduce
+    /// the shipped µ-law bytes exactly).
+    pub compand_l: Companding,
+    pub compand_c: Companding,
+    pub compand_alpha: Companding,
+    /// Trained codebooks used when the group's family is [`Companding::Table`].
+    pub table_l: QuantTable,
+    pub table_c: QuantTable,
+    pub table_alpha: QuantTable,
+    /// Encoder deadzone per group: a normalized |value/scale| below this
+    /// quantizes to the exact-zero center code. 0.0 disables (shipped).
+    pub deadzone_l: f64,
+    pub deadzone_c: f64,
+    pub deadzone_alpha: f64,
+    /// Scalefactor-band experiment (MP3/AAC-style): coefficients at selection
+    /// index ≥ floor(count·band_split) quantize against `scale·band_gain_*`
+    /// instead of `scale`, symmetric in encode and decode. Gain 1.0 disables.
+    pub band_split: f64,
+    pub band_gain_l: f64,
+    pub band_gain_c: f64,
+    /// Anisotropic (CSF oblique-effect) selection weight: sorts candidates by
+    /// priority·(1 + aniso·sin²2θ), penalizing diagonals. 0.0 takes the shipped
+    /// integer-exact path. Sweep-only: the weighted order uses f64 comparison
+    /// and would need an integer reformulation before ever entering the spec.
+    pub aniso_oblique: f64,
 }
 
 impl Tunables {
@@ -272,6 +334,19 @@ impl Tunables {
         w_min_c: 1.0,
         w_exp_c: 1,
         dc_search: true,
+        compand_l: Companding::MuLaw,
+        compand_c: Companding::MuLaw,
+        compand_alpha: Companding::MuLaw,
+        table_l: QuantTable::EMPTY,
+        table_c: QuantTable::EMPTY,
+        table_alpha: QuantTable::EMPTY,
+        deadzone_l: 0.0,
+        deadzone_c: 0.0,
+        deadzone_alpha: 0.0,
+        band_split: 0.5,
+        band_gain_l: 1.0,
+        band_gain_c: 1.0,
+        aniso_oblique: 0.0,
     };
 }
 

@@ -7,10 +7,11 @@ use crate::constants::{
     TIER_BITS, Tunables, VERSION_BITS, ac_shape,
 };
 use crate::dct::{
-    dct_decode_pixel_separable, precompute_cos_table, select_coefficients, window_weights,
+    dct_decode_pixel_separable, precompute_cos_table, select_coefficients_weighted, window_weights,
 };
+use crate::encode::band_split_index;
 use crate::math_utils::{clamp01, round_half_away_from_zero};
-use crate::mulaw::mu_law_dequantize;
+use crate::mulaw::compand_dequantize;
 use crate::transfer::{adobe_rgb_gamma, srgb_gamma};
 
 /// Build the 4096-entry gamma LUT for the output gamut: lut[i] = γ(i/4095)·255.
@@ -106,8 +107,8 @@ fn render_at_size(hash: &[u8], w: usize, h: usize, t: &Tunables, output: Gamut) 
     let shape = ac_shape(&t.layout, has_alpha, tier);
     let l_count = shape.l_count();
     let c_count = shape.c_count;
-    let l_sel = select_coefficients(aspect, tier, l_count);
-    let c_sel = select_coefficients(aspect, tier, c_count);
+    let l_sel = select_coefficients_weighted(aspect, tier, l_count, t.aniso_oblique);
+    let c_sel = select_coefficients_weighted(aspect, tier, c_count, t.aniso_oblique);
 
     // 4. Read AC payload (alpha DC/scale first in alpha mode)
     let (alpha_dc_val, alpha_scale_val) = if has_alpha {
@@ -120,36 +121,55 @@ fn render_at_size(hash: &[u8], w: usize, h: usize, t: &Tunables, output: Gamut) 
         (1.0, 0.0)
     };
 
+    // Scalefactor-band split points (mirror the encoder; gain 1.0 = no-op).
+    let l_split = band_split_index(l_count, t.band_split);
+    let c_split = band_split_index(c_count, t.band_split);
+
     let mut l_ac = Vec::with_capacity(l_count);
+    let mut l_idx = 0usize;
     for &(count, bits) in &shape.l_tiers {
         for _ in 0..count {
             let q = read_bits(hash, bitpos, bits);
             bitpos += bits as usize;
-            l_ac.push(mu_law_dequantize(q, bits, t.mu_l) * l_scale);
+            let gain = if l_idx >= l_split { t.band_gain_l } else { 1.0 };
+            l_ac.push(
+                compand_dequantize(q, bits, t.compand_l, t.mu_l, &t.table_l) * l_scale * gain,
+            );
+            l_idx += 1;
         }
     }
 
     let c_bits = shape.c_bits;
     let mut a_ac = Vec::with_capacity(c_count);
-    for _ in 0..c_count {
+    for i in 0..c_count {
         let q = read_bits(hash, bitpos, c_bits);
         bitpos += c_bits as usize;
-        a_ac.push(mu_law_dequantize(q, c_bits, t.mu_c) * a_scale);
+        let gain = if i >= c_split { t.band_gain_c } else { 1.0 };
+        a_ac.push(compand_dequantize(q, c_bits, t.compand_c, t.mu_c, &t.table_c) * a_scale * gain);
     }
     let mut b_ac = Vec::with_capacity(c_count);
-    for _ in 0..c_count {
+    for i in 0..c_count {
         let q = read_bits(hash, bitpos, c_bits);
         bitpos += c_bits as usize;
-        b_ac.push(mu_law_dequantize(q, c_bits, t.mu_c) * b_scale);
+        let gain = if i >= c_split { t.band_gain_c } else { 1.0 };
+        b_ac.push(compand_dequantize(q, c_bits, t.compand_c, t.mu_c, &t.table_c) * b_scale * gain);
     }
 
     let (alpha_ac, alpha_sel) = if has_alpha {
-        let sel = select_coefficients(aspect, tier, shape.alpha_ac_count);
+        let sel = select_coefficients_weighted(aspect, tier, shape.alpha_ac_count, t.aniso_oblique);
         let mut aac = Vec::with_capacity(shape.alpha_ac_count);
         for _ in 0..shape.alpha_ac_count {
             let q = read_bits(hash, bitpos, ALPHA_AC_BITS);
             bitpos += ALPHA_AC_BITS as usize;
-            aac.push(mu_law_dequantize(q, ALPHA_AC_BITS, t.mu_alpha) * alpha_scale_val);
+            aac.push(
+                compand_dequantize(
+                    q,
+                    ALPHA_AC_BITS,
+                    t.compand_alpha,
+                    t.mu_alpha,
+                    &t.table_alpha,
+                ) * alpha_scale_val,
+            );
         }
         (aac, Some(sel))
     } else {
