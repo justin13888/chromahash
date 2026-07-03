@@ -18,6 +18,11 @@
 > semver, while the on-wire `version` field increments only on an incompatible
 > format break (`1`→v2, `2`→v3, …). This generation is a clean break with **no
 > backward compatibility** with the older v0.6 bitstream.
+>
+> **Design rationale:** [`RATIONALE.md`](RATIONALE.md) records why each decision
+> is what it is — the alternatives considered (including the audio-codec and
+> AVIF/JPEG-XL technique audits), the measured sweep evidence behind the
+> constants, and the explicitly open questions.
 
 ---
 
