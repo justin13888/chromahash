@@ -122,7 +122,7 @@ val argb = (c.a shl 24) or (c.r shl 16) or (c.g shl 8) or c.b
 ## Publish
 
 The AAR publishes via the [vanniktech maven-publish](https://vanniktech.github.io/gradle-maven-publish-plugin/)
-plugin to **Maven Central** and **GitHub Packages** as `io.github.justin13888:chromahash-android`
+plugin to **Maven Central** and **GitHub Packages** as `io.github.visualcommons:chromahash-android`
 (the Kotlin package stays `io.chromahash.ffi` — it is independent of the Maven group):
 
 ```bash
@@ -145,7 +145,7 @@ Central bootstrap (namespace, signing key, secrets) is documented in
 
 ```kotlin
 dependencies {
-    implementation("io.github.justin13888:chromahash-android:X.Y.Z")
+    implementation("io.github.visualcommons:chromahash-android:X.Y.Z")
 }
 ```
 

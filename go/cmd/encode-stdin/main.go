@@ -6,7 +6,7 @@ import (
 	"os"
 	"strconv"
 
-	chromahash "github.com/justin13888/chromahash/go"
+	chromahash "github.com/visualcommons/chromahash/go"
 )
 
 func usage() {

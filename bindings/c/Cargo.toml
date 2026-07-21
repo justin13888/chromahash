@@ -18,7 +18,7 @@ authors = ["Justin Chung <noreply@justinchung.net>"]
 edition = "2021"
 description = "C ABI (cbindgen) exposing the ChromaHash core to C — and the FFI foundation the C# and Go bindings link against"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/justin13888/chromahash"
+repository = "https://github.com/visualcommons/chromahash"
 publish = false
 
 [lib]

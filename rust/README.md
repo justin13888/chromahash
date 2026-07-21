@@ -20,7 +20,7 @@ chromahash = "0.5"
 
 The minimum supported Rust version (MSRV) is **1.85**.
 
-See the [project repository](https://github.com/justin13888/chromahash) for the
+See the [project repository](https://github.com/visualcommons/chromahash) for the
 full format specification, the other language implementations, and usage
 examples.
 
@@ -29,6 +29,6 @@ examples.
 
 ## License
 
-Licensed under either of [Apache License, Version 2.0](https://github.com/justin13888/chromahash/blob/master/LICENSE-APACHE)
-or [MIT license](https://github.com/justin13888/chromahash/blob/master/LICENSE-MIT)
+Licensed under either of [Apache License, Version 2.0](https://github.com/visualcommons/chromahash/blob/master/LICENSE-APACHE)
+or [MIT license](https://github.com/visualcommons/chromahash/blob/master/LICENSE-MIT)
 at your option.

@@ -25,4 +25,4 @@ path = "src/main.rs"
 [dependencies]
 # Pinned to gamut master @ a57526a (the `feat/tonemapping` merge), where
 # gamut-color gained the encoder-exact transfer + OKLab + profile surface.
-gamut-color = { git = "https://github.com/justin13888/gamut", rev = "a57526af2fa8ecdd6264a49e8ab53f38d143ff32" }
+gamut-color = { git = "https://github.com/visualcommons/gamut", rev = "a57526af2fa8ecdd6264a49e8ab53f38d143ff32" }

@@ -16,7 +16,7 @@ implementation, validated against the shared [`spec/`](../spec) test vectors. Th
 `go.mod` is dependency-free.
 
 ```sh
-go get github.com/justin13888/chromahash/go
+go get github.com/visualcommons/chromahash/go
 ```
 
 ## Building
@@ -38,7 +38,7 @@ package main
 import (
 	"fmt"
 
-	chromahash "github.com/justin13888/chromahash/go"
+	chromahash "github.com/visualcommons/chromahash/go"
 )
 
 func main() {
@@ -58,7 +58,7 @@ func main() {
 }
 ```
 
-See the [project repository](https://github.com/justin13888/chromahash) for the
+See the [project repository](https://github.com/visualcommons/chromahash) for the
 full format specification and the other language implementations.
 
 > **Note:** ChromaHash is a pre-1.0 **Draft** format — the bitstream is not yet
@@ -66,6 +66,6 @@ full format specification and the other language implementations.
 
 ## License
 
-Licensed under either of [Apache License, Version 2.0](https://github.com/justin13888/chromahash/blob/master/LICENSE-APACHE)
-or [MIT license](https://github.com/justin13888/chromahash/blob/master/LICENSE-MIT)
+Licensed under either of [Apache License, Version 2.0](https://github.com/visualcommons/chromahash/blob/master/LICENSE-APACHE)
+or [MIT license](https://github.com/visualcommons/chromahash/blob/master/LICENSE-MIT)
 at your option.

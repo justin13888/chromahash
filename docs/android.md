@@ -12,7 +12,7 @@ The Kotlin implementation ([`kotlin/`](../kotlin/)) is correct, spec-compatible,
 ergonomic choice if you only decode a handful of placeholders. But it is pure-JVM **scalar** code:
 decoding runs a per-pixel inverse DCT, a per-channel gamut clip, and an OKLab→sRGB conversion
 entirely on the JVM heap, with no SIMD. The JVM has no portable SIMD story, so the planned SIMD work
-([#3](https://github.com/justin13888/chromahash/issues/3)) only targets Rust, Swift, and C#.
+([#3](https://github.com/visualcommons/chromahash/issues/3)) only targets Rust, Swift, and C#.
 
 On the client, **decode is the hot path** — encoding is normally done server-side, and an app
 decodes placeholders at render time, often many per screen. The Rust core
@@ -99,7 +99,7 @@ AAR; `arm64-v8a` covers essentially all modern physical devices.
 The generated Kotlin runtime depends on **JNA** (the Android `@aar` artifact,
 `net.java.dev.jna:jna:5.14.0@aar`) and loads the `.so` itself — you don't call `System.loadLibrary`.
 Publishing is wired via the [vanniktech maven-publish](https://vanniktech.github.io/gradle-maven-publish-plugin/)
-plugin to **Maven Central** and **GitHub Packages** as `io.github.justin13888:chromahash-android`
+plugin to **Maven Central** and **GitHub Packages** as `io.github.visualcommons:chromahash-android`
 (plus `publishToMavenLocal` for local dev); a `vX.Y.Z` tag publishes both channels via the
 [`release-android`](../.github/workflows/release-android.yml) workflow. See
 [RELEASING.md](../RELEASING.md#publishing-the-android-aar) and the
@@ -179,7 +179,7 @@ optional host-JVM end-to-end check through the generated Kotlin is described in 
 
 - One-shot decode amortizes JNI/UniFFI marshalling to noise; the work is the inner DCT + color-conversion
   loops, where native scalar already beats the JVM and avoids GC churn from per-pixel float math.
-- ARM64 plus the upcoming SIMD work ([#3](https://github.com/justin13888/chromahash/issues/3))
+- ARM64 plus the upcoming SIMD work ([#3](https://github.com/visualcommons/chromahash/issues/3))
   widens the gap further.
 - The `.so` is loaded once per process.
 

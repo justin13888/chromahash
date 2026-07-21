@@ -5,7 +5,7 @@ import PackageDescription
 // ChromaHash for Swift is a thin facade over UniFFI-generated bindings to the Rust
 // core (no native algorithm). This manifest lives at the repo ROOT — SwiftPM and
 // the Swift Package Index only resolve a package whose manifest is at the root, so
-// `github.com/justin13888/chromahash` would not resolve with it under swift/. The
+// `github.com/visualcommons/chromahash` would not resolve with it under swift/. The
 // sources still live under swift/ (see each target's `path:`).
 //
 // The native code ships as ChromaHashFFI.xcframework:
@@ -24,7 +24,7 @@ let ffiTarget: Target =
     } else {
         .binaryTarget(
             name: "chromahash_uniffiFFI",
-            url: "https://github.com/justin13888/chromahash/releases/download/v0.6.0/ChromaHashFFI.xcframework.zip",
+            url: "https://github.com/visualcommons/chromahash/releases/download/v0.6.0/ChromaHashFFI.xcframework.zip",
             checksum: "0000000000000000000000000000000000000000000000000000000000000000"
         )
     }
