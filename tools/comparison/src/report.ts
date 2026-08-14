@@ -1,4 +1,9 @@
 import { splitFor } from "./corpus.ts";
+import {
+  computePairedComparisons,
+  type PairedComparison,
+  pickVersionBaseline,
+} from "./paired.ts";
 import { bootstrapCI, quantile } from "./stats.ts";
 import type {
   FormatResult,
@@ -171,6 +176,44 @@ ${stats
 }
 
 /**
+ * Render the paired version-A/B tables: one block per candidate column, each
+ * differenced per-image against the released-tag baseline. A CI that excludes
+ * zero is the signal — the unpaired tables above cannot resolve differences
+ * this small (see paired.ts).
+ */
+function pairedTable(comparisons: PairedComparison[]): string {
+  if (comparisons.length === 0) return "";
+  return comparisons
+    .map(
+      (
+        cmp,
+      ) => `<h4 style="margin:12px 0 4px;font-size:0.9rem">${cmp.candidate} vs ${cmp.baseline}</h4>
+<table>
+<tr><th>Metric</th><th>${cmp.baseline}</th><th>${cmp.candidate}</th><th>Mean Δ</th><th>Δ%</th><th>95% CI of paired Δ</th><th>win/tie/loss</th><th>sign p</th><th>n</th></tr>
+${cmp.metrics
+  .map((m) => {
+    // A CI strictly on one side of zero is a consistent shift, not noise.
+    const real = m.ci[0] > 0 || m.ci[1] < 0;
+    const cls = !real ? "" : m.meanDelta < 0 ? "metric-good" : "metric-bad";
+    return `<tr>
+  <td><strong>${m.metric}</strong></td>
+  <td>${m.baselineMean.toFixed(4)}</td>
+  <td>${m.candidateMean.toFixed(4)}</td>
+  <td><span class="${cls}">${m.meanDelta.toFixed(4)}</span></td>
+  <td><span class="${cls}">${m.deltaPct !== null ? `${m.deltaPct.toFixed(2)}%` : "N/A"}</span></td>
+  <td>${m.ci[0].toFixed(4)}&nbsp;&ndash;&nbsp;${m.ci[1].toFixed(4)}</td>
+  <td>${m.wins}/${m.ties}/${m.losses}</td>
+  <td>${m.signP.toFixed(4)}</td>
+  <td>${m.pairs}</td>
+</tr>`;
+  })
+  .join("\n")}
+</table>`,
+    )
+    .join("\n");
+}
+
+/**
  * Photographic categories: the primary "natural & realistic" summary. Portrait
  * and Night are natural photographs too — they only carry their own category
  * so the report can break them out.
@@ -216,6 +259,8 @@ export function generateReport(
     showImplementations?: boolean;
     /** Extra HTML injected at the top of the formats tab (the R-D section). */
     preludeHtml?: string;
+    /** Render paired A/B tables against the newest released tag (version runs). */
+    paired?: boolean;
   },
 ): string {
   const formatNames = opts?.formatNames ?? FORMAT_NAMES;
@@ -243,6 +288,21 @@ export function generateReport(
     formatNames,
     (e) => splitFor(e.name) === "holdout",
   );
+
+  // Paired A/B against the newest released tag. Only version runs put two
+  // builds of the same format on the same images, so only they get this.
+  const pairedBaseline = opts?.paired ? pickVersionBaseline(formatNames) : null;
+  const pairedAll = pairedBaseline
+    ? computePairedComparisons(entries, pairedBaseline, formatNames)
+    : [];
+  const pairedHoldout =
+    pairedBaseline && hasHoldout
+      ? computePairedComparisons(
+          entries.filter((e) => splitFor(e.name) === "holdout"),
+          pairedBaseline,
+          formatNames,
+        )
+      : [];
 
   // Check cross-language consistency
   const harnessesSkipped = entries.every((e) => e.harnessResults.length === 0);
@@ -409,6 +469,21 @@ ${formatStatsTable(allStats)}
 </div>
 </details>
 ${
+  pairedAll.length > 0
+    ? `
+<h3 style="margin:16px 0 4px;font-size:0.95rem">Paired A/B vs ${pairedBaseline}</h3>
+<p class="section-note">Every column differenced against <strong>${pairedBaseline}</strong> <em>per image</em>, then aggregated. The unpaired tables above carry the corpus's image-to-image spread, which dwarfs the difference between two builds of one format; pairing cancels it. <strong>Negative Δ = the candidate is better</strong> (signs are normalized per metric). A 95% CI that excludes zero is a consistent shift rather than noise; the sign test reports direction independently of effect size.</p>
+${pairedTable(pairedAll)}
+${
+  pairedHoldout.length > 0
+    ? `<h4 style="margin:16px 0 4px;font-size:0.9rem">Holdout split only</h4>
+<p class="section-note">The never-tuned split — the honest number for a wire or constants change.</p>
+${pairedTable(pairedHoldout)}`
+    : ""
+}
+`
+    : ""
+}${
   hasHoldout
     ? `
 <h3 style="margin:16px 0 4px;font-size:0.95rem">Tune vs holdout</h3>

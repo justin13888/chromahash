@@ -46,6 +46,11 @@ import { ensureHoldoutImages } from "./holdout-images.ts";
 import { buildRdLineup, type RdVariant } from "./rd/lineup.ts";
 import { computeRdCurves, generateRdSection } from "./rd/report.ts";
 import { splitFor } from "./corpus.ts";
+import {
+  computePairedComparisons,
+  formatPairedTable,
+  pickVersionBaseline,
+} from "./paired.ts";
 import { gamutToSrgbReference } from "./gamut.ts";
 import type {
   ComparisonImageJson,
@@ -589,6 +594,33 @@ async function main(): Promise<void> {
     (e) => splitFor(e.name) === "holdout",
   );
 
+  // Paired A/B deltas against the newest released tag. Version mode is the only
+  // controlled experiment the harness runs — same images, same scoring, one
+  // variable — and unpaired CIs cannot resolve the differences it produces
+  // (see paired.ts). Null when the lineup carries no tag to difference against.
+  const pairedBaseline = versionList
+    ? pickVersionBaseline(activeFormatNames)
+    : null;
+  const pairedFor = (filter?: (e: (typeof entries)[number]) => boolean) =>
+    pairedBaseline
+      ? computePairedComparisons(
+          filter ? entries.filter(filter) : entries,
+          pairedBaseline,
+          activeFormatNames,
+        )
+      : [];
+  const paired = pairedBaseline
+    ? {
+        baseline: pairedBaseline,
+        naturalAndRealistic: pairedFor((e) =>
+          PHOTO_CATEGORIES.includes(e.category),
+        ),
+        all: pairedFor(),
+        tune: pairedFor((e) => splitFor(e.name) === "tune"),
+        holdout: pairedFor((e) => splitFor(e.name) === "holdout"),
+      }
+    : null;
+
   const harnessesSkipped = entries.every((e) => e.harnessResults.length === 0);
   const crossLanguage = LANGUAGES.map((language) => {
     if (harnessesSkipped) return { language, pass: null as boolean | null };
@@ -625,6 +657,7 @@ async function main(): Promise<void> {
     crossLanguage,
     images: jsonImages,
     ...(rdJson ? { rd: rdJson } : {}),
+    ...(paired ? { paired } : {}),
   };
   await fs.mkdir(path.dirname(absJson), { recursive: true });
   await fs.writeFile(absJson, `${JSON.stringify(json, null, 2)}\n`);
@@ -643,7 +676,11 @@ async function main(): Promise<void> {
           preludeHtml: generateRdSection(rdJson, entries.length),
         }
       : versionList
-        ? { formatNames: activeFormatNames, showImplementations: false }
+        ? {
+            formatNames: activeFormatNames,
+            showImplementations: false,
+            paired: paired !== null,
+          }
         : undefined,
   );
   await fs.writeFile(absOutput, html);
@@ -674,6 +711,16 @@ async function main(): Promise<void> {
 
   printSummary("Natural Images Only", naturalStats);
   printSummary("All Images", allStats);
+
+  // Paired A/B is the conclusion of a version run, so it prints last — the
+  // holdout block is the honest number and goes closest to the prompt.
+  if (paired) {
+    console.log(formatPairedTable("photographic", paired.naturalAndRealistic));
+    console.log(formatPairedTable("all images", paired.all));
+    if (paired.holdout.length > 0) {
+      console.log(formatPairedTable("HOLDOUT split", paired.holdout));
+    }
+  }
 
   if (!skipHarnesses) {
     console.log("\n=== Cross-Language Verification ===");

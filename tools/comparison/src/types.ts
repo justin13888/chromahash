@@ -1,4 +1,5 @@
 import type { CorpusSplit } from "./corpus.ts";
+import type { PairedComparison } from "./paired.ts";
 
 /** Represents a loaded and downscaled image ready for encoding. */
 export interface ImageInput {
@@ -280,4 +281,21 @@ export interface ComparisonJson {
   images: ComparisonImageJson[];
   /** Rate–distortion sweep (only written by `--rd` runs). */
   rd?: RdJson;
+  /** Paired version A/B deltas (only written by `--versions` runs). */
+  paired?: PairedJson;
+}
+
+/**
+ * Paired per-image deltas against a released-tag baseline, over the same image
+ * subsets as `summary`. Present only in `--versions` runs that include a tag —
+ * see paired.ts for why version comparison needs paired statistics and the
+ * cross-format report does not.
+ */
+export interface PairedJson {
+  /** The released tag every candidate column is differenced against. */
+  baseline: string;
+  naturalAndRealistic: PairedComparison[];
+  all: PairedComparison[];
+  tune: PairedComparison[];
+  holdout: PairedComparison[];
 }

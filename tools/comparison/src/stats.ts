@@ -63,3 +63,39 @@ export function bootstrapCI(
   means.sort((a, b) => a - b);
   return [quantile(means, alpha / 2), quantile(means, 1 - alpha / 2)];
 }
+
+/**
+ * Gauss error function, Abramowitz & Stegun 7.1.26 (|error| < 1.5e-7) — enough
+ * precision for reporting a p-value to four decimals.
+ */
+function erf(x: number): number {
+  const sign = Math.sign(x);
+  const z = Math.abs(x);
+  const t = 1 / (1 + 0.3275911 * z);
+  const poly =
+    ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) *
+      t +
+      0.254829592) *
+    t;
+  return sign * (1 - poly * Math.exp(-z * z));
+}
+
+/**
+ * Two-sided sign-test p-value for `wins` vs `losses` (ties excluded, as the
+ * sign test requires): the probability of a split at least this lopsided under
+ * the null hypothesis that either direction is equally likely.
+ *
+ * Uses the normal approximation with a continuity correction. Paired A/B runs
+ * here have tens of non-tied images, where the approximation is accurate to
+ * well under the reported precision; it complements the paired bootstrap CI by
+ * answering "is the direction consistent?" independently of effect size.
+ * Returns 1 when nothing is comparable.
+ */
+export function signTestP(wins: number, losses: number): number {
+  const n = wins + losses;
+  if (n === 0) return 1;
+  const extreme = Math.max(wins, losses);
+  const z = (Math.abs(extreme - n / 2) - 0.5) / (0.5 * Math.sqrt(n));
+  const p = 2 * (1 - 0.5 * (1 + erf(z / Math.SQRT2)));
+  return Math.min(1, Math.max(0, p));
+}
