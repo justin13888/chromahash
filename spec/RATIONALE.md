@@ -10,8 +10,11 @@ Sweep numbers come from the decision tables produced by `just sweep <config>`
 (65 images: 43 synthetic + 22 curated photos; the 28-image holdout —
 Kodak24 + held-out curated photos — is reserved for validating winners, per the
 pre-registered rule below). Rate–distortion numbers come from `just compare-rd`
-(photographic corpus, display-resolution scoring). Numbers marked **[v0.6]**
-were measured during the v0.6 redesign on the original 52-image corpus.
+(photographic corpus, display-resolution scoring). Release A/B numbers against
+the previous format generation come from `just compare-versions`, which
+differences each image against the v0.6 tag *paired* and reports a bootstrap CI
+of that difference (see Evaluation methodology). Numbers marked **[v0.6]** were
+measured during the v0.6 redesign on the original 52-image corpus.
 
 **Pre-registered retune rule.** A constants-level wire change lands only if it
 improves holdout mean CIEDE2000 by ≥3% with no SSIMULACRA2 / Butteraugli /
@@ -33,6 +36,42 @@ equal-budget upgrade path from prior LQIPs (BlurHash ~30–36 B, ThumbHash
 **Rejected:** variable-length tier 0 (ThumbHash-style, 5–25 B): saves ~15 B per
 image at the cost of length framing everywhere and a materially worse quality
 floor.
+
+#### What holding 32 bytes cost, measured
+Keeping tier 0 at exactly 32 bytes while byte 0 grew into a self-describing
+descriptor had to come from somewhere: the no-alpha luma AC count drops 27 → 26
+(`LAYOUT_B.l_tiers`), and alpha mode collapses v0.6's mixed-precision
+`[(7,6),(13,5)]` into a single `[(20,5)]` tier. That is ~3.7% of the luma AC
+budget spent on framing. **Measured** (`just compare-versions`, paired
+per-image against the v0.6 tag at the same 32 bytes, holdout split, n=28).
+Signs are normalized per metric so that **positive means v1 is worse**:
+
+| Metric | v0.6 | v1 t0 | paired Δ% | 95% CI of paired Δ | win/loss |
+|---|---|---|---|---|---|
+| ΔE00 | 11.312 | 11.364 | **+0.45%** | [+0.029, +0.078] | 3/25 |
+| SSIMULACRA2 | −279.8 | −283.1 | **+1.18%** | [+1.57, +5.53] | 3/25 |
+| Butteraugli | 28.06 | 28.45 | **+1.39%** | [+0.160, +0.657] | 5/23 |
+| DSSIM | 0.2534 | 0.2535 | +0.02% | [−0.0000, +0.0001] | 10/18 |
+
+Small but real: every CI except DSSIM's excludes zero, and the direction is
+consistent (25 of 28 holdout images regress; sign-test p = 0.0001). The
+photographic corpus agrees at +0.62% ΔE00. Run through the sweep runner's guard
+gate (`sweeps/v06-vs-v1.json`), **v1 tier 0 fails the guards against v0.6** —
+the SSIMULACRA2 drop exceeds the 1.0 tolerance.
+
+**Accepted anyway, and this is a positioning claim rather than a quality one.**
+At 32 bytes v1 is not an improvement on v0.6; it is a ~0.5% quality payment for
+the descriptor byte, and what that byte buys is the tier ladder, O(1)
+structural validation, and deterministic variable length. The quality story
+lives one rung up: tier 1 at 108 B is −17.5% ΔE00 against v0.6 on holdout
+(CI [−2.38, −1.61]), winning on all 28 images — a budget v0.6 has no way to
+spend at all. Reclaiming the 27th luma coefficient (a narrower scale field, or
+the reserved bit) is sized by the 0.45% above and recorded as future work.
+
+The effect is also far below the ≥3% pre-registered retune threshold, so it
+does not by itself argue for a constants revision — it is recorded because the
+"equal-budget upgrade path" framing above is true about *bytes* and would
+otherwise be read as also true about *quality*.
 
 ### Quality tiers: count ×4^tier at constant precision
 A 3-bit tier multiplies every AC coefficient *count* by 4^tier and doubles the
@@ -57,12 +96,14 @@ at 32 B ChromaHash competes only with purpose-built LQIPs.
 
 | Anchor | Winner | Runner-ups |
 |---|---|---|
-| 32 B | **ChromaHash t0 10.57** | RawRGB565 11.76 · ThumbHash 12.00 · BlurHash 4x4 13.46 |
+| 32 B | **ChromaHash v0.6 10.51** | ChromaHash t0 10.57 · RawRGB565 11.76 · ThumbHash 12.00 · BlurHash 4x4 13.46 |
 | 108 B | **ChromaHash t1 8.58** | RawRGB565 9.10 · WebP 9.45 · lqip-modern r16 10.53 (82 B) |
 | 411 B | **WebP 6.61** | ChromaHash t2 7.13 · RawRGB565 7.41 · lqip-modern r48 7.57 (248 B) · JPEG 8.83 |
 | 1623 B | **AVIF 4.71** | WebP 5.17 · JPEG 5.30 · RawRGB565 5.75 · ChromaHash t3 6.40 |
 
-Tiers 0 and 1 win their anchors outright — at 108 B even raw RGB565 pixels
+The predecessor edges out v1's tier 0 at the anchor they share, by the margin
+quantified above; against every *other* format at 32 B the two are
+interchangeable. Tier 1 wins its anchor outright — at 108 B even raw RGB565 pixels
 beat WebP, whose container overhead dominates that budget. WebP overtakes
 tier 2 by ~7% at 411 B, and the real codecs lead tier 3 by 20–36% at 1623 B.
 The honest positioning: **tiers 2–3 are not rate–distortion-competitive with
@@ -306,6 +347,15 @@ encoding.
   (gamma-space smooth filtering); linear-light Lanczos is co-supported as the
   signal-fidelity view. Both sides composite over a defined backdrop before
   scoring; a blurred "as-rendered" metric set models blur-up presentation.
+- **Paired statistics for release A/Bs:** per-format bootstrap CIs are
+  *unpaired* — they carry the corpus's image-to-image spread (ΔE00 ranges ~1 to
+  ~30), which swamps the difference between two builds of one format. The
+  v0.6-vs-v1 holdout CIs are [10.25, 12.39] and [10.30, 12.45]: apparently
+  identical formats. Differencing per image first gives [+0.029, +0.078] on the
+  same data — ~40× tighter and excluding zero. Version comparison is the only
+  controlled experiment here (same images, same scoring, one variable), so it
+  reports paired deltas with a sign test; cross-format runs compare different
+  formats at different byte costs and correctly do not.
 - **Tune/holdout split:** the v0.6 constants were tuned on the evaluation
   corpus. The split immediately quantified the damage: mean ΔE00 6.48
   (CI 4.6–8.4) on the tune split vs **11.36 (CI 10.3–12.5) on the
@@ -340,3 +390,8 @@ Explicitly unresolved, so nothing evaluated-in-thought silently disappears:
     coding.
 11. **Perceptual validation** — every conclusion here is metric-based; a small
     human study of blurred placeholders would anchor the metric choices.
+12. **Reclaiming the 27th luma coefficient** — tier 0 pays ~0.45% holdout ΔE00
+    (and a guard-failing 1.18% SSIMULACRA2) for the descriptor byte. A narrower
+    scale field or the reserved bit could fund the coefficient back; the
+    measurement above sizes the prize. Below the retune threshold, so it rides
+    with the next wire change rather than motivating one.
