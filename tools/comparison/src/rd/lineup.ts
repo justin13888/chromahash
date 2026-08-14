@@ -10,6 +10,7 @@ import { RawPixelsAdapter } from "../adapters/raw-pixels.ts";
 import { ThumbHashAdapter } from "../adapters/thumbhash.ts";
 import { UnpicAdapter } from "../adapters/unpic.ts";
 import type { FormatAdapter } from "../types.ts";
+import { prepareVersionBinaries } from "../version-builds.ts";
 
 /**
  * Canonical equal-byte anchors for the R-D comparison: the four ChromaHash
@@ -35,6 +36,16 @@ export interface RdVariant {
 
 /** ChromaHash quality tiers swept (the whole point of the comparison). */
 const CHROMAHASH_TIERS: readonly number[] = [0, 1, 2, 3];
+
+/**
+ * The predecessor format, plotted as a single point at the 32 B anchor. v1's
+ * tier 0 is byte-for-byte the v0.6 footprint, so this is the one genuinely
+ * equal-budget comparison on the chart — and the only way to read what the v1
+ * redesign cost or bought at the size both formats share. Its own family (and
+ * so its own marker) rather than a point on the tier curve: it is a different
+ * format generation, not a tier of this one.
+ */
+const CHROMAHASH_V06 = "v0.6";
 
 /** BlurHash component sweeps (NxN); 4x4 is the standard-report default. */
 const BLURHASH_COMPONENTS: readonly number[] = [1, 2, 3, 4, 6, 8];
@@ -62,6 +73,27 @@ export function buildRdLineup(): RdVariant[] {
         capToSource: true,
       }),
     });
+  }
+
+  const [v06] = prepareVersionBinaries([CHROMAHASH_V06]);
+  if (v06) {
+    variants.push({
+      family: "ChromaHash v0.6",
+      adapter: new ChromaHashAdapter({
+        name: "ChromaHash v0.6",
+        binaryPath: v06.binaryPath,
+        // The tag's decode shim always decodes uncapped. At tier-0 sizes the
+        // natural 32 px render is already below the encoder-input cap, so this
+        // frames v0.6 identically to a capped tier-0 decode either way.
+        capToSource: false,
+        // The shim predates the in-process bench subcommands.
+        benchTiming: false,
+      }),
+    });
+  } else {
+    console.warn(
+      "ChromaHash v0.6 baseline skipped: the v0.6.0 tag build failed (see above).",
+    );
   }
   variants.push({ family: "ThumbHash", adapter: new ThumbHashAdapter() });
   for (const c of BLURHASH_COMPONENTS) {

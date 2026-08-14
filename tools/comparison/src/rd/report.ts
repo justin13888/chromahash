@@ -80,6 +80,10 @@ const FAMILY_STYLES: Record<
   { dark: string; light: string; dashed: boolean }
 > = {
   ChromaHash: { dark: "#3987e5", light: "#2a78d6", dashed: false },
+  // The predecessor shares the family hue (same format lineage) and takes the
+  // dash as its secondary, non-color separator — the same device the codec
+  // baselines use.
+  "ChromaHash v0.6": { dark: "#3987e5", light: "#2a78d6", dashed: true },
   ThumbHash: { dark: "#199e70", light: "#1baf7a", dashed: false },
   BlurHash: { dark: "#c98500", light: "#eda100", dashed: false },
   "lqip-modern": { dark: "#9085e9", light: "#4a3aa7", dashed: false },
