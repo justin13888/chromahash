@@ -319,6 +319,18 @@ async function main(): Promise<void> {
       `R-D lineup: ${adapters.length} variants across ${families.length} families (${families.join(", ")})`,
     );
   } else if (versionList) {
+    // Quality tiers are a v1 feature: released tags have no tier API, and the
+    // decode shim they are built with ignores CHROMAHASH_TIER. Honouring the
+    // tier for `current` alone would put (say) a 411-byte column beside a
+    // 32-byte one in a table captioned "version comparison" — the reader would
+    // score a 3x byte increase as a quality win. Refuse instead of misleading.
+    const taggedVersions = versionList.filter((v) => v !== "current");
+    if (chromaTier !== 0 && taggedVersions.length > 0) {
+      console.error(
+        `CHROMAHASH_TIER=${chromaTier} cannot be applied to released tags (${taggedVersions.join(", ")}): quality tiers are a v1 feature, so those columns would stay at 32 bytes while "current" grew, and the comparison would no longer be equal-budget.\nEither drop CHROMAHASH_TIER to compare at 32 bytes, or pass --versions current to sweep the working tree's tiers on their own.`,
+      );
+      process.exit(1);
+    }
     console.log("Preparing chromahash version binaries...");
     const bins = orderVersions(prepareVersionBinaries(versionList));
     adapters = bins.map(
