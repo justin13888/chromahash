@@ -5,10 +5,15 @@
  * Usage: node dist/sweep.js <config.json> [--split tune|holdout] [--max-images N]
  *
  * A config declares explicit variants (label + TUNE string + optional tier /
- * capToTier0). The first variant is the incumbent: every other variant's guard
- * metrics (SSIMULACRA2 / Butteraugli / DSSIM) are checked against it, mirroring
- * the §12.1 sweep discipline — a candidate only "wins" if it improves mean
- * ΔE00 without regressing the perceptual guards.
+ * capToTier0 / version). The first variant is the incumbent: every other
+ * variant's guard metrics (SSIMULACRA2 / Butteraugli / DSSIM) are checked
+ * against it, mirroring the §12.1 sweep discipline — a candidate only "wins" if
+ * it improves mean ΔE00 without regressing the perceptual guards.
+ *
+ * A variant may name a released tag (`"version": "v0.6"`) instead of running
+ * the working tree. Putting one first makes the previous release the incumbent,
+ * so a wire change is gated against what actually shipped rather than against
+ * another build of the same tree.
  *
  * Sweeps read the TUNE split only (src/corpus.ts); `--split holdout` exists
  * solely to validate a finished winner against the pre-registered rule
@@ -34,6 +39,7 @@ import { ensureIqaAvailable } from "./metrics/iqa.ts";
 import { ensureNaturalImages } from "./natural-images.ts";
 import { quantile } from "./stats.ts";
 import type { ImageInput } from "./types.ts";
+import { prepareVersionBinaries } from "./version-builds.ts";
 
 /** One TUNE variant to score. */
 interface SweepVariant {
@@ -49,6 +55,19 @@ interface SweepVariant {
    * variant's hash look like?
    */
   capToTier0?: boolean;
+  /**
+   * Score this variant with a released tag's binary (e.g. `"v0.6"`) instead of
+   * the working tree. Put it first in `variants` to make the previous release
+   * the incumbent, so the guard machinery gates a wire change against what
+   * actually shipped rather than against another build of the same tree.
+   *
+   * The tag is built through the same cached worktree + decode shim as
+   * `just compare-versions`. That shim exposes only the pre-v1 API, so it
+   * ignores CHROMAHASH_TUNE, has no quality tier, and always decodes uncapped —
+   * `tune`, a non-zero `tier`, and `capToTier0` are rejected rather than
+   * silently dropped.
+   */
+  version?: string;
 }
 
 interface SweepConfig {
@@ -65,6 +84,8 @@ interface SweepRow {
   label: string;
   tune: string | null;
   tier: number;
+  /** Released tag this row was scored with, or null for the working tree. */
+  version: string | null;
   images: number;
   bytes: number;
   meanCiede: number | null;
@@ -176,11 +197,58 @@ async function loadCorpus(): Promise<ImageInput[]> {
   return inputs;
 }
 
+/**
+ * Validate the `version` field across a config and build every tag it names.
+ * Returns version → binary path; empty when no variant uses one. Fails fast on
+ * an unbuildable tag or an option the tag's decode shim cannot honour — a
+ * silently ignored knob would corrupt the whole decision table.
+ */
+function resolveVersionBinaries(variants: SweepVariant[]): Map<string, string> {
+  const wanted = [
+    ...new Set(
+      variants.map((v) => v.version).filter((v): v is string => Boolean(v)),
+    ),
+  ];
+  const resolved = new Map<string, string>();
+  if (wanted.length === 0) return resolved;
+
+  for (const v of variants) {
+    if (!v.version) continue;
+    const rejected = [
+      v.tune ? "tune" : null,
+      v.tier ? "tier" : null,
+      v.capToTier0 ? "capToTier0" : null,
+    ].filter(Boolean);
+    if (rejected.length > 0) {
+      throw new Error(
+        `variant "${v.label}" combines version=${v.version} with ${rejected.join("/")}: the released tag's decode shim exposes only the pre-v1 API and cannot honour those.`,
+      );
+    }
+  }
+
+  for (const bin of prepareVersionBinaries(wanted)) {
+    resolved.set(bin.version, bin.binaryPath);
+  }
+  const missing = wanted.filter((v) => !resolved.has(v));
+  if (missing.length > 0) {
+    throw new Error(
+      `failed to build version binaries: ${missing.join(", ")} (see the build output above)`,
+    );
+  }
+  return resolved;
+}
+
 async function scoreVariant(
   variant: SweepVariant,
   inputs: ImageInput[],
+  versionBinaries: Map<string, string>,
 ): Promise<SweepRow> {
   const tier = variant.tier ?? 0;
+  // A tag variant runs its own binary; hashes are not portable across format
+  // generations, so the same binary must both encode and decode.
+  const cli = variant.version
+    ? (versionBinaries.get(variant.version) as string)
+    : RUST_CLI;
   const ciedes: (number | null)[] = [];
   const ssim2s: (number | null)[] = [];
   const butters: (number | null)[] = [];
@@ -190,7 +258,7 @@ async function scoreVariant(
   for (const input of inputs) {
     const { smallWidth: w, smallHeight: h, smallRgba: rgba } = input;
     const gamut = input.gamut ?? "srgb";
-    const hash = encodeViaRust(RUST_CLI, w, h, rgba, gamut, tier, variant.tune);
+    const hash = encodeViaRust(cli, w, h, rgba, gamut, tier, variant.tune);
     bytesSum += hash.length;
 
     let capW = w;
@@ -198,9 +266,9 @@ async function scoreVariant(
     if (variant.capToTier0) {
       // The image's tier-0 natural render size, from an uncapped tier-0 decode
       // of the incumbent (dimensions depend only on the aspect byte).
-      const t0 = encodeViaRust(RUST_CLI, w, h, rgba, gamut, 0, variant.tune);
+      const t0 = encodeViaRust(cli, w, h, rgba, gamut, 0, variant.tune);
       const t0dec = decodeViaRust(
-        RUST_CLI,
+        cli,
         t0,
         "srgb",
         undefined,
@@ -210,14 +278,7 @@ async function scoreVariant(
       capW = t0dec.w;
       capH = t0dec.h;
     }
-    const decoded = decodeViaRust(
-      RUST_CLI,
-      hash,
-      "srgb",
-      capW,
-      capH,
-      variant.tune,
-    );
+    const decoded = decodeViaRust(cli, hash, "srgb", capW, capH, variant.tune);
 
     const reference = input.metricReferenceRgba ?? input.referenceRgba;
     const { metrics } = await computeAllMetrics(
@@ -238,6 +299,7 @@ async function scoreVariant(
     label: variant.label,
     tune: variant.tune ?? null,
     tier,
+    version: variant.version ?? null,
     images: inputs.length,
     bytes: bytesSum / (inputs.length || 1),
     meanCiede: mean(ciedes),
@@ -296,10 +358,12 @@ async function main(): Promise<void> {
     `Sweep ${config.name}: ${config.variants.length} variants × ${inputs.length} ${split}-split images`,
   );
 
+  const versionBinaries = resolveVersionBinaries(config.variants);
+
   const rows: SweepRow[] = [];
   for (const variant of config.variants) {
     const started = performance.now();
-    const row = await scoreVariant(variant, inputs);
+    const row = await scoreVariant(variant, inputs, versionBinaries);
     rows.push(row);
     console.log(
       `  ${variant.label.padEnd(28)} ΔE00 ${row.meanCiede?.toFixed(3) ?? "N/A"} (${((performance.now() - started) / 1000).toFixed(0)}s)`,

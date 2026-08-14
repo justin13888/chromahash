@@ -1,0 +1,12 @@
+{
+  "name": "v06-vs-v1",
+  "description": "Release A/B: the shipped v0.6 encoder as incumbent against v1's tier ladder. Tier 0 is the equal-budget comparison — both are exactly 32 bytes — and measures what the self-describing descriptor byte cost (v1 spends one fewer luma AC coefficient: LAYOUT_B l_tiers 27 -> 26). Tiers 1-3 are unequal-budget by construction: v0.6 has no ladder, so they measure what the ladder buys, not a like-for-like win. Run with --split holdout for the honest number.",
+  "photoOnly": true,
+  "variants": [
+    { "label": "v0.6 (32 B)", "version": "v0.6" },
+    { "label": "v1 tier 0 (32 B)" },
+    { "label": "v1 tier 1 (108 B)", "tier": 1 },
+    { "label": "v1 tier 2 (411 B)", "tier": 2 },
+    { "label": "v1 tier 3 (1623 B)", "tier": 3 }
+  ]
+}
