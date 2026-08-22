@@ -11,7 +11,7 @@ use crate::dct::{
     Selection, dct_encode_selected, precompute_cos_table, select_coefficients_weighted,
 };
 use crate::math_utils::{clamp_neg1_1, clamp01, round_half_away_from_zero};
-use crate::mulaw::compand_quantize;
+use crate::mulaw::{compand_dequantize, compand_quantize};
 use crate::transfer::{adobe_rgb_eotf, bt2020_pq_eotf, prophoto_rgb_eotf, srgb_eotf, srgb_gamma};
 
 /// Build a 256-entry EOTF lookup table for the given gamut. Per spec §5.2.
@@ -246,6 +246,128 @@ fn analyze(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables, tier: u8) ->
     }
 }
 
+/// One channel's AC quantization job: the coefficients in selection order, the
+/// per-index bit widths, the scalefactor-band split, and the group's companding
+/// parameters. Used by [`quantize_ac_channel`], which owns every encoder-only
+/// scale/rounding policy so the three call sites stay identical.
+struct AcQuantJob<'a> {
+    values: &'a [f64],
+    /// Precision tiers in write order (chroma/alpha pass a single tier).
+    tiers: &'a [(usize, u32)],
+    /// First selection index of the scalefactor high band.
+    split: usize,
+    /// Scale multiplier applied at and above `split` (1.0 disables).
+    band_gain: f64,
+    /// Quantization range the scale code spans (e.g. `MAX_L_SCALE`).
+    max_scale: f64,
+    /// Largest writable scale code (2^bits − 1).
+    code_max: u32,
+    family: crate::constants::Companding,
+    mu: f64,
+    table: &'a crate::constants::QuantTable,
+    deadzone: f64,
+}
+
+impl AcQuantJob<'_> {
+    /// Bit width of the coefficient at selection index `i`.
+    fn bits_at(&self, i: usize) -> u32 {
+        let mut base = 0usize;
+        for &(count, bits) in self.tiers {
+            if i < base + count {
+                return bits;
+            }
+            base += count;
+        }
+        self.tiers.last().map(|&(_, b)| b).unwrap_or(0)
+    }
+
+    /// Scale multiplier at selection index `i`.
+    fn gain_at(&self, i: usize) -> f64 {
+        if i >= self.split { self.band_gain } else { 1.0 }
+    }
+}
+
+/// Quantize one coefficient. With `nearest` the ±2 neighborhood of the
+/// companded-domain code is scored by *reconstruction* error and the best code
+/// wins; otherwise this is bit-for-bit the shipped `compand_quantize`.
+fn quantize_one(job: &AcQuantJob, value: f64, scale: f64, bits: u32, nearest: bool) -> u32 {
+    let normalized = if scale == 0.0 { 0.0 } else { value / scale };
+    let q = compand_quantize(normalized, bits, job.family, job.mu, job.table, job.deadzone);
+    if !nearest || scale == 0.0 {
+        return q;
+    }
+    let max_idx = (1u32 << bits) - 2;
+    let mut best = q;
+    let mut best_err = f64::INFINITY;
+    for d in [0i64, -1, 1, -2, 2] {
+        let cand = (q as i64 + d).clamp(0, max_idx as i64) as u32;
+        let rec = compand_dequantize(cand, bits, job.family, job.mu, job.table) * scale;
+        let err = (rec - value).abs();
+        // Strict improvement keeps the shipped code on ties (d = 0 is first).
+        if err < best_err {
+            best_err = err;
+            best = cand;
+        }
+    }
+    best
+}
+
+/// Reconstruction SSE of a whole channel at one candidate dequantized scale.
+fn channel_sse(job: &AcQuantJob, scale: f64, nearest: bool) -> f64 {
+    let mut sse = 0.0;
+    for (i, &v) in job.values.iter().enumerate() {
+        let bits = job.bits_at(i);
+        let s = scale * job.gain_at(i);
+        let q = quantize_one(job, v, s, bits, nearest);
+        let rec = compand_dequantize(q, bits, job.family, job.mu, job.table) * s;
+        let d = rec - v;
+        sse += d * d;
+    }
+    sse
+}
+
+/// Choose the scale code and quantize a channel's AC set under the encoder-only
+/// `scale_fit` / `ac_nearest` policies. Returns `(scale_code, codes)`.
+///
+/// Mode 0 reproduces the shipped bytes exactly: the code is `round(max|AC|)`
+/// and coefficients are normalized by the *unquantized* max|AC|, even though
+/// the decoder will dequantize with the rounded scale.
+fn quantize_ac_channel(job: &AcQuantJob, raw_scale: f64, t: &Tunables) -> (u32, Vec<u32>) {
+    let nominal =
+        round_half_away_from_zero(job.code_max as f64 * clamp01(raw_scale / job.max_scale)) as u32;
+    let dq = |code: u32| code as f64 / job.code_max as f64 * job.max_scale;
+
+    let (code, norm_scale) = match t.scale_fit {
+        0 => (nominal, raw_scale),
+        1 => (nominal, dq(nominal)),
+        _ => {
+            // Search every representable scale code. A channel with no energy
+            // keeps code 0 (and the exact-zero AC codes that go with it).
+            if raw_scale == 0.0 {
+                (0, 0.0)
+            } else {
+                let mut best = nominal.max(1);
+                let mut best_sse = f64::INFINITY;
+                for code in 1..=job.code_max {
+                    let sse = channel_sse(job, dq(code), t.ac_nearest);
+                    if sse < best_sse {
+                        best_sse = sse;
+                        best = code;
+                    }
+                }
+                (best, dq(best))
+            }
+        }
+    };
+
+    let mut codes = Vec::with_capacity(job.values.len());
+    for (i, &v) in job.values.iter().enumerate() {
+        let bits = job.bits_at(i);
+        codes.push(quantize_one(job, v, norm_scale * job.gain_at(i), bits, t.ac_nearest));
+    }
+    (code, codes)
+}
+
 /// Encode an image into a ChromaHash body with explicit tunables and quality
 /// `tier`. Per spec §10 (v1). Returns the variable-length encoded bytes
 /// (tier 0 = 32 bytes; each higher tier roughly quadruples the length).
@@ -262,9 +384,53 @@ pub fn encode_with(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables, tier
 
     // 8. Quantize header values (decode-aware DC code search, v0.6)
     let (l_dc_q, a_dc_q, b_dc_q) = select_dc_codes(l_dc, a_dc, b_dc, t);
-    let l_scl_q = round_half_away_from_zero(63.0 * clamp01(l_scale / t.max_l_scale)) as u64;
-    let a_scl_q = round_half_away_from_zero(63.0 * clamp01(a_scale / t.max_a_scale)) as u64;
-    let b_scl_q = round_half_away_from_zero(31.0 * clamp01(b_scale / t.max_b_scale)) as u64;
+
+    // Scalefactor-band split points (index >= split uses scale*band_gain).
+    let l_split = band_split_index(shape.l_count(), t.band_split);
+    let c_split = band_split_index(shape.c_count, t.band_split);
+
+    // AC scale codes + codes for L/a/b. With the shipped tunables this is
+    // bit-for-bit the v1 quantizer; `scale_fit`/`ac_nearest` are encoder-only.
+    let c_tiers = [(shape.c_count, shape.c_bits)];
+    let l_job = AcQuantJob {
+        values: &l_ac,
+        tiers: &shape.l_tiers,
+        split: l_split,
+        band_gain: t.band_gain_l,
+        max_scale: t.max_l_scale,
+        code_max: (1u32 << L_SCALE_BITS) - 1,
+        family: t.compand_l,
+        mu: t.mu_l,
+        table: &t.table_l,
+        deadzone: t.deadzone_l,
+    };
+    let a_job = AcQuantJob {
+        values: &a_ac,
+        tiers: &c_tiers,
+        split: c_split,
+        band_gain: t.band_gain_c,
+        max_scale: t.max_a_scale,
+        code_max: (1u32 << A_SCALE_BITS) - 1,
+        family: t.compand_c,
+        mu: t.mu_c,
+        table: &t.table_c,
+        deadzone: t.deadzone_c,
+    };
+    let b_job = AcQuantJob {
+        values: &b_ac,
+        tiers: &c_tiers,
+        split: c_split,
+        band_gain: t.band_gain_c,
+        max_scale: t.max_b_scale,
+        code_max: (1u32 << B_SCALE_BITS) - 1,
+        family: t.compand_c,
+        mu: t.mu_c,
+        table: &t.table_c,
+        deadzone: t.deadzone_c,
+    };
+    let (l_scl_q, l_codes) = quantize_ac_channel(&l_job, l_scale, t);
+    let (a_scl_q, a_codes) = quantize_ac_channel(&a_job, a_scale, t);
+    let (b_scl_q, b_codes) = quantize_ac_channel(&b_job, b_scale, t);
 
     // 9. Allocate the variable-length body and write the descriptor bytes.
     //    Byte 0: version (bits 0..3) | tier (bits 3..6) | hasAlpha (bit 6) |
@@ -282,15 +448,15 @@ pub fn encode_with(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables, tier
     bitpos += A_DC_BITS as usize;
     write_bits(&mut hash, bitpos, B_DC_BITS, b_dc_q);
     bitpos += B_DC_BITS as usize;
-    write_bits(&mut hash, bitpos, L_SCALE_BITS, l_scl_q as u32);
+    write_bits(&mut hash, bitpos, L_SCALE_BITS, l_scl_q);
     bitpos += L_SCALE_BITS as usize;
-    write_bits(&mut hash, bitpos, A_SCALE_BITS, a_scl_q as u32);
+    write_bits(&mut hash, bitpos, A_SCALE_BITS, a_scl_q);
     bitpos += A_SCALE_BITS as usize;
-    write_bits(&mut hash, bitpos, B_SCALE_BITS, b_scl_q as u32);
+    write_bits(&mut hash, bitpos, B_SCALE_BITS, b_scl_q);
     bitpos += B_SCALE_BITS as usize;
     debug_assert_eq!(bitpos, PREFIX_BITS as usize);
 
-    // 11. AC payload with companded quantization (µ-law by default; the
+    // 11. AC payload (codes computed above; µ-law by default, the
     //     family/deadzone/band knobs are sweep-only and default to no-ops).
     let quantize_ac = |value: f64,
                        scale: f64,
@@ -306,9 +472,6 @@ pub fn encode_with(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables, tier
             compand_quantize(value / scale, bits, family, mu, table, deadzone)
         }
     };
-    // Scalefactor-band split points (index ≥ split uses scale·band_gain).
-    let l_split = band_split_index(shape.l_count(), t.band_split);
-    let c_split = band_split_index(shape.c_count, t.band_split);
 
     if has_alpha {
         let alpha_dc_q = round_half_away_from_zero(31.0 * clamp01(alpha_dc)) as u32;
@@ -324,17 +487,7 @@ pub fn encode_with(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables, tier
     let mut l_idx = 0usize;
     for &(count, bits) in &shape.l_tiers {
         for _ in 0..count {
-            let gain = if l_idx >= l_split { t.band_gain_l } else { 1.0 };
-            let q = quantize_ac(
-                l_ac[l_idx],
-                l_scale * gain,
-                bits,
-                t.compand_l,
-                t.mu_l,
-                &t.table_l,
-                t.deadzone_l,
-            );
-            write_bits(&mut hash, bitpos, bits, q);
+            write_bits(&mut hash, bitpos, bits, l_codes[l_idx]);
             bitpos += bits as usize;
             l_idx += 1;
         }
@@ -342,31 +495,11 @@ pub fn encode_with(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables, tier
 
     // Chroma AC
     let c_bits = shape.c_bits;
-    for (i, ac_val) in a_ac.iter().enumerate() {
-        let gain = if i >= c_split { t.band_gain_c } else { 1.0 };
-        let q = quantize_ac(
-            *ac_val,
-            a_scale * gain,
-            c_bits,
-            t.compand_c,
-            t.mu_c,
-            &t.table_c,
-            t.deadzone_c,
-        );
+    for &q in &a_codes {
         write_bits(&mut hash, bitpos, c_bits, q);
         bitpos += c_bits as usize;
     }
-    for (i, ac_val) in b_ac.iter().enumerate() {
-        let gain = if i >= c_split { t.band_gain_c } else { 1.0 };
-        let q = quantize_ac(
-            *ac_val,
-            b_scale * gain,
-            c_bits,
-            t.compand_c,
-            t.mu_c,
-            &t.table_c,
-            t.deadzone_c,
-        );
+    for &q in &b_codes {
         write_bits(&mut hash, bitpos, c_bits, q);
         bitpos += c_bits as usize;
     }

@@ -301,6 +301,23 @@ pub struct Tunables {
     /// integer-exact path. Sweep-only: the weighted order uses f64 comparison
     /// and would need an integer reformulation before ever entering the spec.
     pub aniso_oblique: f64,
+    /// Encoder-only: pick the AC code whose *dequantized* value is closest to
+    /// the coefficient, instead of the code nearest in the companded domain.
+    /// The shipped quantizer rounds in µ-law space, which is not the same
+    /// decision — µ-law levels are unevenly spaced, so the nearest compressed
+    /// level is not always the nearest reconstruction. Costs a ±2 neighborhood
+    /// search per coefficient and zero bits; the decoder is untouched.
+    pub ac_nearest: bool,
+    /// Encoder-only AC scale-factor policy (zero wire cost — every mode writes
+    /// a legal scale code and the decoder is untouched):
+    /// * `0` — shipped: code = round(max|AC| / max_scale), coefficients
+    ///   normalized by the **unquantized** max|AC|.
+    /// * `1` — normalize by the dequantized scale the decoder will actually
+    ///   use, removing the encoder/decoder scale mismatch.
+    /// * `2` — search every scale code for the one minimizing reconstruction
+    ///   SSE over the channel's AC set (clipping a lone outlier can buy back
+    ///   resolution for everything else).
+    pub scale_fit: u32,
 }
 
 impl Tunables {
@@ -347,6 +364,8 @@ impl Tunables {
         band_gain_l: 1.0,
         band_gain_c: 1.0,
         aniso_oblique: 0.0,
+        ac_nearest: false,
+        scale_fit: 0,
     };
 }
 

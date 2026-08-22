@@ -230,6 +230,36 @@ impl ChromaHash {
         })
     }
 
+    /// Validate raw bytes against an explicit tunable layout (harness sweep
+    /// interface). [`from_bytes`](Self::from_bytes) checks the length implied by
+    /// the *shipped* layout; a sweep that resizes the AC layout produces a
+    /// legitimately different length, so the runner must validate against the
+    /// same `Tunables` it encoded with.
+    #[doc(hidden)]
+    pub fn from_bytes_tuned(bytes: &[u8], t: &Tunables) -> Result<Self, ChromaHashError> {
+        if bytes.len() < (PREFIX_BITS as usize).div_ceil(8) {
+            return Err(ChromaHashError::TooShort);
+        }
+        let b0 = bytes[0];
+        if b0 & ((1 << VERSION_BITS) - 1) != FORMAT_VERSION {
+            return Err(ChromaHashError::UnsupportedVersion);
+        }
+        let tier = (b0 >> VERSION_BITS) & ((1 << TIER_BITS) - 1);
+        if tier > MAX_TIER {
+            return Err(ChromaHashError::InvalidTier);
+        }
+        if (b0 >> RESERVED_FLAG_BIT) & 1 != 0 {
+            return Err(ChromaHashError::ReservedBitSet);
+        }
+        let has_alpha = (b0 >> ALPHA_FLAG_BIT) & 1 == 1;
+        if bytes.len() != body_len_bytes(&t.layout, has_alpha, tier) {
+            return Err(ChromaHashError::LengthMismatch);
+        }
+        Ok(Self {
+            hash: Box::from(bytes),
+        })
+    }
+
     /// Encode with explicit tunables (comparison-harness sweep interface).
     #[doc(hidden)]
     pub fn encode_tuned(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables) -> Self {

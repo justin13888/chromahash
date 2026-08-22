@@ -43,13 +43,15 @@ fn tier_from_env() -> u8 {
     }
 }
 
-/// Read a whole variable-length hash from stdin and validate it.
+/// Read a whole variable-length hash from stdin and validate it against the
+/// tunables in effect (a sweep may resize the AC layout, which legitimately
+/// changes the encoded length).
 fn read_hash_from_stdin() -> ChromaHash {
     let mut buf = Vec::new();
     io::stdin()
         .read_to_end(&mut buf)
         .expect("failed to read hash from stdin");
-    ChromaHash::from_bytes(&buf).unwrap_or_else(|e| {
+    ChromaHash::from_bytes_tuned(&buf, &tunables_from_env()).unwrap_or_else(|e| {
         eprintln!("invalid chromahash on stdin: {e}");
         std::process::exit(1);
     })
@@ -125,6 +127,8 @@ fn tunables_from_env() -> Tunables {
             "band_gain_l" => t.band_gain_l = parse_f64(),
             "band_gain_c" => t.band_gain_c = parse_f64(),
             "aniso" => t.aniso_oblique = parse_f64(),
+            "ac_nearest" => t.ac_nearest = value == "1" || value == "true",
+            "scale_fit" => t.scale_fit = parse_u32(),
             // Raw AcLayout overrides ("count:bits"), applied on top of `layout`
             "l1" => t.layout.l_tiers[0] = parse_count_bits(key, value),
             "l2" => t.layout.l_tiers[1] = parse_count_bits(key, value),
