@@ -1,0 +1,37 @@
+{
+  "name": "render-raster",
+  "description": "Isolate the render-raster effect from the coefficient-count effect: identical coefficient counts (and identical byte length) encoded at tier 0 (32 px natural raster) vs the shipped tier (64/128/256 px, capped by the sweep to the <=100 px encoder input).",
+  "photoOnly": true,
+  "variants": [
+    {
+      "label": "t1 shipped (108 B, 64px)",
+      "tier": 1
+    },
+    {
+      "label": "t1 counts @tier0 (32px)",
+      "tune": "l1=104:5 c=36:4"
+    },
+    {
+      "label": "t2 shipped (411 B, 128px)",
+      "tier": 2
+    },
+    {
+      "label": "t2 counts @tier0 (32px)",
+      "tune": "l1=416:5 c=144:4"
+    },
+    {
+      "label": "t2 counts @tier1 (64px)",
+      "tier": 1,
+      "tune": "l1=104:5 c=36:4"
+    },
+    {
+      "label": "t3 shipped (1623 B, 256px)",
+      "tier": 3
+    },
+    {
+      "label": "t3 counts @tier1 (64px)",
+      "tier": 1,
+      "tune": "l1=416:5 c=144:4"
+    }
+  ]
+}

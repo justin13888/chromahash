@@ -97,6 +97,11 @@ interface SweepRow {
   ciedeDeltaPct: number | null;
   /** All guard metrics within tolerance of the incumbent. */
   guardsOk: boolean | null;
+  /** Per-image ΔE00 in corpus order — the input to paired statistics and to
+   * per-image (oracle) analyses the aggregate row cannot express. */
+  perImageCiede: (number | null)[];
+  /** Corpus image names, in the same order as {@link perImageCiede}. */
+  imageNames: string[];
 }
 
 /** Guard tolerances vs the incumbent (absolute for SSIM2, relative otherwise). */
@@ -301,6 +306,10 @@ async function scoreVariant(
     tier,
     version: variant.version ?? null,
     images: inputs.length,
+    perImageCiede: ciedes,
+    imageNames: inputs.map((i) =>
+      path.basename(i.filePath).replace(/\.[^.]+$/, ""),
+    ),
     bytes: bytesSum / (inputs.length || 1),
     meanCiede: mean(ciedes),
     medianCiede: median(ciedes),

@@ -1,0 +1,98 @@
+{
+  "name": "low-budget-allocation",
+  "description": "Bit allocation at the two budgets that matter for the LQIP floor: 21 B (ThumbHash's own size) and 32 B (the shipped tier 0). Sweeps the luma/chroma coefficient COUNT split against per-coefficient PRECISION in both directions - the shipped tier-1 experiment only tested finer coefficients, never coarser ones, which is the trade that actually matters when the budget is scarce. Incumbent: the shipped 32 B layout.",
+  "photoOnly": true,
+  "variants": [
+    {
+      "label": "32B SHIPPED L26@5 C9@4"
+    },
+    {
+      "label": "32B L26@5 C9@4",
+      "tune": "l1=26:5 c=9:4"
+    },
+    {
+      "label": "32B L34@4 C8@4",
+      "tune": "l1=34:4 c=8:4"
+    },
+    {
+      "label": "32B L36@4 C9@3",
+      "tune": "l1=36:4 c=9:3"
+    },
+    {
+      "label": "32B L23@6 C8@4",
+      "tune": "l1=23:6 c=8:4"
+    },
+    {
+      "label": "32B L44@3 C11@3",
+      "tune": "l1=44:3 c=11:3"
+    },
+    {
+      "label": "32B L29@5 C9@3",
+      "tune": "l1=29:5 c=9:3"
+    },
+    {
+      "label": "32B L24@5 C8@5",
+      "tune": "l1=24:5 c=8:5"
+    },
+    {
+      "label": "32B L32@5 C5@4",
+      "tune": "l1=32:5 c=5:4"
+    },
+    {
+      "label": "32B L21@5 C12@4",
+      "tune": "l1=21:5 c=12:4"
+    },
+    {
+      "label": "32B L40@4 C5@4",
+      "tune": "l1=40:4 c=5:4"
+    },
+    {
+      "label": "32B L28@4 C14@3",
+      "tune": "l1=28:4 c=14:3"
+    },
+    {
+      "label": "32B L38@4 C6@4",
+      "tune": "l1=38:4 c=6:4"
+    },
+    {
+      "label": "21B L13@5 C6@4",
+      "tune": "l1=13:5 c=6:4"
+    },
+    {
+      "label": "21B L18@4 C5@4",
+      "tune": "l1=18:4 c=5:4"
+    },
+    {
+      "label": "21B L20@4 C5@3",
+      "tune": "l1=20:4 c=5:3"
+    },
+    {
+      "label": "21B L14@5 C7@3",
+      "tune": "l1=14:5 c=7:3"
+    },
+    {
+      "label": "21B L26@3 C6@3",
+      "tune": "l1=26:3 c=6:3"
+    },
+    {
+      "label": "21B L11@6 C6@4",
+      "tune": "l1=11:6 c=6:4"
+    },
+    {
+      "label": "21B L17@5 C3@4",
+      "tune": "l1=17:5 c=3:4"
+    },
+    {
+      "label": "21B L10@5 C8@4",
+      "tune": "l1=10:5 c=8:4"
+    },
+    {
+      "label": "21B L22@4 C3@4",
+      "tune": "l1=22:4 c=3:4"
+    },
+    {
+      "label": "21B L15@4 C8@3",
+      "tune": "l1=15:4 c=8:3"
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "name": "encoder-compute",
+  "description": "Encoder-only levers: zero wire cost, decoder untouched, bytes unchanged. ac_nearest picks the AC code nearest in RECONSTRUCTION instead of nearest in the companded domain; scale_fit=1 normalizes by the dequantized scale the decoder actually uses (removing the shipped encoder/decoder scale mismatch); scale_fit=2 searches every scale code for minimum reconstruction SSE. Measured at the 21 B (ThumbHash-equal), 32 B (shipped tier 0) and 108 B (tier 1) budgets.",
+  "photoOnly": true,
+  "variants": [
+    { "label": "32 B shipped" },
+    { "label": "32 B ac_nearest", "tune": "ac_nearest=1" },
+    { "label": "32 B scale_fit=1", "tune": "scale_fit=1" },
+    { "label": "32 B fit1+nearest", "tune": "scale_fit=1 ac_nearest=1" },
+    { "label": "32 B scale_fit=2", "tune": "scale_fit=2" },
+    { "label": "32 B fit2+nearest", "tune": "scale_fit=2 ac_nearest=1" },
+    { "label": "21 B shipped-quant", "tune": "l1=13:5 c=6:4" },
+    {
+      "label": "21 B fit2+nearest",
+      "tune": "l1=13:5 c=6:4 scale_fit=2 ac_nearest=1"
+    },
+    { "label": "108 B shipped-quant", "tier": 1 },
+    {
+      "label": "108 B fit2+nearest",
+      "tier": 1,
+      "tune": "scale_fit=2 ac_nearest=1"
+    },
+    { "label": "411 B shipped-quant", "tier": 2 },
+    {
+      "label": "411 B fit2+nearest",
+      "tier": 2,
+      "tune": "scale_fit=2 ac_nearest=1"
+    }
+  ]
+}
