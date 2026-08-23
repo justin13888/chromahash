@@ -365,9 +365,14 @@ async function main(): Promise<void> {
     // They target the active tier's byte anchor, so the columns are equal-budget.
     if (!(values["skip-codecs"] ?? false)) {
       const anchor = RD_ANCHORS[chromaTier] ?? RD_ANCHORS[0] ?? 32;
+      // No general codec can reach the tier-0 budget — AVIF's floor is ~470 B
+      // against 32 — so there the honest row is the codec's smallest possible
+      // output, labelled as such. From tier 1 up the budget is reachable and
+      // the row is a genuine equal-budget comparison.
+      const codecsNeedFloor = anchor < 128;
       adapters.push(
-        new CodecThumbAdapter("webp", anchor, true),
-        new CodecThumbAdapter("avif", anchor, true),
+        new CodecThumbAdapter("webp", anchor, codecsNeedFloor),
+        new CodecThumbAdapter("avif", anchor, codecsNeedFloor),
       );
     }
     if (formatFilter) {

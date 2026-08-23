@@ -107,6 +107,10 @@ export class CodecThumbAdapter implements FormatAdapter {
     this.codec = codec;
     this.targetBytes = targetBytes;
     this.floorFallback = floorFallback;
+    // `(min)` is only truthful when the budget is genuinely unreachable for
+    // this codec, which the caller decides — see `main.ts`. Enabling the
+    // fallback at a budget the codec *can* hit would label an equal-budget
+    // result as a floor.
     this.name = floorFallback
       ? `${CODEC_LABEL[codec]} (min)`
       : `${CODEC_LABEL[codec]}@${targetBytes}B`;
@@ -174,20 +178,21 @@ export class CodecThumbAdapter implements FormatAdapter {
       maxLongEdge,
     });
     if (chosen === null && this.floorFallback) {
-      // Retry with an unbounded budget: the search then returns the best
-      // candidate the codec can produce at all, which is its floor.
-      chosen = await findCodecVariantForBudget(
-        encodeAt,
-        Number.MAX_SAFE_INTEGER,
-        {
-          maxLongEdge,
-          referenceRgba: reference,
-          referenceWidth: input.referenceWidth,
-          referenceHeight: input.referenceHeight,
-          decode: (buf) => this.decode(buf),
-          dimLadder: [Math.min(4, maxLongEdge)],
-        },
-      );
+      // Re-target the search at the codec's actual floor: the smallest rung of
+      // the dimension ladder at minimum quality. Passing an unbounded budget
+      // instead would make `maxQualityWithinBudget` short-circuit to
+      // QUALITY_MAX and return the *largest* output at that size — the opposite
+      // of a floor, and 2.5x too big in practice.
+      const floorLongEdge = Math.min(4, maxLongEdge);
+      const floorBytes = (await encodeAt(floorLongEdge, QUALITY_MIN)).length;
+      chosen = await findCodecVariantForBudget(encodeAt, floorBytes, {
+        maxLongEdge,
+        referenceRgba: reference,
+        referenceWidth: input.referenceWidth,
+        referenceHeight: input.referenceHeight,
+        decode: (buf) => this.decode(buf),
+        dimLadder: [floorLongEdge],
+      });
     }
     if (chosen === null) {
       // Report the codec's byte floor so the failure message is diagnostic.

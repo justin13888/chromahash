@@ -64,6 +64,14 @@ const USER_AGENT =
 /** Retry schedule, in milliseconds, for a throttled or transiently failing host. */
 const RETRY_DELAYS_MS = [1_000, 3_000, 8_000, 20_000];
 
+/**
+ * Cap on a server-supplied `Retry-After`. Wikimedia may legally answer a 429
+ * with `Retry-After: 3600`, and fixtures are fetched serially — honouring that
+ * literally would stall a 24-image corpus for a day. Past this the run should
+ * fail and be retried later rather than appear to hang.
+ */
+const MAX_RETRY_AFTER_MS = 60_000;
+
 /** Status codes worth retrying: explicit throttling and transient server errors. */
 function isRetryable(status: number): boolean {
   return status === 429 || status === 408 || status >= 500;
@@ -80,23 +88,51 @@ function isRetryable(status: number): boolean {
 async function fetchWithRetry(url: string): Promise<Buffer> {
   let lastError = "";
   for (let attempt = 0; ; attempt++) {
-    const response = await fetch(url, {
-      redirect: "follow",
-      headers: { "User-Agent": USER_AGENT },
-    });
-    if (response.ok) return Buffer.from(await response.arrayBuffer());
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        redirect: "follow",
+        headers: { "User-Agent": USER_AGENT },
+      });
+    } catch (err) {
+      // A dropped connection is exactly what a retry is for. With this outside
+      // the loop an HTTP 503 got five attempts and an ECONNRESET got none,
+      // which inverts the purpose of the retry.
+      lastError = err instanceof Error ? err.message : String(err);
+      const delay = RETRY_DELAYS_MS[attempt];
+      if (delay === undefined) break;
+      console.warn(
+        `  ${lastError} fetching ${url} — retrying in ${delay / 1000}s`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      continue;
+    }
+
+    if (response.ok) {
+      try {
+        return Buffer.from(await response.arrayBuffer());
+      } catch (err) {
+        // The body can fail mid-stream; that is transient too.
+        lastError = err instanceof Error ? err.message : String(err);
+        const delay = RETRY_DELAYS_MS[attempt];
+        if (delay === undefined) break;
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        continue;
+      }
+    }
 
     lastError = `HTTP ${response.status} ${response.statusText}`;
     const delay = RETRY_DELAYS_MS[attempt];
     if (delay === undefined || !isRetryable(response.status)) break;
 
-    // A server-supplied Retry-After wins over the schedule when it is longer.
+    // A server-supplied Retry-After wins over the schedule when it is longer,
+    // but only up to MAX_RETRY_AFTER_MS.
     const after = Number.parseInt(
       response.headers.get("retry-after") ?? "",
       10,
     );
     const waitMs = Number.isFinite(after)
-      ? Math.max(delay, after * 1000)
+      ? Math.min(Math.max(delay, after * 1000), MAX_RETRY_AFTER_MS)
       : delay;
     console.warn(
       `  ${lastError} fetching ${url} — retrying in ${Math.round(waitMs / 1000)}s`,
