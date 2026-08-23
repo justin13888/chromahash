@@ -2,8 +2,7 @@ use crate::aspect::decode_output_size;
 use crate::bitpack::read_bits;
 use crate::color::{oklab_to_linear_output, oklab_to_linear_srgb};
 use crate::constants::{
-    ALPHA_AC_BITS, ALPHA_DC_BITS, ALPHA_FLAG_BIT, ALPHA_SCALE_BITS, Gamut, TIER_BITS, Tunables,
-    VERSION_BITS, ac_shape, prefix_bits,
+    ALPHA_FLAG_BIT, Gamut, TIER_BITS, Tunables, VERSION_BITS, ac_shape, prefix_bits,
 };
 use crate::dct::{
     SelectionOrder, dct_decode_pixel_separable, precompute_cos_table, window_weights,
@@ -201,10 +200,13 @@ fn render_at_size(hash: &[u8], w: usize, h: usize, t: &Tunables, output: Gamut) 
 
     // 4. Read AC payload (alpha DC/scale first in alpha mode)
     let (alpha_dc_val, alpha_scale_val) = if has_alpha {
-        let adc = read_bits(hash, bitpos, ALPHA_DC_BITS) as f64 / 31.0;
-        bitpos += ALPHA_DC_BITS as usize;
-        let ascl = read_bits(hash, bitpos, ALPHA_SCALE_BITS) as f64 / 15.0 * t.max_alpha_scale;
-        bitpos += ALPHA_SCALE_BITS as usize;
+        let adc = read_bits(hash, bitpos, t.alpha_dc_bits) as f64
+            / ((1u32 << t.alpha_dc_bits) - 1) as f64;
+        bitpos += t.alpha_dc_bits as usize;
+        let ascl = read_bits(hash, bitpos, t.alpha_scale_bits) as f64
+            / ((1u32 << t.alpha_scale_bits) - 1) as f64
+            * t.max_alpha_scale;
+        bitpos += t.alpha_scale_bits as usize;
         (adc, ascl)
     } else {
         (1.0, 0.0)
@@ -302,12 +304,12 @@ fn render_at_size(hash: &[u8], w: usize, h: usize, t: &Tunables, output: Gamut) 
         let sel = order.take(shape.alpha_ac_count);
         let mut aac = Vec::with_capacity(shape.alpha_ac_count);
         for _ in 0..shape.alpha_ac_count {
-            let q = read_bits(hash, bitpos, ALPHA_AC_BITS);
-            bitpos += ALPHA_AC_BITS as usize;
+            let q = read_bits(hash, bitpos, shape.alpha_ac_bits);
+            bitpos += shape.alpha_ac_bits as usize;
             aac.push(
                 compand_dequantize(
                     q,
-                    ALPHA_AC_BITS,
+                    shape.alpha_ac_bits,
                     t.compand_alpha,
                     t.mu_alpha,
                     &t.table_alpha,
@@ -488,7 +490,8 @@ pub fn average_color_with(hash: &[u8], t: &Tunables) -> [u8; 4] {
 
     // Alpha DC is the first field after the header prefix, in alpha mode.
     let alpha = if has_alpha {
-        read_bits(hash, prefix_bits(t) as usize, ALPHA_DC_BITS) as f64 / 31.0
+        read_bits(hash, prefix_bits(t) as usize, t.alpha_dc_bits) as f64
+            / ((1u32 << t.alpha_dc_bits) - 1) as f64
     } else {
         1.0
     };

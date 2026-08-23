@@ -197,6 +197,10 @@ fn tunables_from_env() -> Tunables {
             "synth_gain" => t.synth_gain = parse_f64(),
             "interleave" => t.interleave = value == "1" || value == "true",
             "trunc_bytes" => t.trunc_bytes = parse_u32() as usize,
+            "alpha_dc_bits" => t.alpha_dc_bits = parse_u32(),
+            "alpha_scale_bits" => t.alpha_scale_bits = parse_u32(),
+            "alpha_ac_count" => t.alpha_ac_count = parse_u32() as usize,
+            "alpha_ac_bits" => t.alpha_ac_bits = parse_u32(),
             // Raw AcLayout overrides ("count:bits"), applied on top of `layout`.
             // v1 splits the layout in two (tier 0 vs. the tier-1..3 base). The
             // bare keys write *both*, so a sweep written before the split keeps

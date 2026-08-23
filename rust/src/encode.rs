@@ -2,9 +2,8 @@ use crate::aspect::encode_aspect;
 use crate::bitpack::write_bits;
 use crate::color::{linear_rgb_to_oklab, oklab_to_linear_srgb};
 use crate::constants::{
-    ALPHA_AC_BITS, ALPHA_DC_BITS, ALPHA_FLAG_BIT, ALPHA_PREFIX_BITS, ALPHA_SCALE_BITS,
-    FORMAT_VERSION, Gamut, MAX_TIER, Tunables, VERSION_BITS, ac_payload_bits, ac_shape,
-    body_len_bytes, prefix_bits,
+    ALPHA_FLAG_BIT, FORMAT_VERSION, Gamut, MAX_TIER, Tunables, VERSION_BITS, ac_payload_bits,
+    ac_shape, body_len_bytes, prefix_bits,
 };
 use crate::dct::{
     Selection, SelectionOrder, dct_decode_pixel_separable, dct_encode_selected, interleaved_order,
@@ -1227,13 +1226,16 @@ pub fn encode_with(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables, tier
     };
 
     if has_alpha {
-        let alpha_dc_q = round_half_away_from_zero(31.0 * clamp01(alpha_dc)) as u32;
+        let alpha_dc_max = ((1u32 << t.alpha_dc_bits) - 1) as f64;
+        let alpha_scl_max = ((1u32 << t.alpha_scale_bits) - 1) as f64;
+        let alpha_dc_q = round_half_away_from_zero(alpha_dc_max * clamp01(alpha_dc)) as u32;
         let alpha_scl_q =
-            round_half_away_from_zero(15.0 * clamp01(alpha_scale / t.max_alpha_scale)) as u32;
-        write_bits(&mut hash, bitpos, ALPHA_DC_BITS, alpha_dc_q);
-        bitpos += ALPHA_DC_BITS as usize;
-        write_bits(&mut hash, bitpos, ALPHA_SCALE_BITS, alpha_scl_q);
-        bitpos += ALPHA_SCALE_BITS as usize;
+            round_half_away_from_zero(alpha_scl_max * clamp01(alpha_scale / t.max_alpha_scale))
+                as u32;
+        write_bits(&mut hash, bitpos, t.alpha_dc_bits, alpha_dc_q);
+        bitpos += t.alpha_dc_bits as usize;
+        write_bits(&mut hash, bitpos, t.alpha_scale_bits, alpha_scl_q);
+        bitpos += t.alpha_scale_bits as usize;
     }
 
     let c_bits = shape.c_bits;
@@ -1276,20 +1278,20 @@ pub fn encode_with(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables, tier
             let q = quantize_ac(
                 *ac_val,
                 alpha_scale,
-                ALPHA_AC_BITS,
+                shape.alpha_ac_bits,
                 t.compand_alpha,
                 t.mu_alpha,
                 &t.table_alpha,
                 t.deadzone_alpha,
             );
-            write_bits(&mut hash, bitpos, ALPHA_AC_BITS, q);
-            bitpos += ALPHA_AC_BITS as usize;
+            write_bits(&mut hash, bitpos, shape.alpha_ac_bits, q);
+            bitpos += shape.alpha_ac_bits as usize;
         }
     }
 
     // Exact bit budget; trailing bits to the byte boundary are padding zeros.
     let alpha_prefix = if has_alpha {
-        ALPHA_PREFIX_BITS as usize
+        (t.alpha_dc_bits + t.alpha_scale_bits) as usize
     } else {
         0
     };

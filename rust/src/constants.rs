@@ -47,7 +47,11 @@ pub const B_DC_BITS: u32 = 7;
 pub const L_SCALE_BITS: u32 = 6;
 pub const A_SCALE_BITS: u32 = 6;
 pub const B_SCALE_BITS: u32 = 5;
-/// Alpha DC / scale code bit widths (present only in alpha mode).
+/// Alpha DC / scale code bit widths (present only in alpha mode). These are the
+/// shipped values and the defaults of [`Tunables::alpha_dc_bits`] /
+/// [`Tunables::alpha_scale_bits`]; the alpha prefix is their sum (9 bits), which
+/// [`body_len_bytes`] computes from the tunables rather than from a constant so
+/// a sweep can resize it.
 pub const ALPHA_DC_BITS: u32 = 5;
 pub const ALPHA_SCALE_BITS: u32 = 4;
 
@@ -59,8 +63,6 @@ pub const DC_SCALE_BITS: u32 =
     L_DC_BITS + A_DC_BITS + B_DC_BITS + L_SCALE_BITS + A_SCALE_BITS + B_SCALE_BITS;
 /// Fixed prefix before the AC payload: descriptor + aspect + DC + scales = 54 bits.
 pub const PREFIX_BITS: u32 = DESCRIPTOR_BITS + DC_SCALE_BITS;
-/// Extra prefix bits present only in alpha mode (alpha DC 5 + alpha scale 4).
-pub const ALPHA_PREFIX_BITS: u32 = ALPHA_DC_BITS + ALPHA_SCALE_BITS;
 
 /// AC bit layout: how the per-channel AC budget is split at one quality tier.
 ///
@@ -168,6 +170,8 @@ pub(crate) struct AcShape {
     pub c_bits: u32,
     /// Alpha AC coefficient count (0 when not in alpha mode).
     pub alpha_ac_count: usize,
+    /// Bits per alpha AC coefficient.
+    pub alpha_ac_bits: u32,
 }
 
 impl AcShape {
@@ -206,7 +210,8 @@ pub(crate) fn ac_shape(t: &Tunables, has_alpha: bool, tier: u8) -> AcShape {
             ],
             c_count: layout.ca_count * s,
             c_bits: layout.ca_bits,
-            alpha_ac_count: ALPHA_AC_COUNT * s,
+            alpha_ac_count: t.alpha_ac_count * s,
+            alpha_ac_bits: t.alpha_ac_bits,
         }
     } else {
         AcShape {
@@ -217,6 +222,7 @@ pub(crate) fn ac_shape(t: &Tunables, has_alpha: bool, tier: u8) -> AcShape {
             c_count: layout.c_count * s,
             c_bits: layout.c_bits,
             alpha_ac_count: 0,
+            alpha_ac_bits: t.alpha_ac_bits,
         }
     }
 }
@@ -227,7 +233,7 @@ pub(crate) fn ac_payload_bits(shape: &AcShape) -> usize {
     let l_bits: usize = shape.l_tiers.iter().map(|&(n, b)| n * b as usize).sum();
     l_bits
         + 2 * shape.c_count * shape.c_bits as usize
-        + shape.alpha_ac_count * ALPHA_AC_BITS as usize
+        + shape.alpha_ac_count * shape.alpha_ac_bits as usize
 }
 
 /// Bits before the AC payload for a given tunable header layout: descriptor
@@ -247,7 +253,7 @@ pub(crate) fn body_len_bytes(t: &Tunables, has_alpha: bool, tier: u8) -> usize {
     let shape = ac_shape(t, has_alpha, tier);
     let mut bits = prefix_bits(t) as usize + ac_payload_bits(&shape);
     if has_alpha {
-        bits += ALPHA_PREFIX_BITS as usize;
+        bits += (t.alpha_dc_bits + t.alpha_scale_bits) as usize;
     }
     bits.div_ceil(8)
 }
@@ -434,6 +440,16 @@ pub struct Tunables {
     /// selection order would live in. Shares the Q12 integer key with
     /// [`Tunables::aniso_oblique`]; `|hv| < 1` keeps the weight positive.
     pub sel_hv: f64,
+    /// Alpha DC code width, in bits (alpha mode only). The quantizer's top code
+    /// is `2^bits - 1`, so narrowing this coarsens the flat alpha level rather
+    /// than clipping it.
+    pub alpha_dc_bits: u32,
+    /// Alpha AC scale-factor code width, in bits (alpha mode only).
+    pub alpha_scale_bits: u32,
+    /// Alpha AC coefficient count at tier 0 (scaled by `4^tier` above it).
+    pub alpha_ac_count: usize,
+    /// Bits per alpha AC coefficient.
+    pub alpha_ac_bits: u32,
     /// Grid the pixel-domain refinement scores on: `0` = the encoder input
     /// (reconstruct the source as well as possible), `1` = the **natural render
     /// grid**, against the ideal full-basis downsample of the source — i.e. the
@@ -552,6 +568,10 @@ impl Tunables {
         b_scale_from_a: false,
         scale_mu: 0.0,
         sel_hv: 0.15,
+        alpha_dc_bits: ALPHA_DC_BITS,
+        alpha_scale_bits: ALPHA_SCALE_BITS,
+        alpha_ac_count: ALPHA_AC_COUNT,
+        alpha_ac_bits: ALPHA_AC_BITS,
         refine_grid: 0,
         refine_wl: 1.0,
         refine_wc: 1.0,
