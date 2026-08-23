@@ -29,7 +29,13 @@ import {
   decodeViaRust,
   encodeViaRust,
 } from "./adapters/chromahash.ts";
-import { type CorpusSplit, splitFor } from "./corpus.ts";
+import {
+  type CorpusSet,
+  type CorpusSplit,
+  inCorpus,
+  parseCorpusSet,
+  splitFor,
+} from "./corpus.ts";
 import { gamutToSrgbReference } from "./gamut.ts";
 import { generateFixtures } from "./generate-fixtures.ts";
 import { ensureHoldoutImages } from "./holdout-images.ts";
@@ -75,7 +81,15 @@ interface SweepConfig {
   description?: string;
   /** First variant is the incumbent the guards compare against. */
   variants: SweepVariant[];
-  /** Restrict to photo categories (Natural/Portrait/Night/Realistic). */
+  /**
+   * Body of content to measure against (see `corpus.ts`). Defaults to "all",
+   * i.e. every fixture in the requested split.
+   */
+  corpus?: CorpusSet;
+  /**
+   * Legacy alias for `corpus: "photo"`. Kept so every config written before
+   * the other corpora existed keeps its exact meaning; prefer `corpus`.
+   */
   photoOnly?: boolean;
 }
 
@@ -134,10 +148,20 @@ const maxImages = values["max-images"]
   ? Number.parseInt(values["max-images"], 10)
   : null;
 
-const PHOTO_PREFIXES = ["natural-", "portrait-", "night-", "chroma-", "kodak"];
-
-function isPhoto(name: string): boolean {
-  return PHOTO_PREFIXES.some((p) => name.startsWith(p));
+/**
+ * Resolve a config's corpus, honouring the legacy `photoOnly` alias. Declaring
+ * both is an error rather than a precedence rule: a config that says two
+ * different things about what it measures is a config whose result cannot be
+ * interpreted.
+ */
+function corpusFor(config: SweepConfig): CorpusSet {
+  if (config.corpus !== undefined && config.photoOnly !== undefined) {
+    throw new Error(
+      `config ${config.name} sets both "corpus" and the legacy "photoOnly"; keep one`,
+    );
+  }
+  if (config.corpus !== undefined) return parseCorpusSet(config.corpus);
+  return config.photoOnly ? "photo" : "all";
 }
 
 /** Mean of the non-null values, or null. */
@@ -357,8 +381,11 @@ async function main(): Promise<void> {
   }
 
   let inputs = await loadCorpus();
-  if (config.photoOnly) {
-    inputs = inputs.filter((i) => isPhoto(path.basename(i.filePath)));
+  const corpus = corpusFor(config);
+  if (corpus !== "all") {
+    inputs = inputs.filter((i) =>
+      inCorpus(path.parse(i.filePath).name, corpus),
+    );
   }
   if (maxImages !== null) {
     inputs = inputs.slice(0, maxImages);

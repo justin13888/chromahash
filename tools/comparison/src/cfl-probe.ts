@@ -21,7 +21,7 @@ import path from "node:path";
 import { parseArgs } from "node:util";
 import { RUST_CLI } from "./adapters/chromahash.ts";
 import { execFileSync } from "node:child_process";
-import { splitFor } from "./corpus.ts";
+import { inCorpus, splitFor } from "./corpus.ts";
 import { loadImage } from "./image-loader.ts";
 
 const { values } = parseArgs({
@@ -35,7 +35,6 @@ const split = values.split ?? "tune";
 const count = Number.parseInt(values.count ?? "26", 10);
 const tier = Number.parseInt(values.tier ?? "0", 10);
 
-const PHOTO_PREFIXES = ["natural-", "portrait-", "night-", "chroma-", "kodak"];
 
 /** Pearson correlation of two equal-length series (null when either is flat). */
 function pearson(x: number[], y: number[]): number | null {
@@ -85,7 +84,7 @@ async function main(): Promise<void> {
     path.join(toolRoot, "fixtures/**/*.{png,jpg}"),
   )) {
     const name = path.basename(entry).replace(/\.[^.]+$/, "");
-    if (!PHOTO_PREFIXES.some((p) => name.startsWith(p))) continue;
+    if (!inCorpus(name, "photo")) continue;
     if (split !== "all" && splitFor(name) !== split) continue;
     paths.push(entry);
   }

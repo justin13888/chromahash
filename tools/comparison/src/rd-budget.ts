@@ -36,7 +36,7 @@ import { CodecThumbAdapter, isJxlAvailable } from "./adapters/codec-thumb.ts";
 import { LqipModernAdapter } from "./adapters/lqip-modern.ts";
 import { RawPixelsAdapter } from "./adapters/raw-pixels.ts";
 import { ThumbHashAdapter } from "./adapters/thumbhash.ts";
-import { type CorpusSplit, splitFor } from "./corpus.ts";
+import { type CorpusSplit, inCorpus, splitFor } from "./corpus.ts";
 import { gamutToSrgbReference } from "./gamut.ts";
 import { generateFixtures } from "./generate-fixtures.ts";
 import { ensureHoldoutImages } from "./holdout-images.ts";
@@ -141,7 +141,6 @@ const formatFilter = values.formats
   ? new Set(values.formats.split(",").map((s) => s.trim().toLowerCase()))
   : null;
 
-const PHOTO_PREFIXES = ["natural-", "portrait-", "night-", "chroma-", "kodak"];
 
 async function loadCorpus(): Promise<ImageInput[]> {
   const toolRoot = path.resolve(import.meta.dirname, "..");
@@ -166,7 +165,7 @@ async function loadCorpus(): Promise<ImageInput[]> {
   const inputs: ImageInput[] = [];
   for (const filePath of paths) {
     const name = path.basename(filePath).replace(/\.[^.]+$/, "");
-    if (!PHOTO_PREFIXES.some((p) => name.startsWith(p))) continue;
+    if (!inCorpus(name, "photo")) continue;
     if (splitArg !== "all" && splitFor(name) !== (splitArg as CorpusSplit))
       continue;
     const input = await loadImage(filePath);

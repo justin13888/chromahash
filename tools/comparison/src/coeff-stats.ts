@@ -23,7 +23,7 @@ import { glob } from "node:fs/promises";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { RUST_CLI } from "./adapters/chromahash.ts";
-import { splitFor } from "./corpus.ts";
+import { inCorpus, splitFor } from "./corpus.ts";
 import { loadImage } from "./image-loader.ts";
 
 const { values } = parseArgs({
@@ -37,7 +37,6 @@ const split = values.split ?? "tune";
 const K = Number.parseInt(values.k ?? "26", 10);
 const BIG = Number.parseInt(values.big ?? "200", 10);
 
-const PHOTO_PREFIXES = ["natural-", "portrait-", "night-", "chroma-", "kodak"];
 
 /** mu-law compress, matching `rust/src/mulaw.rs`. */
 function muCompress(v: number, mu: number): number {
@@ -101,7 +100,7 @@ async function main(): Promise<void> {
   const paths: string[] = [];
   for await (const e of glob(path.join(toolRoot, "fixtures/**/*.{png,jpg}"))) {
     const name = path.basename(e).replace(/\.[^.]+$/, "");
-    if (!PHOTO_PREFIXES.some((p) => name.startsWith(p))) continue;
+    if (!inCorpus(name, "photo")) continue;
     if (split !== "all" && splitFor(name) !== split) continue;
     paths.push(e);
   }

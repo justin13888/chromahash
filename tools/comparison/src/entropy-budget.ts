@@ -49,7 +49,7 @@ import {
   decodeViaRust,
   encodeViaRust,
 } from "./adapters/chromahash.ts";
-import { type CorpusSplit, splitFor } from "./corpus.ts";
+import { type CorpusSplit, inCorpus, splitFor } from "./corpus.ts";
 import { gamutToSrgbReference } from "./gamut.ts";
 import { ensureHoldoutImages } from "./holdout-images.ts";
 import { loadImage } from "./image-loader.ts";
@@ -105,7 +105,6 @@ const PRECISION_FAMILIES: ReadonlyArray<readonly [number, number]> = [
  */
 const LC_RATIOS: readonly number[] = [SHIPPED_LC_RATIO, 1.5, 2.0, 4.0, 6.0];
 
-const PHOTO_PREFIXES = ["natural-", "portrait-", "night-", "chroma-", "kodak"];
 
 const { values } = parseArgs({
   options: {
@@ -553,7 +552,7 @@ async function loadCorpus(): Promise<ImageInput[]> {
   const inputs: ImageInput[] = [];
   for (const filePath of paths) {
     const name = path.basename(filePath).replace(/\.[^.]+$/, "");
-    if (!PHOTO_PREFIXES.some((p) => name.startsWith(p))) continue;
+    if (!inCorpus(name, "photo")) continue;
     if (splitArg !== "all" && splitFor(name) !== (splitArg as CorpusSplit))
       continue;
     const input = await loadImage(filePath);
