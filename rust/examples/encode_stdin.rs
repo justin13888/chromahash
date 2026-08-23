@@ -63,6 +63,41 @@ fn set_layouts(t: &mut Tunables, mut f: impl FnMut(&mut chromahash::AcLayout)) {
     f(&mut t.layout_upper);
 }
 
+/// Which row of the two-row AC layout table a raw override applies to.
+enum LayoutScope {
+    /// Both rows — the historical "one base, scaled by 4^tier" meaning.
+    Both,
+    /// Tier 0 only.
+    T0,
+    /// The tier-1..3 base only.
+    Upper,
+}
+
+/// Apply a raw layout override to one row of the table, or to both.
+fn set_layout_scoped(
+    t: &mut Tunables,
+    scope: LayoutScope,
+    mut f: impl FnMut(&mut chromahash::AcLayout),
+) {
+    match scope {
+        LayoutScope::Both => set_layouts(t, f),
+        LayoutScope::T0 => f(&mut t.layout),
+        LayoutScope::Upper => f(&mut t.layout_upper),
+    }
+}
+
+/// Split a raw layout key into its base name and the row it targets: a `_t0`
+/// suffix means tier 0 only, `_up` the tier-1..3 base, and no suffix both.
+fn split_layout_scope(key: &str) -> (&str, LayoutScope) {
+    if let Some(base) = key.strip_suffix("_t0") {
+        (base, LayoutScope::T0)
+    } else if let Some(base) = key.strip_suffix("_up") {
+        (base, LayoutScope::Upper)
+    } else {
+        (key, LayoutScope::Both)
+    }
+}
+
 /// Parse CHROMAHASH_TUNE overrides on top of `Tunables::DEFAULT`.
 /// Unknown keys or malformed values abort loudly — a silently ignored knob
 /// would corrupt a whole sweep.
@@ -163,27 +198,39 @@ fn tunables_from_env() -> Tunables {
             "interleave" => t.interleave = value == "1" || value == "true",
             "trunc_bytes" => t.trunc_bytes = parse_u32() as usize,
             // Raw AcLayout overrides ("count:bits"), applied on top of `layout`.
-            // v1 splits the layout in two (tier 0 vs. the tier-1..3 base); these
-            // knobs write *both*, so a sweep keeps the historical "one base,
-            // scaled by 4^tier" meaning at whatever tier it runs at.
-            "l1" => set_layouts(&mut t, |l| l.l_tiers[0] = parse_count_bits(key, value)),
-            "l2" => set_layouts(&mut t, |l| l.l_tiers[1] = parse_count_bits(key, value)),
-            "c" => set_layouts(&mut t, |l| {
-                let (count, bits) = parse_count_bits(key, value);
-                l.c_count = count;
-                l.c_bits = bits;
-            }),
-            "la1" => set_layouts(&mut t, |l| l.la_tiers[0] = parse_count_bits(key, value)),
-            "la2" => set_layouts(&mut t, |l| l.la_tiers[1] = parse_count_bits(key, value)),
-            "ca" => set_layouts(&mut t, |l| {
-                let (count, bits) = parse_count_bits(key, value);
-                l.ca_count = count;
-                l.ca_bits = bits;
-            }),
-            _ => {
-                eprintln!("CHROMAHASH_TUNE: unknown key '{key}'");
-                std::process::exit(1);
-            }
+            // v1 splits the layout in two (tier 0 vs. the tier-1..3 base). The
+            // bare keys write *both*, so a sweep written before the split keeps
+            // the historical "one base, scaled by 4^tier" meaning at whatever
+            // tier it runs at; a `_t0` or `_up` suffix targets one row, which is
+            // the only way to ask "move tier 0 and leave the rest alone".
+            _ => match split_layout_scope(key) {
+                ("l1", sc) => {
+                    set_layout_scoped(&mut t, sc, |l| l.l_tiers[0] = parse_count_bits(key, value));
+                }
+                ("l2", sc) => {
+                    set_layout_scoped(&mut t, sc, |l| l.l_tiers[1] = parse_count_bits(key, value));
+                }
+                ("c", sc) => set_layout_scoped(&mut t, sc, |l| {
+                    let (count, bits) = parse_count_bits(key, value);
+                    l.c_count = count;
+                    l.c_bits = bits;
+                }),
+                ("la1", sc) => {
+                    set_layout_scoped(&mut t, sc, |l| l.la_tiers[0] = parse_count_bits(key, value));
+                }
+                ("la2", sc) => {
+                    set_layout_scoped(&mut t, sc, |l| l.la_tiers[1] = parse_count_bits(key, value));
+                }
+                ("ca", sc) => set_layout_scoped(&mut t, sc, |l| {
+                    let (count, bits) = parse_count_bits(key, value);
+                    l.ca_count = count;
+                    l.ca_bits = bits;
+                }),
+                _ => {
+                    eprintln!("CHROMAHASH_TUNE: unknown key '{key}'");
+                    std::process::exit(1);
+                }
+            },
         }
     }
     t
