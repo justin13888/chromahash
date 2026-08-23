@@ -7,27 +7,27 @@
   "variants": [
     {
       "label": "DEFAULT (legacy alpha path)",
-      "tune": "alpha_ac_count=5 alpha_ac_bits=4"
+      "tune": "la1=20:5 ca=9:4 alpha_ac_count=5 alpha_ac_bits=4"
     },
     {
       "label": "alpha_ac_fit=1",
-      "tune": "alpha_ac_fit=1 alpha_ac_count=5 alpha_ac_bits=4"
+      "tune": "la1=20:5 ca=9:4 alpha_ac_count=5 alpha_ac_bits=4 alpha_ac_fit=1"
     },
     {
       "label": "alpha_ac_fit, scale_fit=1",
-      "tune": "alpha_ac_fit=1 scale_fit=1 alpha_ac_count=5 alpha_ac_bits=4"
+      "tune": "la1=20:5 ca=9:4 alpha_ac_count=5 alpha_ac_bits=4 alpha_ac_fit=1 scale_fit=1"
     },
     {
       "label": "alpha_ac_fit, no nearest",
-      "tune": "alpha_ac_fit=1 ac_nearest=0 alpha_ac_count=5 alpha_ac_bits=4"
+      "tune": "la1=20:5 ca=9:4 alpha_ac_count=5 alpha_ac_bits=4 alpha_ac_fit=1 ac_nearest=0"
     },
     {
       "label": "alpha_ac_fit, no fit no near",
-      "tune": "alpha_ac_fit=1 scale_fit=0 ac_nearest=0 alpha_ac_count=5 alpha_ac_bits=4"
+      "tune": "la1=20:5 ca=9:4 alpha_ac_count=5 alpha_ac_bits=4 alpha_ac_fit=1 scale_fit=0 ac_nearest=0"
     },
     {
       "label": "legacy, no fit no near",
-      "tune": "scale_fit=0 ac_nearest=0 alpha_ac_count=5 alpha_ac_bits=4"
+      "tune": "la1=20:5 ca=9:4 alpha_ac_count=5 alpha_ac_bits=4 scale_fit=0 ac_nearest=0"
     },
     {
       "label": "alpha_ac_fit @ L22@4 C14@3",
@@ -37,5 +37,6 @@
       "label": "legacy @ L22@4 C14@3",
       "tune": "la1=22:4 ca=14:3 alpha_ac_count=5 alpha_ac_bits=4"
     }
-  ]
+  ],
+  "expectBytes": 32
 }

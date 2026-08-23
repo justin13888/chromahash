@@ -7,7 +7,7 @@
   "variants": [
     {
       "label": "SHIPPED A5@4 L20@5 C9@4",
-      "tune": "la1=20:5 ca=9:4"
+      "tune": "la1=20:5 ca=9:4 alpha_ac_count=5 alpha_ac_bits=4"
     },
     {
       "label": "A8@4 L17@5 C9@4",
@@ -81,5 +81,6 @@
       "label": "A20@4 L20@5 C1@4 (from chroma)",
       "tune": "la1=20:5 ca=1:4 alpha_ac_count=20"
     }
-  ]
+  ],
+  "expectBytes": 32
 }

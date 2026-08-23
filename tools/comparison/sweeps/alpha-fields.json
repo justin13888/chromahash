@@ -7,7 +7,7 @@
   "variants": [
     {
       "label": "SHIPPED dc5 scl4 A5@4",
-      "tune": "la1=20:5 ca=9:4"
+      "tune": "la1=20:5 ca=9:4 alpha_ac_count=5 alpha_ac_bits=4"
     },
     {
       "label": "A8@4 (+3 alpha AC, -3 L)",
@@ -49,5 +49,6 @@
       "label": "scale 3b (-1)",
       "tune": "la1=20:5 ca=9:4 alpha_scale_bits=3 alpha_ac_count=5 alpha_ac_bits=4"
     }
-  ]
+  ],
+  "expectBytes": 32
 }

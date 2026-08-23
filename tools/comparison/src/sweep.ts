@@ -109,6 +109,15 @@ interface SweepConfig {
   /** Also score the alpha plane directly, reported as `meanAlphaMae`. */
   alphaFidelity?: boolean;
   /**
+   * Byte length every arm must encode to. A sweep comparing layouts is only
+   * meaningful at a fixed budget, and a config that overrides part of a layout
+   * inherits the rest from the shipped default — so when a default moves, arms
+   * silently change size and the table stops being the comparison it claims to
+   * be. Declaring the budget turns that from a silent wrong answer into a
+   * failed run.
+   */
+  expectBytes?: number;
+  /**
    * Composite every input over the scoring backdrop and force alpha to opaque
    * before encoding, so the same pictures are measured in the format's *opaque*
    * mode.
@@ -462,6 +471,23 @@ async function main(): Promise<void> {
     );
   }
   applyGuards(rows);
+
+  if (config.expectBytes !== undefined) {
+    const off = rows.filter(
+      (r) => Math.abs(r.bytes - config.expectBytes!) > 0.5,
+    );
+    if (off.length > 0) {
+      const detail = off
+        .map((r) => `    ${r.label}: ${r.bytes.toFixed(1)} B`)
+        .join("\n");
+      throw new Error(
+        `config ${config.name} declares expectBytes ${config.expectBytes} but ` +
+          `${off.length} of ${rows.length} arms encode to a different size:\n${detail}\n` +
+          "  Arms that override only part of a layout inherit the rest from the " +
+          "shipped default; pin every field the budget depends on.",
+      );
+    }
+  }
 
   const toolRoot = path.resolve(import.meta.dirname, "..");
   const outDir = path.join(toolRoot, "output/sweeps");

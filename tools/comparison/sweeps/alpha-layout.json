@@ -141,5 +141,6 @@
       "label": "L9@5 C31@2",
       "tune": "la1=9:5 ca=31:2 alpha_ac_count=5 alpha_ac_bits=4"
     }
-  ]
+  ],
+  "expectBytes": 32
 }
