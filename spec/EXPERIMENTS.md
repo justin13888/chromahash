@@ -1303,7 +1303,12 @@ half-wrong alpha channel should give.
 
 The opaque row was rebalanced to `L 28 @ 4 / C 15 @ 3` in §8; alpha mode still
 carried v0.6's `L 20 @ 5 / C 9 @ 4` purely because nothing could measure it.
-`sweeps/alpha-layout.json`, 34 layouts all at exactly 32 bytes, tune split:
+`sweeps/alpha-layout.json`, 34 layouts all at exactly 32 bytes, tune split. Every arm
+pins the alpha AC allocation explicitly: a config that overrides only part of a layout
+inherits the rest from the shipped default, so once §11.3 moved that default these arms
+would have silently stopped being 32 bytes. It is the same class of drift the corpus pins
+exist to prevent, in the knob space rather than the corpus, and it is worth stating
+because a sweep that quietly changes budget mid-campaign reports a comparison nobody made.
 
 | layout | ΔE00 | Δ% | paired 95% CI | win/n |
 |---|---|---|---|---|
