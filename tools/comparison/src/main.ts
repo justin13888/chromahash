@@ -366,8 +366,8 @@ async function main(): Promise<void> {
     if (!(values["skip-codecs"] ?? false)) {
       const anchor = RD_ANCHORS[chromaTier] ?? RD_ANCHORS[0] ?? 32;
       adapters.push(
-        new CodecThumbAdapter("webp", anchor),
-        new CodecThumbAdapter("avif", anchor),
+        new CodecThumbAdapter("webp", anchor, true),
+        new CodecThumbAdapter("avif", anchor, true),
       );
     }
     if (formatFilter) {

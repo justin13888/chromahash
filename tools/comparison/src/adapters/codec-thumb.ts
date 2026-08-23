@@ -92,11 +92,24 @@ export class CodecThumbAdapter implements FormatAdapter {
   readonly name: string;
   private readonly codec: ThumbCodec;
   private readonly targetBytes: number;
+  private readonly floorFallback: boolean;
 
-  constructor(codec: ThumbCodec, targetBytes: number) {
+  /**
+   * @param floorFallback When the budget is unrepresentable, encode at the
+   *   codec's smallest possible output instead of failing. At LQIP budgets this
+   *   is the *interesting* answer rather than an error: no real codec reaches
+   *   32 bytes (AVIF's floor is ~465 B), and a column of N/A says that far less
+   *   clearly than a row showing what the smallest possible AVIF actually
+   *   scores. The row's mean-size column then reports the real byte count, so
+   *   the comparison stays honest about not being equal-budget.
+   */
+  constructor(codec: ThumbCodec, targetBytes: number, floorFallback = false) {
     this.codec = codec;
     this.targetBytes = targetBytes;
-    this.name = `${CODEC_LABEL[codec]}@${targetBytes}B`;
+    this.floorFallback = floorFallback;
+    this.name = floorFallback
+      ? `${CODEC_LABEL[codec]} (min)`
+      : `${CODEC_LABEL[codec]}@${targetBytes}B`;
   }
 
   /** Downscale the encoder input to `longEdge` and encode it at `quality`. */
@@ -153,13 +166,29 @@ export class CodecThumbAdapter implements FormatAdapter {
     const encodeAt = (longEdge: number, quality: number) =>
       this.encodeAt(input, longEdge, quality);
 
-    const chosen = await findCodecVariantForBudget(encodeAt, this.targetBytes, {
+    let chosen = await findCodecVariantForBudget(encodeAt, this.targetBytes, {
       decode: (data) => this.decode(data),
       referenceRgba: reference,
       referenceWidth: input.referenceWidth,
       referenceHeight: input.referenceHeight,
       maxLongEdge,
     });
+    if (chosen === null && this.floorFallback) {
+      // Retry with an unbounded budget: the search then returns the best
+      // candidate the codec can produce at all, which is its floor.
+      chosen = await findCodecVariantForBudget(
+        encodeAt,
+        Number.MAX_SAFE_INTEGER,
+        {
+          maxLongEdge,
+          referenceRgba: reference,
+          referenceWidth: input.referenceWidth,
+          referenceHeight: input.referenceHeight,
+          decode: (buf) => this.decode(buf),
+          dimLadder: [Math.min(4, maxLongEdge)],
+        },
+      );
+    }
     if (chosen === null) {
       // Report the codec's byte floor so the failure message is diagnostic.
       const floor = (await encodeAt(Math.min(4, maxLongEdge), QUALITY_MIN))
