@@ -12,8 +12,13 @@ Kodak24 + held-out curated photos — is reserved for validating winners, per th
 pre-registered rule below). The curated set grew from 26 to 39 photographs in
 the 2026-08 corpus revision (`EXPERIMENTS.md` §9); **the v1 numbers in this file
 were measured before it** and are not comparable to the re-measured tables
-there — the conclusions they support are unchanged, and re-deriving the v1
-constants on the revised corpus is a job for the next constants revision. Rate–distortion numbers come from `just compare-rd`
+there. Re-deriving the constants on the revised corpus was a stated job for the
+next revision, and **v0.7 did it**: µ-law companding, the deadzone, the
+quantization ranges, the scalefactor bands and the selection weights were all
+re-swept on the current corpus at the current bit depths (`EXPERIMENTS.md`
+§11.5–§11.9). Every one of them stands, so the conclusions in this file survive
+their re-derivation — but the *numbers* below are the pre-revision ones, and
+§11 is where the current figures live. Rate–distortion numbers come from `just compare-rd`
 (photographic corpus, display-resolution scoring). Release A/B numbers against
 the previous format generation come from `just compare-versions`, which
 differences each image against the v0.6 tag *paired* and reports a bootstrap CI
@@ -392,15 +397,23 @@ encoding.
 Explicitly unresolved, so nothing evaluated-in-thought silently disappears:
 1. **Chroma-from-luma** — the largest expected v0.8 win; needs a
    residual-coding design and a wire change.
-2. **Alpha-mode tier-0 layout** — tier 0 rebalanced to 4-bit luma / 3-bit
-   chroma for opaque images, but alpha mode still carries the v0.6 split
-   because the photographic corpus has no alpha in it. The arithmetic points at
-   `L 22 @ 4, a/b 14 @ 3` (255 bits); it needs its own corpus and sweep.
-3. **Tier 2–3 positioning** — size-matched WebP overtakes tier 2 at 411 B
-   (6.61 vs 7.13) and AVIF/WebP/JPEG beat tier 3 at 1623 B (4.71–5.30 vs
-   6.40) on the full photographic corpus. Either close the gap (entropy
-   coding, CfL) or reposition tiers 2–3 as an operational convenience (no
-   decoder dependency, deterministic bytes) rather than an R-D claim.
+2. ~~**Alpha-mode tier-0 layout**~~ — **resolved in v0.7** (`EXPERIMENTS.md`
+   §11.3). It got its own corpus and sweep, and the answer was not the
+   arithmetic's `L 22 @ 4, a/b 14 @ 3`. The binding constraint was not the
+   luma/chroma split at all: the *alpha channel* had five AC coefficients,
+   inherited from v0.6 and never measured, and five cannot describe a
+   silhouette. Tier 0 now carries `L 22 @ 4, a/b 3 @ 3, A 28 @ 3`, worth
+   −16.2% mean ΔE00 on a never-tuned alpha holdout with every guard improving.
+   Still open: tiers 2–3 alpha, inherited from the tier-1 measurement rather
+   than measured directly.
+3. ~~**Tier 2–3 positioning**~~ — **resolved in v0.7 by repositioning them**
+   (`README.md` §14.1). Size-matched WebP overtakes tier 2 and AVIF/WebP/JPEG
+   beat tier 3; entropy coding would recover ~4% of a 20–40% gap and would
+   cost the O(1) length check that is the format's validity check. The spec
+   now states that tiers 2–3 are kept for their operational properties — no
+   codec dependency, no decoder CVE surface, byte-exact reproducibility, one
+   code path from 21 B to 1.6 kB — and makes no rate–distortion claim for
+   them.
 4. **Entropy-coded AC at tiers 2–3** — sized by that same R-D gap.
 5. **Embedded/progressive tiers** — interleave AC by priority so a tier-t hash
    is a prefix of tier-t+1; capped decode bounds the value at −20% ΔE00 for
@@ -415,9 +428,21 @@ Explicitly unresolved, so nothing evaluated-in-thought silently disappears:
 10. **Per-image adaptive selection with signaling** — only alongside entropy
     coding.
 11. **Perceptual validation** — every conclusion here is metric-based; a small
-    human study of blurred placeholders would anchor the metric choices.
+    human study of blurred placeholders would anchor the metric choices. v0.7
+    sharpened the case rather than weakening it: `EXPERIMENTS.md` §11.12
+    records a candidate that was statistically significant on one tune corpus,
+    independently corroborated on a second, and still failed out of sample.
+    Metrics agreeing with each other is not the same as metrics being right.
 12. **Reclaiming the 27th luma coefficient** — tier 0 pays ~0.45% holdout ΔE00
     (and a guard-failing 1.18% SSIMULACRA2) for the descriptor byte. A narrower
     scale field or the reserved bit could fund the coefficient back; the
     measurement above sizes the prize. Below the retune threshold, so it rides
     with the next wire change rather than motivating one.
+13. **Smartphone-source photographs** — sensor noise, motion blur, on-camera
+    flash and heavy JPEG history. Both photographic corpora are professional
+    captures, which is not what a real placeholder pipeline ingests.
+14. **The corpus mix is a choice, not a measurement.** The alpha allocation of
+    §11.3 was picked to protect mostly-opaque images precisely because the
+    ΔE00-optimal point depended on this corpus being three-quarters
+    transparent. Any future corpus change should re-ask that question rather
+    than inherit the answer.
