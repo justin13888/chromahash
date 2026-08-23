@@ -5,7 +5,7 @@ mod tests {
     use crate::aspect::{decode_aspect, decode_output_size, encode_aspect};
     use crate::bitpack::{read_bits, write_bits};
     use crate::color::{gamma_rgb_to_oklab, linear_rgb_to_oklab, oklab_to_linear_srgb};
-    use crate::constants::{Gamut, Tunables, ac_shape};
+    use crate::constants::{COMPACT_TIER, Gamut, Tunables, ac_shape};
     use crate::dct::SelectionOrder;
     use crate::math_utils::{cbrt_halley, cbrt_signed};
     use crate::mulaw::{mu_compress, mu_expand, mu_law_dequantize, mu_law_quantize};
@@ -732,12 +732,32 @@ mod tests {
                 ChromaHash::encode(4, 4, &solid_image(4, 4, 200, 60, 40, 128), Gamut::Srgb);
             let valid_t2 =
                 ChromaHash::encode_with_quality(16, 16, &gradient_image(16, 16), Gamut::Srgb, 2);
+            // The compact tier occupies a code from the formerly-reserved range,
+            // so both modes are pinned: a decoder that rejects code 4 outright is
+            // a v1 decoder written before it existed, and must be caught here.
+            let valid_compact = ChromaHash::encode_with_quality(
+                4,
+                4,
+                &solid_image(4, 4, 128, 128, 128, 255),
+                Gamut::Srgb,
+                COMPACT_TIER,
+            );
+            let valid_compact_alpha = ChromaHash::encode_with_quality(
+                4,
+                4,
+                &solid_image(4, 4, 200, 60, 40, 128),
+                Gamut::Srgb,
+                COMPACT_TIER,
+            );
 
             let base: Vec<u8> = valid.as_bytes().to_vec();
             let mut bad_version = base.clone();
             bad_version[0] = (bad_version[0] & !0b111) | 1; // version 1 (unsupported)
+            // The first code that is still reserved. Not `MAX_TIER + 1`: that is
+            // the compact tier, which is valid — it sits below tier 0 in quality
+            // rather than above tier 3 in it.
             let mut bad_tier = base.clone();
-            bad_tier[0] = (bad_tier[0] & !(0b111 << 3)) | ((MAX_TIER + 1) << 3); // tier out of range
+            bad_tier[0] = (bad_tier[0] & !(0b111 << 3)) | ((COMPACT_TIER + 1) << 3);
             let mut reserved = base.clone();
             reserved[0] |= 1 << 7; // reserved bit set
             let mut too_long = base.clone();
@@ -749,6 +769,11 @@ mod tests {
                 ("valid_tier0", base.clone()),
                 ("valid_tier0_alpha", valid_alpha.as_bytes().to_vec()),
                 ("valid_tier2", valid_t2.as_bytes().to_vec()),
+                ("valid_compact", valid_compact.as_bytes().to_vec()),
+                (
+                    "valid_compact_alpha",
+                    valid_compact_alpha.as_bytes().to_vec(),
+                ),
                 ("empty", Vec::new()),
                 ("tiny", tiny),
                 ("truncated_by_one", truncated),

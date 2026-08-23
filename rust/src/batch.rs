@@ -134,7 +134,7 @@ impl BatchEncoder {
                 "item {i}: rgba length mismatch"
             );
             assert!(
-                item.quality <= crate::MAX_TIER,
+                crate::constants::is_valid_tier(item.quality),
                 "item {i}: quality tier must be <= {}",
                 crate::MAX_TIER
             );

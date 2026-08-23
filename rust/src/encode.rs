@@ -2,8 +2,8 @@ use crate::aspect::encode_aspect;
 use crate::bitpack::write_bits;
 use crate::color::{linear_rgb_to_oklab, oklab_to_linear_srgb};
 use crate::constants::{
-    ALPHA_FLAG_BIT, FORMAT_VERSION, Gamut, MAX_TIER, Tunables, VERSION_BITS, ac_payload_bits,
-    ac_shape, body_len_bytes, prefix_bits,
+    ALPHA_FLAG_BIT, COMPACT_TIER, FORMAT_VERSION, Gamut, MAX_TIER, Tunables, VERSION_BITS,
+    ac_payload_bits, ac_shape, body_len_bytes, is_valid_tier, prefix_bits,
 };
 use crate::dct::{
     Selection, SelectionOrder, dct_decode_pixel_separable, dct_encode_selected, interleaved_order,
@@ -139,7 +139,10 @@ fn analyze(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables, tier: u8) ->
         rgba.len() == (w as usize) * (h as usize) * 4,
         "rgba length mismatch"
     );
-    assert!(tier <= MAX_TIER, "quality tier must be <= {MAX_TIER}");
+    assert!(
+        is_valid_tier(tier),
+        "tier must be 0..={MAX_TIER} or the compact tier {COMPACT_TIER}"
+    );
 
     let w = w as usize;
     let h = h as usize;

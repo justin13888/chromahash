@@ -33,8 +33,11 @@ fn tier_from_env() -> u8 {
                 eprintln!("CHROMAHASH_TIER: invalid tier '{s}'");
                 std::process::exit(1);
             });
-            if tier > MAX_TIER {
-                eprintln!("CHROMAHASH_TIER: tier {tier} exceeds MAX_TIER {MAX_TIER}");
+            if !chromahash::is_valid_tier(tier) {
+                eprintln!(
+                    "CHROMAHASH_TIER: tier {tier} is not a valid code (0..={MAX_TIER}, or {} for the compact tier)",
+                    chromahash::COMPACT_TIER
+                );
                 std::process::exit(1);
             }
             tier

@@ -31,9 +31,40 @@ pub const ALPHA_FLAG_BIT: u32 = 6;
 /// Bit position of the reserved flag within byte 0 (MUST be 0 in v1).
 pub const RESERVED_FLAG_BIT: u32 = 7;
 
-/// Highest quality tier the v1 format defines. Tiers `0..=MAX_TIER` are valid;
-/// `4..=7` are reserved and MUST be rejected by a v1 decoder.
+/// Highest *quality* tier the v1 format defines. Quality tiers are `0..=MAX_TIER`.
+///
+/// This is deliberately not "the largest valid tier code": [`COMPACT_TIER`] is
+/// code 4 and is valid, but it is *below* tier 0 in quality. Use
+/// [`is_valid_tier`] to validate a code and [`render_level`] to order codes by
+/// quality; comparing a raw code against `MAX_TIER` is what makes tier 4 look
+/// like an out-of-range tier 5.
 pub const MAX_TIER: u8 = 3;
+
+/// The compact tier's code (spec §3.1). 21 bytes: below tier 0 in quality and
+/// in size, at tier 0's render resolution.
+///
+/// It occupies a code from the reserved `4..=7` range, so a v1 decoder written
+/// before it existed rejects it rather than mis-decoding it — which is what
+/// makes adding it a compatible extension rather than a format break.
+pub const COMPACT_TIER: u8 = 4;
+
+/// Is `tier` a code this format defines? Codes `5..=7` remain reserved.
+#[inline]
+pub const fn is_valid_tier(tier: u8) -> bool {
+    tier <= MAX_TIER || tier == COMPACT_TIER
+}
+
+/// Quality ordinal of a tier code: how many times the natural render size
+/// doubles, and the exponent behind the `4^level` coefficient scaling.
+///
+/// The compact tier renders at tier 0's size, so it has level 0. Every place
+/// that previously shifted by the raw tier code must shift by this instead —
+/// code 4 would otherwise mean a 512 px render at 256x the coefficients, the
+/// exact opposite of compact.
+#[inline]
+pub const fn render_level(tier: u8) -> u8 {
+    if tier == COMPACT_TIER { 0 } else { tier }
+}
 
 /// Natural render long-edge in pixels at tier 0. The natural render size scales
 /// to `BASE_LONG_EDGE << tier` on the long edge (32 / 64 / 128 / 256 px).
@@ -153,6 +184,25 @@ pub const LAYOUT_D: AcLayout = AcLayout {
     ca_bits: 5,
 };
 
+/// Layout TC: the **compact-tier row** (tier code 4, 21 bytes).
+///
+/// Chosen on the photographic tune split and tie-broken on the graphics corpus:
+/// the leading 21-byte layouts are a plateau there (the top seven span 0.5% and
+/// every paired-bootstrap CI against the leader includes zero), so the tie was
+/// broken on which candidate holds up across both bodies of content rather than
+/// by mining the photographic guards. See `EXPERIMENTS.md` §11.5.
+///
+/// `54 + 19·4 + 2·6·3 = 166 bits` → 21 bytes (no alpha).
+/// `54 + 9 + 13·4 + 2·5·3 + 5·4 = 165 bits` → 21 bytes (alpha).
+pub const LAYOUT_TC: AcLayout = AcLayout {
+    l_tiers: [(19, 4), (0, 4)],
+    c_count: 6,
+    c_bits: 3,
+    la_tiers: [(13, 4), (0, 4)],
+    ca_count: 5,
+    ca_bits: 3,
+};
+
 /// Number of alpha-channel AC coefficients at tier 0 (alpha mode only).
 pub const ALPHA_AC_COUNT: usize = 5;
 /// Bits per alpha AC coefficient.
@@ -181,19 +231,20 @@ impl AcShape {
     }
 }
 
-/// `4^tier` — the count multiplier for a quality tier (1, 4, 16, 64).
+/// `4^level` — the count multiplier for a tier code (1, 4, 16, 64; 1 for the
+/// compact tier, which shares tier 0's render level).
 #[inline]
 pub(crate) fn tier_count_scale(tier: u8) -> usize {
-    1usize << (2 * tier as usize)
+    1usize << (2 * render_level(tier) as usize)
 }
 
-/// The [`AcLayout`] that governs a quality tier: tier 0 has its own table,
-/// tiers 1..=3 share one base scaled by `4^tier`.
+/// The [`AcLayout`] that governs a tier code. The table has three rows: the
+/// compact tier, tier 0, and one base that tiers 1..=3 scale by `4^tier`.
 pub(crate) fn tier_layout(t: &Tunables, tier: u8) -> &AcLayout {
-    if tier == 0 {
-        &t.layout
-    } else {
-        &t.layout_upper
+    match tier {
+        COMPACT_TIER => &t.layout_compact,
+        0 => &t.layout,
+        _ => &t.layout_upper,
     }
 }
 
@@ -309,6 +360,8 @@ pub struct Tunables {
     pub layout: AcLayout,
     /// AC layout base for **tiers 1..=3**, scaled by `4^tier`.
     pub layout_upper: AcLayout,
+    /// AC layout of the compact tier (code 4). The third row of the table.
+    pub layout_compact: AcLayout,
     /// DC chroma quantization ranges. Sized to the union OKLab hull of the
     /// display-output gamuts (sRGB ∪ Display P3 ∪ Adobe RGB: max |a| ≈ 0.347,
     /// max |b| ≈ 0.321) so wide-gamut colors are stored faithfully for
@@ -531,6 +584,7 @@ impl Tunables {
     pub const DEFAULT: Tunables = Tunables {
         layout: LAYOUT_T0,
         layout_upper: LAYOUT_B,
+        layout_compact: LAYOUT_TC,
         max_chroma_a: 0.35,
         max_chroma_b: 0.33,
         max_l_scale: 0.5,

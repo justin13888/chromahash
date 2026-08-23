@@ -28,9 +28,13 @@ fn base_output_size(byte: u8) -> (u32, u32) {
     }
 }
 
-/// Decode the natural output size for an aspect byte at a given quality `tier`.
-/// The tier-0 size is scaled by a power of two — `(w << tier, h << tier)` — so
-/// the long edge is `32 · 2^tier` (32 / 64 / 128 / 256 px). Per spec §8.2 (v1).
+/// Decode the natural output size for an aspect byte at a given `tier` code.
+/// The tier-0 size is scaled by a power of two — `(w << level, h << level)` — so
+/// the long edge is `32 · 2^level` (32 / 64 / 128 / 256 px). Per spec §8.2 (v1).
+///
+/// The shift is on the tier's *render level*, not its code: the compact tier is
+/// code 4 and renders at tier 0's size, so shifting by the code would give it a
+/// 512 px render — the opposite of what it is for.
 ///
 /// Scaling the *already-rounded* base size by a bit shift (rather than
 /// re-rounding `32 · 2^tier / ratio`) is mandatory: the two disagree
@@ -38,7 +42,8 @@ fn base_output_size(byte: u8) -> (u32, u32) {
 /// MUST derive identical grids or the reconstruction desynchronizes.
 pub fn decode_output_size(byte: u8, tier: u8) -> (u32, u32) {
     let (w, h) = base_output_size(byte);
-    (w << tier, h << tier)
+    let level = crate::constants::render_level(tier);
+    (w << level, h << level)
 }
 
 #[cfg(test)]

@@ -90,9 +90,19 @@ mod test_vectors;
 mod transfer;
 
 pub use batch::{BatchEncoder, ImageInput};
+/// Tier code of the **compact tier** — 21 bytes, below tier 0 in quality and
+/// size, rendered at tier 0's resolution. Accepted by
+/// [`ChromaHash::encode_with_quality`] alongside `0..=`[`MAX_TIER`].
+pub use constants::COMPACT_TIER;
 pub use constants::Gamut;
 /// Highest quality tier [`ChromaHash::encode_with_quality`] accepts (`0..=3`).
+///
+/// Not the largest valid tier *code* — see [`COMPACT_TIER`] and
+/// [`is_valid_tier`].
 pub use constants::MAX_TIER;
+/// Is `tier` a code this format defines? `0..=`[`MAX_TIER`] and
+/// [`COMPACT_TIER`]; codes `5..=7` remain reserved and are rejected.
+pub use constants::is_valid_tier;
 
 use constants::{
     ALPHA_FLAG_BIT, FORMAT_VERSION, PREFIX_BITS, RESERVED_FLAG_BIT, TIER_BITS, VERSION_BITS,
@@ -105,7 +115,8 @@ use constants::{
 // locked into the spec.
 #[doc(hidden)]
 pub use constants::{
-    AcLayout, Companding, LAYOUT_A, LAYOUT_B, LAYOUT_C, LAYOUT_D, LAYOUT_T0, QuantTable, Tunables,
+    AcLayout, Companding, LAYOUT_A, LAYOUT_B, LAYOUT_C, LAYOUT_D, LAYOUT_T0, LAYOUT_TC, QuantTable,
+    Tunables,
 };
 #[doc(hidden)]
 pub use encode::{CoeffDump, encode_debug_coefficients};
@@ -215,7 +226,7 @@ impl ChromaHash {
             return Err(ChromaHashError::UnsupportedVersion);
         }
         let tier = (b0 >> VERSION_BITS) & ((1 << TIER_BITS) - 1);
-        if tier > MAX_TIER {
+        if !is_valid_tier(tier) {
             return Err(ChromaHashError::InvalidTier);
         }
         if (b0 >> RESERVED_FLAG_BIT) & 1 != 0 {
@@ -245,7 +256,7 @@ impl ChromaHash {
             return Err(ChromaHashError::UnsupportedVersion);
         }
         let tier = (b0 >> VERSION_BITS) & ((1 << TIER_BITS) - 1);
-        if tier > MAX_TIER {
+        if !is_valid_tier(tier) {
             return Err(ChromaHashError::InvalidTier);
         }
         if (b0 >> RESERVED_FLAG_BIT) & 1 != 0 {
@@ -527,8 +538,11 @@ mod tests {
             Err(ChromaHashError::UnsupportedVersion)
         );
 
+        // The first code that is still reserved. Not `MAX_TIER + 1`: that is the
+        // compact tier, which is valid and below tier 0 in quality rather than
+        // above tier 3 in it.
         let mut bad_tier = bytes.clone();
-        bad_tier[0] = (bad_tier[0] & !(0b111 << 3)) | ((MAX_TIER + 1) << 3);
+        bad_tier[0] = (bad_tier[0] & !(0b111 << 3)) | ((COMPACT_TIER + 1) << 3);
         assert_eq!(
             ChromaHash::from_bytes(&bad_tier),
             Err(ChromaHashError::InvalidTier)
