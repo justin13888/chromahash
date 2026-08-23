@@ -1,0 +1,44 @@
+{
+  "name": "embedded-tiers",
+  "description": "U15 materialized: the AC codes of all three channels merged by frequency priority, so a truncated payload is still a valid low-frequency reconstruction. Rows labelled 'trunc N' encode a full tier-1 hash (108 B) and decode only its first N bytes - what a progressive consumer would actually see. The 'seq' rows do the same on the shipped channel-sequential order, which is the control: a sequential prefix carries all of luma and none of the chroma. The Bytes column is the ENCODED size; the truncation is in the label.",
+  "photoOnly": true,
+  "variants": [
+    { "label": "t0 native 32 B", "tune": "" },
+    {
+      "label": "t1 interleaved, full 108 B",
+      "tier": 1,
+      "tune": "interleave=1"
+    },
+    { "label": "t1 seq, full 108 B", "tier": 1 },
+    {
+      "label": "t1 interleaved, trunc 32 B",
+      "tier": 1,
+      "tune": "interleave=1 trunc_bytes=32"
+    },
+    { "label": "t1 seq, trunc 32 B", "tier": 1, "tune": "trunc_bytes=32" },
+    {
+      "label": "t1 interleaved, trunc 48 B",
+      "tier": 1,
+      "tune": "interleave=1 trunc_bytes=48"
+    },
+    { "label": "t1 seq, trunc 48 B", "tier": 1, "tune": "trunc_bytes=48" },
+    {
+      "label": "t1 interleaved, trunc 64 B",
+      "tier": 1,
+      "tune": "interleave=1 trunc_bytes=64"
+    },
+    { "label": "t1 seq, trunc 64 B", "tier": 1, "tune": "trunc_bytes=64" },
+    { "label": "t0 interleaved, full 32 B", "tune": "interleave=1" },
+    {
+      "label": "t2 interleaved, trunc 32 B",
+      "tier": 2,
+      "tune": "interleave=1 trunc_bytes=32"
+    },
+    {
+      "label": "t2 interleaved, trunc 108 B",
+      "tier": 2,
+      "tune": "interleave=1 trunc_bytes=108"
+    },
+    { "label": "t2 interleaved, full 411 B", "tier": 2, "tune": "interleave=1" }
+  ]
+}

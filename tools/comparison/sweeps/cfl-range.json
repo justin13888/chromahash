@@ -1,0 +1,32 @@
+{
+  "name": "cfl-range",
+  "description": "Audit of the CfL result: a least-squares predictor whose gains are FREE cannot make the residual larger, so 'free CfL is worse than no CfL' means the signalled gain is too coarse for the alpha the data actually wants. This sweeps cfl_range (the span alpha is quantized over) against cfl_bits, all in free mode (the gains are added on top rather than paid for), so the ceiling of the idea is measured before it is rejected.",
+  "photoOnly": true,
+  "variants": [
+    { "label": "32B shipped (no cfl)" },
+    { "label": "free cfl6 range0.50", "tune": "cfl_bits=6 cfl_range=0.5" },
+    { "label": "free cfl6 range0.25", "tune": "cfl_bits=6 cfl_range=0.25" },
+    { "label": "free cfl6 range0.10", "tune": "cfl_bits=6 cfl_range=0.1" },
+    { "label": "free cfl6 range0.05", "tune": "cfl_bits=6 cfl_range=0.05" },
+    { "label": "free cfl8 range0.25", "tune": "cfl_bits=8 cfl_range=0.25" },
+    { "label": "free cfl8 range0.10", "tune": "cfl_bits=8 cfl_range=0.1" },
+    { "label": "free cfl10 range0.25", "tune": "cfl_bits=10 cfl_range=0.25" },
+    { "label": "free cfl10 range1.0", "tune": "cfl_bits=10 cfl_range=1.0" },
+    { "label": "free cfl4 range0.10", "tune": "cfl_bits=4 cfl_range=0.1" },
+    {
+      "label": "t1 free cfl8 range0.10",
+      "tier": 1,
+      "tune": "cfl_bits=8 cfl_range=0.1"
+    },
+    {
+      "label": "t2 free cfl8 range0.10",
+      "tier": 2,
+      "tune": "cfl_bits=8 cfl_range=0.1"
+    },
+    {
+      "label": "t3 free cfl8 range0.10",
+      "tier": 3,
+      "tune": "cfl_bits=8 cfl_range=0.1"
+    }
+  ]
+}
