@@ -1,0 +1,46 @@
+{
+  "name": "graphics-encoder",
+  "corpus": "graphic",
+  "description": "SS11.4 - the adopted encoder stack on non-photographic content. The selection weights were trained on natural-image orientation statistics: aniso penalizes diagonals, sel_hv breaks H/V symmetry. Screenshots, charts and text are far more axis-aligned than photographs, so the weights could help more there or could be actively wrong. scale_fit and ac_nearest are content-independent in principle and are included as a control.",
+  "variants": [
+    {
+      "label": "DEFAULT (full stack)"
+    },
+    {
+      "label": "no selection weights",
+      "tune": "aniso=0 sel_hv=0"
+    },
+    {
+      "label": "no aniso",
+      "tune": "aniso=0"
+    },
+    {
+      "label": "no sel_hv",
+      "tune": "sel_hv=0"
+    },
+    {
+      "label": "aniso=0.6",
+      "tune": "aniso=0.6"
+    },
+    {
+      "label": "aniso=2.0",
+      "tune": "aniso=2.0"
+    },
+    {
+      "label": "sel_hv=0.30",
+      "tune": "sel_hv=0.30"
+    },
+    {
+      "label": "sel_hv=-0.15",
+      "tune": "sel_hv=-0.15"
+    },
+    {
+      "label": "no encoder search",
+      "tune": "scale_fit=0 ac_nearest=0"
+    },
+    {
+      "label": "pre-adoption (all off)",
+      "tune": "l1=26:5 c=9:4 aniso=0 sel_hv=0 scale_fit=0 ac_nearest=0"
+    }
+  ]
+}

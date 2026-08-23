@@ -1,0 +1,53 @@
+{
+  "name": "alpha-fields",
+  "corpus": "alpha",
+  "backdrops": "white-black-grey",
+  "alphaFidelity": true,
+  "description": "\u00a711.3 \u2014 the alpha channel's own field widths, never measured. alpha DC 5 b, alpha scale 4 b and alpha AC 5 @ 4 b were inherited from v0.6 and were not tunable until now. Arms that change a width also change the byte length, so each is paired with a compensating luma/chroma adjustment that keeps the hash at exactly 32 bytes; the label states the trade. Budget: 54 prefix + alpha_dc + alpha_scale + L\u00b7lb + 2\u00b7C\u00b7cb + A\u00b7ab must land in 249..256 bits.",
+  "variants": [
+    {
+      "label": "SHIPPED dc5 scl4 A5@4",
+      "tune": "la1=20:5 ca=9:4"
+    },
+    {
+      "label": "A8@4 (+3 alpha AC, -3 L)",
+      "tune": "la1=17:5 ca=9:4 alpha_ac_count=8"
+    },
+    {
+      "label": "A12@4 (+7 alpha AC, -6 L)",
+      "tune": "la1=14:5 ca=9:4 alpha_ac_count=12"
+    },
+    {
+      "label": "A3@4 (-2 alpha AC, +1 L)",
+      "tune": "la1=21:5 ca=9:4 alpha_ac_count=3"
+    },
+    {
+      "label": "A0 (no alpha AC, +4 L)",
+      "tune": "la1=24:5 ca=9:4 alpha_ac_count=0"
+    },
+    {
+      "label": "A7@3 (coarser, more)",
+      "tune": "la1=20:5 ca=9:4 alpha_ac_count=7 alpha_ac_bits=3"
+    },
+    {
+      "label": "A4@5 (finer, fewer)",
+      "tune": "la1=20:5 ca=9:4 alpha_ac_count=4 alpha_ac_bits=5"
+    },
+    {
+      "label": "dc 6b (+1, -1 alpha AC)",
+      "tune": "la1=20:5 ca=9:4 alpha_dc_bits=6 alpha_ac_count=4 alpha_ac_bits=4"
+    },
+    {
+      "label": "dc 4b (-1, +1 alpha AC)",
+      "tune": "la1=20:5 ca=9:4 alpha_dc_bits=4 alpha_ac_count=5 alpha_ac_bits=4"
+    },
+    {
+      "label": "scale 5b (+1)",
+      "tune": "la1=20:5 ca=9:4 alpha_scale_bits=5 alpha_ac_count=4 alpha_ac_bits=4"
+    },
+    {
+      "label": "scale 3b (-1)",
+      "tune": "la1=20:5 ca=9:4 alpha_scale_bits=3 alpha_ac_count=5 alpha_ac_bits=4"
+    }
+  ]
+}

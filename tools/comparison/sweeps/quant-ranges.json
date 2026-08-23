@@ -1,12 +1,30 @@
 {
   "name": "quant-ranges",
   "description": "Re-validate the corpus-derived quantization ranges on the expanded corpus (they were locked on the old, smaller corpus): chroma AC scale maxima, the asserted-not-measured MAX_L_SCALE, and the a/b range symmetry (the a=6b/b=5b field-width asymmetry itself is wire-fixed; range asymmetry is the sweepable proxy).",
+  "corpus": "photo",
   "variants": [
-    { "label": "default (0.5 / 0.125 / 0.125)" },
-    { "label": "max_b_scale=0.15", "tune": "max_b_scale=0.15" },
-    { "label": "max_a_scale=0.15", "tune": "max_a_scale=0.15" },
-    { "label": "max_a=max_b=0.1", "tune": "max_a_scale=0.1 max_b_scale=0.1" },
-    { "label": "max_l_scale=0.35", "tune": "max_l_scale=0.35" },
-    { "label": "max_l_scale=0.65", "tune": "max_l_scale=0.65" }
+    {
+      "label": "default (0.5 / 0.125 / 0.125)"
+    },
+    {
+      "label": "max_b_scale=0.15",
+      "tune": "max_b_scale=0.15"
+    },
+    {
+      "label": "max_a_scale=0.15",
+      "tune": "max_a_scale=0.15"
+    },
+    {
+      "label": "max_a=max_b=0.1",
+      "tune": "max_a_scale=0.1 max_b_scale=0.1"
+    },
+    {
+      "label": "max_l_scale=0.35",
+      "tune": "max_l_scale=0.35"
+    },
+    {
+      "label": "max_l_scale=0.65",
+      "tune": "max_l_scale=0.65"
+    }
   ]
 }

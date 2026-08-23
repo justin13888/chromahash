@@ -1,12 +1,27 @@
 {
   "name": "scalefactor-bands",
-  "description": "MP3/AAC-style scalefactor bands: coefficients past floor(count·split) quantize against scale·gain. gain<1 = finer high band (clamps outliers), gain>1 = coarser high band (protects the low band).",
+  "description": "MP3/AAC-style scalefactor bands: coefficients past floor(count\u00b7split) quantize against scale\u00b7gain. gain<1 = finer high band (clamps outliers), gain>1 = coarser high band (protects the low band).",
+  "corpus": "photo",
   "variants": [
-    { "label": "default (single scale)" },
-    { "label": "gain_l=0.7", "tune": "band_gain_l=0.7" },
-    { "label": "gain_l=1.4", "tune": "band_gain_l=1.4" },
-    { "label": "gain_c=0.7", "tune": "band_gain_c=0.7" },
-    { "label": "gain_c=1.4", "tune": "band_gain_c=1.4" },
+    {
+      "label": "default (single scale)"
+    },
+    {
+      "label": "gain_l=0.7",
+      "tune": "band_gain_l=0.7"
+    },
+    {
+      "label": "gain_l=1.4",
+      "tune": "band_gain_l=1.4"
+    },
+    {
+      "label": "gain_c=0.7",
+      "tune": "band_gain_c=0.7"
+    },
+    {
+      "label": "gain_c=1.4",
+      "tune": "band_gain_c=1.4"
+    },
     {
       "label": "split=0.3 gain_l=0.7",
       "tune": "band_split=0.3 band_gain_l=0.7"

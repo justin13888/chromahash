@@ -1,0 +1,145 @@
+{
+  "name": "alpha-layout",
+  "description": "\u00a711.1 \u2014 the alpha-mode tier-0 layout, which ships today with no evidence behind it. The opaque row was rebalanced to L 28 @ 4 / C 15 @ 3; alpha mode still carries v0.6's L 20 @ 5 / C 9 @ 4 only because the photographic corpus has no transparency. Every arm is exactly 32 bytes (249-256 bits: 54 prefix + 9 alpha DC/scale + L*lb + 2*C*cb + 5*4 alpha AC). Alpha AC is held at the shipped 5 @ 4 so the question stays how luma and chroma should split the alpha-mode budget; SS11.3 sweeps the alpha fields themselves. Scored over three backdrops with a direct alpha-plane MAE, because a single white backdrop hides most alpha error.",
+  "corpus": "alpha",
+  "backdrops": "white-black-grey",
+  "alphaFidelity": true,
+  "variants": [
+    {
+      "label": "SHIPPED L20@5 C9@4",
+      "tune": "la1=20:5 ca=9:4"
+    },
+    {
+      "label": "L22@4 C14@3 (arithmetic)",
+      "tune": "la1=22:4 ca=14:3"
+    },
+    {
+      "label": "L30@5 C2@4",
+      "tune": "la1=30:5 ca=2:4"
+    },
+    {
+      "label": "L22@5 C7@4",
+      "tune": "la1=22:5 ca=7:4"
+    },
+    {
+      "label": "L15@5 C12@4",
+      "tune": "la1=15:5 ca=12:4"
+    },
+    {
+      "label": "L7@5 C17@4",
+      "tune": "la1=7:5 ca=17:4"
+    },
+    {
+      "label": "L39@4 C2@3",
+      "tune": "la1=39:4 ca=2:3"
+    },
+    {
+      "label": "L29@4 C9@3",
+      "tune": "la1=29:4 ca=9:3"
+    },
+    {
+      "label": "L16@4 C17@3",
+      "tune": "la1=16:4 ca=17:3"
+    },
+    {
+      "label": "L7@4 C24@3",
+      "tune": "la1=7:4 ca=24:3"
+    },
+    {
+      "label": "L38@4 C2@4",
+      "tune": "la1=38:4 ca=2:4"
+    },
+    {
+      "label": "L29@4 C7@4",
+      "tune": "la1=29:4 ca=7:4"
+    },
+    {
+      "label": "L16@4 C13@4",
+      "tune": "la1=16:4 ca=13:4"
+    },
+    {
+      "label": "L7@4 C18@4",
+      "tune": "la1=7:4 ca=18:4"
+    },
+    {
+      "label": "L31@5 C2@3",
+      "tune": "la1=31:5 ca=2:3"
+    },
+    {
+      "label": "L23@5 C9@3",
+      "tune": "la1=23:5 ca=9:3"
+    },
+    {
+      "label": "L13@5 C17@3",
+      "tune": "la1=13:5 ca=17:3"
+    },
+    {
+      "label": "L7@5 C23@3",
+      "tune": "la1=7:5 ca=23:3"
+    },
+    {
+      "label": "L52@3 C2@3",
+      "tune": "la1=52:3 ca=2:3"
+    },
+    {
+      "label": "L36@3 C10@3",
+      "tune": "la1=36:3 ca=10:3"
+    },
+    {
+      "label": "L20@3 C18@3",
+      "tune": "la1=20:3 ca=18:3"
+    },
+    {
+      "label": "L7@3 C25@3",
+      "tune": "la1=7:3 ca=25:3"
+    },
+    {
+      "label": "L53@3 C2@2",
+      "tune": "la1=53:3 ca=2:2"
+    },
+    {
+      "label": "L43@3 C11@2",
+      "tune": "la1=43:3 ca=11:2"
+    },
+    {
+      "label": "L26@3 C22@2",
+      "tune": "la1=26:3 ca=22:2"
+    },
+    {
+      "label": "L16@3 C31@2",
+      "tune": "la1=16:3 ca=31:2"
+    },
+    {
+      "label": "L40@4 C2@2",
+      "tune": "la1=40:4 ca=2:2"
+    },
+    {
+      "label": "L30@4 C12@2",
+      "tune": "la1=30:4 ca=12:2"
+    },
+    {
+      "label": "L20@4 C22@2",
+      "tune": "la1=20:4 ca=22:2"
+    },
+    {
+      "label": "L12@4 C31@2",
+      "tune": "la1=12:4 ca=31:2"
+    },
+    {
+      "label": "L32@5 C2@2",
+      "tune": "la1=32:5 ca=2:2"
+    },
+    {
+      "label": "L24@5 C12@2",
+      "tune": "la1=24:5 ca=12:2"
+    },
+    {
+      "label": "L16@5 C22@2",
+      "tune": "la1=16:5 ca=22:2"
+    },
+    {
+      "label": "L9@5 C31@2",
+      "tune": "la1=9:5 ca=31:2"
+    }
+  ]
+}

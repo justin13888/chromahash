@@ -1,0 +1,26 @@
+{
+  "name": "compact-tier",
+  "description": "§11.5 — the layout for a 21-byte compact tier (tier code 4). Measured at tier 0 with raw layout overrides, the same way §7.6 measured it, so the layout is decided before a tier code is spent on it. Every arm is exactly 21 bytes (161-168 bits: 54 prefix + L·lb + 2·C·cb). Incumbent is the shipped tier-0 shape resized to 21 B, which is what §7.6/§8.6 compare ThumbHash against. The encoder stack (scale_fit=2, ac_nearest, aniso, sel_hv) is the shipped default and needs no override.",
+  "corpus": "photo",
+  "variants": [
+    { "label": "shipped shape L13@5 C6@4", "tune": "l1=13:5 c=6:4" },
+
+    { "label": "L19@4 C6@3  (§8.1 tune)", "tune": "l1=19:4 c=6:3" },
+    { "label": "L26@3 C6@3  (§8.1 hold)", "tune": "l1=26:3 c=6:3" },
+    { "label": "L22@3 C8@3  (§4.3)", "tune": "l1=22:3 c=8:3" },
+
+    { "label": "L18@4 C7@3", "tune": "l1=18:4 c=7:3" },
+    { "label": "L20@4 C5@3", "tune": "l1=20:4 c=5:3" },
+    { "label": "L22@4 C4@3", "tune": "l1=22:4 c=4:3" },
+    { "label": "L16@4 C8@3", "tune": "l1=16:4 c=8:3" },
+    { "label": "L16@4 C6@4", "tune": "l1=16:4 c=6:4" },
+
+    { "label": "L24@3 C7@3", "tune": "l1=24:3 c=7:3" },
+    { "label": "L28@3 C5@3", "tune": "l1=28:3 c=5:3" },
+    { "label": "L30@3 C3@3", "tune": "l1=30:3 c=3:3" },
+    { "label": "L20@3 C9@3", "tune": "l1=20:3 c=9:3" },
+
+    { "label": "L35@3 C2@2 (count-max)", "tune": "l1=35:3 c=2:2" },
+    { "label": "L19@5 C2@4 (precision-max)", "tune": "l1=19:5 c=2:4" }
+  ]
+}

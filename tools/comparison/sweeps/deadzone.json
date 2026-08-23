@@ -1,12 +1,30 @@
 {
   "name": "deadzone",
   "description": "Encoder deadzone (video-codec staple): normalized |v| below the threshold takes the exact-zero code, freeing effective levels for nonzero values.",
+  "corpus": "photo",
   "variants": [
-    { "label": "default (no deadzone)" },
-    { "label": "deadzone_l=0.02", "tune": "deadzone_l=0.02" },
-    { "label": "deadzone_l=0.05", "tune": "deadzone_l=0.05" },
-    { "label": "deadzone_c=0.02", "tune": "deadzone_c=0.02" },
-    { "label": "deadzone_c=0.05", "tune": "deadzone_c=0.05" },
-    { "label": "deadzone both 0.03", "tune": "deadzone_l=0.03 deadzone_c=0.03" }
+    {
+      "label": "default (no deadzone)"
+    },
+    {
+      "label": "deadzone_l=0.02",
+      "tune": "deadzone_l=0.02"
+    },
+    {
+      "label": "deadzone_l=0.05",
+      "tune": "deadzone_l=0.05"
+    },
+    {
+      "label": "deadzone_c=0.02",
+      "tune": "deadzone_c=0.02"
+    },
+    {
+      "label": "deadzone_c=0.05",
+      "tune": "deadzone_c=0.05"
+    },
+    {
+      "label": "deadzone both 0.03",
+      "tune": "deadzone_l=0.03 deadzone_c=0.03"
+    }
   ]
 }
