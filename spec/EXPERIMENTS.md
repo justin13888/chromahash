@@ -1607,3 +1607,106 @@ shipped layout and −1.16% on a better one, guards clean
 (`sweeps/alpha-encoder.json`). Small, free, and principled — the same argument
 that adopted `ac_nearest` at 0.05%.
 
+### 11.11 Does the alpha finding hold above tier 0?
+
+It has to be asked rather than assumed. Tiers 1–3 scale one base row by
+`4^tier`, so adopting §11.3 at tier 0 and leaving that row alone would give
+**tier 1 fewer alpha coefficients than tier 0** — a higher quality tier that is
+worse at the thing that matters most for a cut-out. The tier-1 base budget is
+the same 192 bits as tier 0's alpha budget, so `sweeps/alpha-tier1.json` is the
+same allocations evaluated at 4× resolution.
+
+| allocation | tier-1 ΔE00 | Δ% | SSIM2 | Butter | αMAE |
+|---|---|---|---|---|---|
+| shipped A5@4 L20@5 C9@4 | 12.332 | — | −278.0 | 41.89 | 0.1775 |
+| A24@3 L22@4 C5@3 | 10.852 | −12.00% | −234.5 | 33.85 | 0.1216 |
+| **A28@3 L22@4 C3@3** (the tier-0 choice) | **10.859** | **−11.95%** | −233.5 | 33.93 | 0.1185 |
+| A32@3 L19@4 C3@3 | 10.872 | −11.84% | −240.7 | 34.71 | 0.1164 |
+| A16@4 L14@4 C9@4 | 10.987 | −10.91% | −266.4 | 34.07 | 0.1213 |
+| A40@3 L13@4 C3@3 | 11.153 | −9.56% | −270.3 | 36.57 | 0.1147 |
+
+The tier-0 choice is essentially tied for best at tier 1 (0.06% behind the
+leader), so **one row still serves tiers 1–3** and the `4^tier` structure is
+intact. Alpha AC counts are now 16 / 28 / 112 / 448 / 1792 across
+compact / 0 / 1 / 2 / 3 — monotone, which `validate.py` asserts.
+
+### 11.12 The holdout, consulted once
+
+Every decision above was taken on tune, with holdout untouched until they were
+all frozen. It rejected half of them.
+
+**Photographic holdout (32 images):**
+
+| candidate | tune | holdout | verdict |
+|---|---|---|---|
+| `sel_hv` 0.15 → 0.30 | −0.81%, CI excluded zero | **+0.69%** | **rejected** |
+| isotropic weights | −0.21% | +0.60%, guards fail | rejected |
+| pre-adoption v0.6-derived | +2.47% | +3.63% | (confirms §8 out of sample) |
+| compact 21 B `L19@4 C6@3` | −3.99% | −2.6% vs the shipped shape | adopted |
+
+`sel_hv = 0.30` was significant on tune **and** independently corroborated on
+the graphics corpus (§11.4), and it still failed out of sample. The shipped
+`0.15` stands. This is the split doing exactly the job it exists for, and it is
+worth recording that two agreeing corpora were not enough.
+
+**Alpha holdout (8 images):**
+
+| candidate | tune | holdout | verdict |
+|---|---|---|---|
+| **A28@3 L22@4 C3@3** | −17.10% | **−16.19%**, every guard improving | **adopted** |
+| `alpha_ac_fit` | −0.21% | +0.09% | **rejected** |
+| A28@3 + `alpha_ac_fit` | — | −14.48% (worse than without) | rejected |
+| compact alpha A16@3 L12@4 C1@3 | −13.00% | −6.96%, guards ok | adopted |
+
+The alpha allocation validates emphatically: SSIMULACRA2 −307.2 → −242.7,
+Butteraugli 57.56 → 44.36, DSSIM 0.2319 → 0.2179, αMAE 0.2696 → 0.1675.
+
+`alpha_ac_fit` does not, and is left at `false`. It is principled and free, and
+it measured −0.21% on tune — but out of sample it is +0.09% alone and makes the
+adopted allocation *worse* in combination. The knob stays for a future
+measurement; the default does not move on a result that will not replicate.
+
+**The compact tier's positioning claim, on holdout:**
+
+| | bytes | ΔE00 ↓ | SSIM2 ↑ | Butter ↓ | DSSIM ↓ |
+|---|---|---|---|---|---|
+| ThumbHash | 21.1 | 12.851 | −326.3 | 31.75 | 0.2589 |
+| **ChromaHash compact** | **21** | **12.047** | **−323.2** | **30.52** | **0.2576** |
+
+Beaten on all four metrics, out of sample, at ThumbHash's own size — the claim
+§8.6 wanted and the shipped constants could not previously make anywhere.
+
+### 11.13 What v0.7 stabilization changed, and what it did not
+
+| Change | Evidence |
+|---|---|
+| Alpha row → `L 22 @ 4, a/b 3 @ 3, A 28 @ 3` at the compact tier, tier 0 and the tier-1..3 base | −16.19% holdout, all guards (§11.3, §11.11, §11.12) |
+| Compact tier, code 4, 21 B, `L 19 @ 4 / a/b 6 @ 3` (alpha `L 12 @ 4 / a/b 1 @ 3 / A 16 @ 3`) | Beats ThumbHash on all four on holdout (§11.10, §11.12) |
+| Deadzone made reachable again | It was byte-identical at every value (§11.7) |
+
+Deliberately unchanged, each with the number that left it alone:
+
+| Kept | Why |
+|---|---|
+| `sel_hv = 0.15` | 0.30 was better on two tune corpora and **worse on holdout** (§11.12) |
+| `aniso_oblique = 1.2` | Isotropic is statistically indistinguishable on tune and worse on holdout (§11.5, §11.12) |
+| µ-law µ_L = 5 / µ_C = 8 | Every alternative family is worse, including corpus-trained codebooks (§11.6) |
+| No deadzone | +0.36% once the knob could move the output (§11.7) |
+| Quantization ranges | Every arm within ±0.12% (§11.8) |
+| No scalefactor bands | −0.30%, below threshold and unable to pay its signalling (§11.9) |
+| Tier-0 opaque layout | Holds on non-photographic content; no candidate significantly better (§11.4) |
+| `alpha_ac_fit = false` | −0.21% on tune, +0.09% on holdout (§11.12) |
+
+What is still not measured, and is now the honest list for v0.8:
+
+* **Perceptual validation (U19).** Unchanged and still the most valuable missing
+  thing. Every number in this file is metric-based, and §11.12 is a fresh
+  reminder that a metric that agrees with itself across two corpora can still
+  fail on a third split.
+* **Tiers 2–3 alpha**, inherited from the tier-1 measurement rather than
+  measured directly.
+* **Smartphone-source photographs** — sensor noise, motion blur, heavy JPEG
+  history. Both photographic corpora are professional captures.
+* **Entropy-coded AC** (−4.3%), which remains refused on the fail-fast O(1)
+  length check rather than on its quality (§7.13).
+
