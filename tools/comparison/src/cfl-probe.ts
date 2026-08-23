@@ -145,10 +145,19 @@ async function main(): Promise<void> {
 
   const mean = (xs: number[]) =>
     xs.length ? xs.reduce((s, v) => s + v, 0) / xs.length : Number.NaN;
-  const absRhoA = mean(rows.map((r) => Math.abs(r.rhoA ?? 0)));
-  const absRhoB = mean(rows.map((r) => Math.abs(r.rhoB ?? 0)));
-  const resA = mean(rows.map((r) => r.residualA));
-  const resB = mean(rows.map((r) => r.residualB));
+  // A grayscale photograph has an identically-zero chroma AC set: its
+  // correlation with luma is 0/0, and "the predictor recovered none of the
+  // energy" is meaningless when there is no energy to recover. Those channels
+  // are excluded from the means (and counted) rather than folded in as
+  // ρ = 0 / residual = 100%, which is what an achromatic image would otherwise
+  // contribute to both.
+  const definedA = rows.filter((r) => r.rhoA !== null);
+  const definedB = rows.filter((r) => r.rhoB !== null);
+  const absRhoA = mean(definedA.map((r) => Math.abs(r.rhoA as number)));
+  const absRhoB = mean(definedB.map((r) => Math.abs(r.rhoB as number)));
+  const resA = mean(definedA.map((r) => r.residualA));
+  const resB = mean(definedB.map((r) => r.residualB));
+  const skipped = rows.length - Math.min(definedA.length, definedB.length);
 
   console.log(
     `CfL probe: ${rows.length} ${split}-split photos, ${count} coefficients/channel at tier ${tier}\n`,
@@ -159,6 +168,11 @@ async function main(): Promise<void> {
   for (const r of rows) {
     console.log(
       `  ${r.image.padEnd(24)} ${(r.rhoA ?? Number.NaN).toFixed(3).padStart(8)} ${(r.rhoB ?? Number.NaN).toFixed(3).padStart(8)} ${r.residualA.toFixed(3).padStart(9)} ${r.residualB.toFixed(3).padStart(9)}`,
+    );
+  }
+  if (skipped > 0) {
+    console.log(
+      `\n  ${skipped} image(s) have an all-zero chroma AC set (achromatic) and are excluded from the means.`,
     );
   }
   console.log(`\n  mean |ρ|: a ${absRhoA.toFixed(3)}, b ${absRhoB.toFixed(3)}`);
