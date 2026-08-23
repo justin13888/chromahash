@@ -127,21 +127,29 @@ class AcLayout:
     la_tiers: tuple[tuple[int, int], tuple[int, int]]  # alpha-mode L (count, bits) ×2
     ca_count: int                                      # alpha-mode chroma a/b count
     ca_bits: int
+    # Alpha AC coefficient count and bit width (alpha mode only). Part of the
+    # row rather than one global: §11.3 measured tier 0 wanting 28 coefficients
+    # where the compact tier's smaller budget wants 16.
+    a_count: int
+    a_bits: int
 
 
 # Layout B: the v1 tier-0 base (the shipped default). Sized so a tier-0 hash is
 # exactly 32 bytes for both alpha modes (the v0.6 footprint, for equal-budget
 # comparison):
 #   no-alpha = 54 prefix + 26·5 L + 2·9·4 chroma                  = 256 bits
-#   alpha    = 54 + 9 + 20·5 L + 2·9·4 chroma + 5·4 alpha         = 255 bits
-# (both round up to 32 bytes).
+#   alpha    = 54 + 9 + 22·4 L + 2·3·3 chroma + 28·3 alpha        = 253 bits
+# (both round up to 32 bytes). The alpha row is the §11.3 allocation, which
+# measured essentially tied for best at tier 1 as well as at tier 0.
 LAYOUT_B = AcLayout(
     l_tiers=((26, 5), (0, 5)),
     c_count=9,
     c_bits=4,
-    la_tiers=((20, 5), (0, 5)),
-    ca_count=9,
-    ca_bits=4,
+    la_tiers=((22, 4), (0, 4)),
+    ca_count=3,
+    ca_bits=3,
+    a_count=28,
+    a_bits=3,
 )
 
 # Layout T0: the v1 TIER-0 layout (the shipped default at tier 0). At a 32-byte
@@ -149,29 +157,38 @@ LAYOUT_B = AcLayout(
 # 4 bits plus 15 chroma at 3 beats LAYOUT_B's 26@5 / 9@4 split by 3.5% mean
 # ΔE00 on the never-tuned holdout split (spec/EXPERIMENTS.md §8.3):
 #   no-alpha = 54 prefix + 28·4 L + 2·15·3 chroma                 = 256 bits
-#   alpha    = 54 + 9 + 20·5 L + 2·9·4 chroma + 5·4 alpha         = 255 bits
-# The ALPHA-MODE fields deliberately stay at the LAYOUT_B values: the rebalance
-# was measured on a photographic corpus with no alpha in it at all.
+#   alpha    = 54 + 9 + 22·4 L + 2·3·3 chroma + 28·3 alpha        = 253 bits
+# The alpha row is the §11.3 allocation. The alpha channel had five AC
+# coefficients, inherited from v0.6 and never measured, and five cannot describe
+# a silhouette. Raising it to 28 and paying out of chroma — which transparent
+# regions composite away — is worth −16.2% mean ΔE00 on the never-tuned alpha
+# holdout with every guard improving.
 LAYOUT_T0 = AcLayout(
     l_tiers=((28, 4), (0, 4)),
     c_count=15,
     c_bits=3,
-    la_tiers=((20, 5), (0, 5)),
-    ca_count=9,
-    ca_bits=4,
+    la_tiers=((22, 4), (0, 4)),
+    ca_count=3,
+    ca_bits=3,
+    a_count=28,
+    a_bits=3,
 )
 
 # Layout TC: the compact-tier row (tier code 4, 21 bytes).
 #   no alpha = 54 + 19·4 L + 2·6·3 chroma                          = 166 bits
-#   alpha    = 54 + 9 + 13·4 L + 2·5·3 chroma + 5·4 alpha          = 165 bits
-# Both round up to 21 bytes.
+#   alpha    = 54 + 9 + 12·4 L + 2·1·3 chroma + 16·3 alpha         = 165 bits
+# Both round up to 21 bytes. The compact row wants fewer alpha coefficients than
+# tier 0 (16 vs 28) because its whole budget is smaller — which is why the
+# allocation lives per row rather than as one global.
 LAYOUT_TC = AcLayout(
     l_tiers=((19, 4), (0, 4)),
     c_count=6,
     c_bits=3,
-    la_tiers=((13, 4), (0, 4)),
-    ca_count=5,
+    la_tiers=((12, 4), (0, 4)),
+    ca_count=1,
     ca_bits=3,
+    a_count=16,
+    a_bits=3,
 )
 
 # The shipped default layouts (Tunables::DEFAULT in the Rust reference):
@@ -221,8 +238,8 @@ SEL_Q = 12
 SEL_ONE = 1 << SEL_Q
 
 # Alpha-channel AC coefficients at tier 0 (alpha mode only) and their bit width.
-ALPHA_AC_COUNT = 5
-ALPHA_AC_BITS = 4
+LEGACY_ALPHA_AC_COUNT = 5
+LEGACY_ALPHA_AC_BITS = 4
 
 
 @dataclass(frozen=True)
@@ -237,6 +254,7 @@ class AcShape:
     c_count: int                                       # chroma a/b count (each channel)
     c_bits: int
     alpha_ac_count: int                                # 0 when not in alpha mode
+    alpha_ac_bits: int                                 # bits per alpha AC coefficient
 
     def l_count(self) -> int:
         """Total L coefficient count across both precision tiers."""
@@ -261,7 +279,8 @@ def ac_shape(layout: AcLayout, has_alpha: bool, tier: int) -> AcShape:
             ),
             c_count=layout.ca_count * s,
             c_bits=layout.ca_bits,
-            alpha_ac_count=ALPHA_AC_COUNT * s,
+            alpha_ac_count=layout.a_count * s,
+            alpha_ac_bits=layout.a_bits,
         )
     return AcShape(
         l_tiers=(
@@ -271,6 +290,7 @@ def ac_shape(layout: AcLayout, has_alpha: bool, tier: int) -> AcShape:
         c_count=layout.c_count * s,
         c_bits=layout.c_bits,
         alpha_ac_count=0,
+        alpha_ac_bits=layout.a_bits,
     )
 
 
@@ -281,7 +301,7 @@ def ac_payload_bits(shape: AcShape) -> int:
     return (
         l_bits
         + 2 * shape.c_count * shape.c_bits
-        + shape.alpha_ac_count * ALPHA_AC_BITS
+        + shape.alpha_ac_count * shape.alpha_ac_bits
     )
 
 

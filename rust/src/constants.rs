@@ -118,6 +118,14 @@ pub struct AcLayout {
     pub la_tiers: [(usize, u32); 2],
     pub ca_count: usize,
     pub ca_bits: u32,
+    /// Alpha AC coefficient count and bit width (alpha mode only).
+    ///
+    /// Part of the layout row rather than one global, because the rows
+    /// disagree: §11.3 measured tier 0 wanting 28 coefficients where the
+    /// compact tier's smaller budget wants 16. A global would force one of
+    /// them to be wrong.
+    pub a_count: usize,
+    pub a_bits: u32,
 }
 
 /// Layout A: rebalance 15 bits from L to chroma (primary v0.6 candidate).
@@ -128,6 +136,8 @@ pub const LAYOUT_A: AcLayout = AcLayout {
     la_tiers: [(19, 5), (0, 5)],
     ca_count: 10,
     ca_bits: 4,
+    a_count: 5,
+    a_bits: 4,
 };
 
 /// Layout B: the **v1 tier-0 base** (the shipped default). Sized so a tier-0
@@ -138,9 +148,11 @@ pub const LAYOUT_B: AcLayout = AcLayout {
     l_tiers: [(26, 5), (0, 5)],
     c_count: 9,
     c_bits: 4,
-    la_tiers: [(20, 5), (0, 5)],
-    ca_count: 9,
-    ca_bits: 4,
+    la_tiers: [(22, 4), (0, 4)],
+    ca_count: 3,
+    ca_bits: 3,
+    a_count: 28,
+    a_bits: 3,
 };
 
 /// Layout T0: the **v1 tier-0 layout** (the shipped default at tier 0). At a
@@ -159,9 +171,11 @@ pub const LAYOUT_T0: AcLayout = AcLayout {
     l_tiers: [(28, 4), (0, 4)],
     c_count: 15,
     c_bits: 3,
-    la_tiers: [(20, 5), (0, 5)],
-    ca_count: 9,
-    ca_bits: 4,
+    la_tiers: [(22, 4), (0, 4)],
+    ca_count: 3,
+    ca_bits: 3,
+    a_count: 28,
+    a_bits: 3,
 };
 
 /// Layout C: tiered L precision (6-bit low band) with widened chroma.
@@ -172,6 +186,8 @@ pub const LAYOUT_C: AcLayout = AcLayout {
     la_tiers: [(6, 6), (12, 5)],
     ca_count: 10,
     ca_bits: 4,
+    a_count: 5,
+    a_bits: 4,
 };
 
 /// Layout D: fewer but finer (5-bit) chroma coefficients.
@@ -182,6 +198,8 @@ pub const LAYOUT_D: AcLayout = AcLayout {
     la_tiers: [(19, 5), (0, 5)],
     ca_count: 8,
     ca_bits: 5,
+    a_count: 5,
+    a_bits: 4,
 };
 
 /// Layout TC: the **compact-tier row** (tier code 4, 21 bytes).
@@ -198,15 +216,12 @@ pub const LAYOUT_TC: AcLayout = AcLayout {
     l_tiers: [(19, 4), (0, 4)],
     c_count: 6,
     c_bits: 3,
-    la_tiers: [(13, 4), (0, 4)],
-    ca_count: 5,
+    la_tiers: [(12, 4), (0, 4)],
+    ca_count: 1,
     ca_bits: 3,
+    a_count: 16,
+    a_bits: 3,
 };
-
-/// Number of alpha-channel AC coefficients at tier 0 (alpha mode only).
-pub const ALPHA_AC_COUNT: usize = 5;
-/// Bits per alpha AC coefficient.
-pub const ALPHA_AC_BITS: u32 = 4;
 
 /// Per-channel AC counts/bit-widths resolved for one (alpha mode, tier). The
 /// base [`AcLayout`] describes tier 0; tier `m` scales every coefficient *count*
@@ -261,8 +276,8 @@ pub(crate) fn ac_shape(t: &Tunables, has_alpha: bool, tier: u8) -> AcShape {
             ],
             c_count: layout.ca_count * s,
             c_bits: layout.ca_bits,
-            alpha_ac_count: t.alpha_ac_count * s,
-            alpha_ac_bits: t.alpha_ac_bits,
+            alpha_ac_count: layout.a_count * s,
+            alpha_ac_bits: layout.a_bits,
         }
     } else {
         AcShape {
@@ -273,7 +288,7 @@ pub(crate) fn ac_shape(t: &Tunables, has_alpha: bool, tier: u8) -> AcShape {
             c_count: layout.c_count * s,
             c_bits: layout.c_bits,
             alpha_ac_count: 0,
-            alpha_ac_bits: t.alpha_ac_bits,
+            alpha_ac_bits: layout.a_bits,
         }
     }
 }
@@ -499,10 +514,6 @@ pub struct Tunables {
     pub alpha_dc_bits: u32,
     /// Alpha AC scale-factor code width, in bits (alpha mode only).
     pub alpha_scale_bits: u32,
-    /// Alpha AC coefficient count at tier 0 (scaled by `4^tier` above it).
-    pub alpha_ac_count: usize,
-    /// Bits per alpha AC coefficient.
-    pub alpha_ac_bits: u32,
     /// Quantize the alpha AC plane through the same path as L/a/b, so
     /// [`Tunables::scale_fit`] and [`Tunables::ac_nearest`] apply to it.
     ///
@@ -632,8 +643,6 @@ impl Tunables {
         sel_hv: 0.15,
         alpha_dc_bits: ALPHA_DC_BITS,
         alpha_scale_bits: ALPHA_SCALE_BITS,
-        alpha_ac_count: ALPHA_AC_COUNT,
-        alpha_ac_bits: ALPHA_AC_BITS,
         alpha_ac_fit: false,
         refine_grid: 0,
         refine_wl: 1.0,

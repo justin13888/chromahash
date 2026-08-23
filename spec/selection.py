@@ -37,12 +37,12 @@ import math
 import sys
 
 from constants import (
-    ALPHA_AC_COUNT,
     ANISO_OBLIQUE,
     BASE_LONG_EDGE,
     SEL_HV,
     SEL_ONE,
     SEL_Q,
+    tier_count_scale,
     tier_layout,
 )
 
@@ -50,10 +50,10 @@ from constants import (
 def format_ks(tier: int) -> list[int]:
     """Every per-channel K the format uses at `tier`, ascending."""
     lay = tier_layout(tier)
-    s = 1 << (2 * tier)
+    s = tier_count_scale(tier)
     return sorted(
         {
-            ALPHA_AC_COUNT * s,
+            lay.a_count * s,
             lay.c_count * s,
             lay.ca_count * s,
             (lay.la_tiers[0][0] + lay.la_tiers[1][0]) * s,

@@ -681,10 +681,10 @@ mod tests {
         assert_eq!((w, h), (32, 32));
         let px = |i: usize| &rgba[i * 4..i * 4 + 4];
         // First row: alpha climbs left→right; RGB stays put.
-        assert_eq!(px(0), [200, 59, 38, 5]);
-        assert_eq!(px(16), [200, 59, 38, 129]);
-        assert_eq!(px(31), [200, 59, 38, 242]);
-        assert_eq!(px(1023), [200, 59, 38, 242]);
+        assert_eq!(px(0), [200, 59, 38, 0]);
+        assert_eq!(px(16), [200, 59, 38, 126]);
+        assert_eq!(px(31), [200, 59, 38, 255]);
+        assert_eq!(px(1023), [200, 59, 38, 255]);
     }
 
     #[test]

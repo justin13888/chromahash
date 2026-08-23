@@ -599,8 +599,17 @@ def validate_length_formula():
           f"tier-0 no-alpha = {no_alpha_bits} bits (54 prefix + 112 L + 90 chroma)")
     alpha_bits = (PREFIX_BITS + ALPHA_PREFIX_BITS
                   + ac_payload_bits(ac_shape(layout, True, 0)))
-    check(alpha_bits == 255,
-          f"tier-0 alpha = {alpha_bits} bits (54 + 9 + 100 L + 72 chroma + 20 alpha)")
+    check(alpha_bits == 253,
+          f"tier-0 alpha = {alpha_bits} bits (54 + 9 + 88 L + 18 chroma + 84 alpha)")
+    # The alpha channel must never have fewer coefficients at a higher tier than
+    # at a lower one — the failure the per-row allocation of §11.3 introduces if
+    # a row is updated in isolation.
+    prev_a = ac_shape(tier_layout(COMPACT_TIER), True, COMPACT_TIER).alpha_ac_count
+    for tier in range(0, MAX_TIER + 1):
+        n = ac_shape(tier_layout(tier), True, tier).alpha_ac_count
+        check(n >= prev_a,
+              f"alpha AC count at tier {tier} is {n} (>= {prev_a} at the tier below)")
+        prev_a = n
 
     # Higher tiers: positive, strictly growing, and approaching 4× per tier.
     for has_alpha in (False, True):

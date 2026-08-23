@@ -202,8 +202,14 @@ fn tunables_from_env() -> Tunables {
             "trunc_bytes" => t.trunc_bytes = parse_u32() as usize,
             "alpha_dc_bits" => t.alpha_dc_bits = parse_u32(),
             "alpha_scale_bits" => t.alpha_scale_bits = parse_u32(),
-            "alpha_ac_count" => t.alpha_ac_count = parse_u32() as usize,
-            "alpha_ac_bits" => t.alpha_ac_bits = parse_u32(),
+            "alpha_ac_count" => {
+                let n = parse_u32() as usize;
+                set_layouts(&mut t, |l| l.a_count = n);
+            }
+            "alpha_ac_bits" => {
+                let n = parse_u32();
+                set_layouts(&mut t, |l| l.a_bits = n);
+            }
             "alpha_ac_fit" => t.alpha_ac_fit = value == "1" || value == "true",
             // Raw AcLayout overrides ("count:bits"), applied on top of `layout`.
             // v1 splits the layout in two (tier 0 vs. the tier-1..3 base). The
@@ -229,6 +235,11 @@ fn tunables_from_env() -> Tunables {
                 ("la2", sc) => {
                     set_layout_scoped(&mut t, sc, |l| l.la_tiers[1] = parse_count_bits(key, value));
                 }
+                ("a", sc) => set_layout_scoped(&mut t, sc, |l| {
+                    let (count, bits) = parse_count_bits(key, value);
+                    l.a_count = count;
+                    l.a_bits = bits;
+                }),
                 ("ca", sc) => set_layout_scoped(&mut t, sc, |l| {
                     let (count, bits) = parse_count_bits(key, value);
                     l.ca_count = count;
