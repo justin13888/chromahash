@@ -3,79 +3,103 @@
   "corpus": "alpha",
   "backdrops": "white-black-grey",
   "alphaFidelity": true,
-  "description": "SS11.5 - the alpha-mode row of a 21-byte compact tier. Alpha mode spends 9 extra prefix bits and 20 on alpha AC, so the opaque compact layouts do not fit: the same coefficient counts cost 25 bytes. This is the 21-byte alpha grid (161-168 bits: 54 prefix + 9 alpha DC/scale + L*lb + 2*C*cb + 5*4 alpha AC), with the shipped tier-0 alpha shape resized to 21 B as the incumbent.",
+  "description": "SS11.10 - the alpha-mode row of the 21-byte compact tier, re-measured after SS11.3 found the alpha channel badly starved. The first pass held the alpha AC count at the shipped 5 and was therefore measuring the wrong question. Alpha mode spends 9 extra prefix bits, so the opaque compact layouts do not fit: the same coefficient counts cost 25 bytes. Budget is 161-168 bits = 54 prefix + 9 alpha DC/scale + L*lb + 2*C*cb + A*ab.",
   "variants": [
     {
-      "label": "shipped shape L9@5 C5@4",
+      "label": "shipped shape A5@4 L9@5 C5@4",
       "tune": "la1=9:5 ca=5:4"
     },
     {
-      "label": "L17@4 C2@3",
-      "tune": "la1=17:4 ca=2:3"
+      "label": "A8@3 L18@4 C1@3",
+      "tune": "la1=18:4 ca=1:3 alpha_ac_count=8 alpha_ac_bits=3"
     },
     {
-      "label": "L12@4 C6@3",
-      "tune": "la1=12:4 ca=6:3"
+      "label": "A8@3 L17@4 C2@3",
+      "tune": "la1=17:4 ca=2:3 alpha_ac_count=8 alpha_ac_bits=3"
     },
     {
-      "label": "L4@4 C11@3",
-      "tune": "la1=4:4 ca=11:3"
+      "label": "A8@3 L15@4 C3@3",
+      "tune": "la1=15:4 ca=3:3 alpha_ac_count=8 alpha_ac_bits=3"
     },
     {
-      "label": "L22@3 C2@3",
-      "tune": "la1=22:3 ca=2:3"
+      "label": "A8@3 L12@4 C5@3",
+      "tune": "la1=12:4 ca=5:3 alpha_ac_count=8 alpha_ac_bits=3"
     },
     {
-      "label": "L12@3 C7@3",
-      "tune": "la1=12:3 ca=7:3"
+      "label": "A12@3 L15@4 C1@3",
+      "tune": "la1=15:4 ca=1:3 alpha_ac_count=12 alpha_ac_bits=3"
     },
     {
-      "label": "L4@3 C12@3",
-      "tune": "la1=4:3 ca=12:3"
+      "label": "A12@3 L14@4 C2@3",
+      "tune": "la1=14:4 ca=2:3 alpha_ac_count=12 alpha_ac_bits=3"
     },
     {
-      "label": "L13@5 C2@4",
-      "tune": "la1=13:5 ca=2:4"
+      "label": "A12@3 L12@4 C3@3",
+      "tune": "la1=12:4 ca=3:3 alpha_ac_count=12 alpha_ac_bits=3"
     },
     {
-      "label": "L4@5 C8@4",
-      "tune": "la1=4:5 ca=8:4"
+      "label": "A12@3 L9@4 C5@3",
+      "tune": "la1=9:4 ca=5:3 alpha_ac_count=12 alpha_ac_bits=3"
     },
     {
-      "label": "L16@4 C2@4",
-      "tune": "la1=16:4 ca=2:4"
+      "label": "A16@3 L12@4 C1@3",
+      "tune": "la1=12:4 ca=1:3 alpha_ac_count=16 alpha_ac_bits=3"
     },
     {
-      "label": "L11@4 C5@4",
-      "tune": "la1=11:4 ca=5:4"
+      "label": "A16@3 L11@4 C2@3",
+      "tune": "la1=11:4 ca=2:3 alpha_ac_count=16 alpha_ac_bits=3"
     },
     {
-      "label": "L5@4 C8@4",
-      "tune": "la1=5:4 ca=8:4"
+      "label": "A16@3 L9@4 C3@3",
+      "tune": "la1=9:4 ca=3:3 alpha_ac_count=16 alpha_ac_bits=3"
     },
     {
-      "label": "L24@3 C2@2",
-      "tune": "la1=24:3 ca=2:2"
+      "label": "A16@3 L6@4 C5@3",
+      "tune": "la1=6:4 ca=5:3 alpha_ac_count=16 alpha_ac_bits=3"
     },
     {
-      "label": "L13@3 C10@2",
-      "tune": "la1=13:3 ca=10:2"
+      "label": "A20@3 L9@4 C1@3",
+      "tune": "la1=9:4 ca=1:3 alpha_ac_count=20 alpha_ac_bits=3"
     },
     {
-      "label": "L4@3 C18@2",
-      "tune": "la1=4:3 ca=18:2"
+      "label": "A20@3 L8@4 C2@3",
+      "tune": "la1=8:4 ca=2:3 alpha_ac_count=20 alpha_ac_bits=3"
     },
     {
-      "label": "L14@5 C2@3",
-      "tune": "la1=14:5 ca=2:3"
+      "label": "A20@3 L6@4 C3@3",
+      "tune": "la1=6:4 ca=3:3 alpha_ac_count=20 alpha_ac_bits=3"
     },
     {
-      "label": "L9@5 C6@3",
-      "tune": "la1=9:5 ca=6:3"
+      "label": "A24@3 L6@4 C1@3",
+      "tune": "la1=6:4 ca=1:3 alpha_ac_count=24 alpha_ac_bits=3"
     },
     {
-      "label": "L5@5 C10@3",
-      "tune": "la1=5:5 ca=10:3"
+      "label": "A24@3 L5@4 C2@3",
+      "tune": "la1=5:4 ca=2:3 alpha_ac_count=24 alpha_ac_bits=3"
+    },
+    {
+      "label": "A8@4 L15@4 C2@3",
+      "tune": "la1=15:4 ca=2:3 alpha_ac_count=8"
+    },
+    {
+      "label": "A8@4 L13@4 C3@3",
+      "tune": "la1=13:4 ca=3:3 alpha_ac_count=8"
+    },
+    {
+      "label": "A12@4 L11@4 C2@3",
+      "tune": "la1=11:4 ca=2:3 alpha_ac_count=12"
+    },
+    {
+      "label": "A12@4 L9@4 C3@3",
+      "tune": "la1=9:4 ca=3:3 alpha_ac_count=12"
+    },
+    {
+      "label": "A16@4 L7@4 C2@3",
+      "tune": "la1=7:4 ca=2:3 alpha_ac_count=16"
+    },
+    {
+      "label": "A16@4 L5@4 C3@3",
+      "tune": "la1=5:4 ca=3:3 alpha_ac_count=16"
     }
   ]
 }

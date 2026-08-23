@@ -1250,3 +1250,360 @@ point — the format's output moved.
   layout — so it was already non-conforming before this change and is not made
   conforming by it. Every other binding is FFI over the Rust core and follows
   automatically. That port is its own piece of work.
+
+## 11. Stabilizing v0.7 (2026-08)
+
+§10 adopted the recipe §8 converged on. This section is the work of deciding
+whether v0.7 can be called stable: every constant the format ships was either
+re-derived on the current corpus and current bit depths, or measured for the
+first time.
+
+Three things made that possible and are worth stating before the results,
+because each of them changed what a measurement means:
+
+| Change | Why the numbers below could not be taken without it |
+|---|---|
+| **Two new corpora** (§11.0) | The alpha-mode layout cannot be measured on a corpus with no transparency, and no constant had ever been chosen against non-photographic content. |
+| **Alpha scored as alpha** (§11.0) | Both sides were composited over opaque white before any metric ran, so alpha error was folded into colour error against one background. |
+| **`forceOpaque` control** | The alpha corpus is cut-outs and line art — graphic-like content — and the graphics corpus independently prefers more luma. Without a control, "alpha mode wants a different layout" and "this content wants a different layout" are the same measurement. |
+
+Every decision below is taken on the **tune** split. Holdout is consulted once,
+at the end (§11.12), for the assembled candidate — repeatedly consulting it
+would make it a second tune set.
+
+### 11.0 What the measurements needed first
+
+**The corpora.** 24 `cutout-*` images with real transparency (non-opaque
+fraction 0.118–0.912, soft-edge fraction 0.000–0.293, so hard binary masks and
+anti-aliased edges are both represented) and 24 `graphic-*` images (screenshots,
+charts, maps, schematics, comics, dense text). Both content-pinned by SHA-256,
+16 tune / 8 holdout, split by position in the sorted label list so the split
+never depends on a result. The generated `alpha-*`, `illust-*` and `textui-*`
+synthetic fixtures stay out of both: they are 8×8 correctness cases for a code
+path, not content to tune against. The new prefixes sit outside
+`PHOTO_PREFIXES`, so every photographic sweep still sees 31 tune / 32 holdout
+images and no number in §1–§10 moves.
+
+**Alpha scoring.** `ALPHA_BACKDROP` composited both sides over opaque white
+before any metric ran. On a 32×32 near-white test image whose left half is fully
+transparent, against a decode with alpha completely wrong (fully opaque):
+
+| scoring | ΔE00 |
+|---|---|
+| white backdrop only | 6.06 |
+| white + black + mid-grey | **17.49** |
+
+The single white backdrop hides roughly two thirds of the error, so a layout
+sweep scored that way is largely ranking colour. Alpha experiments below score
+over three backdrops and additionally report a direct alpha-plane mean absolute
+error (αMAE), which reads 0.5000 on the test above — arithmetically what a
+half-wrong alpha channel should give.
+
+### 11.1 The alpha-mode tier-0 layout — the shipped split is wrong
+
+The opaque row was rebalanced to `L 28 @ 4 / C 15 @ 3` in §8; alpha mode still
+carried v0.6's `L 20 @ 5 / C 9 @ 4` purely because nothing could measure it.
+`sweeps/alpha-layout.json`, 34 layouts all at exactly 32 bytes, tune split:
+
+| layout | ΔE00 | Δ% | paired 95% CI | win/n |
+|---|---|---|---|---|
+| **shipped** L20@5 C9@4 | 15.689 | — | — | — |
+| L22@4 C14@3 (the arithmetic in §8.1) | 15.541 | −0.94% | [+0.054, +0.250] | 15/16 |
+| L29@4 C9@3 | 15.497 | −1.22% | [+0.057, +0.366] | 12/16 |
+| L36@3 C10@3 | 15.432 | −1.64% | [+0.098, +0.460] | 13/16 |
+| **L43@3 C11@2** | **15.401** | **−1.84%** | [+0.112, +0.513] | 13/16 |
+
+The shipped layout is significantly worse than a dozen alternatives, and the
+direction is consistent: alpha mode wants **more luma coefficients at lower
+precision, and much less chroma** than the opaque row does.
+
+### 11.2 That direction belongs to alpha mode, not to the corpus
+
+The alpha corpus is cut-outs and insignia. §11.4 finds that non-photographic
+content independently prefers more luma, so the §11.1 result could be nothing
+but a statement about cut-outs. `sweeps/alpha-layout-control.json` re-runs the
+grid on the **same images**, flattened to opaque and encoded in the format's
+opaque mode:
+
+| layout | opaque mode (control) | alpha mode (§11.1) |
+|---|---|---|
+| v0.6 shape L26@5 C9@4 | 15.180 (base) | — |
+| **the photographic winner** L28@4 C15@3 | **14.673 (−3.34%)** | — |
+| L35@3 C16@3 | 14.583 (−3.93%) | — |
+| L46@4 C2@3 (chroma-starved) | 15.085 (−0.63%) | — |
+| L39@4 C2@3 (chroma-starved) | — | 15.500 (−1.20%) |
+
+In opaque mode on this content the photographic layout is near-best and
+chroma-starved layouts are *mediocre*. In alpha mode the same chroma-starved
+layouts *win*. The shift is a property of alpha mode: transparent regions are
+composited away, so chroma spent on them buys nothing.
+
+### 11.4 Non-photographic content — the photographic constants hold
+
+No constant in this format had ever been chosen against a screenshot, a chart
+or a page of text. `sweeps/graphics-layout.json` re-runs the same 32-byte
+allocation grid that chose the tier-0 layout (§4.2) on the graphics corpus,
+with the adopted default as incumbent; `sweeps/graphics-encoder.json` does the
+same for the encoder stack. Both run with `forceOpaque`, because two of the 16
+tune images carry an alpha channel and would otherwise encode in alpha mode,
+where none of an opaque-layout arm's overrides apply — contributing an identical
+constant to every arm and diluting every delta, which biases a layout test
+toward exactly the "no difference" verdict it is trying to test for.
+
+**Layout.** The photo-derived `L 28 @ 4 / C 15 @ 3` is not the graphics
+optimum, but it is close to it and the gap does not justify a second constant:
+
+| layout | ΔE00 | Δ% | paired 95% CI |
+|---|---|---|---|
+| **DEFAULT** L28@4 C15@3 | 10.450 | — | — |
+| pre-adoption L26@5 C9@4 | 10.570 | +1.14% | [−0.299, +0.032] |
+| L30@4 C13@3 | 10.394 | −0.54% | [+0.008, +0.104] |
+| L40@4 C7@3 | 10.344 | −1.01% | includes zero |
+
+Exactly one arm reaches significance, by 0.54%. Graphics wants slightly more
+luma and less chroma — the same direction as alpha mode, for the same reason
+that structure matters more than colour in synthetic content — but at a
+magnitude that does not warrant splitting the constant.
+
+**The encoder stack generalizes.** This is the stronger result: every part of
+the §8 adoption was chosen on photographs, and it holds on content it never saw.
+
+| variant | ΔE00 | Δ% | paired 95% CI |
+|---|---|---|---|
+| **DEFAULT** (full stack) | 10.450 | — | — |
+| no selection weights | 10.513 | +0.60% | [−0.255, +0.038] |
+| no encoder search (`scale_fit=0 ac_nearest=0`) | 10.577 | +1.22% | **[−0.224, −0.038]** |
+| pre-adoption (everything off) | 10.766 | **+3.02%** | **[−0.597, −0.138]** |
+| `sel_hv = 0.30` | 10.410 | −0.39% | includes zero |
+
+Turning the adoption off costs 3.02% on graphics, significantly. Note the last
+row: graphics independently prefers `sel_hv = 0.30` over the shipped `0.15`,
+which is the same direction §11.5 finds on photographs.
+
+### 11.5 The selection weights, re-derived — and `sel_hv` is not optimal
+
+`aniso-selection` and `aniso-extended` could not answer this any more. Both
+labelled their incumbent "default (isotropic)", which stopped being true the
+moment `aniso = 1.2` / `sel_hv = 0.15` were adopted: every delta in them was
+measured against the *new* default while claiming the old one. Re-run today they
+report `aniso=1.2` as 0.00% different from "isotropic", which is the tell.
+`sweeps/selection-weights.json` replaces them with the full 2-D grid, the
+adopted pair as incumbent and an explicit isotropic arm.
+
+| variant | ΔE00 | Δ% | paired 95% CI | win/n |
+|---|---|---|---|---|
+| **DEFAULT** aniso 1.2 / hv 0.15 | 10.183 | — | — | — |
+| isotropic (aniso 0, hv 0) | 10.161 | −0.21% | [−0.066, +0.115] | 15/31 |
+| **aniso 1.2 / hv 0.30** | **10.100** | **−0.81%** | **[+0.011, +0.164]** | 18/31 |
+| aniso 2.0 / hv 0.30 | 10.126 | −0.56% | includes zero | 16/31 |
+| aniso 1.2 / hv −0.15 | 10.281 | +0.97% | **[−0.189, −0.010]** | 11/31 |
+| aniso 1.2 / hv −0.30 | 10.383 | +1.97% | **[−0.313, −0.089]** | 7/31 |
+| aniso 3.2 / hv 0.0 | 10.321 | +1.36% | **[−0.238, −0.048]** | 9/31 |
+
+Three findings, and two of them are uncomfortable:
+
+1. **`sel_hv = 0.30` is significantly better than the shipped `0.15`** —
+   the only positive-direction arm whose CI excludes zero, and §11.4 finds the
+   same direction independently on the graphics corpus. The adopted value is
+   not the optimum.
+2. **Isotropic is statistically indistinguishable from the adopted weights.**
+   On the current corpus the selection weights buy nothing measurable on tune;
+   their justification rests entirely on the holdout delta §7.12 recorded
+   (−3.16% without them, −3.50% with). §8.1 already called them "the weakest of
+   the three constants-level changes"; this is weaker still.
+3. **The sign is real.** Negative `hv` is significantly worse, and large `aniso`
+   without `hv` is significantly worse. The weights are not noise — the
+   *magnitude* the format shipped is simply not where the optimum is.
+
+### 11.6 µ-law companding, re-derived — stands
+
+`sweeps/companding-family.json`, now pinned to `corpus: "photo"` and re-run at
+the 4 b/3 b tier-0 depths rather than the 5 b/4 b depths it was locked against.
+
+| family | ΔE00 | Δ% |
+|---|---|---|
+| **µ-law µ_L=5 / µ_C=8 (shipped)** | 10.183 | — |
+| µ_L=7 | 10.168 | −0.14% |
+| µ_C=12 | 10.204 | +0.21% |
+| A-law 87.6 (G.711) | 10.476 | +2.88% |
+| power-law 0.75 (AAC/MP3) | 10.267 | +0.83% |
+| power-law 0.9 | 10.366 | +1.80% |
+| Lloyd-Max L+C (trained on this corpus) | 10.335 | +1.49% |
+
+Every alternative family is worse, including codebooks trained on the corpus
+being scored. The µ plateau §4.6 reported survives both the corpus revision and
+the bit-depth change: nothing inside ±0.25% separates µ_L ∈ {4…7}.
+
+### 11.7 Deadzone, re-derived — and it was measuring nothing
+
+The first re-run reported every arm byte-identical to the base. That was not a
+result: adopting `ac_nearest = 1` had silently killed the knob. The deadzone
+forces a small coefficient to the exact-zero centre code, and the ±2
+reconstruction search then runs on that code — for a small value the
+nearest-reconstruction code is always inside ±2, so the search undid every
+deadzone decision it was handed. The encoder produced identical bytes at
+`deadzone_l` = 0, 0.05 and 0.2.
+
+A fired deadzone now short-circuits the search, and the knob measures again:
+
+| variant | ΔE00 | Δ% |
+|---|---|---|
+| **no deadzone (shipped)** | 10.183 | — |
+| `deadzone_l = 0.02` | 10.183 | 0.00% |
+| `deadzone_l = 0.05` | 10.220 | +0.36% |
+| both = 0.03 | 10.184 | +0.02% |
+
+Rejected — now on evidence rather than on an artifact. `deadzone_l = 0.02` is
+still exactly 0.00% for a real reason: at 4-bit luma the quantizer's zero bin is
+already wider than 0.02, so nothing falls inside the deadzone.
+
+A knob that cannot move the output is worse than a rejected one, because the
+next sweep to touch it draws a conclusion from a constant.
+
+### 11.8 Quantization ranges, re-derived — stand
+
+`sweeps/quant-ranges.json`: `max_l_scale` ∈ {0.35, 0.5, 0.65}, `max_a/b_scale`
+∈ {0.1, 0.125, 0.15}. Every arm lands within **±0.12%** of the shipped values
+and every guard holds. The ranges are sized to the signal, as `RATIONALE.md`
+claims; the claim now rests on the current corpus.
+
+### 11.9 Scalefactor bands, re-derived — still below threshold
+
+`sweeps/scalefactor-bands.json`: the best arm (`band_gain_l = 0.7`, high-band
+luma scaled down) is worth **−0.30%**, consistent with the −0.52% at tier 1
+`RATIONALE.md` records. Real, small, and it costs a signalled band split it
+cannot pay for. Not adopted; unchanged from the previous verdict.
+
+### 11.10 The compact tier — a plateau, tie-broken across corpora
+
+§8.1 proposed a 21-byte tier and left its layout open, noting that tune and
+holdout disagreed (`L 19 @ 4` vs `L 26 @ 3`). `sweeps/compact-tier.json`
+measures 15 layouts, all at exactly 21 bytes, at tier 0 with raw layout
+overrides — the same way §7.6 measured it, so the layout is decided before a
+tier code is spent on it.
+
+| layout | ΔE00 | Δ% vs shipped shape | paired CI vs the leader |
+|---|---|---|---|
+| shipped shape L13@5 C6@4 | 11.419 | — | **[−0.710, −0.266]** |
+| **L18@4 C7@3** | **10.947** | −4.13% | (leader) |
+| L19@4 C6@3 | 10.963 | −3.99% | [−0.088, +0.043] |
+| L16@4 C8@3 | 10.982 | −3.83% | [−0.190, +0.114] |
+| L24@3 C7@3 | 10.989 | −3.76% | [−0.166, +0.067] |
+| L20@4 C5@3 | 10.990 | −3.76% | [−0.155, +0.051] |
+| L35@3 C2@2 (count-maximal) | 11.367 | −0.45% | **[−0.653, −0.192]** |
+| L19@5 C2@4 (precision-maximal) | 11.355 | −0.56% | **[−0.605, −0.225]** |
+
+The extremes are decisively rejected and the shipped shape is decisively beaten
+— by 4.3% — but **the leading seven layouts are a plateau**: every paired CI
+against the leader includes zero. The photographic split cannot choose here, and
+squeezing its guard metrics for a winner would be mining noise.
+
+So the tie is broken on new information rather than on a second look at the same
+data: which candidate holds up on the graphics corpus, which a compact tier will
+also be asked to carry (`sweeps/compact-tier-graphics.json`).
+
+| layout | photo rank | graphics ΔE00 | graphics rank | rank sum |
+|---|---|---|---|---|
+| **L19@4 C6@3** | 2 | 10.855 (−2.78%) | 3 | **5** |
+| L20@4 C5@3 | 5 | 10.783 (−3.43%) | 1 | 6 |
+| L18@4 C7@3 | 1 | 10.917 (−2.22%) | 7 | 8 |
+| L24@3 C7@3 | 4 | 10.885 (−2.52%) | 5 | 9 |
+| L26@3 C6@3 | 8 | 10.813 (−3.16%) | 2 | 10 |
+| L16@4 C8@3 | 3 | 11.060 (−0.94%) | 8 | 11 |
+
+`L 19 @ 4 b, a/b 6 @ 3 b` is the most robust across both bodies of content —
+and it is the layout §8.1 chose on tune, arrived at independently.
+
+**Implementation.** The compact tier is code 4, taken from the formerly-reserved
+`4..=7` range, so a v1 decoder written before it existed rejects it rather than
+mis-decoding it. It renders at tier 0's resolution and scales coefficient counts
+by 1.
+
+That last sentence is the whole hazard. Code 4 is numerically *above* tier 3 and
+*below* tier 0 in quality, and two places shifted by the raw tier code —
+`decode_output_size` (`w << tier`) and `tier_count_scale` (`1 << 2·tier`) —
+which would have made "compact" a 512 px render at 256× the coefficients. Both
+now shift by a `render_level(tier)` that maps code 4 to level 0. `MAX_TIER`
+keeps meaning "highest *quality* tier" and validation moves to `is_valid_tier`.
+
+The distinction was already load-bearing: two tests built their invalid-tier
+fixture as `MAX_TIER + 1`, which is now the compact tier. One of them is in the
+shared cross-language vectors, where it had been asserting `InvalidTier` and
+began failing with `LengthMismatch` — a parity vector quietly testing the wrong
+thing. `unit-validate.json` now pins `valid_compact` and `valid_compact_alpha`
+too, so an implementation that rejects code 4 outright is caught by the gate.
+
+### 11.3 The alpha channel is starved — the largest result of this round
+
+The alpha field widths were never tunable, so this had never been asked.
+`sweeps/alpha-fields.json` asks it, trading each field against luma so every arm
+stays at exactly 32 bytes:
+
+| variant | ΔE00 | Δ% | αMAE | guards |
+|---|---|---|---|---|
+| **shipped** alpha DC 5 b, scale 4 b, AC 5 @ 4 b | 15.689 | — | 0.2625 | — |
+| alpha DC 4 b (−1) | 15.708 | +0.12% | 0.2623 | ok |
+| alpha scale 3 b (−1) | 15.677 | −0.08% | 0.2613 | ok |
+| **A 8 @ 4** (+3 coefficients, −3 luma) | 14.884 | **−5.13%** | 0.2316 | ok |
+| **A 12 @ 4** (+7 coefficients, −6 luma) | 14.465 | **−7.80%** | 0.2139 | ok |
+| A 3 @ 4 (−2 coefficients) | 17.005 | +8.39% | 0.3030 | FAIL |
+| A 0 (no alpha AC at all) | 19.428 | **+23.84%** | 0.3812 | FAIL |
+
+The field *widths* are noise: ±0.12% for a bit either way on the DC and scale
+codes. The **count** is not. Five AC coefficients cannot describe a silhouette,
+and a silhouette is what a cut-out placeholder mostly is. Removing them costs
+24%; adding seven buys 7.8%, more than the entire §8 adoption bought at tier 0.
+
+`sweeps/alpha-ac-count.json` and `sweeps/alpha-ceiling.json` follow the ladder
+to the point where the budget runs out. It is monotone for a long way:
+
+| allocation | ΔE00 | Δ% | SSIM2 | Butter | αMAE |
+|---|---|---|---|---|---|
+| shipped A5@4 L20@5 C9@4 | 15.689 | — | −393.8 | 57.38 | 0.2625 |
+| A12@4 L18@4 C9@4 | 14.348 | −8.54% | −374.2 | 50.95 | 0.2139 |
+| A20@4 L20@5 C1@4 | 13.526 | −13.79% | −356.2 | 46.63 | 0.1777 |
+| **A28@3 L22@4 C3@3** | **13.005** | **−17.10%** | **−339.9** | 44.48 | 0.1632 |
+| A40@3 L13@4 C3@3 | 12.906 | −17.74% | −344.8 | 43.38 | 0.1515 |
+| A48@3 L7@4 C3@3 | 12.885 | −17.87% | −349.1 | 43.34 | 0.1423 |
+| A32@2 L24@4 C5@3 | 13.880 | −11.53% | −366.1 | 61.43 | **FAIL** |
+
+Three things fall out.
+
+1. **Alpha needs at least 3 bits per coefficient.** Every 2-bit arm fails the
+   Butteraugli guard (59–64 against 43–45), whatever the count.
+2. **The coefficients are better bought from chroma than from luma.**
+   `A20@4 L20@5 C1@4` beats `A20@4 L10@4 C9@4` (13.526 vs 13.619) while keeping
+   the full luma budget: transparent regions are composited away, so chroma
+   spent on them buys nothing. Holding the count fixed, ΔE00 falls monotonically
+   as chroma shrinks, and the per-image difference between 3 and 5 chroma
+   coefficients never exceeds 0.1 ΔE00 on any image in the corpus.
+3. **The mean hides a trade, and the trade decides the constant.**
+
+| allocation | all | mostly opaque (<35% transparent) | mostly transparent |
+|---|---|---|---|
+| A28@3 L22@4 C3@3 | −17.10% | **−7.42%** | −22.60% |
+| A32@3 L19@4 C3@3 | −17.19% | −6.79% | −23.09% |
+| A40@3 L13@4 C3@3 | −17.74% | −5.68% | −24.58% |
+| A48@3 L7@4 C3@3 | −17.87% | −3.86% | −25.82% |
+
+Pushing the alpha count higher buys transparent images at the expense of opaque
+ones, and the mean is driven by this corpus being three-quarters transparent —
+a property of the corpus, not of the world. **`A 28 @ 3 b, L 22 @ 4 b,
+a/b 3 @ 3 b`** is adopted: it takes −17.10% overall while giving the at-risk
+opaque-ish subgroup the largest gain of any arm, posts the best SSIM2 of the
+whole sweep, and carries *more* luma than the layout it replaces (22 vs 20).
+Choosing the ΔE00-optimal corner instead would trade 0.8 pp of mean for 3.6 pp
+of the subgroup most exposed to a different corpus mix.
+
+Not a corpus artifact, checked two ways. **Every one of the 16 images improves**,
+including those only 15–22% transparent. And §11.2's control shows the direction
+belongs to alpha mode rather than to cut-out content.
+
+**The alpha channel also ran a generation behind the others.** L, a and b go
+through `quantize_ac_channel`, where `scale_fit` and `ac_nearest` live; alpha
+used a bare per-coefficient quantize against a nominal scale code, the v0.6
+path. Routing it through the same code (`alpha_ac_fit`) is worth −0.21% on the
+shipped layout and −1.16% on a better one, guards clean
+(`sweeps/alpha-encoder.json`). Small, free, and principled — the same argument
+that adopted `ac_nearest` at 0.05%.
+

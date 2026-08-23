@@ -1,0 +1,45 @@
+{
+  "name": "v07-holdout-alpha",
+  "corpus": "alpha",
+  "backdrops": "white-black-grey",
+  "alphaFidelity": true,
+  "description": "SS11.12 - the single holdout validation of the alpha-mode changes. Run once, after every tune decision was settled. The incumbent is the alpha layout as shipped at the start of SS11, so the delta is what stabilizing v0.7 moves alpha mode by. The tier-0 candidate is A28@3 L22@4 C3@3 and the compact-tier candidate A16@3 L12@4 C1@3; both were chosen on tune by protecting the mostly-opaque subgroup rather than by taking the deltaE00-optimal corner.",
+  "variants": [
+    {
+      "label": "SHIPPED A5@4 L20@5 C9@4",
+      "tune": "la1=20:5 ca=9:4"
+    },
+    {
+      "label": "ADOPTED A28@3 L22@4 C3@3",
+      "tune": "la1=22:4 ca=3:3 alpha_ac_count=28 alpha_ac_bits=3"
+    },
+    {
+      "label": "  + alpha_ac_fit",
+      "tune": "la1=22:4 ca=3:3 alpha_ac_count=28 alpha_ac_bits=3 alpha_ac_fit=1"
+    },
+    {
+      "label": "alt A40@3 L13@4 C3@3",
+      "tune": "la1=13:4 ca=3:3 alpha_ac_count=40 alpha_ac_bits=3"
+    },
+    {
+      "label": "alt A16@4 L14@4 C9@4",
+      "tune": "la1=14:4 ca=9:4 alpha_ac_count=16"
+    },
+    {
+      "label": "alpha_ac_fit alone",
+      "tune": "alpha_ac_fit=1"
+    },
+    {
+      "label": "compact 21B shipped shape",
+      "tune": "la1=9:5 ca=5:4"
+    },
+    {
+      "label": "compact 21B ADOPTED A16@3 L12@4 C1@3",
+      "tune": "la1=12:4 ca=1:3 alpha_ac_count=16 alpha_ac_bits=3"
+    },
+    {
+      "label": "compact 21B alt A20@3 L9@4 C1@3",
+      "tune": "la1=9:4 ca=1:3 alpha_ac_count=20 alpha_ac_bits=3"
+    }
+  ]
+}
