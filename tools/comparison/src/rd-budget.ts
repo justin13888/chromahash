@@ -9,9 +9,17 @@
  * LQIP and codec baseline at the *same* budgets, on the *same* corpus split as
  * `just sweep`, so a ladder row and a competitor row are directly comparable.
  *
+ * Every run also emits the guard-aware summary (roadmap U16): a winner per
+ * metric inside each byte neighbourhood, flagging where ChromaHash wins ΔE00
+ * and loses SSIMULACRA2 / Butteraugli / DSSIM to the format it is beating.
+ * `--summarize` recomputes that section from an already-written JSON, so the
+ * cross-format scoring can be revisited without re-running the metrics.
+ *
  * Usage:
  *   node dist/rd-budget.js [--split tune|holdout|all] [--budgets 16,21,24,32,...]
  *                          [--max-images N] [--out <name>] [--formats a,b,c]
+ *   node dist/rd-budget.js --summarize output/sweeps/rd-budget-tune.json
+ *                          [--budgets 16,21,24,32,...]
  */
 
 import fs from "node:fs/promises";
@@ -111,6 +119,7 @@ const { values } = parseArgs({
     formats: { type: "string" },
     "max-images": { type: "string" },
     out: { type: "string" },
+    summarize: { type: "string" },
   },
 });
 
@@ -261,7 +270,261 @@ async function scoreAdapter(
   };
 }
 
+/**
+ * Guard-aware cross-format scoring (roadmap U16).
+ *
+ * Every cross-format claim the project makes is ΔE00-only: ΔE00 is the format's
+ * primary metric, and SSIMULACRA2 / Butteraugli / DSSIM are checked as guards
+ * only *within* a sweep, against another ChromaHash build. Across formats they
+ * were never scored at all — which hides the one asymmetry §2 of
+ * `spec/EXPERIMENTS.md` turned up: from ~84 B up ChromaHash wins colour and
+ * loses structure, to competitors it is nominally beating.
+ *
+ * So the summary below names a winner per metric inside each byte
+ * neighbourhood and labels ChromaHash's result there: a clean sweep, a ΔE00-only
+ * win (with the guards it loses named), or a loss.
+ */
+
+/** Metrics the summary ranks, with their direction of improvement. */
+const SUMMARY_METRICS = [
+  { key: "ciede2000", label: "ΔE00", lowerIsBetter: true, digits: 3 },
+  { key: "ssimulacra2", label: "SSIM2", lowerIsBetter: false, digits: 1 },
+  { key: "butteraugli", label: "Butter", lowerIsBetter: true, digits: 2 },
+  { key: "dssim", label: "DSSIM", lowerIsBetter: true, digits: 4 },
+] as const satisfies ReadonlyArray<{
+  key: keyof Pick<Row, "ciede2000" | "ssimulacra2" | "butteraugli" | "dssim">;
+  label: string;
+  lowerIsBetter: boolean;
+  digits: number;
+}>;
+
+/** Direction lookup keyed by metric field, derived from {@link SUMMARY_METRICS}. */
+const LOWER_IS_BETTER: Record<string, boolean> = Object.fromEntries(
+  SUMMARY_METRICS.map((m) => [m.key, m.lowerIsBetter]),
+);
+
+/**
+ * How far a row's mean size may sit from an anchor and still be treated as
+ * competing at that budget. 1.20x matches how §2 groups its table (lqip-modern
+ * r16 at 83.9 B against ChromaHash at 80 B, WebP at 107.2 B against 108 B) and
+ * keeps a row that is a quarter larger from being scored as an equal-byte peer.
+ */
+const NEIGHBOURHOOD_RATIO = 1.2;
+
+/**
+ * Tie tolerances, mirroring the in-sweep guard rule (sweep.ts): SSIMULACRA2 is
+ * absolute, everything else relative. A rival must beat ChromaHash by more than
+ * this to count as a guard loss, so noise does not manufacture verdicts.
+ */
+const TIE_SSIM2 = 1.0;
+const TIE_REL = 0.02;
+
+/** Winner of one metric inside one neighbourhood. */
+interface MetricWinner {
+  metric: string;
+  variant: string;
+  value: number | null;
+  /** ChromaHash's value for the same metric, or null if it has no row here. */
+  chromahash: number | null;
+}
+
+/** One byte-anchor neighbourhood, scored per metric. */
+interface Neighbourhood {
+  anchorBytes: number;
+  variants: string[];
+  chromahash: string | null;
+  winners: MetricWinner[];
+  /** Guards ChromaHash loses here despite (or alongside) its ΔE00 result. */
+  lostGuards: string[];
+  /**
+   * One of: "sweep" (ChromaHash leads every metric), "ΔE00 only" (leads ΔE00,
+   * loses a guard), "ΔE00 tie, guards clean" / "ΔE00 tie, loses guards" (inside
+   * the tie tolerance on colour), "behind", "unopposed" (nothing else competes
+   * at this size), "absent" (no ChromaHash row here).
+   */
+  verdict: string;
+}
+
+/** Is `a` better than `b` on a metric, by more than the tie tolerance? */
+function beats(metric: string, a: number, b: number): boolean {
+  if (metric === "ssimulacra2") return a - b > TIE_SSIM2;
+  const lower = LOWER_IS_BETTER[metric] ?? true;
+  return lower ? b - a > Math.abs(b) * TIE_REL : a - b > Math.abs(b) * TIE_REL;
+}
+
+/**
+ * Group rows into byte neighbourhoods around the swept anchors and score each
+ * one per metric. A row joins the anchor nearest in log-byte space, and is
+ * dropped when even that anchor is more than {@link NEIGHBOURHOOD_RATIO} away —
+ * an unopposed row at a size nobody else reaches proves nothing about a winner.
+ */
+function summarizeGuards(rows: Row[], anchors: number[]): Neighbourhood[] {
+  const groups = new Map<number, Row[]>();
+  for (const row of rows) {
+    if (row.bytes <= 0) continue;
+    let best: number | null = null;
+    let bestDist = Number.POSITIVE_INFINITY;
+    for (const anchor of anchors) {
+      const d = Math.abs(Math.log(row.bytes / anchor));
+      if (d < bestDist) {
+        bestDist = d;
+        best = anchor;
+      }
+    }
+    if (best === null || bestDist > Math.log(NEIGHBOURHOOD_RATIO)) continue;
+    const list = groups.get(best);
+    if (list) list.push(row);
+    else groups.set(best, [row]);
+  }
+
+  // One row per family per neighbourhood: the one closest to the anchor. A
+  // budget ladder emits several rows per family near one anchor (a codec that
+  // floors out, two adjacent ChromaHash layouts), and scoring a family against
+  // itself is not a cross-format result.
+  for (const [anchor, group] of groups) {
+    const best = new Map<string, Row>();
+    for (const row of group) {
+      const incumbent = best.get(row.family);
+      if (
+        !incumbent ||
+        Math.abs(Math.log(row.bytes / anchor)) <
+          Math.abs(Math.log(incumbent.bytes / anchor))
+      ) {
+        best.set(row.family, row);
+      }
+    }
+    groups.set(anchor, [...best.values()]);
+  }
+
+  const out: Neighbourhood[] = [];
+  for (const anchor of [...groups.keys()].sort((a, b) => a - b)) {
+    const group = groups.get(anchor) ?? [];
+    const ours = group.find((r) => r.family === "ChromaHash") ?? null;
+    const winners: MetricWinner[] = [];
+    const lostGuards: string[] = [];
+    for (const { key, label } of SUMMARY_METRICS) {
+      const scored = group.filter(
+        (r): r is Row & Record<typeof key, number> =>
+          r[key] !== null && Number.isFinite(r[key]),
+      );
+      if (scored.length === 0) {
+        winners.push({
+          metric: label,
+          variant: "—",
+          value: null,
+          chromahash: null,
+        });
+        continue;
+      }
+      const lower = LOWER_IS_BETTER[key] ?? true;
+      let top = scored[0] as Row & Record<typeof key, number>;
+      for (const r of scored) {
+        if (lower ? r[key] < top[key] : r[key] > top[key]) top = r;
+      }
+      const mine = ours && ours[key] !== null ? ours[key] : null;
+      winners.push({
+        metric: label,
+        variant: top.variant,
+        value: top[key],
+        chromahash: mine,
+      });
+      if (mine !== null && key !== "ciede2000" && beats(key, top[key], mine)) {
+        lostGuards.push(label);
+      }
+    }
+
+    let verdict: string;
+    if (!ours) verdict = "absent";
+    else if (group.length === 1) verdict = "unopposed";
+    else {
+      const deltaE = winners.find((w) => w.metric === "ΔE00");
+      const topIsOurs = deltaE?.variant === ours.variant;
+      // Within the tie tolerance the colour lead is not real, so say "tie"
+      // rather than crediting a win the numbers do not support.
+      const tiesColour =
+        deltaE !== undefined &&
+        deltaE.value !== null &&
+        deltaE.chromahash !== null &&
+        !beats("ciede2000", deltaE.value, deltaE.chromahash);
+      if (!tiesColour) verdict = "behind";
+      else if (lostGuards.length === 0)
+        verdict = topIsOurs ? "sweep" : "ΔE00 tie, guards clean";
+      else verdict = topIsOurs ? "ΔE00 only" : "ΔE00 tie, loses guards";
+    }
+
+    out.push({
+      anchorBytes: anchor,
+      variants: group.map((r) => r.variant),
+      chromahash: ours?.variant ?? null,
+      winners,
+      lostGuards,
+      verdict,
+    });
+  }
+  return out;
+}
+
+/** Print the guard-aware summary table. */
+function printGuardSummary(summary: Neighbourhood[]): void {
+  console.log(
+    "\nGuard-aware winners by byte neighbourhood (ΔE00 primary, three guards)",
+  );
+  console.log(
+    `  ${"Anchor".padStart(7)} ${"n".padStart(3)} ${"ΔE00 winner".padEnd(22)} ${"SSIM2 winner".padEnd(22)} ${"Butter winner".padEnd(22)} ${"DSSIM winner".padEnd(22)} verdict`,
+  );
+  for (const n of summary) {
+    const cell = (label: string) => {
+      const w = n.winners.find((x) => x.metric === label);
+      if (!w || w.value === null) return "—".padEnd(22);
+      const digits =
+        SUMMARY_METRICS.find((m) => m.label === label)?.digits ?? 2;
+      return `${w.variant} ${w.value.toFixed(digits)}`.padEnd(22);
+    };
+    const note =
+      n.lostGuards.length > 0 ? ` (loses ${n.lostGuards.join(", ")})` : "";
+    console.log(
+      `  ${`${n.anchorBytes} B`.padStart(7)} ${String(n.variants.length).padStart(3)} ${cell("ΔE00")} ${cell("SSIM2")} ${cell("Butter")} ${cell("DSSIM")} ${n.verdict}${note}`,
+    );
+  }
+  const only = summary.filter(
+    (n) => n.verdict === "ΔE00 only" || n.verdict === "ΔE00 tie, loses guards",
+  );
+  if (only.length > 0) {
+    console.log(
+      `\n  ChromaHash wins ΔE00 but loses a guard at ${only
+        .map((n) => `${n.anchorBytes} B [${n.lostGuards.join("+")}]`)
+        .join(", ")}.`,
+    );
+  } else {
+    console.log(
+      "\n  No neighbourhood where ChromaHash wins ΔE00 and loses a guard.",
+    );
+  }
+}
+
+/** Re-score an already-written rd-budget JSON, adding the guard summary. */
+async function summarizeExisting(jsonPath: string): Promise<void> {
+  const raw = JSON.parse(await fs.readFile(jsonPath, "utf8")) as {
+    split: string;
+    images: number;
+    budgets: number[];
+    rows: Row[];
+    summary?: Neighbourhood[];
+  };
+  const anchors = values.budgets !== undefined ? budgets : raw.budgets;
+  const summary = summarizeGuards(raw.rows, anchors);
+  printGuardSummary(summary);
+  raw.summary = summary;
+  await fs.writeFile(jsonPath, `${JSON.stringify(raw, null, 2)}\n`);
+  console.log(`\n→ ${jsonPath}`);
+}
+
 async function main(): Promise<void> {
+  const summarizePath = values.summarize;
+  if (summarizePath !== undefined) {
+    await summarizeExisting(path.resolve(summarizePath));
+    return;
+  }
   ensureIqaAvailable();
   setScoringConfig({ upscalePolicy: "browser-gamma", blurredScoring: false });
 
@@ -370,9 +633,10 @@ async function main(): Promise<void> {
     outDir,
     `${values.out ?? "rd-budget"}-${splitArg}.json`,
   );
+  const summary = summarizeGuards(rows, budgets);
   await fs.writeFile(
     outPath,
-    `${JSON.stringify({ split: splitArg, images: inputs.length, budgets, rows }, null, 2)}\n`,
+    `${JSON.stringify({ split: splitArg, images: inputs.length, budgets, rows, summary }, null, 2)}\n`,
   );
 
   console.log(`\nR-D by byte budget (${splitArg} split) → ${outPath}`);
@@ -388,6 +652,8 @@ async function main(): Promise<void> {
       `  ${r.variant.padEnd(26)} ${r.bytes.toFixed(1).padStart(7)} ${cell(r.ciede2000, 3, 8)} ${cell(r.ssimulacra2, 1, 8)} ${cell(r.butteraugli, 2, 8)} ${cell(r.dssim, 4, 8)}`,
     );
   }
+
+  printGuardSummary(summary);
 }
 
 main().catch((err) => {
