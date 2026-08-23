@@ -1053,6 +1053,54 @@ pub fn encode_with(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables, tier
     };
     let (l_scl_q, l_codes) = quantize_ac_channel(&l_job, l_scale, t);
 
+    // Alpha AC. `alpha_ac_fit` routes it through the same channel quantizer as
+    // L/a/b so `scale_fit`/`ac_nearest` reach it; the legacy path is a nominal
+    // scale code and a bare per-coefficient quantize, which is what alpha has
+    // used since v0.6.
+    let alpha_tiers = [(shape.alpha_ac_count, shape.alpha_ac_bits)];
+    let alpha_job = AcQuantJob {
+        values: &alpha_ac,
+        tiers: &alpha_tiers,
+        split: shape.alpha_ac_count,
+        band_gain: 1.0,
+        max_scale: t.max_alpha_scale,
+        code_max: (1u32 << t.alpha_scale_bits) - 1,
+        scale_bits: t.alpha_scale_bits,
+        scale_mu: t.scale_mu,
+        family: t.compand_alpha,
+        mu: t.mu_alpha,
+        table: &t.table_alpha,
+        deadzone: t.deadzone_alpha,
+    };
+    let (alpha_scl_q, alpha_codes) = if !has_alpha {
+        (0, Vec::new())
+    } else if t.alpha_ac_fit {
+        quantize_ac_channel(&alpha_job, alpha_scale, t)
+    } else {
+        let code = round_half_away_from_zero(
+            ((1u32 << t.alpha_scale_bits) - 1) as f64 * clamp01(alpha_scale / t.max_alpha_scale),
+        ) as u32;
+        let codes = alpha_ac
+            .iter()
+            .map(|&v| {
+                let n = if alpha_scale == 0.0 {
+                    0.0
+                } else {
+                    v / alpha_scale
+                };
+                compand_quantize(
+                    n,
+                    shape.alpha_ac_bits,
+                    t.compand_alpha,
+                    t.mu_alpha,
+                    &t.table_alpha,
+                    t.deadzone_alpha,
+                )
+            })
+            .collect();
+        (code, codes)
+    };
+
     // Chroma-from-luma: recode each chroma coefficient as a residual against
     // `alpha · (the luma AC value the decoder will reconstruct)`. The gains are
     // signalled, so the predictor is exactly reproducible; the chroma scale
@@ -1216,30 +1264,11 @@ pub fn encode_with(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables, tier
     }
     debug_assert_eq!(bitpos, prefix_bits(t) as usize);
 
-    // 11. AC payload (codes computed above; µ-law by default, the
-    //     family/deadzone/band knobs are sweep-only and default to no-ops).
-    let quantize_ac = |value: f64,
-                       scale: f64,
-                       bits: u32,
-                       family: crate::constants::Companding,
-                       mu: f64,
-                       table: &crate::constants::QuantTable,
-                       deadzone: f64|
-     -> u32 {
-        if scale == 0.0 {
-            compand_quantize(0.0, bits, family, mu, table, deadzone)
-        } else {
-            compand_quantize(value / scale, bits, family, mu, table, deadzone)
-        }
-    };
-
+    // 11. AC payload (every channel's codes were computed above; µ-law by
+    //     default, the family/deadzone/band knobs are sweep-only no-ops).
     if has_alpha {
         let alpha_dc_max = ((1u32 << t.alpha_dc_bits) - 1) as f64;
-        let alpha_scl_max = ((1u32 << t.alpha_scale_bits) - 1) as f64;
         let alpha_dc_q = round_half_away_from_zero(alpha_dc_max * clamp01(alpha_dc)) as u32;
-        let alpha_scl_q =
-            round_half_away_from_zero(alpha_scl_max * clamp01(alpha_scale / t.max_alpha_scale))
-                as u32;
         write_bits(&mut hash, bitpos, t.alpha_dc_bits, alpha_dc_q);
         bitpos += t.alpha_dc_bits as usize;
         write_bits(&mut hash, bitpos, t.alpha_scale_bits, alpha_scl_q);
@@ -1282,16 +1311,7 @@ pub fn encode_with(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables, tier
     }
 
     if has_alpha {
-        for ac_val in &alpha_ac {
-            let q = quantize_ac(
-                *ac_val,
-                alpha_scale,
-                shape.alpha_ac_bits,
-                t.compand_alpha,
-                t.mu_alpha,
-                &t.table_alpha,
-                t.deadzone_alpha,
-            );
+        for &q in &alpha_codes {
             write_bits(&mut hash, bitpos, shape.alpha_ac_bits, q);
             bitpos += shape.alpha_ac_bits as usize;
         }

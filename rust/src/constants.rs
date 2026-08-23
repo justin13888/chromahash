@@ -450,6 +450,14 @@ pub struct Tunables {
     pub alpha_ac_count: usize,
     /// Bits per alpha AC coefficient.
     pub alpha_ac_bits: u32,
+    /// Quantize the alpha AC plane through the same path as L/a/b, so
+    /// [`Tunables::scale_fit`] and [`Tunables::ac_nearest`] apply to it.
+    ///
+    /// Alpha has always used a bare quantizer and a nominal scale code, so
+    /// every encoder-side improvement since v0.6 has skipped it — the alpha
+    /// channel runs a generation behind the channels beside it. `false`
+    /// reproduces that legacy path exactly.
+    pub alpha_ac_fit: bool,
     /// Grid the pixel-domain refinement scores on: `0` = the encoder input
     /// (reconstruct the source as well as possible), `1` = the **natural render
     /// grid**, against the ideal full-basis downsample of the source — i.e. the
@@ -572,6 +580,7 @@ impl Tunables {
         alpha_scale_bits: ALPHA_SCALE_BITS,
         alpha_ac_count: ALPHA_AC_COUNT,
         alpha_ac_bits: ALPHA_AC_BITS,
+        alpha_ac_fit: false,
         refine_grid: 0,
         refine_wl: 1.0,
         refine_wc: 1.0,

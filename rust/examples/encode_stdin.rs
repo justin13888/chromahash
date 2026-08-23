@@ -201,6 +201,7 @@ fn tunables_from_env() -> Tunables {
             "alpha_scale_bits" => t.alpha_scale_bits = parse_u32(),
             "alpha_ac_count" => t.alpha_ac_count = parse_u32() as usize,
             "alpha_ac_bits" => t.alpha_ac_bits = parse_u32(),
+            "alpha_ac_fit" => t.alpha_ac_fit = value == "1" || value == "true",
             // Raw AcLayout overrides ("count:bits"), applied on top of `layout`.
             // v1 splits the layout in two (tier 0 vs. the tier-1..3 base). The
             // bare keys write *both*, so a sweep written before the split keeps
