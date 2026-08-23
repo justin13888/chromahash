@@ -127,6 +127,13 @@ export type ImageCategory =
 /** Per-format summary statistics, averaged across a set of images. */
 export interface FormatStat {
   name: string;
+  /**
+   * Images this format actually produced a result for. A codec baseline can
+   * fail to hit a small byte budget on some images (its container floor
+   * exceeds it), and a mean over the subset that fit would otherwise be
+   * presented as a mean over the whole set.
+   */
+  images: number;
   avgSize: number;
   avgEncode: number;
   avgDecode: number;

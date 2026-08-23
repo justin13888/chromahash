@@ -104,6 +104,7 @@ export function computeFormatStats(
 
     return {
       name,
+      images: results.length,
       avgSize,
       avgEncode,
       avgDecode,
@@ -148,14 +149,18 @@ function fmtCi(ci: [number, number] | null, digits: number): string {
 }
 
 function formatStatsTable(stats: FormatStat[]): string {
+  // A format with fewer images than the widest one could not represent the
+  // budget everywhere; its means cover a subset and the table has to say so.
+  const maxImages = stats.reduce((m, x) => Math.max(m, x.images), 0);
   // The blurred "as-rendered" column only appears when the run computed it.
   const hasBlurred = stats.some((s) => s.avgCiedeBlurred !== null);
   return `<table>
-<tr><th>Format</th><th>Avg Size (B)</th><th>Encode (ms)</th><th>Decode (ms)</th><th>Avg ΔE00 ↓</th><th>Median ΔE00 ↓</th><th>p90 ΔE00 ↓</th><th>95% CI ΔE00</th>${hasBlurred ? "<th>Avg ΔE00 (blur) ↓</th>" : ""}<th>Avg DSSIM ↓</th><th>Avg MS-SSIM ↑</th><th>Avg PSNR-HVS-M ↑</th><th>Avg SSIMULACRA2 ↑</th><th>Avg Butteraugli ↓</th><th>Avg PSNR (dB) ↑</th></tr>
+<tr><th>Format</th><th>Images</th><th>Avg Size (B)</th><th>Encode (ms)</th><th>Decode (ms)</th><th>Avg ΔE00 ↓</th><th>Median ΔE00 ↓</th><th>p90 ΔE00 ↓</th><th>95% CI ΔE00</th>${hasBlurred ? "<th>Avg ΔE00 (blur) ↓</th>" : ""}<th>Avg DSSIM ↓</th><th>Avg MS-SSIM ↑</th><th>Avg PSNR-HVS-M ↑</th><th>Avg SSIMULACRA2 ↑</th><th>Avg Butteraugli ↓</th><th>Avg PSNR (dB) ↑</th></tr>
 ${stats
   .map(
     (s) => `<tr>
   <td><strong>${s.name}</strong></td>
+  <td${s.images < maxImages ? ' class="short" title="fewer images than the set: this format could not represent the byte budget on every image, so its means cover only the images listed"' : ""}>${s.images}${s.images < maxImages ? "*" : ""}</td>
   <td>${s.avgSize.toFixed(1)}</td>
   <td>${s.avgEncode.toFixed(3)}</td>
   <td>${s.avgDecode.toFixed(3)}</td>
@@ -409,7 +414,7 @@ ${catEntries
   body.light .section-note { color: #666; }
   .image-row { display: flex; gap: 8px; align-items: flex-start; flex-wrap: wrap; margin: 8px 0; padding: 8px; background: #222244; border-radius: 4px; }
   body.light .image-row { background: #fff; border: 1px solid #ddd; }
-  .image-cell { text-align: center; min-width: 80px; }
+  .image-cell { text-align: center; min-width: 128px; }
   .image-cell img { height: 150px; width: auto; image-rendering: pixelated; border: 1px solid #555; }
   body.blur .image-cell img { image-rendering: auto; }
   .original-wrap { position: relative; display: inline-block; }
@@ -559,12 +564,16 @@ ${catEntries
       <div class="label">${r.formatName}<br>${r.decodedWidth}x${r.decodedHeight}px | ${r.encodedSizeBytes}B</div>
     </div>`;
       }
+      // All four metrics the format's constants were balanced on, not just the
+      // primary: the cross-format story is different on ΔE00 than on the
+      // structural guards, and a card showing only ΔE00 hides that.
+      const m = (v: number | null, d: number) =>
+        v !== null ? v.toFixed(d) : "N/A";
       const ciedeStr =
         r.metrics.ciede2000 !== null
           ? ` | ΔE:${r.metrics.ciede2000.toFixed(2)}`
           : "";
-      const dssimStr =
-        r.metrics.dssim !== null ? ` DSSIM:${r.metrics.dssim.toFixed(3)}` : "";
+      const dssimStr = `<br>S2:${m(r.metrics.ssimulacra2, 0)} Bu:${m(r.metrics.butteraugli, 1)} DS:${m(r.metrics.dssim, 3)}`;
       return `<div class="image-cell">
       <img src="${r.dataUri}" alt="${r.formatName}">
       <div class="label">${r.formatName}<br>${r.decodedWidth}x${r.decodedHeight}px | ${r.encodedSizeBytes}B${ciedeStr}${dssimStr}</div>

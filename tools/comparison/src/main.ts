@@ -43,7 +43,8 @@ import type { ReportMeta } from "./report.ts";
 import { generateFixtures } from "./generate-fixtures.ts";
 import { ensureNaturalImages } from "./natural-images.ts";
 import { ensureHoldoutImages } from "./holdout-images.ts";
-import { buildRdLineup, type RdVariant } from "./rd/lineup.ts";
+import { CodecThumbAdapter } from "./adapters/codec-thumb.ts";
+import { buildRdLineup, RD_ANCHORS, type RdVariant } from "./rd/lineup.ts";
 import { computeRdCurves, generateRdSection } from "./rd/report.ts";
 import { splitFor } from "./corpus.ts";
 import {
@@ -93,6 +94,7 @@ const { values } = parseArgs({
     // Rate–distortion mode: sweep every format's quality knob on the
     // photographic corpus and chart quality vs bytes (see rd/lineup.ts).
     rd: { type: "boolean", default: false },
+    "skip-codecs": { type: "boolean", default: false },
   },
 });
 
@@ -357,6 +359,17 @@ async function main(): Promise<void> {
       new LqipModernAdapter(),
       new UnpicAdapter(),
     ];
+    // Size-matched real codecs. The interesting comparison for this format is
+    // not only against other LQIPs but against what a general codec does with
+    // the same number of bytes, and that was previously visible only in `--rd`.
+    // They target the active tier's byte anchor, so the columns are equal-budget.
+    if (!(values["skip-codecs"] ?? false)) {
+      const anchor = RD_ANCHORS[chromaTier] ?? RD_ANCHORS[0] ?? 32;
+      adapters.push(
+        new CodecThumbAdapter("webp", anchor),
+        new CodecThumbAdapter("avif", anchor),
+      );
+    }
     if (formatFilter) {
       adapters = adapters.filter((a) =>
         formatFilter.includes(a.name.toLowerCase()),
@@ -369,9 +382,16 @@ async function main(): Promise<void> {
         `Format filter active: ${adapters.map((a) => a.name).join(", ")}`,
       );
     }
-    activeFormatNames = FORMAT_NAMES.filter((n) =>
+    // FORMAT_NAMES fixes the canonical column order; anything not in it (the
+    // byte-targeted codec adapters, whose names carry their budget) is appended
+    // rather than filtered away, which would silently drop it from every table.
+    const known = FORMAT_NAMES.filter((n) =>
       adapters.some((a) => a.name === n),
     );
+    const extra = adapters
+      .map((a) => a.name)
+      .filter((n) => !FORMAT_NAMES.includes(n));
+    activeFormatNames = [...known, ...extra];
   }
 
   const entries: Array<{
