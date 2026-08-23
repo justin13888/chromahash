@@ -11,119 +11,119 @@
     },
     {
       "label": "A12@4 L31@4 C3@3",
-      "tune": "la1=31:4 ca=3:3 alpha_ac_count=12"
+      "tune": "la1=31:4 ca=3:3 alpha_ac_count=12 alpha_ac_bits=4"
     },
     {
       "label": "A12@4 L28@4 C5@3",
-      "tune": "la1=28:4 ca=5:3 alpha_ac_count=12"
+      "tune": "la1=28:4 ca=5:3 alpha_ac_count=12 alpha_ac_bits=4"
     },
     {
       "label": "A12@4 L25@4 C7@3",
-      "tune": "la1=25:4 ca=7:3 alpha_ac_count=12"
+      "tune": "la1=25:4 ca=7:3 alpha_ac_count=12 alpha_ac_bits=4"
     },
     {
       "label": "A12@4 L22@4 C9@3",
-      "tune": "la1=22:4 ca=9:3 alpha_ac_count=12"
+      "tune": "la1=22:4 ca=9:3 alpha_ac_count=12 alpha_ac_bits=4"
     },
     {
       "label": "A12@4 L26@4 C5@4",
-      "tune": "la1=26:4 ca=5:4 alpha_ac_count=12"
+      "tune": "la1=26:4 ca=5:4 alpha_ac_count=12 alpha_ac_bits=4"
     },
     {
       "label": "A12@4 L18@4 C9@4",
-      "tune": "la1=18:4 ca=9:4 alpha_ac_count=12"
+      "tune": "la1=18:4 ca=9:4 alpha_ac_count=12 alpha_ac_bits=4"
     },
     {
       "label": "A16@4 L27@4 C3@3",
-      "tune": "la1=27:4 ca=3:3 alpha_ac_count=16"
+      "tune": "la1=27:4 ca=3:3 alpha_ac_count=16 alpha_ac_bits=4"
     },
     {
       "label": "A16@4 L24@4 C5@3",
-      "tune": "la1=24:4 ca=5:3 alpha_ac_count=16"
+      "tune": "la1=24:4 ca=5:3 alpha_ac_count=16 alpha_ac_bits=4"
     },
     {
       "label": "A16@4 L21@4 C7@3",
-      "tune": "la1=21:4 ca=7:3 alpha_ac_count=16"
+      "tune": "la1=21:4 ca=7:3 alpha_ac_count=16 alpha_ac_bits=4"
     },
     {
       "label": "A16@4 L18@4 C9@3",
-      "tune": "la1=18:4 ca=9:3 alpha_ac_count=16"
+      "tune": "la1=18:4 ca=9:3 alpha_ac_count=16 alpha_ac_bits=4"
     },
     {
       "label": "A16@4 L22@4 C5@4",
-      "tune": "la1=22:4 ca=5:4 alpha_ac_count=16"
+      "tune": "la1=22:4 ca=5:4 alpha_ac_count=16 alpha_ac_bits=4"
     },
     {
       "label": "A16@4 L14@4 C9@4",
-      "tune": "la1=14:4 ca=9:4 alpha_ac_count=16"
+      "tune": "la1=14:4 ca=9:4 alpha_ac_count=16 alpha_ac_bits=4"
     },
     {
       "label": "A20@4 L23@4 C3@3",
-      "tune": "la1=23:4 ca=3:3 alpha_ac_count=20"
+      "tune": "la1=23:4 ca=3:3 alpha_ac_count=20 alpha_ac_bits=4"
     },
     {
       "label": "A20@4 L20@4 C5@3",
-      "tune": "la1=20:4 ca=5:3 alpha_ac_count=20"
+      "tune": "la1=20:4 ca=5:3 alpha_ac_count=20 alpha_ac_bits=4"
     },
     {
       "label": "A20@4 L17@4 C7@3",
-      "tune": "la1=17:4 ca=7:3 alpha_ac_count=20"
+      "tune": "la1=17:4 ca=7:3 alpha_ac_count=20 alpha_ac_bits=4"
     },
     {
       "label": "A20@4 L14@4 C9@3",
-      "tune": "la1=14:4 ca=9:3 alpha_ac_count=20"
+      "tune": "la1=14:4 ca=9:3 alpha_ac_count=20 alpha_ac_bits=4"
     },
     {
       "label": "A20@4 L18@4 C5@4",
-      "tune": "la1=18:4 ca=5:4 alpha_ac_count=20"
+      "tune": "la1=18:4 ca=5:4 alpha_ac_count=20 alpha_ac_bits=4"
     },
     {
       "label": "A20@4 L10@4 C9@4",
-      "tune": "la1=10:4 ca=9:4 alpha_ac_count=20"
+      "tune": "la1=10:4 ca=9:4 alpha_ac_count=20 alpha_ac_bits=4"
     },
     {
       "label": "A24@4 L19@4 C3@3",
-      "tune": "la1=19:4 ca=3:3 alpha_ac_count=24"
+      "tune": "la1=19:4 ca=3:3 alpha_ac_count=24 alpha_ac_bits=4"
     },
     {
       "label": "A24@4 L16@4 C5@3",
-      "tune": "la1=16:4 ca=5:3 alpha_ac_count=24"
+      "tune": "la1=16:4 ca=5:3 alpha_ac_count=24 alpha_ac_bits=4"
     },
     {
       "label": "A24@4 L13@4 C7@3",
-      "tune": "la1=13:4 ca=7:3 alpha_ac_count=24"
+      "tune": "la1=13:4 ca=7:3 alpha_ac_count=24 alpha_ac_bits=4"
     },
     {
       "label": "A24@4 L10@4 C9@3",
-      "tune": "la1=10:4 ca=9:3 alpha_ac_count=24"
+      "tune": "la1=10:4 ca=9:3 alpha_ac_count=24 alpha_ac_bits=4"
     },
     {
       "label": "A24@4 L14@4 C5@4",
-      "tune": "la1=14:4 ca=5:4 alpha_ac_count=24"
+      "tune": "la1=14:4 ca=5:4 alpha_ac_count=24 alpha_ac_bits=4"
     },
     {
       "label": "A24@4 L6@4 C9@4",
-      "tune": "la1=6:4 ca=9:4 alpha_ac_count=24"
+      "tune": "la1=6:4 ca=9:4 alpha_ac_count=24 alpha_ac_bits=4"
     },
     {
       "label": "A28@4 L15@4 C3@3",
-      "tune": "la1=15:4 ca=3:3 alpha_ac_count=28"
+      "tune": "la1=15:4 ca=3:3 alpha_ac_count=28 alpha_ac_bits=4"
     },
     {
       "label": "A28@4 L12@4 C5@3",
-      "tune": "la1=12:4 ca=5:3 alpha_ac_count=28"
+      "tune": "la1=12:4 ca=5:3 alpha_ac_count=28 alpha_ac_bits=4"
     },
     {
       "label": "A28@4 L9@4 C7@3",
-      "tune": "la1=9:4 ca=7:3 alpha_ac_count=28"
+      "tune": "la1=9:4 ca=7:3 alpha_ac_count=28 alpha_ac_bits=4"
     },
     {
       "label": "A28@4 L6@4 C9@3",
-      "tune": "la1=6:4 ca=9:3 alpha_ac_count=28"
+      "tune": "la1=6:4 ca=9:3 alpha_ac_count=28 alpha_ac_bits=4"
     },
     {
       "label": "A28@4 L10@4 C5@4",
-      "tune": "la1=10:4 ca=5:4 alpha_ac_count=28"
+      "tune": "la1=10:4 ca=5:4 alpha_ac_count=28 alpha_ac_bits=4"
     },
     {
       "label": "A24@3 L22@4 C5@3",

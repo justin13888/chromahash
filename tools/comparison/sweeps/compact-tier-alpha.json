@@ -79,27 +79,27 @@
     },
     {
       "label": "A8@4 L15@4 C2@3",
-      "tune": "la1=15:4 ca=2:3 alpha_ac_count=8"
+      "tune": "la1=15:4 ca=2:3 alpha_ac_count=8 alpha_ac_bits=4"
     },
     {
       "label": "A8@4 L13@4 C3@3",
-      "tune": "la1=13:4 ca=3:3 alpha_ac_count=8"
+      "tune": "la1=13:4 ca=3:3 alpha_ac_count=8 alpha_ac_bits=4"
     },
     {
       "label": "A12@4 L11@4 C2@3",
-      "tune": "la1=11:4 ca=2:3 alpha_ac_count=12"
+      "tune": "la1=11:4 ca=2:3 alpha_ac_count=12 alpha_ac_bits=4"
     },
     {
       "label": "A12@4 L9@4 C3@3",
-      "tune": "la1=9:4 ca=3:3 alpha_ac_count=12"
+      "tune": "la1=9:4 ca=3:3 alpha_ac_count=12 alpha_ac_bits=4"
     },
     {
       "label": "A16@4 L7@4 C2@3",
-      "tune": "la1=7:4 ca=2:3 alpha_ac_count=16"
+      "tune": "la1=7:4 ca=2:3 alpha_ac_count=16 alpha_ac_bits=4"
     },
     {
       "label": "A16@4 L5@4 C3@3",
-      "tune": "la1=5:4 ca=3:3 alpha_ac_count=16"
+      "tune": "la1=5:4 ca=3:3 alpha_ac_count=16 alpha_ac_bits=4"
     }
   ],
   "expectBytes": 21

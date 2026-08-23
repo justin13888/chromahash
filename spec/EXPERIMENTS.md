@@ -1359,7 +1359,7 @@ or a page of text. `sweeps/graphics-layout.json` re-runs the same 32-byte
 allocation grid that chose the tier-0 layout (§4.2) on the graphics corpus,
 with the adopted default as incumbent; `sweeps/graphics-encoder.json` does the
 same for the encoder stack. Both run with `forceOpaque`, because two of the 16
-tune images carry an alpha channel and would otherwise encode in alpha mode,
+tune images carry real transparency and would otherwise encode in alpha mode,
 where none of an opaque-layout arm's overrides apply — contributing an identical
 constant to every arm and diluting every delta, which biases a layout test
 toward exactly the "no difference" verdict it is trying to test for.
@@ -1385,9 +1385,9 @@ the §8 adoption was chosen on photographs, and it holds on content it never saw
 | variant | ΔE00 | Δ% | paired 95% CI |
 |---|---|---|---|
 | **DEFAULT** (full stack) | 10.450 | — | — |
-| no selection weights | 10.513 | +0.60% | [−0.255, +0.038] |
+| no selection weights | 10.513 | +0.60% | [−0.226, +0.081] |
 | no encoder search (`scale_fit=0 ac_nearest=0`) | 10.577 | +1.22% | **[−0.224, −0.038]** |
-| pre-adoption (everything off) | 10.766 | **+3.02%** | **[−0.597, −0.138]** |
+| pre-adoption (everything off) | 10.766 | **+3.02%** | **[−0.581, −0.112]** |
 | `sel_hv = 0.30` | 10.410 | −0.39% | includes zero |
 
 Turning the adoption off costs 3.02% on graphics, significantly. Note the last
@@ -1417,9 +1417,10 @@ adopted pair as incumbent and an explicit isotropic arm.
 Three findings, and two of them are uncomfortable:
 
 1. **`sel_hv = 0.30` is significantly better than the shipped `0.15`** —
-   the only positive-direction arm whose CI excludes zero, and §11.4 finds the
-   same direction independently on the graphics corpus. The adopted value is
-   not the optimum.
+   the largest positive-direction arm whose CI excludes zero. (`aniso 0.9 /
+   hv 0.15` also clears zero, at −0.07% with 4/31 wins — real but too small to
+   act on.) §11.4 finds the same *direction* on the graphics corpus, though not
+   significantly there. The adopted value is not the tune optimum.
 2. **Isotropic is statistically indistinguishable from the adopted weights.**
    On the current corpus the selection weights buy nothing measurable on tune;
    their justification rests entirely on the holdout delta §7.12 recorded
@@ -1446,7 +1447,7 @@ the 4 b/3 b tier-0 depths rather than the 5 b/4 b depths it was locked against.
 
 Every alternative family is worse, including codebooks trained on the corpus
 being scored. The µ plateau §4.6 reported survives both the corpus revision and
-the bit-depth change: nothing inside ±0.25% separates µ_L ∈ {4…7}.
+the bit-depth change: every µ_L ∈ {4…7} lands within ±0.14% of the shipped µ_L = 5.
 
 ### 11.7 Deadzone, re-derived — and it was measuring nothing
 
@@ -1467,9 +1468,15 @@ A fired deadzone now short-circuits the search, and the knob measures again:
 | `deadzone_l = 0.05` | 10.220 | +0.36% |
 | both = 0.03 | 10.184 | +0.02% |
 
-Rejected — now on evidence rather than on an artifact. `deadzone_l = 0.02` is
-still exactly 0.00% for a real reason: at 4-bit luma the quantizer's zero bin is
-already wider than 0.02, so nothing falls inside the deadzone.
+Rejected — now on evidence rather than on an artifact.
+
+Three arms still read exactly 0.00%, and for a real reason rather than the old
+one: the quantizer's zero bin is already wider than those deadzones, so nothing
+falls inside them. The bin scales with the code width, so the threshold differs
+per channel — luma is 4-bit at tier 0 and chroma 3-bit, and chroma's bin is
+correspondingly wider. Sweeping past it confirms the knob is live on both
+channels: `deadzone_c` first moves the output at 0.15, and moves it further at
+0.4. The rejection stands on the arms that do fire.
 
 A knob that cannot move the output is worse than a rejected one, because the
 next sweep to touch it draws a conclusion from a constant.
@@ -1477,7 +1484,7 @@ next sweep to touch it draws a conclusion from a constant.
 ### 11.8 Quantization ranges, re-derived — stand
 
 `sweeps/quant-ranges.json`: `max_l_scale` ∈ {0.35, 0.5, 0.65}, `max_a/b_scale`
-∈ {0.1, 0.125, 0.15}. Every arm lands within **±0.12%** of the shipped values
+∈ {0.1, 0.125, 0.15}. Every arm lands within **±0.13%** of the shipped values
 and every guard holds. The ranges are sized to the signal, as `RATIONALE.md`
 claims; the claim now rests on the current corpus.
 
@@ -1508,7 +1515,7 @@ tier code is spent on it.
 | L19@5 C2@4 (precision-maximal) | 11.355 | −0.56% | **[−0.605, −0.225]** |
 
 The extremes are decisively rejected and the shipped shape is decisively beaten
-— by 4.3% — but **the leading seven layouts are a plateau**: every paired CI
+— by 4.13% — but **the leading seven layouts are a plateau**: every paired CI
 against the leader includes zero. The photographic split cannot choose here, and
 squeezing its guard metrics for a winner would be mining noise.
 
@@ -1584,13 +1591,17 @@ to the point where the budget runs out. It is monotone for a long way:
 Three things fall out.
 
 1. **Alpha needs at least 3 bits per coefficient.** Every 2-bit arm fails the
-   Butteraugli guard (59–64 against 43–45), whatever the count.
+   Butteraugli guard (58.7–64.6 against 42.9–45.3), whatever the count.
 2. **The coefficients are better bought from chroma than from luma.**
    `A20@4 L20@5 C1@4` beats `A20@4 L10@4 C9@4` (13.526 vs 13.619) while keeping
    the full luma budget: transparent regions are composited away, so chroma
-   spent on them buys nothing. Holding the count fixed, ΔE00 falls monotonically
-   as chroma shrinks, and the per-image difference between 3 and 5 chroma
-   coefficients never exceeds 0.1 ΔE00 on any image in the corpus.
+   spent on them buys nothing. Holding the alpha count fixed, shrinking chroma is
+   near-free: across every C3-vs-C5 pair the mean difference is under 0.05 ΔE00
+   and the largest single-image difference is 0.59 (`cutout-navy-crest`), against
+   a 15.7 ΔE00 baseline. It is not strictly monotone — at `A12@4` and `A16@4`
+   the C5 arm edges the C3 one by 0.008 and 0.029 — and no pair isolates chroma,
+   since every C3→C5 swap also moves luma to keep the budget. The honest reading
+   is that chroma is nearly inert here, not that less of it is always better.
 3. **The mean hides a trade, and the trade decides the constant.**
 
 | allocation | all | mostly opaque (<35% transparent) | mostly transparent |
@@ -1604,8 +1615,9 @@ Pushing the alpha count higher buys transparent images at the expense of opaque
 ones, and the mean is driven by this corpus being three-quarters transparent —
 a property of the corpus, not of the world. **`A 28 @ 3 b, L 22 @ 4 b,
 a/b 3 @ 3 b`** is adopted: it takes −17.10% overall while giving the at-risk
-opaque-ish subgroup the largest gain of any arm, posts the best SSIM2 of the
-whole sweep, and carries *more* luma than the layout it replaces (22 vs 20).
+opaque-ish subgroup the largest gain of any **guard-passing** arm (three 2-bit
+arms score higher there — −7.5% to −8.5% — but all three fail Butteraugli),
+posts the best SSIM2 of the whole sweep, and carries *more* luma than the layout it replaces (22 vs 20).
 Choosing the ΔE00-optimal corner instead would trade 0.8 pp of mean for 3.6 pp
 of the subgroup most exposed to a different corpus mix.
 
@@ -1617,18 +1629,31 @@ belongs to alpha mode rather than to cut-out content.
 through `quantize_ac_channel`, where `scale_fit` and `ac_nearest` live; alpha
 used a bare per-coefficient quantize against a nominal scale code, the v0.6
 path. Routing it through the same code (`alpha_ac_fit`) is worth −0.21% on the
-shipped layout and −1.16% on a better one, guards clean
-(`sweeps/alpha-encoder.json`). Small, free, and principled — the same argument
-that adopted `ac_nearest` at 0.05%.
+shipped layout and −0.22% on a better one, guards clean
+(`sweeps/alpha-encoder.json`).
+
+The knob has to be read against a fixed layout. The row
+`alpha_ac_fit @ L22@4 C14@3` is −1.16% against the *shipped* incumbent, but
+−0.94 pp of that is the layout and only −0.22 pp is the knob: quoting the
+combined figure would overstate it fivefold. Small, free and principled — the
+same argument that adopted `ac_nearest` at 0.05% — which is exactly why
+§11.12's holdout result gets to overrule it.
 
 ### 11.11 Does the alpha finding hold above tier 0?
 
-It has to be asked rather than assumed. Tiers 1–3 scale one base row by
-`4^tier`, so adopting §11.3 at tier 0 and leaving that row alone would give
-**tier 1 fewer alpha coefficients than tier 0** — a higher quality tier that is
-worse at the thing that matters most for a cut-out. The tier-1 base budget is
-the same 192 bits as tier 0's alpha budget, so `sweeps/alpha-tier1.json` is the
-same allocations evaluated at 4× resolution.
+It has to be asked rather than assumed. Tiers 1–3 share one base row scaled by
+`4^(tier−1)` (§3.2), so adopting §11.3 at tier 0 and leaving that row alone
+would give **tier 1 fewer alpha coefficients than tier 0** — a higher quality
+tier that is worse at the thing that matters most for a cut-out. The tier-1
+base budget is the same 192 bits as tier 0's alpha budget, so
+`sweeps/alpha-tier1.json` is the same allocations evaluated at 4× resolution.
+
+Two arms in that file are **off-budget** and are excluded from the comparison
+below: `A20@4 L20@5 C1@4` at 106 B and `A20@3 L26@4 C3@3` at 99 B, against the
+103–104 B the rest occupy. The first posts the best raw ΔE00 in the file
+(10.768) and the best guards, which is what 2–3 extra bytes buys; it is not an
+equal-budget result and is not treated as one. This is the drift `expectBytes`
+now catches.
 
 | allocation | tier-1 ΔE00 | Δ% | SSIM2 | Butter | αMAE |
 |---|---|---|---|---|---|
@@ -1639,9 +1664,9 @@ same allocations evaluated at 4× resolution.
 | A16@4 L14@4 C9@4 | 10.987 | −10.91% | −266.4 | 34.07 | 0.1213 |
 | A40@3 L13@4 C3@3 | 11.153 | −9.56% | −270.3 | 36.57 | 0.1147 |
 
-The tier-0 choice is essentially tied for best at tier 1 (0.06% behind the
-leader), so **one row still serves tiers 1–3** and the `4^tier` structure is
-intact. Alpha AC counts are now 16 / 28 / 112 / 448 / 1792 across
+Among the equal-budget arms the tier-0 choice is essentially tied for best at
+tier 1 — 0.06% behind `A24@3 L22@4 C5@3` — so **one row still serves tiers
+1–3** and the `4^(tier−1)` structure is intact. Alpha AC counts are now 16 / 28 / 112 / 448 / 1792 across
 compact / 0 / 1 / 2 / 3 — monotone, which `validate.py` asserts.
 
 ### 11.12 The holdout, consulted once
@@ -1658,10 +1683,17 @@ all frozen. It rejected half of them.
 | pre-adoption v0.6-derived | +2.47% | +3.63% | (confirms §8 out of sample) |
 | compact 21 B `L19@4 C6@3` | −3.99% | −2.6% vs the shipped shape | adopted |
 
-`sel_hv = 0.30` was significant on tune **and** independently corroborated on
-the graphics corpus (§11.4), and it still failed out of sample. The shipped
-`0.15` stands. This is the split doing exactly the job it exists for, and it is
-worth recording that two agreeing corpora were not enough.
+Holdout ranks the compact plateau differently from tune — `L26@3 C6@3` leads it
+at 11.971 against the adopted layout's 12.047 — which is the same tune/holdout
+disagreement §8.1 originally flagged for this tier. The pick was frozen before
+the holdout was opened and is not revisited on it; the spread across the four
+candidates is 0.9%, and all four beat the shipped shape by 2.4–3.2%.
+
+`sel_hv = 0.30` was significant on tune, and pointed the same way on the
+graphics corpus (§11.4 — −0.39% there, though its CI includes zero), and it
+still failed out of sample. The shipped `0.15` stands. This is the split doing
+exactly the job it exists for: a result that was significant on one corpus and
+directionally agreed with on a second did not survive a third split.
 
 **Alpha holdout (8 images):**
 
@@ -1694,7 +1726,7 @@ Beaten on all four metrics, out of sample, at ThumbHash's own size — the claim
 
 | Change | Evidence |
 |---|---|
-| Alpha row → `L 22 @ 4, a/b 3 @ 3, A 28 @ 3` at the compact tier, tier 0 and the tier-1..3 base | −16.19% holdout, all guards (§11.3, §11.11, §11.12) |
+| Alpha row → `L 22 @ 4, a/b 3 @ 3, A 28 @ 3` at tier 0 and the tier-1..3 base (the compact tier takes its own, below) | −16.19% holdout, all guards (§11.3, §11.11, §11.12) |
 | Compact tier, code 4, 21 B, `L 19 @ 4 / a/b 6 @ 3` (alpha `L 12 @ 4 / a/b 1 @ 3 / A 16 @ 3`) | Beats ThumbHash on all four on holdout (§11.10, §11.12) |
 | Deadzone made reachable again | It was byte-identical at every value (§11.7) |
 

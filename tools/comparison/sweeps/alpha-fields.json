@@ -11,19 +11,19 @@
     },
     {
       "label": "A8@4 (+3 alpha AC, -3 L)",
-      "tune": "la1=17:5 ca=9:4 alpha_ac_count=8"
+      "tune": "la1=17:5 ca=9:4 alpha_ac_count=8 alpha_ac_bits=4"
     },
     {
       "label": "A12@4 (+7 alpha AC, -6 L)",
-      "tune": "la1=14:5 ca=9:4 alpha_ac_count=12"
+      "tune": "la1=14:5 ca=9:4 alpha_ac_count=12 alpha_ac_bits=4"
     },
     {
       "label": "A3@4 (-2 alpha AC, +1 L)",
-      "tune": "la1=21:5 ca=9:4 alpha_ac_count=3"
+      "tune": "la1=21:5 ca=9:4 alpha_ac_count=3 alpha_ac_bits=4"
     },
     {
       "label": "A0 (no alpha AC, +4 L)",
-      "tune": "la1=24:5 ca=9:4 alpha_ac_count=0"
+      "tune": "la1=24:5 ca=9:4 alpha_ac_count=0 alpha_ac_bits=4"
     },
     {
       "label": "A7@3 (coarser, more)",

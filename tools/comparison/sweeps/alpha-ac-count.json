@@ -11,47 +11,47 @@
     },
     {
       "label": "A8@4 L17@5 C9@4",
-      "tune": "la1=17:5 ca=9:4 alpha_ac_count=8"
+      "tune": "la1=17:5 ca=9:4 alpha_ac_count=8 alpha_ac_bits=4"
     },
     {
       "label": "A8@4 L22@4 C9@4",
-      "tune": "la1=22:4 ca=9:4 alpha_ac_count=8"
+      "tune": "la1=22:4 ca=9:4 alpha_ac_count=8 alpha_ac_bits=4"
     },
     {
       "label": "A12@4 L14@5 C9@4",
-      "tune": "la1=14:5 ca=9:4 alpha_ac_count=12"
+      "tune": "la1=14:5 ca=9:4 alpha_ac_count=12 alpha_ac_bits=4"
     },
     {
       "label": "A12@4 L18@4 C9@4",
-      "tune": "la1=18:4 ca=9:4 alpha_ac_count=12"
+      "tune": "la1=18:4 ca=9:4 alpha_ac_count=12 alpha_ac_bits=4"
     },
     {
       "label": "A16@4 L11@5 C9@4",
-      "tune": "la1=11:5 ca=9:4 alpha_ac_count=16"
+      "tune": "la1=11:5 ca=9:4 alpha_ac_count=16 alpha_ac_bits=4"
     },
     {
       "label": "A16@4 L14@4 C9@4",
-      "tune": "la1=14:4 ca=9:4 alpha_ac_count=16"
+      "tune": "la1=14:4 ca=9:4 alpha_ac_count=16 alpha_ac_bits=4"
     },
     {
       "label": "A20@4 L8@5 C9@4",
-      "tune": "la1=8:5 ca=9:4 alpha_ac_count=20"
+      "tune": "la1=8:5 ca=9:4 alpha_ac_count=20 alpha_ac_bits=4"
     },
     {
       "label": "A20@4 L10@4 C9@4",
-      "tune": "la1=10:4 ca=9:4 alpha_ac_count=20"
+      "tune": "la1=10:4 ca=9:4 alpha_ac_count=20 alpha_ac_bits=4"
     },
     {
       "label": "A24@4 L5@5 C9@4",
-      "tune": "la1=5:5 ca=9:4 alpha_ac_count=24"
+      "tune": "la1=5:5 ca=9:4 alpha_ac_count=24 alpha_ac_bits=4"
     },
     {
       "label": "A24@4 L6@4 C9@4",
-      "tune": "la1=6:4 ca=9:4 alpha_ac_count=24"
+      "tune": "la1=6:4 ca=9:4 alpha_ac_count=24 alpha_ac_bits=4"
     },
     {
       "label": "A28@4 L2@4 C9@4",
-      "tune": "la1=2:4 ca=9:4 alpha_ac_count=28"
+      "tune": "la1=2:4 ca=9:4 alpha_ac_count=28 alpha_ac_bits=4"
     },
     {
       "label": "A12@3 L21@4 C9@4",
@@ -75,11 +75,11 @@
     },
     {
       "label": "A12@4 L20@5 C5@4 (from chroma)",
-      "tune": "la1=20:5 ca=5:4 alpha_ac_count=12"
+      "tune": "la1=20:5 ca=5:4 alpha_ac_count=12 alpha_ac_bits=4"
     },
     {
       "label": "A20@4 L20@5 C1@4 (from chroma)",
-      "tune": "la1=20:5 ca=1:4 alpha_ac_count=20"
+      "tune": "la1=20:5 ca=1:4 alpha_ac_count=20 alpha_ac_bits=4"
     }
   ],
   "expectBytes": 32
