@@ -1,0 +1,48 @@
+{
+  "note": "Baseline for the tier-0 R-D regression gate (src/rd-gate.ts). Regenerate deliberately with `just rd-gate-update` after an intended encoder change, and say so in the commit message.",
+  "tier": 0,
+  "tolerancePct": 1,
+  "images": [
+    {
+      "label": "chroma-strawberries",
+      "bytes": 32,
+      "ciede2000": 15.314762487289755
+    },
+    {
+      "label": "natural-city",
+      "bytes": 32,
+      "ciede2000": 8.210880007415827
+    },
+    {
+      "label": "natural-facade",
+      "bytes": 32,
+      "ciede2000": 9.643841022210228
+    },
+    {
+      "label": "natural-food",
+      "bytes": 32,
+      "ciede2000": 5.643689990695808
+    },
+    {
+      "label": "natural-mountains",
+      "bytes": 32,
+      "ciede2000": 6.730469060965571
+    },
+    {
+      "label": "night-milky-way",
+      "bytes": 32,
+      "ciede2000": 5.675999295718619
+    },
+    {
+      "label": "portrait-camera",
+      "bytes": 32,
+      "ciede2000": 10.177460910741322
+    },
+    {
+      "label": "portrait-suit",
+      "bytes": 32,
+      "ciede2000": 9.370075940020957
+    }
+  ],
+  "meanCiede2000": 8.845897339382262
+}

@@ -723,3 +723,22 @@ release version:
     echo "       [{{version}}]: .../compare/<prev>...v{{version}}"
     echo "  2. Bump the version to {{version}} across all implementations and tools."
     echo "  3. Commit, then: git tag -a v{{version}} -m 'v{{version}}' && git push --tags"
+
+# ─── Quality gate ───────────────────────────────────────────────────────────
+
+# Tier-0 R-D regression gate: encode a fixed handful of content-pinned corpus
+# photos, score mean ΔE00, and compare it against the checked-in baseline
+# tools/comparison/baselines/rd-gate.json. Deliberately small — a few images, no
+# codec baselines — so CI can run it on every push; `compare-rd` and the sweeps
+# remain the full picture. Two-sided: an improvement past tolerance also fails,
+# because a stale baseline gates nothing. Requires iqa-cli (`just install-iqa`).
+rd-gate *args: build-compare
+    cargo build --manifest-path rust/Cargo.toml --release --example encode_stdin
+    mise exec -- node tools/comparison/dist/rd-gate.js {{args}}
+
+# Refresh the R-D gate baseline after an intended encoder change. Every number
+# moving is the point — but review the diff and say in the commit message which
+# change moved it.
+rd-gate-update: build-compare
+    cargo build --manifest-path rust/Cargo.toml --release --example encode_stdin
+    mise exec -- node tools/comparison/dist/rd-gate.js --update

@@ -92,6 +92,18 @@ jobs:
       - name: Build Rust harness
         run: cargo build --manifest-path rust/Cargo.toml --example encode_stdin
 
+      # The comparison report below proves the harness still runs; it does not
+      # prove the format still performs. This gate (spec/EXPERIMENTS.md U18)
+      # encodes a handful of content-pinned corpus photos at tier 0 and fails if
+      # mean ΔE00 has drifted from tools/comparison/baselines/rd-gate.json, so a
+      # silent rate-distortion regression cannot land unnoticed. It needs a
+      # release build — the debug encoder is the same bytes but far slower.
+      - name: Build Rust harness (release, for the R-D gate)
+        run: cargo build --manifest-path rust/Cargo.toml --release --example encode_stdin
+
+      - name: R-D regression gate (tier 0)
+        run: node tools/comparison/dist/rd-gate.js
+
       - uses: actions/setup-go@v5
         with:
           go-version: "1.24"
