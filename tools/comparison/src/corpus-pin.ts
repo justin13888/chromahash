@@ -50,6 +50,62 @@ export class CorpusPinError extends Error {
  *
  * @returns true when the file had to be downloaded.
  */
+/**
+ * User-Agent sent with every fixture fetch.
+ *
+ * Wikimedia — where the alpha and graphics corpora live — returns 429 to
+ * clients that do not identify themselves, and its policy requires a
+ * descriptive agent with a contact URL. Node's `fetch` sends none by default,
+ * which is how a corpus fetch fails on a machine that has never seen it fail.
+ */
+const USER_AGENT =
+  "chromahash-comparison/0.7 (https://github.com/visualcommons/chromahash) node-fetch";
+
+/** Retry schedule, in milliseconds, for a throttled or transiently failing host. */
+const RETRY_DELAYS_MS = [1_000, 3_000, 8_000, 20_000];
+
+/** Status codes worth retrying: explicit throttling and transient server errors. */
+function isRetryable(status: number): boolean {
+  return status === 429 || status === 408 || status >= 500;
+}
+
+/**
+ * Fetch a fixture, backing off on throttling.
+ *
+ * Corpora are fetched as a burst of a few dozen files from one host, which is
+ * exactly the shape that trips a rate limiter. Honouring `Retry-After` and
+ * backing off is the difference between a reproducible corpus and one that
+ * depends on how busy the host was.
+ */
+async function fetchWithRetry(url: string): Promise<Buffer> {
+  let lastError = "";
+  for (let attempt = 0; ; attempt++) {
+    const response = await fetch(url, {
+      redirect: "follow",
+      headers: { "User-Agent": USER_AGENT },
+    });
+    if (response.ok) return Buffer.from(await response.arrayBuffer());
+
+    lastError = `HTTP ${response.status} ${response.statusText}`;
+    const delay = RETRY_DELAYS_MS[attempt];
+    if (delay === undefined || !isRetryable(response.status)) break;
+
+    // A server-supplied Retry-After wins over the schedule when it is longer.
+    const after = Number.parseInt(
+      response.headers.get("retry-after") ?? "",
+      10,
+    );
+    const waitMs = Number.isFinite(after)
+      ? Math.max(delay, after * 1000)
+      : delay;
+    console.warn(
+      `  ${lastError} fetching ${url} — retrying in ${Math.round(waitMs / 1000)}s`,
+    );
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+  }
+  throw new Error(lastError);
+}
+
 export async function ensurePinnedFixture(
   fixture: PinnedFixture,
 ): Promise<boolean> {
@@ -74,7 +130,7 @@ export async function ensurePinnedFixture(
         `  actual:   ${got}`,
         "  The cached bytes are not the ones the corpus statistics were measured on.",
         "  Delete the file to re-fetch, or — if upstream genuinely changed — update the",
-        "  pinned digest in src/natural-images.ts / src/holdout-images.ts deliberately",
+        "  pinned digest in the corresponding src/*-images.ts deliberately",
         "  and re-measure every affected sweep.",
       ].join("\n"),
     );
@@ -82,11 +138,7 @@ export async function ensurePinnedFixture(
 
   let body: Buffer;
   try {
-    const response = await fetch(url, { redirect: "follow" });
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status} ${response.statusText}`);
-    }
-    body = Buffer.from(await response.arrayBuffer());
+    body = await fetchWithRetry(url);
   } catch (err) {
     throw new CorpusPinError(
       [

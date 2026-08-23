@@ -1,3 +1,5 @@
+import { ALPHA_IMAGES } from "./alpha-images.ts";
+import { GRAPHIC_IMAGES } from "./graphic-images.ts";
 import { CURATED_IMAGES } from "./natural-images.ts";
 
 /**
@@ -8,22 +10,24 @@ import { CURATED_IMAGES } from "./natural-images.ts";
  */
 export type CorpusSplit = "tune" | "holdout";
 
-/** Declared split of every curated natural image, keyed by label. */
-const NATURAL_SPLITS = new Map<string, CorpusSplit>(
-  CURATED_IMAGES.map((spec) => [spec.label, spec.split]),
-);
+/** Declared split of every curated image, keyed by label. */
+const DECLARED_SPLITS = new Map<string, CorpusSplit>([
+  ...CURATED_IMAGES.map((s): [string, CorpusSplit] => [s.label, s.split]),
+  ...ALPHA_IMAGES.map((s): [string, CorpusSplit] => [s.label, s.split]),
+  ...GRAPHIC_IMAGES.map((s): [string, CorpusSplit] => [s.label, s.split]),
+]);
 
 /**
  * Resolve the corpus split for an image by its report name (the filename
  * without extension). Explicit rules:
  *
  * - `kodak*` (the Kodak True Color suite) is holdout by definition.
- * - Curated Picsum photos carry their declared split (natural-images.ts).
+ * - Every curated image — photo, alpha or graphic — carries its declared split.
  * - Everything else — all synthetic fixtures and realistic images — is tune.
  */
 export function splitFor(imageName: string): CorpusSplit {
   if (imageName.startsWith("kodak")) return "holdout";
-  return NATURAL_SPLITS.get(imageName) ?? "tune";
+  return DECLARED_SPLITS.get(imageName) ?? "tune";
 }
 
 /**

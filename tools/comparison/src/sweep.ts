@@ -38,6 +38,8 @@ import {
 } from "./corpus.ts";
 import { gamutToSrgbReference } from "./gamut.ts";
 import { generateFixtures } from "./generate-fixtures.ts";
+import { ensureAlphaImages } from "./alpha-images.ts";
+import { ensureGraphicImages } from "./graphic-images.ts";
 import { ensureHoldoutImages } from "./holdout-images.ts";
 import { loadImage } from "./image-loader.ts";
 import {
@@ -196,7 +198,7 @@ function median(values: (number | null)[]): number | null {
   return xs.length > 0 ? quantile(xs, 0.5) : null;
 }
 
-async function loadCorpus(): Promise<ImageInput[]> {
+async function loadCorpus(corpus: CorpusSet): Promise<ImageInput[]> {
   const toolRoot = path.resolve(import.meta.dirname, "..");
   const syntheticDir = path.join(toolRoot, "fixtures/synthetic");
   try {
@@ -209,6 +211,10 @@ async function loadCorpus(): Promise<ImageInput[]> {
   if (split === "holdout") {
     await ensureHoldoutImages();
   }
+  // Only fetch a corpus a run will actually score: the alpha and graphics sets
+  // are ~40 MB the photographic sweeps would never look at.
+  if (corpus === "alpha" || corpus === "all") await ensureAlphaImages();
+  if (corpus === "graphic" || corpus === "all") await ensureGraphicImages();
 
   const paths: string[] = [];
   for await (const entry of glob(
@@ -403,8 +409,8 @@ async function main(): Promise<void> {
     throw new Error(`config ${config.name} declares no variants`);
   }
 
-  let inputs = await loadCorpus();
   const corpus = corpusFor(config);
+  let inputs = await loadCorpus(corpus);
   if (corpus !== "all") {
     inputs = inputs.filter((i) =>
       inCorpus(path.parse(i.filePath).name, corpus),
