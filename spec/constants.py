@@ -97,9 +97,12 @@ ALPHA_PREFIX_BITS = ALPHA_DC_BITS + ALPHA_SCALE_BITS
 # =========================================================================
 # AC Layout (§3.2, §6.4)
 # =========================================================================
-# How the per-channel AC budget is split. Counts are the TIER-0 BASE; tier m
-# scales every count by 4^m (bits per coefficient stay constant — higher tiers
-# carry MORE coefficients, not finer ones). L coefficients are written in
+# How the per-channel AC budget is split at one quality tier. v1 carries TWO
+# of these: tier 0 has its own table (LAYOUT_T0) and tiers 1..=3 scale a single
+# base (LAYOUT_B) by 4^m — bits per coefficient stay constant, so higher tiers
+# carry MORE coefficients, not finer ones. The split exists because the
+# count-vs-precision optimum moves with the budget: at 32 bytes the format is
+# better off with more, coarser coefficients (§3.2). L coefficients are written in
 # selection order through up to two precision tiers (a tier with count 0 is
 # unused). Chroma a/b each get c_count coefficients at c_bits. The la_*/ca_*
 # fields are the alpha-mode equivalents (alpha mode additionally stores alpha
@@ -134,8 +137,48 @@ LAYOUT_B = AcLayout(
     ca_bits=4,
 )
 
-# The shipped default layout (Tunables::DEFAULT.layout in the Rust reference).
-DEFAULT_LAYOUT = LAYOUT_B
+# Layout T0: the v1 TIER-0 layout (the shipped default at tier 0). At a 32-byte
+# budget the AC payload is 202 bits, and spending it on 28 luma coefficients at
+# 4 bits plus 15 chroma at 3 beats LAYOUT_B's 26@5 / 9@4 split by 3.5% mean
+# ΔE00 on the never-tuned holdout split (spec/EXPERIMENTS.md §8.3):
+#   no-alpha = 54 prefix + 28·4 L + 2·15·3 chroma                 = 256 bits
+#   alpha    = 54 + 9 + 20·5 L + 2·9·4 chroma + 5·4 alpha         = 255 bits
+# The ALPHA-MODE fields deliberately stay at the LAYOUT_B values: the rebalance
+# was measured on a photographic corpus with no alpha in it at all.
+LAYOUT_T0 = AcLayout(
+    l_tiers=((28, 4), (0, 4)),
+    c_count=15,
+    c_bits=3,
+    la_tiers=((20, 5), (0, 5)),
+    ca_count=9,
+    ca_bits=4,
+)
+
+# The shipped default layouts (Tunables::DEFAULT in the Rust reference):
+# tier 0 has its own table, tiers 1..=3 share one base scaled by 4^tier.
+DEFAULT_LAYOUT = LAYOUT_T0
+DEFAULT_LAYOUT_UPPER = LAYOUT_B
+
+
+def tier_layout(tier: int) -> AcLayout:
+    """The shipped layout governing a quality tier. Per spec §3.2 (v1)."""
+    return DEFAULT_LAYOUT if tier == 0 else DEFAULT_LAYOUT_UPPER
+
+# =========================================================================
+# Selection weights (§6.2)
+# =========================================================================
+# The transmission order is the candidate frequencies sorted by
+#   priority · (1 + ANISO_OBLIQUE·sin²2θ) · (1 + SEL_HV·cos2θ)
+# — human contrast sensitivity is lower on the diagonals, so the budget buys
+# axis-aligned detail first, and SEL_HV > 0 favours vertical detail over
+# horizontal. Both ride as Q12 integers so the comparison is exact (see
+# selection.py); SEL_HV deliberately breaks the portrait/landscape symmetry the
+# unweighted order has.
+ANISO_OBLIQUE = 1.2
+SEL_HV = 0.15
+# Fixed-point shift the order is defined on.
+SEL_Q = 12
+SEL_ONE = 1 << SEL_Q
 
 # Alpha-channel AC coefficients at tier 0 (alpha mode only) and their bit width.
 ALPHA_AC_COUNT = 5
@@ -146,8 +189,8 @@ ALPHA_AC_BITS = 4
 class AcShape:
     """Per-channel AC counts/bit-widths resolved for one (alpha mode, tier).
 
-    The base AcLayout describes tier 0; tier m scales every coefficient COUNT
-    by 4^m while bit widths stay fixed.
+    The AcLayout passed in describes the tier's base counts; tier m scales every
+    coefficient COUNT by 4^m while bit widths stay fixed.
     """
 
     l_tiers: tuple[tuple[int, int], tuple[int, int]]   # L precision tiers (count, bits)

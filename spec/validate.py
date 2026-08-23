@@ -37,7 +37,10 @@ from constants import (
     MU_ALPHA,
     MU_C,
     MU_L,
+    ANISO_OBLIQUE,
     DEFAULT_LAYOUT,
+    SEL_HV,
+    tier_layout,
     FORMAT_VERSION,
     MAX_TIER,
     DESCRIPTOR_BITS,
@@ -49,7 +52,14 @@ from constants import (
     body_len_bytes,
     tier_count_scale,
 )
-from selection import FORMAT_KS, decode_output_size, select_coefficients
+from selection import (
+    FORMAT_KS,
+    decode_output_size,
+    format_ks,
+    q12,
+    select_coefficients,
+    selection_key,
+)
 
 # Mapping from gamut name → stored M1 matrix
 STORED_M1 = {
@@ -369,10 +379,11 @@ def validate_aspect_ratio():
 
 
 def validate_selection():
-    """Check top-K coefficient selection properties across tiers. Per spec §6.1 (v1)."""
-    print("\n9. Coefficient selection (top-K per-pixel frequency, all tiers)")
+    """Check coefficient selection properties across tiers. Per spec §6 (v1)."""
+    print("\n9. Coefficient selection (weighted top-K frequency order, all tiers)")
 
     representative = [0, 64, 100, 128, 159, 191, 255]
+    a_q, h_q = q12(ANISO_OBLIQUE), q12(SEL_HV)
 
     def check_invariants(byte_iter, tier):
         """Return (invariants_ok, fully_satisfied) for the bytes at this tier."""
@@ -381,8 +392,7 @@ def validate_selection():
         for byte in byte_iter:
             w, h = decode_output_size(byte, tier)
             candidates = w * h - 1
-            for base_k in FORMAT_KS:
-                k = base_k << (2 * tier)  # every K scales by 4^tier
+            for k in format_ks(tier):
                 if k > candidates:
                     satisfied = False
                 coeffs, p_k = select_coefficients(byte, tier, k)
@@ -392,10 +402,13 @@ def validate_selection():
                     ok = False
                 if any(cx >= w or cy >= h for cx, cy in coeffs):
                     ok = False
-                priorities = [(cx * h) ** 2 + (cy * w) ** 2 for cx, cy in coeffs]
-                if priorities != sorted(priorities):
+                # Transmission order is ascending in the §6.2 key, not in the
+                # bare priority — the weights are exactly what reorders it.
+                keys = [selection_key(cx * h, cy * w, a_q, h_q) for cx, cy in coeffs]
+                if keys != sorted(keys):
                     ok = False
-                if p_k != priorities[-1] or p_k <= 0:
+                last_cx, last_cy = coeffs[-1]
+                if p_k != (last_cx * h) ** 2 + (last_cy * w) ** 2 or p_k <= 0:
                     ok = False
         return ok, satisfied
 
@@ -415,33 +428,70 @@ def validate_selection():
                "K(tier) = K·4^tier")
     check(satN, f"Tiers 1..{MAX_TIER}: every K(tier) ≤ candidate count")
 
+    # ── The bare order (both weights zeroed) ─────────────────────────────
     # Square at byte=128 (W=H=32): radial order, ℓ2 ball
-    coeffs_9, _ = select_coefficients(128, 0, 9)
+    def bare(byte, tier, k):
+        return select_coefficients(byte, tier, k, 0.0, 0.0)
+
+    coeffs_9, _ = bare(128, 0, 9)
     check(coeffs_9[0] == (0, 1) and coeffs_9[1] == (1, 0),
           "Square K=9: first two slots are (0,1),(1,0) — tied priority, lex tiebreak")
     check(coeffs_9[2] == (1, 1), "Square K=9: third slot is (1,1)")
 
-    coeffs_26, _ = select_coefficients(128, 0, 26)
+    coeffs_26, _ = bare(128, 0, 26)
     check((3, 4) in coeffs_26 and (4, 3) in coeffs_26,
           "Square K=26: ℓ2 ball includes diagonals (3,4)/(4,3)")
     check((6, 0) not in coeffs_26 and (0, 6) not in coeffs_26,
           "Square K=26: ℓ2 ball excludes axis extremes (6,0)/(0,6)")
 
-    # Same K returns the same low frequencies at any tier: priority (cx·H)² +
-    # (cy·W)² scales uniformly by 4^tier when the grid doubles. Per spec §6.1.
+    # Zeroing both weights must reproduce the bare priority order exactly — the
+    # key is then `priority << 16`, which is order-identical to `priority`.
+    zero_ok = True
+    for byte in representative:
+        w, h = decode_output_size(byte, 0)
+        pri = sorted(
+            ((cx * h) ** 2 + (cy * w) ** 2, cx, cy)
+            for cy in range(h) for cx in range(w) if (cx, cy) != (0, 0)
+        )
+        if bare(byte, 0, 28)[0] != [(cx, cy) for _, cx, cy in pri[:28]]:
+            zero_ok = False
+    check(zero_ok, "aniso = hv = 0 ⇒ key is priority << 16 ⇒ the bare priority order")
+
+    # ── The shipped weighted order (§6.2) ─────────────────────────────────
+    # Same K returns the same low frequencies at any tier: the key is
+    # homogeneous, so doubling the grid scales every key by 4 and leaves the
+    # order untouched. Per spec §6.2.
+    coeffs_w26, _ = select_coefficients(128, 0, 26)
     same_across_tiers = all(
-        select_coefficients(128, t, 26)[0] == coeffs_26 for t in range(MAX_TIER + 1)
+        select_coefficients(128, t, 26)[0] == coeffs_w26 for t in range(MAX_TIER + 1)
     )
     check(same_across_tiers,
           f"Same K=26 ⇒ identical low frequencies across tiers 0..{MAX_TIER}")
     # The larger high-tier grid is what lets K itself scale to reach genuinely
     # higher frequencies (always satisfiable).
-    max0 = max(max(cx, cy) for cx, cy in coeffs_26)
+    max0 = max(max(cx, cy) for cx, cy in coeffs_w26)
     coeffs_hi, _ = select_coefficients(128, MAX_TIER, 26 << (2 * MAX_TIER))
     max_hi = max(max(cx, cy) for cx, cy in coeffs_hi)
     check(max_hi > max0,
           f"tier {MAX_TIER} with K·4^tier reaches higher frequencies "
           f"({max_hi} > {max0})")
+
+    # Both weights must be observable on the square grid (W = H = 32), where
+    # the diagonal (1,1) has priority 2048 and the axis pair (2,0)/(0,2) 4096:
+    #   (1,1) → 2048·(1 + 1.2·1)·(1 + 0.15·0)  = 4506   (oblique penalty)
+    #   (0,2) → 4096·(1 + 1.2·0)·(1 − 0.15·1)  = 3482   (hv favours vertical)
+    #   (2,0) → 4096·(1 + 1.2·0)·(1 + 0.15·1)  = 4710
+    # so the bare order (1,1) < (0,2) = (2,0) becomes (0,2) < (1,1) < (2,0).
+    first4 = select_coefficients(128, 0, 4)[0]
+    check(first4.index((0, 2)) < first4.index((1, 1)),
+          f"aniso = {ANISO_OBLIQUE}: the oblique penalty demotes the diagonal "
+          f"(1,1) behind the axis frequency (0,2) (K=4 → {first4})")
+    check(bare(128, 0, 4)[0].index((1, 1)) < 3,
+          "…which the bare order does not: it puts (1,1) third")
+    first6 = select_coefficients(128, 0, 6)[0]
+    check(first6.index((0, 2)) < first6.index((2, 0)),
+          f"hv = {SEL_HV}: the tied axis pair splits in favour of the vertical "
+          f"frequency (0,2) over (2,0)")
 
     # Extreme landscape at byte=255 (W=32, H=2): long axis dominates
     coeffs_land, _ = select_coefficients(255, 0, 26)
@@ -451,10 +501,10 @@ def validate_selection():
           "16:1 landscape: no cy ≥ H=2 frequency ever selected")
 
     # Portrait/landscape symmetry: byte b and byte (255−b) have mirrored
-    # (W, H), so the selected priority multisets are identical. The exact
-    # coefficient sets may differ within an equal-priority tie group cut at
-    # the K boundary (the (priority, cx, cy) tiebreak is not swap-invariant);
-    # this is benign — the priority multiset and p_k stay swap-invariant.
+    # (W, H), so under the BARE order the selected priority multisets are
+    # identical. The exact coefficient sets may differ within an equal-priority
+    # tie group cut at the K boundary (the (key, cx, cy) tiebreak is not
+    # swap-invariant); this is benign — the multiset and p_k stay invariant.
     sym_ok = True
     for b in range(128):
         w_lo, h_lo = decode_output_size(b, 0)
@@ -462,14 +512,31 @@ def validate_selection():
         if (w_lo, h_lo) != (h_hi, w_hi):
             sym_ok = False
         for k in FORMAT_KS:
-            lo, pk_lo = select_coefficients(b, 0, k)
-            hi, pk_hi = select_coefficients(255 - b, 0, k)
+            lo, pk_lo = bare(b, 0, k)
+            hi, pk_hi = bare(255 - b, 0, k)
             pri_lo = sorted((cx * h_lo) ** 2 + (cy * w_lo) ** 2 for cx, cy in lo)
             pri_hi = sorted((cx * h_hi) ** 2 + (cy * w_hi) ** 2 for cx, cy in hi)
             if pri_lo != pri_hi or pk_lo != pk_hi:
                 sym_ok = False
-    check(sym_ok, "Portrait/landscape symmetry: mirrored dims, equal priority "
-                  "multisets and p_k across all K")
+    check(sym_ok, "Bare priority order: portrait/landscape symmetry — mirrored dims, "
+                  "equal priority multisets and p_k across all K")
+
+    # hv ≠ 0 BREAKS that symmetry on purpose: cos2θ flips sign under the
+    # transpose, so a landscape image and its portrait mirror do not select
+    # mirrored frequency sets. Assert the asymmetry so it can never be
+    # reintroduced as a "fix".
+    asym = False
+    for b in range(128):
+        w_lo, h_lo = decode_output_size(b, 0)
+        if (w_lo, h_lo) == (h_lo, w_lo):
+            continue
+        lo, _ = select_coefficients(b, 0, 28)
+        hi, _ = select_coefficients(255 - b, 0, 28)
+        if sorted(lo) != sorted((cy, cx) for cx, cy in hi):
+            asym = True
+            break
+    check(asym, f"hv = {SEL_HV} deliberately breaks portrait/landscape symmetry "
+                "(vertical detail is favoured over horizontal)")
 
 
 def validate_length_formula():
@@ -484,7 +551,7 @@ def validate_length_formula():
     """
     print("\n10. v1 length formula and tier scaling")
 
-    layout = DEFAULT_LAYOUT
+    layout = DEFAULT_LAYOUT  # tier 0; tiers 1..=3 use tier_layout(tier)
 
     # Version / tier descriptor constants are consistent.
     check(FORMAT_VERSION == 0, f"FORMAT_VERSION = {FORMAT_VERSION} (format v1)")
@@ -508,7 +575,7 @@ def validate_length_formula():
     # Tier-0 bit accounting matches the spec's stated split.
     no_alpha_bits = PREFIX_BITS + ac_payload_bits(ac_shape(layout, False, 0))
     check(no_alpha_bits == 256,
-          f"tier-0 no-alpha = {no_alpha_bits} bits (54 prefix + 130 L + 72 chroma)")
+          f"tier-0 no-alpha = {no_alpha_bits} bits (54 prefix + 112 L + 90 chroma)")
     alpha_bits = (PREFIX_BITS + ALPHA_PREFIX_BITS
                   + ac_payload_bits(ac_shape(layout, True, 0)))
     check(alpha_bits == 255,
@@ -519,7 +586,7 @@ def validate_length_formula():
         label = "alpha" if has_alpha else "no-alpha"
         prev = body_len_bytes(layout, has_alpha, 0)
         for tier in range(1, MAX_TIER + 1):
-            n = body_len_bytes(layout, has_alpha, tier)
+            n = body_len_bytes(tier_layout(tier), has_alpha, tier)
             ratio = n / prev
             check(n > 0 and n > prev,
                   f"{label} tier {tier} length {n} bytes > tier {tier - 1} ({prev})")
@@ -527,15 +594,18 @@ def validate_length_formula():
                   f"{label} tier {tier}/{tier - 1} length ratio {ratio:.3f} ≈ 4×")
             prev = n
 
-    # AC payload scales by EXACTLY 4^tier; bit widths stay constant per tier.
+    # Within the tier-1..=3 band the AC payload scales by EXACTLY 4^tier and bit
+    # widths stay constant. Tier 0 is excluded on purpose: it has its own layout
+    # (§3.2), so it is *not* the tier-1 base scaled down.
     for has_alpha in (False, True):
         label = "alpha" if has_alpha else "no-alpha"
-        base = ac_shape(layout, has_alpha, 0)
+        upper = tier_layout(1)
+        base = ac_shape(upper, has_alpha, 0)
         base_payload = ac_payload_bits(base)
-        for tier in range(MAX_TIER + 1):
+        for tier in range(1, MAX_TIER + 1):
             s = tier_count_scale(tier)
             check(s == 4 ** tier, f"tier_count_scale({tier}) = {s} (= 4^{tier})")
-            shape = ac_shape(layout, has_alpha, tier)
+            shape = ac_shape(upper, has_alpha, tier)
             check(ac_payload_bits(shape) == base_payload * s,
                   f"{label} tier {tier} AC payload scales ×{s} "
                   f"(= {base_payload * s} bits)")

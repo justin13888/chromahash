@@ -2,22 +2,30 @@
 """Generate canonical coefficient selection tables for ChromaHash (format v1).
 
 v1 keeps v0.6's single deterministic top-K selection over the natural-decode
-frequency domain (spec §6.1), now parameterized by quality tier:
+frequency domain, now parameterized by quality tier and by a perceptual weight:
 
   1. (W, H) = decodeOutputSize(aspect_byte, tier)   # long edge 32·2^tier
   2. Candidates: all (cx, cy) in [0, W) × [0, H) except DC (0, 0).
      The bound makes selecting a frequency unrepresentable at the natural
      render structurally impossible.
   3. priority = (cx·H)² + (cy·W)²             # integer, bit-exact across langs
-  4. Sort ascending by (priority, cx, cy); take the first K.
+  4. key = priority · (1 + aniso·sin²2θ) · (1 + hv·cos2θ)
+  5. Sort ascending by (key, cx, cy); take the first K.
+
+Step 4 is evaluated as an EXACT INTEGER (`selection_key` below) — no float
+comparison anywhere — so the order is bit-exact across languages. With the
+weights zeroed the key is `priority << 16`, i.e. step 4 collapses to the bare
+priority order.
 
 p_k (the priority of the K-th selected pair) is emitted alongside each
 selection; it is reserved for frequency-normalized decoder extensions and
-pinned by the test vectors.
+pinned by the test vectors. It is the UNWEIGHTED priority: the synthesis window
+is defined on the true spatial frequency, not on the perceptual sort key.
 
-K per channel at tier 0 (constants.py LAYOUT_B): L = 26 (no-alpha) /
-20 (alpha mode), chroma a/b = 9, alpha = 5. Tier m scales every K by 4^m, and
-the larger grid keeps the higher K satisfiable (candidates ≥ 64·4^m − 1).
+K per channel at tier 0 (constants.py LAYOUT_T0): L = 28 (no-alpha) /
+20 (alpha mode), chroma a/b = 15 / 9, alpha = 5. Tiers 1..=3 scale the LAYOUT_B
+counts by 4^m, and the larger grid keeps the higher K satisfiable
+(candidates ≥ 64·4^m − 1).
 
 Usage:
     python3 spec/selection.py           # pretty-print (tier 0)
@@ -28,18 +36,69 @@ import json
 import math
 import sys
 
-from constants import ALPHA_AC_COUNT, BASE_LONG_EDGE, LAYOUT_B
-
-# Every per-channel K the format uses at tier 0, in ascending order. Tier m
-# uses each of these scaled by 4^m.
-FORMAT_KS = sorted(
-    {
-        ALPHA_AC_COUNT,
-        LAYOUT_B.c_count,
-        LAYOUT_B.la_tiers[0][0] + LAYOUT_B.la_tiers[1][0],
-        LAYOUT_B.l_tiers[0][0] + LAYOUT_B.l_tiers[1][0],
-    }
+from constants import (
+    ALPHA_AC_COUNT,
+    ANISO_OBLIQUE,
+    BASE_LONG_EDGE,
+    SEL_HV,
+    SEL_ONE,
+    SEL_Q,
+    tier_layout,
 )
+
+
+def format_ks(tier: int) -> list[int]:
+    """Every per-channel K the format uses at `tier`, ascending."""
+    lay = tier_layout(tier)
+    s = 1 << (2 * tier)
+    return sorted(
+        {
+            ALPHA_AC_COUNT * s,
+            lay.c_count * s,
+            lay.ca_count * s,
+            (lay.la_tiers[0][0] + lay.la_tiers[1][0]) * s,
+            (lay.l_tiers[0][0] + lay.l_tiers[1][0]) * s,
+        }
+    )
+
+
+# Every per-channel K at tier 0, in ascending order.
+FORMAT_KS = format_ks(0)
+
+
+def q12(v: float) -> int:
+    """Quantize a selection-weight parameter onto the Q12 grid."""
+    return round(v * SEL_ONE)
+
+
+def selection_key(px: int, py: int, a_q12: int, h_q12: int) -> int:
+    """Exact integer sort key for one candidate frequency. Per spec §6.2 (v1).
+
+    With s = px², t = py², p = s + t and d = s − t, the identities
+    cos2θ = d/p and sin²2θ = 1 − (d/p)² turn both weight factors into
+    polynomials in the single ratio d/p, which is what makes an exact integer
+    form possible:
+
+        X = trunc(d · 2^12 / p)                  in [−2^12, 2^12]   (Q12)
+        U = (2^12 + A)·2^12 − ((A·X²) >> 12)     >= 2^24            (Q24)
+        V = 2^24 + H·X                           > 0                (Q24)
+        W = (U·V) >> 32                                             (Q16)
+        key = p · W
+
+    `>>` is an arithmetic (floor) shift and `/` truncates toward zero. Every
+    intermediate stays under 2^51 at every tier for the parameter ranges the
+    format allows (aniso in [0, 8], |hv| < 1), so a language with exact 53-bit
+    integers — a JavaScript `number` — evaluates it without a bignum.
+    """
+    s, t = px * px, py * py
+    p = s + t
+    if a_q12 == 0 and h_q12 == 0:
+        return p << 16
+    d = s - t
+    x = -((-d * SEL_ONE) // p) if d < 0 else (d * SEL_ONE) // p  # trunc toward 0
+    u = (SEL_ONE + a_q12) * SEL_ONE - ((a_q12 * x * x) >> SEL_Q)
+    v = SEL_ONE * SEL_ONE + h_q12 * x
+    return p * ((u * v) >> 32)
 
 
 def round_half_away_from_zero(x: float) -> int:
@@ -75,26 +134,37 @@ def decode_output_size(aspect_byte: int, tier: int) -> tuple[int, int]:
 
 
 def select_coefficients(
-    aspect_byte: int, tier: int, k: int
+    aspect_byte: int,
+    tier: int,
+    k: int,
+    aniso: float = ANISO_OBLIQUE,
+    hv: float = SEL_HV,
 ) -> tuple[list[tuple[int, int]], int]:
-    """Return (selected (cx, cy) pairs in transmission order, p_k). Per §6.1 (v1).
+    """Return (selected (cx, cy) pairs in transmission order, p_k). Per §6 (v1).
+
+    `aniso`/`hv` default to the shipped weights; pass 0.0 for both to get the
+    bare priority order. `p_k` is always the unweighted priority of the
+    last pair in selection order.
 
     The candidate count is ≥ 64·4^tier − 1 for every aspect byte (the 16:1
     extreme), and every per-channel K(tier) the format uses is < that bound, so
     the selection is always fully satisfied.
     """
     w, h = decode_output_size(aspect_byte, tier)
+    a_q12, h_q12 = q12(aniso), q12(hv)
     entries = []
     for cy in range(h):
         for cx in range(w):
             if cx == 0 and cy == 0:
                 continue
-            priority = (cx * h) ** 2 + (cy * w) ** 2
-            entries.append((priority, cx, cy))
+            key = selection_key(cx * h, cy * w, a_q12, h_q12)
+            entries.append((key, cx, cy))
     entries.sort()
     entries = entries[:k]
-    p_k = entries[-1][0]
-    return [(cx, cy) for (_, cx, cy) in entries], p_k
+    coeffs = [(cx, cy) for (_, cx, cy) in entries]
+    cx, cy = coeffs[-1]
+    p_k = (cx * h) ** 2 + (cy * w) ** 2
+    return coeffs, p_k
 
 
 def main() -> None:
