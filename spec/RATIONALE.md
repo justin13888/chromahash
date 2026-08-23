@@ -7,9 +7,13 @@ file records the *evidence*.
 Sweep numbers come from the decision tables produced by `just sweep <config>`
 (configs in `tools/comparison/sweeps/`, results in
 `tools/comparison/output/sweeps/`) on the **tune split** of the expanded corpus
-(65 images: 43 synthetic + 22 curated photos; the 28-image holdout —
+(74 images: 43 synthetic + 31 curated photos; the 32-image holdout —
 Kodak24 + held-out curated photos — is reserved for validating winners, per the
-pre-registered rule below). Rate–distortion numbers come from `just compare-rd`
+pre-registered rule below). The curated set grew from 26 to 39 photographs in
+the 2026-08 corpus revision (`EXPERIMENTS.md` §9); **the v1 numbers in this file
+were measured before it** and are not comparable to the re-measured tables
+there — the conclusions they support are unchanged, and re-deriving the v1
+constants on the revised corpus is a job for the next constants revision. Rate–distortion numbers come from `just compare-rd`
 (photographic corpus, display-resolution scoring). Release A/B numbers against
 the previous format generation come from `just compare-versions`, which
 differences each image against the v0.6 tag *paired* and reports a bootstrap CI
@@ -39,8 +43,8 @@ floor.
 
 #### What holding 32 bytes cost, measured
 Keeping tier 0 at exactly 32 bytes while byte 0 grew into a self-describing
-descriptor had to come from somewhere: the no-alpha luma AC count drops 27 → 26
-(`LAYOUT_B.l_tiers`), and alpha mode collapses v0.6's mixed-precision
+descriptor had to come from somewhere: at the v0.6 bit widths the no-alpha luma
+AC count drops 27 → 26, and alpha mode collapses v0.6's mixed-precision
 `[(7,6),(13,5)]` into a single `[(20,5)]` tier. That is ~3.7% of the luma AC
 budget spent on framing. **Measured** (`just compare-versions`, paired
 per-image against the v0.6 tag at the same 32 bytes, holdout split, n=28).
@@ -184,12 +188,23 @@ coding → v0.8).
 Review challenged isotropy via the human CSF's oblique effect (diagonal
 frequencies are less visible; JPEG's tables penalize diagonals ~2×).
 **Measured** (`aniso-selection` + `aniso-extended`): weighting the ball by
-`1 + aniso·sin²2θ` improves monotonically to an optimum at aniso=1.2 —
-**−1.51% ΔE00 with every guard also improving** (SSIMULACRA2 −76.2→−72.0,
-Butteraugli 17.78→17.64) — then degrades and fails guards past 1.6. A real,
-validated effect, but under the 3% retune threshold, and the weighted ordering
-compares f64 keys, which would need an integer reformulation before entering
-the spec. The strongest single candidate for a future constants revision.
+`1 + aniso·sin²2θ` improves monotonically to an optimum at aniso=1.2, then
+degrades and fails guards past 1.6. Extending it to the two-parameter family
+`(1 + aniso·sin²2θ)(1 + hv·cos2θ)` adds a horizontal/vertical term at hv=0.15.
+
+**Shipped in v1** (§6.2). On its own the weight is under the 3% retune
+threshold; it entered the spec as part of the tier-0 recipe of
+`EXPERIMENTS.md` §8, which clears it as a whole (−3.50% holdout, all guards
+improving) and is worth −0.34 pp of that. The f64 ordering the sweep used is
+*not* what shipped: the spec orders on an exact Q12 integer key, so the order
+is bit-exact across languages, and computing it once per candidate instead of
+inside the comparator made decode ~8% **faster** than the unweighted v0.6 sort
+rather than the +32% the float prototype cost.
+
+`hv ≠ 0` deliberately breaks the portrait/landscape symmetry the bare priority
+order has — `cos2θ` flips sign under the transpose. That asymmetry is the
+point (vertical detail is favoured), and `spec/validate.py` asserts it so it
+cannot be "fixed" back out.
 
 ### Encoder frequency clamp + decoder frequency filter
 Selected pairs outside the source's representable band are emitted as exact
@@ -260,12 +275,23 @@ proxy (a vs b at 0.15) shows b is the more sensitive axis (+0.46% vs −0.01%),
 consistent with keeping b's range tight — the 1-bit swap itself remains an
 open (wire-changing) question.
 
-### Bit allocation: L=5 b ×26 / C=4 b ×9+9 (LAYOUT_B)
-Locked by the v0.6 coordinate-descent sweep over layouts A–D
-(chroma-rebalanced, tiered-precision, finer-chroma variants) optimizing mean
-ΔE00 with SSIMULACRA2/Butteraugli/DSSIM guards; layout B won on natural
-images. The v1 tier-1 layout sweep above independently re-confirms the split
-against three equal-byte alternatives.
+### Bit allocation: tier 0 = L 4 b ×28 / C 3 b ×15+15; tiers 1–3 = L 5 b / C 4 b
+The v0.6 sweep over layouts A–D (chroma-rebalanced, tiered-precision,
+finer-chroma variants) locked a 5-bit luma / 4-bit chroma split, and the v1
+tier-1 sweep re-confirms it against three equal-byte alternatives — *at tier 1
+and above*.
+
+At tier 0 it is the wrong answer. The count-vs-precision optimum moves with the
+budget, and a 32-byte hash has 202 AC bits to spend: sweeping the whole
+equal-byte grid (`EXPERIMENTS.md` §4.2) puts the optimum at 28 luma
+coefficients at 4 bits plus 15 chroma at 3, worth −3.5% mean ΔE00 on the
+never-tuned holdout with every guard improving. So v1 carries a **two-row
+layout table** rather than one base scaled by `4^tier` (§3.2).
+
+The optimum is broad — L30/C13 and L32/C12 are within noise of L28/C15 — which
+is itself the finding: what matters is moving *off* 26 @ 5, not the exact stop.
+Alpha mode keeps 5-bit luma at tier 0, because the photographic corpus that
+chose the rebalance contains no alpha and cannot speak to it.
 
 ### DC: 7/7/7 bits + decode-aware ±1 search
 The encoder simulates the decoder's DC path (dequantize → clamp → gamma) over
@@ -366,10 +392,10 @@ encoding.
 Explicitly unresolved, so nothing evaluated-in-thought silently disappears:
 1. **Chroma-from-luma** — the largest expected v0.8 win; needs a
    residual-coding design and a wire change.
-2. **Anisotropic (oblique-effect) selection** — validated at −1.51% ΔE00 with
-   improved guards (aniso≈1.2), but below the retune threshold and requires an
-   integer reformulation of the weighted ordering before it can enter the
-   spec. The strongest known candidate for a future constants revision.
+2. **Alpha-mode tier-0 layout** — tier 0 rebalanced to 4-bit luma / 3-bit
+   chroma for opaque images, but alpha mode still carries the v0.6 split
+   because the photographic corpus has no alpha in it. The arithmetic points at
+   `L 22 @ 4, a/b 14 @ 3` (255 bits); it needs its own corpus and sweep.
 3. **Tier 2–3 positioning** — size-matched WebP overtakes tier 2 at 411 B
    (6.61 vs 7.13) and AVIF/WebP/JPEG beat tier 3 at 1623 B (4.71–5.30 vs
    6.40) on the full photographic corpus. Either close the gap (entropy
