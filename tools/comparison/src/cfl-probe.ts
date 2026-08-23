@@ -35,7 +35,6 @@ const split = values.split ?? "tune";
 const count = Number.parseInt(values.count ?? "26", 10);
 const tier = Number.parseInt(values.tier ?? "0", 10);
 
-
 /** Pearson correlation of two equal-length series (null when either is flat). */
 function pearson(x: number[], y: number[]): number | null {
   const n = Math.min(x.length, y.length);

@@ -49,7 +49,7 @@ export function rasterizeUnpicGradients(
   rows: number,
   outW: number,
   outH: number,
-  backdrop: [number, number, number],
+  backdrop: readonly [number, number, number],
 ): Uint8Array {
   if (cols < 2 || rows < 2) {
     // unpic positions cells at col/(cols-1) — a 1-wide/1-tall grid would be a

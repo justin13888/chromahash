@@ -40,7 +40,12 @@ import { gamutToSrgbReference } from "./gamut.ts";
 import { generateFixtures } from "./generate-fixtures.ts";
 import { ensureHoldoutImages } from "./holdout-images.ts";
 import { loadImage } from "./image-loader.ts";
-import { computeAllMetrics, setScoringConfig } from "./metrics.ts";
+import {
+  BACKDROP_SETS,
+  type BackdropSetName,
+  computeAllMetrics,
+  setScoringConfig,
+} from "./metrics.ts";
 import { ensureIqaAvailable } from "./metrics/iqa.ts";
 import { ensureNaturalImages } from "./natural-images.ts";
 import { quantile } from "./stats.ts";
@@ -91,6 +96,15 @@ interface SweepConfig {
    * the other corpora existed keeps its exact meaning; prefer `corpus`.
    */
   photoOnly?: boolean;
+  /**
+   * Backdrop set to composite translucent pixels over (see `metrics.ts`).
+   * Defaults to `"white"`, which is the historical behaviour bit for bit.
+   * An alpha experiment wants `"white-black-grey"`, or it is largely
+   * measuring colour.
+   */
+  backdrops?: BackdropSetName;
+  /** Also score the alpha plane directly, reported as `meanAlphaMae`. */
+  alphaFidelity?: boolean;
 }
 
 /** Per-variant aggregate row of the decision table. */
@@ -107,6 +121,8 @@ interface SweepRow {
   meanSsimulacra2: number | null;
   meanButteraugli: number | null;
   meanDssim: number | null;
+  /** Mean absolute alpha error on [0, 1], or null when alpha is not scored. */
+  meanAlphaMae: number | null;
   /** ΔE00 change vs the incumbent, in percent (negative = better). */
   ciedeDeltaPct: number | null;
   /** All guard metrics within tolerance of the incumbent. */
@@ -282,6 +298,7 @@ async function scoreVariant(
   const ssim2s: (number | null)[] = [];
   const butters: (number | null)[] = [];
   const dssims: (number | null)[] = [];
+  const alphaMaes: (number | null)[] = [];
   let bytesSum = 0;
 
   for (const input of inputs) {
@@ -310,7 +327,7 @@ async function scoreVariant(
     const decoded = decodeViaRust(cli, hash, "srgb", capW, capH, variant.tune);
 
     const reference = input.metricReferenceRgba ?? input.referenceRgba;
-    const { metrics } = await computeAllMetrics(
+    const { metrics, alphaMae } = await computeAllMetrics(
       reference,
       input.referenceWidth,
       input.referenceHeight,
@@ -322,6 +339,7 @@ async function scoreVariant(
     ssim2s.push(metrics.ssimulacra2);
     butters.push(metrics.butteraugli);
     dssims.push(metrics.dssim);
+    alphaMaes.push(alphaMae);
   }
 
   return {
@@ -340,6 +358,7 @@ async function scoreVariant(
     meanSsimulacra2: mean(ssim2s),
     meanButteraugli: mean(butters),
     meanDssim: mean(dssims),
+    meanAlphaMae: mean(alphaMaes),
     ciedeDeltaPct: null,
     guardsOk: null,
   };
@@ -372,10 +391,14 @@ function applyGuards(rows: SweepRow[]): void {
 
 async function main(): Promise<void> {
   ensureIqaAvailable();
-  setScoringConfig({ upscalePolicy: "browser-gamma", blurredScoring: false });
-
   const raw = await fs.readFile(configPath, "utf8");
   const config = JSON.parse(raw) as SweepConfig;
+  setScoringConfig({
+    upscalePolicy: "browser-gamma",
+    blurredScoring: false,
+    backdrops: BACKDROP_SETS[config.backdrops ?? "white"],
+    alphaFidelity: config.alphaFidelity ?? false,
+  });
   if (!config.variants?.length) {
     throw new Error(`config ${config.name} declares no variants`);
   }
@@ -414,19 +437,23 @@ async function main(): Promise<void> {
   const outPath = path.join(outDir, `${config.name}${suffix}.json`);
   await fs.writeFile(
     outPath,
-    `${JSON.stringify({ name: config.name, description: config.description ?? null, split, images: inputs.length, guardTolerances: { ssimulacra2Drop: GUARD_SSIM2_DROP, relativeRise: GUARD_REL_RISE }, rows }, null, 2)}\n`,
+    `${JSON.stringify({ name: config.name, description: config.description ?? null, split, images: inputs.length, guardTolerances: { ssimulacra2Drop: GUARD_SSIM2_DROP, relativeRise: GUARD_REL_RISE }, corpus, backdrops: config.backdrops ?? "white", alphaFidelity: config.alphaFidelity ?? false, rows }, null, 2)}\n`,
   );
 
   console.log(`\nDecision table (${split} split) → ${outPath}`);
+  // The alpha column only exists when alpha was scored, so an opaque sweep's
+  // table stays exactly as wide as it was.
+  const showAlpha = rows.some((r) => r.meanAlphaMae !== null);
   console.log(
-    `  ${"Variant".padEnd(28)} ${"Bytes".padStart(6)} ${"ΔE00".padStart(8)} ${"Δ%".padStart(7)} ${"Med".padStart(8)} ${"SSIM2".padStart(8)} ${"Butter".padStart(8)} ${"DSSIM".padStart(8)} Guards`,
+    `  ${"Variant".padEnd(28)} ${"Bytes".padStart(6)} ${"ΔE00".padStart(8)} ${"Δ%".padStart(7)} ${"Med".padStart(8)} ${"SSIM2".padStart(8)} ${"Butter".padStart(8)} ${"DSSIM".padStart(8)}${showAlpha ? ` ${"αMAE".padStart(8)}` : ""} Guards`,
   );
   const cell = (v: number | null, d: number, w: number) =>
     (v !== null ? v.toFixed(d) : "N/A").padStart(w);
   for (const r of rows) {
     const guards = r.guardsOk === null ? "(base)" : r.guardsOk ? "ok" : "FAIL";
+    const alpha = showAlpha ? ` ${cell(r.meanAlphaMae, 4, 8)}` : "";
     console.log(
-      `  ${r.label.padEnd(28)} ${r.bytes.toFixed(0).padStart(6)} ${cell(r.meanCiede, 3, 8)} ${cell(r.ciedeDeltaPct, 2, 7)} ${cell(r.medianCiede, 3, 8)} ${cell(r.meanSsimulacra2, 1, 8)} ${cell(r.meanButteraugli, 2, 8)} ${cell(r.meanDssim, 4, 8)} ${guards}`,
+      `  ${r.label.padEnd(28)} ${r.bytes.toFixed(0).padStart(6)} ${cell(r.meanCiede, 3, 8)} ${cell(r.ciedeDeltaPct, 2, 7)} ${cell(r.medianCiede, 3, 8)} ${cell(r.meanSsimulacra2, 1, 8)} ${cell(r.meanButteraugli, 2, 8)} ${cell(r.meanDssim, 4, 8)}${alpha} ${guards}`,
     );
   }
 }

@@ -105,7 +105,6 @@ const PRECISION_FAMILIES: ReadonlyArray<readonly [number, number]> = [
  */
 const LC_RATIOS: readonly number[] = [SHIPPED_LC_RATIO, 1.5, 2.0, 4.0, 6.0];
 
-
 const { values } = parseArgs({
   options: {
     split: { type: "string", default: "tune" },

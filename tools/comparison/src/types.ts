@@ -215,7 +215,7 @@ export interface ScoringMetaJson {
   /** Gaussian sigma rule for blurred scoring (informational). */
   blurSigmaRule: string;
   /** Backdrop RGB both sides are composited over before scoring. */
-  alphaBackdrop: [number, number, number];
+  alphaBackdrop: readonly [number, number, number];
 }
 
 /**

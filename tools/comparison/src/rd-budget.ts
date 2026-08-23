@@ -141,7 +141,6 @@ const formatFilter = values.formats
   ? new Set(values.formats.split(",").map((s) => s.trim().toLowerCase()))
   : null;
 
-
 async function loadCorpus(): Promise<ImageInput[]> {
   const toolRoot = path.resolve(import.meta.dirname, "..");
   const syntheticDir = path.join(toolRoot, "fixtures/synthetic");
