@@ -407,6 +407,13 @@ impl AcQuantJob<'_> {
 /// Quantize one coefficient. With `nearest` the ±2 neighborhood of the
 /// companded-domain code is scored by *reconstruction* error and the best code
 /// wins; otherwise this is bit-for-bit the shipped `compand_quantize`.
+///
+/// A fired deadzone short-circuits the search. The deadzone's whole purpose is
+/// to force a small coefficient to exact zero, and the nearest-reconstruction
+/// code for a small value is always within ±2 of the centre — so letting the
+/// search run would silently undo every deadzone decision, making the knob
+/// inert rather than merely ineffective. (It was: before this, the encoder
+/// produced byte-identical output at every deadzone value.)
 fn quantize_one(job: &AcQuantJob, value: f64, scale: f64, bits: u32, nearest: bool) -> u32 {
     let normalized = if scale == 0.0 { 0.0 } else { value / scale };
     let q = compand_quantize(
@@ -417,7 +424,8 @@ fn quantize_one(job: &AcQuantJob, value: f64, scale: f64, bits: u32, nearest: bo
         job.table,
         job.deadzone,
     );
-    if !nearest || scale == 0.0 {
+    let deadzoned = job.deadzone > 0.0 && normalized.abs() < job.deadzone;
+    if !nearest || scale == 0.0 || deadzoned {
         return q;
     }
     let max_idx = (1u32 << bits) - 2;
