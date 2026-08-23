@@ -54,6 +54,19 @@ const SHIPPED_LC_RATIO = 26 / 9;
 const L_BITS = 5;
 const C_BITS = 4;
 
+/**
+ * Byte anchors the format actually ships, mapped to their tier code. At these
+ * budgets the comparison must run the shipped constants; anywhere else there is
+ * no shipped layout to run and one is synthesized instead.
+ */
+const SHIPPED_ANCHORS = new Map<number, number>([
+  [21, 4], // the compact tier
+  [32, 0],
+  [108, 1],
+  [411, 2],
+  [1623, 3],
+]);
+
 /** Encoded length in bytes for a tier-0 (nL, nC) AC layout. */
 function bytesFor(nL: number, nC: number): number {
   return Math.ceil((PREFIX_BITS + nL * L_BITS + 2 * nC * C_BITS) / 8);
@@ -188,7 +201,8 @@ function mean(xs: (number | null)[]): number | null {
 async function scoreChromaHash(
   label: string,
   targetBytes: number,
-  tune: string,
+  /** CHROMAHASH_TUNE overrides, or null to run the shipped constants. */
+  tune: string | null,
   tier: number,
   inputs: ImageInput[],
 ): Promise<Row> {
@@ -199,9 +213,17 @@ async function scoreChromaHash(
   let bytesSum = 0;
   for (const input of inputs) {
     const { smallWidth: w, smallHeight: h, smallRgba: rgba } = input;
-    const hash = encodeViaRust(RUST_CLI, w, h, rgba, "srgb", tier, tune);
+    const hash = encodeViaRust(
+      RUST_CLI,
+      w,
+      h,
+      rgba,
+      "srgb",
+      tier,
+      tune ?? undefined,
+    );
     bytesSum += hash.length;
-    const dec = decodeViaRust(RUST_CLI, hash, "srgb", w, h, tune);
+    const dec = decodeViaRust(RUST_CLI, hash, "srgb", w, h, tune ?? undefined);
     const { metrics } = await computeAllMetrics(
       input.metricReferenceRgba ?? input.referenceRgba,
       input.referenceWidth,
@@ -543,9 +565,21 @@ async function main(): Promise<void> {
     );
   };
 
-  // ChromaHash: one layout per budget, resized to fill it.
+  // ChromaHash. At a shipped byte anchor this must be the shipped tier, not a
+  // layout synthesized to fill the budget: `allocate` builds a 5 b/4 b layout,
+  // which is the *pre-v0.7* shape, so synthesizing at 32 B would report the old
+  // format under the current name. Off-anchor budgets are still synthesized —
+  // there is nothing else to show there — and are labelled "resized" so the two
+  // are never confused.
   if (want("chromahash")) {
     for (const b of budgets) {
+      const anchorTier = SHIPPED_ANCHORS.get(b);
+      if (anchorTier !== undefined) {
+        await push(
+          scoreChromaHash(`ChromaHash@${b}B`, b, null, anchorTier, inputs),
+        );
+        continue;
+      }
       const a = allocate(b);
       if (!a) {
         console.log(
@@ -560,9 +594,7 @@ async function main(): Promise<void> {
       const c = Math.round(a.nC / s);
       const tune = `l1=${l1}:5 c=${c}:4`;
       await push(
-        scoreChromaHash(`ChromaHash@${b}B`, b, tune, tier, inputs).then(
-          (r) => r,
-        ),
+        scoreChromaHash(`ChromaHash@${b}B (resized)`, b, tune, tier, inputs),
       );
     }
   }
