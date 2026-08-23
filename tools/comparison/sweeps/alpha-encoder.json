@@ -1,0 +1,17 @@
+{
+  "name": "alpha-encoder",
+  "corpus": "alpha",
+  "backdrops": "white-black-grey",
+  "alphaFidelity": true,
+  "description": "§11.2 — bringing the alpha channel's quantizer up to the same generation as L/a/b. `alpha_ac_fit=1` routes alpha through `quantize_ac_channel`, so `scale_fit` (search the scale code by reconstruction SSE) and `ac_nearest` (pick the code nearest in reconstruction, not in the companded domain) apply to it. Both were adopted for the colour channels and were worth −0.43% and −0.05% there; alpha has never had either. The arms separate the two effects and check that neither depends on the layout.",
+  "variants": [
+    { "label": "DEFAULT (legacy alpha path)" },
+    { "label": "alpha_ac_fit=1", "tune": "alpha_ac_fit=1" },
+    { "label": "alpha_ac_fit, scale_fit=1", "tune": "alpha_ac_fit=1 scale_fit=1" },
+    { "label": "alpha_ac_fit, no nearest", "tune": "alpha_ac_fit=1 ac_nearest=0" },
+    { "label": "alpha_ac_fit, no fit no near", "tune": "alpha_ac_fit=1 scale_fit=0 ac_nearest=0" },
+    { "label": "legacy, no fit no near", "tune": "scale_fit=0 ac_nearest=0" },
+    { "label": "alpha_ac_fit @ L22@4 C14@3", "tune": "alpha_ac_fit=1 la1=22:4 ca=14:3" },
+    { "label": "legacy @ L22@4 C14@3", "tune": "la1=22:4 ca=14:3" }
+  ]
+}
