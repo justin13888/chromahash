@@ -237,9 +237,6 @@ SEL_HV = 0.15
 SEL_Q = 12
 SEL_ONE = 1 << SEL_Q
 
-# Alpha-channel AC coefficients at tier 0 (alpha mode only) and their bit width.
-LEGACY_ALPHA_AC_COUNT = 5
-LEGACY_ALPHA_AC_BITS = 4
 
 
 @dataclass(frozen=True)

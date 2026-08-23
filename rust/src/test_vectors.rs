@@ -251,8 +251,12 @@ mod tests {
             ] {
                 let byte = encode_aspect(w, h);
                 let decoded_ratio = decode_aspect(byte);
-                // Natural size scales by 2^tier on each axis (long edge 32·2^tier).
-                for tier in 0..=MAX_TIER {
+                // Natural size scales by 2^level on each axis (long edge 32·2^level),
+                // where level is the tier's *render level*. The compact tier is
+                // included deliberately: its size is the half of the render-level
+                // rule that no length check can catch, because the byte length
+                // depends only on the coefficient counts.
+                for tier in [COMPACT_TIER, 0, 1, 2, 3] {
                     let (dw, dh) = decode_output_size(byte, tier);
                     cases.push(format!(
                         r#"  {{
@@ -478,7 +482,7 @@ mod tests {
                 "solid_red_4x4",
             ];
             for (name, w, h, rgba, gamut) in &test_images {
-                let mut tiers = vec![0u8];
+                let mut tiers = vec![COMPACT_TIER, 0u8];
                 if higher_tier_images.contains(name) {
                     tiers.extend(1..=MAX_TIER);
                 }

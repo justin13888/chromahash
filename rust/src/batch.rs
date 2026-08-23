@@ -27,7 +27,8 @@ pub struct ImageInput {
     pub rgba: Arc<[u8]>,
     /// Source color space.
     pub gamut: Gamut,
-    /// Quality tier (`0..=`[`crate::MAX_TIER`]); 0 is the default 32-byte hash.
+    /// Tier code (`0..=`[`crate::MAX_TIER`], or [`crate::COMPACT_TIER`]);
+    /// 0 is the default 32-byte hash.
     pub quality: u8,
 }
 
@@ -123,7 +124,8 @@ impl BatchEncoder {
     ///
     /// # Panics
     /// Panics, identifying the offending index, if any item has `w < 1`,
-    /// `h < 1`, `rgba.len() != w * h * 4`, or `quality > `[`crate::MAX_TIER`].
+    /// `h < 1`, `rgba.len() != w * h * 4`, or `quality` is not a valid tier
+    /// code (see [`crate::is_valid_tier`]).
     #[must_use]
     pub fn encode_batch(&self, items: &[ImageInput]) -> Vec<ChromaHash> {
         for (i, item) in items.iter().enumerate() {
@@ -135,8 +137,9 @@ impl BatchEncoder {
             );
             assert!(
                 crate::constants::is_valid_tier(item.quality),
-                "item {i}: quality tier must be <= {}",
-                crate::MAX_TIER
+                "item {i}: tier must be 0..={} or the compact tier {}",
+                crate::MAX_TIER,
+                crate::COMPACT_TIER
             );
         }
 

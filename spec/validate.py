@@ -13,6 +13,7 @@ Exit code 0 on success, 1 on any validation failure.
 import math
 import sys
 
+import selection
 from constants import (
     M1_ADOBE_RGB,
     M1_BT2020,
@@ -53,7 +54,8 @@ from constants import (
     tier_count_scale,
     COMPACT_TIER,
     is_valid_tier,
-    render_level,)
+    render_level,
+    ALPHA_FLAG_BIT,)
 from selection import (
     FORMAT_KS,
     decode_output_size,
@@ -657,6 +659,70 @@ def validate_length_formula():
 # Main
 # =========================================================================
 
+def validate_against_vectors():
+    """Check this reference against the shared test vectors. Per spec §2.
+
+    The other checks in this file are self-consistent: they verify the constants
+    against each other and against arithmetic. That is not enough. A reference
+    implementation can be internally coherent and still disagree with the
+    normative bytes — which is exactly what happened to `decode_output_size`,
+    where shifting by the tier code rather than the render level gave the
+    compact tier a 512 px grid while every self-consistent check still passed.
+
+    The vectors are the only thing that can catch that class of error, so the
+    Python reference is now measured against them like any other port.
+    """
+    import json
+    import os
+
+    print("\n11. Reference vs shared test vectors")
+    vec_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "test-vectors")
+
+    # Render size: the half of the render-level rule no length check can see.
+    with open(os.path.join(vec_dir, "unit-aspect.json")) as f:
+        aspect_cases = json.load(f)
+    bad = []
+    for c in aspect_cases:
+        i, e = c["input"], c["expected"]
+        got = selection.decode_output_size(e["byte"], i["tier"])
+        if got != (e["output_width"], e["output_height"]):
+            bad.append((c["name"], got, (e["output_width"], e["output_height"])))
+    check(not bad,
+          f"decode_output_size matches all {len(aspect_cases)} unit-aspect vectors"
+          + (f" — MISMATCH: {bad[:3]}" if bad else ""))
+
+    # Selection order and p_k, including the weighted form.
+    with open(os.path.join(vec_dir, "unit-selection.json")) as f:
+        sel_cases = json.load(f)
+    bad = []
+    for c in sel_cases:
+        i, e = c["input"], c["expected"]
+        coeffs, p_k = selection.select_coefficients(
+            i["aspect_byte"], i["tier"], i["k"], i.get("aniso", 0.0), i.get("hv", 0.0)
+        )
+        if [list(x) for x in coeffs] != e["coeffs"] or p_k != e["p_k"]:
+            bad.append(c["name"])
+    check(not bad,
+          f"select_coefficients matches all {len(sel_cases)} unit-selection vectors"
+          + (f" — {len(bad)} MISMATCHED: {bad[:3]}" if bad else ""))
+
+    # Byte length, across every tier code and both alpha modes.
+    with open(os.path.join(vec_dir, "integration-encode.json")) as f:
+        enc_cases = json.load(f)
+    bad = []
+    for c in enc_cases:
+        e = c["expected"]
+        raw = e["hash"]
+        tier = (raw[0] >> 3) & 0b111
+        has_alpha = bool((raw[0] >> ALPHA_FLAG_BIT) & 1)
+        want = body_len_bytes(tier_layout(tier), has_alpha, tier)
+        if want != len(raw):
+            bad.append((c["name"], want, len(raw)))
+    check(not bad,
+          f"body_len_bytes matches all {len(enc_cases)} integration-encode vectors"
+          + (f" — MISMATCH: {bad[:3]}" if bad else ""))
+
+
 if __name__ == "__main__":
     print("ChromaHash Constants Validation")
     print("=" * 60)
@@ -671,6 +737,7 @@ if __name__ == "__main__":
     validate_aspect_ratio()
     validate_selection()
     validate_length_formula()
+    validate_against_vectors()
 
     print(f"\n{'=' * 60}")
     print(f"Results: {passed} passed, {failed} failed")

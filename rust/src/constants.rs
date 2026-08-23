@@ -211,7 +211,7 @@ pub const LAYOUT_D: AcLayout = AcLayout {
 /// by mining the photographic guards. See `EXPERIMENTS.md` §11.5.
 ///
 /// `54 + 19·4 + 2·6·3 = 166 bits` → 21 bytes (no alpha).
-/// `54 + 9 + 13·4 + 2·5·3 + 5·4 = 165 bits` → 21 bytes (alpha).
+/// `54 + 9 + 12·4 + 2·1·3 + 16·3 = 165 bits` → 21 bytes (alpha).
 pub const LAYOUT_TC: AcLayout = AcLayout {
     l_tiers: [(19, 4), (0, 4)],
     c_count: 6,

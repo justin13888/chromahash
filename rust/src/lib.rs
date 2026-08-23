@@ -48,7 +48,8 @@
 //! - [`average_color`](ChromaHash::average_color) — the DC color, without a full
 //!   decode.
 //! - [`encode_with_quality`](ChromaHash::encode_with_quality) — image → hash at a
-//!   chosen quality tier (`0..=3`); higher tiers carry more detail in more bytes.
+//!   chosen tier (`0..=3`, or `COMPACT_TIER` for a 21-byte code); higher tiers
+//!   carry more detail in more bytes.
 //! - [`from_bytes`](ChromaHash::from_bytes) / [`as_bytes`](ChromaHash::as_bytes)
 //!   — round-trip the raw bytes; `from_bytes` validates and is fallible.
 //!
@@ -147,7 +148,8 @@ impl ChromaHash {
         }
     }
 
-    /// Encode an image at an explicit quality `tier` (`0..=`[`MAX_TIER`]).
+    /// Encode an image at an explicit `tier` (`0..=`[`MAX_TIER`], or
+    /// [`COMPACT_TIER`]).
     ///
     /// Tier 0 is the default 32-byte placeholder. Each higher tier doubles the
     /// natural render resolution (long edge `32 · 2^tier`) and roughly
@@ -160,7 +162,7 @@ impl ChromaHash {
     /// # Panics
     ///
     /// Panics if `w` or `h` is 0, if `rgba.len()` is not exactly `w * h * 4`,
-    /// or if `quality > `[`MAX_TIER`].
+    /// or if `quality` is not a valid tier code (see [`is_valid_tier`]).
     pub fn encode_with_quality(w: u32, h: u32, rgba: &[u8], gamut: Gamut, quality: u8) -> Self {
         Self {
             hash: encode::encode_quality(w, h, rgba, gamut, quality),

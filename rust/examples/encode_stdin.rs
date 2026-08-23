@@ -64,16 +64,20 @@ fn read_hash_from_stdin() -> ChromaHash {
 fn set_layouts(t: &mut Tunables, mut f: impl FnMut(&mut chromahash::AcLayout)) {
     f(&mut t.layout);
     f(&mut t.layout_upper);
+    f(&mut t.layout_compact);
 }
 
-/// Which row of the two-row AC layout table a raw override applies to.
+/// Which row of the three-row AC layout table a raw override applies to.
 enum LayoutScope {
-    /// Both rows — the historical "one base, scaled by 4^tier" meaning.
+    /// Every row — the historical "one base, scaled by 4^tier" meaning, extended
+    /// to the compact row so a bare knob is never silently inert at some tier.
     Both,
     /// Tier 0 only.
     T0,
     /// The tier-1..3 base only.
     Upper,
+    /// The compact tier only.
+    Compact,
 }
 
 /// Apply a raw layout override to one row of the table, or to both.
@@ -86,6 +90,7 @@ fn set_layout_scoped(
         LayoutScope::Both => set_layouts(t, f),
         LayoutScope::T0 => f(&mut t.layout),
         LayoutScope::Upper => f(&mut t.layout_upper),
+        LayoutScope::Compact => f(&mut t.layout_compact),
     }
 }
 
@@ -96,6 +101,8 @@ fn split_layout_scope(key: &str) -> (&str, LayoutScope) {
         (base, LayoutScope::T0)
     } else if let Some(base) = key.strip_suffix("_up") {
         (base, LayoutScope::Upper)
+    } else if let Some(base) = key.strip_suffix("_tc") {
+        (base, LayoutScope::Compact)
     } else {
         (key, LayoutScope::Both)
     }

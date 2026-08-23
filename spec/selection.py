@@ -42,6 +42,7 @@ from constants import (
     SEL_HV,
     SEL_ONE,
     SEL_Q,
+    render_level,
     tier_count_scale,
     tier_layout,
 )
@@ -120,17 +121,21 @@ def base_output_size(aspect_byte: int) -> tuple[int, int]:
 
 
 def decode_output_size(aspect_byte: int, tier: int) -> tuple[int, int]:
-    """Natural output size for an aspect byte at a quality tier. Per spec §8.2 (v1).
+    """Natural output size for an aspect byte at a tier code. Per spec §8.2 (v1).
 
-    The tier-0 size is scaled by a power of two — (w << tier, h << tier) — so the
-    long edge is 32·2^tier (32 / 64 / 128 / 256 px). Scaling the already-rounded
+    The tier-0 size is scaled by a power of two — (w << level, h << level), where
+    level is render_level(tier) — so the long edge is 32·2^level
+    (32 / 64 / 128 / 256 px). The shift is on the RENDER LEVEL, not the tier
+    code: the compact tier is code 4 and renders at tier 0's size, so shifting by
+    the code would give it a 512 px grid. Scaling the already-rounded
     base size by a bit shift (rather than re-rounding 32·2^tier/ratio) is
     mandatory: the two disagree for non-power-of-two ratios (round(64/3) = 21 vs
     round(32/3) << 1 = 22), and the encoder and decoder MUST derive identical
     grids or the reconstruction desynchronizes.
     """
     w, h = base_output_size(aspect_byte)
-    return (w << tier, h << tier)
+    level = render_level(tier)
+    return (w << level, h << level)
 
 
 def select_coefficients(
