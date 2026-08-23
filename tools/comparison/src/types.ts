@@ -114,6 +114,8 @@ export interface HarnessResult {
 export type ImageCategory =
   | "Dimensions"
   | "Alpha"
+  | "Alpha (real)"
+  | "Graphics"
   | "Color Distribution"
   | "Quantization"
   | "Gamut"

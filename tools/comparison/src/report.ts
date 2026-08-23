@@ -326,6 +326,8 @@ export function generateReport(
   const categories: ImageCategory[] = [
     "Dimensions",
     "Alpha",
+    "Alpha (real)",
+    "Graphics",
     "Color Distribution",
     "Quantization",
     "Gamut",
@@ -614,6 +616,10 @@ ${reportFooter(meta)}
 export function categorizeImage(fileName: string): ImageCategory {
   const base = fileName.replace(/\.[^.]+$/, "");
   if (base.startsWith("dim-")) return "Dimensions";
+  // `cutout-`/`graphic-` are the curated evaluation corpora (§11.0); `alpha-`,
+  // `textui-` and `illust-` are the small generated fixtures that predate them.
+  if (base.startsWith("cutout-")) return "Alpha (real)";
+  if (base.startsWith("graphic-")) return "Graphics";
   if (base.startsWith("alpha-")) return "Alpha";
   if (
     base.startsWith("solid-") ||
