@@ -51,7 +51,9 @@ from constants import (
     ac_payload_bits,
     body_len_bytes,
     tier_count_scale,
-)
+    COMPACT_TIER,
+    is_valid_tier,
+    render_level,)
 from selection import (
     FORMAT_KS,
     decode_output_size,
@@ -556,7 +558,26 @@ def validate_length_formula():
     # Version / tier descriptor constants are consistent.
     check(FORMAT_VERSION == 0, f"FORMAT_VERSION = {FORMAT_VERSION} (format v1)")
     check(MAX_TIER == 3,
-          f"MAX_TIER = {MAX_TIER} (tiers 0..=3 valid, 4..=7 reserved)")
+          f"MAX_TIER = {MAX_TIER} (highest QUALITY tier)")
+    # The compact tier takes a code from the formerly-reserved range. MAX_TIER
+    # is not "the largest valid code" any more, and code 4 is valid while being
+    # BELOW tier 0 in quality — the one hazard in this design, so pin it.
+    check(COMPACT_TIER == 4, f"COMPACT_TIER = {COMPACT_TIER} (code 4)")
+    check(is_valid_tier(COMPACT_TIER), "compact tier code 4 is valid")
+    check(all(not is_valid_tier(t) for t in (5, 6, 7)),
+          "codes 5..=7 remain reserved and are rejected")
+    check(render_level(COMPACT_TIER) == 0,
+          "compact tier renders at level 0 (tier 0's resolution), not level 4")
+    check(tier_count_scale(COMPACT_TIER) == 1,
+          "compact tier scales coefficient counts by 1, not 4^4")
+    # It must be genuinely smaller than tier 0 in both alpha modes, or it is not
+    # a compact tier at all.
+    for has_alpha in (False, True):
+        label = "alpha" if has_alpha else "no-alpha"
+        nc = body_len_bytes(tier_layout(COMPACT_TIER), has_alpha, COMPACT_TIER)
+        n0 = body_len_bytes(tier_layout(0), has_alpha, 0)
+        check(nc == 21, f"compact {label} length = {nc} bytes (= 21)")
+        check(nc < n0, f"compact {label} ({nc} B) is smaller than tier 0 ({n0} B)")
 
     # Fixed prefix framing: 16-bit descriptor/aspect + 38-bit DC/scale = 54 bits.
     check(PREFIX_BITS == 54, f"PREFIX_BITS = {PREFIX_BITS} (= 54)")

@@ -63,9 +63,16 @@ TIER_BITS = 3           # Width of the byte-0 tier field (bits 3..6)
 ALPHA_FLAG_BIT = 6      # Bit position of the hasAlpha flag within byte 0
 RESERVED_FLAG_BIT = 7   # Bit position of the reserved flag (MUST be 0 in v1)
 
-# Highest quality tier v1 defines: tiers 0..=MAX_TIER are valid; 4..=7 are
-# reserved and MUST be rejected by a v1 decoder.
+# Highest *quality* tier v1 defines. Deliberately not "the largest valid tier
+# code": COMPACT_TIER is code 4 and is valid, but sits BELOW tier 0 in quality.
+# Validate with is_valid_tier() and order codes with render_level(); comparing a
+# raw code against MAX_TIER is what makes tier 4 look like an out-of-range 5.
 MAX_TIER = 3
+# The compact tier's code (§3.1): 21 bytes, below tier 0 in quality and in size,
+# at tier 0's render resolution. It occupies a code from the formerly-reserved
+# 4..=7 range, so a v1 decoder written before it existed rejects it rather than
+# mis-decoding it. Codes 5..=7 remain reserved.
+COMPACT_TIER = 4
 # Tier-0 natural-render long edge (px). The long edge scales to
 # BASE_LONG_EDGE << tier (32 / 64 / 128 / 256 px).
 BASE_LONG_EDGE = 32
@@ -154,14 +161,47 @@ LAYOUT_T0 = AcLayout(
     ca_bits=4,
 )
 
+# Layout TC: the compact-tier row (tier code 4, 21 bytes).
+#   no alpha = 54 + 19·4 L + 2·6·3 chroma                          = 166 bits
+#   alpha    = 54 + 9 + 13·4 L + 2·5·3 chroma + 5·4 alpha          = 165 bits
+# Both round up to 21 bytes.
+LAYOUT_TC = AcLayout(
+    l_tiers=((19, 4), (0, 4)),
+    c_count=6,
+    c_bits=3,
+    la_tiers=((13, 4), (0, 4)),
+    ca_count=5,
+    ca_bits=3,
+)
+
 # The shipped default layouts (Tunables::DEFAULT in the Rust reference):
 # tier 0 has its own table, tiers 1..=3 share one base scaled by 4^tier.
 DEFAULT_LAYOUT = LAYOUT_T0
 DEFAULT_LAYOUT_UPPER = LAYOUT_B
+DEFAULT_LAYOUT_COMPACT = LAYOUT_TC
+
+
+def is_valid_tier(tier: int) -> bool:
+    """Is `tier` a code this format defines? 0..=MAX_TIER and COMPACT_TIER."""
+    return tier <= MAX_TIER or tier == COMPACT_TIER
+
+
+def render_level(tier: int) -> int:
+    """Quality ordinal of a tier code: how many times the natural render size
+    doubles, and the exponent behind the 4^level coefficient scaling.
+
+    The compact tier renders at tier 0's size, so it has level 0. Every place
+    that would shift by the raw tier code must shift by this instead — code 4
+    would otherwise mean a 512 px render at 256x the coefficients."""
+    return 0 if tier == COMPACT_TIER else tier
 
 
 def tier_layout(tier: int) -> AcLayout:
-    """The shipped layout governing a quality tier. Per spec §3.2 (v1)."""
+    """The shipped layout governing a tier code. Per spec §3.2 (v1).
+
+    Three rows: the compact tier, tier 0, and one base tiers 1..=3 scale."""
+    if tier == COMPACT_TIER:
+        return DEFAULT_LAYOUT_COMPACT
     return DEFAULT_LAYOUT if tier == 0 else DEFAULT_LAYOUT_UPPER
 
 # =========================================================================
@@ -204,8 +244,9 @@ class AcShape:
 
 
 def tier_count_scale(tier: int) -> int:
-    """4^tier — the count multiplier for a quality tier (1, 4, 16, 64)."""
-    return 1 << (2 * tier)
+    """4^level — the count multiplier for a tier code (1, 4, 16, 64; 1 for the
+    compact tier, which shares tier 0's render level)."""
+    return 1 << (2 * render_level(tier))
 
 
 def ac_shape(layout: AcLayout, has_alpha: bool, tier: int) -> AcShape:
