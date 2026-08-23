@@ -1,7 +1,7 @@
 {
   "name": "compact-tier-graphics",
   "corpus": "graphic",
-  "description": "SS11.5 tie-break - the compact-tier plateau on the graphic corpus. The photographic tune split cannot separate these layouts: the top seven span 0.5% and every pairwise paired-bootstrap CI against the leader includes zero. Rather than mine the photographic guards for a winner, the tie is broken on whether a candidate holds up on content the compact tier will also be asked to carry.",
+  "description": "SS11.5 tie-break - the compact-tier plateau on the graphic corpus. The photographic tune split cannot separate these layouts: the top seven span 0.5% and every pairwise paired-bootstrap CI against the leader includes zero. Rather than mine the photographic guards for a winner, the tie is broken on whether a candidate holds up on content the compact tier will also be asked to carry. Run with forceOpaque: two images in this corpus carry an alpha channel and would otherwise encode in alpha mode, where none of the arms' opaque-layout overrides apply \u2014 they would contribute an identical constant to every arm, diluting every delta and biasing the test toward 'no difference'.",
   "variants": [
     {
       "label": "shipped shape L13@5 C6@4",
@@ -39,5 +39,6 @@
       "label": "L22@3 C8@3",
       "tune": "l1=22:3 c=8:3"
     }
-  ]
+  ],
+  "forceOpaque": true
 }

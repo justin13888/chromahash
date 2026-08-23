@@ -1,7 +1,7 @@
 {
   "name": "graphics-encoder",
   "corpus": "graphic",
-  "description": "SS11.4 - the adopted encoder stack on non-photographic content. The selection weights were trained on natural-image orientation statistics: aniso penalizes diagonals, sel_hv breaks H/V symmetry. Screenshots, charts and text are far more axis-aligned than photographs, so the weights could help more there or could be actively wrong. scale_fit and ac_nearest are content-independent in principle and are included as a control.",
+  "description": "SS11.4 - the adopted encoder stack on non-photographic content. The selection weights were trained on natural-image orientation statistics: aniso penalizes diagonals, sel_hv breaks H/V symmetry. Screenshots, charts and text are far more axis-aligned than photographs, so the weights could help more there or could be actively wrong. scale_fit and ac_nearest are content-independent in principle and are included as a control. Run with forceOpaque: two images in this corpus carry an alpha channel and would otherwise encode in alpha mode, where none of the arms' opaque-layout overrides apply \u2014 they would contribute an identical constant to every arm, diluting every delta and biasing the test toward 'no difference'.",
   "variants": [
     {
       "label": "DEFAULT (full stack)"
@@ -42,5 +42,6 @@
       "label": "pre-adoption (all off)",
       "tune": "l1=26:5 c=9:4 aniso=0 sel_hv=0 scale_fit=0 ac_nearest=0"
     }
-  ]
+  ],
+  "forceOpaque": true
 }

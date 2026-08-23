@@ -46,6 +46,7 @@ import {
   BACKDROP_SETS,
   type BackdropSetName,
   computeAllMetrics,
+  flattenOverBackdrop,
   setScoringConfig,
 } from "./metrics.ts";
 import { ensureIqaAvailable } from "./metrics/iqa.ts";
@@ -107,6 +108,18 @@ interface SweepConfig {
   backdrops?: BackdropSetName;
   /** Also score the alpha plane directly, reported as `meanAlphaMae`. */
   alphaFidelity?: boolean;
+  /**
+   * Composite every input over the scoring backdrop and force alpha to opaque
+   * before encoding, so the same pictures are measured in the format's *opaque*
+   * mode.
+   *
+   * This is the control for an alpha-mode experiment. The alpha corpus is
+   * cut-outs, insignia and line art — graphic-like content — and the graphics
+   * corpus independently prefers more luma than photographs do. Without this,
+   * "alpha mode wants a different layout" and "this content wants a different
+   * layout" are the same measurement.
+   */
+  forceOpaque?: boolean;
 }
 
 /** Per-variant aggregate row of the decision table. */
@@ -418,6 +431,20 @@ async function main(): Promise<void> {
   }
   if (maxImages !== null) {
     inputs = inputs.slice(0, maxImages);
+  }
+  if (config.forceOpaque) {
+    // Flatten both the encoder input and the reference, so the images enter the
+    // encoder with no alpha at all and are scored against their own opaque
+    // appearance rather than against a translucent original.
+    for (const input of inputs) {
+      input.smallRgba = flattenOverBackdrop(input.smallRgba);
+      input.referenceRgba = flattenOverBackdrop(input.referenceRgba);
+      if (input.metricReferenceRgba) {
+        input.metricReferenceRgba = flattenOverBackdrop(
+          input.metricReferenceRgba,
+        );
+      }
+    }
   }
   console.log(
     `Sweep ${config.name}: ${config.variants.length} variants × ${inputs.length} ${split}-split images`,
