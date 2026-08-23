@@ -472,19 +472,15 @@ async function main(): Promise<void> {
   }
   applyGuards(rows);
 
-  if (config.expectBytes !== undefined) {
-    const off = rows.filter(
-      (r) => Math.abs(r.bytes - config.expectBytes!) > 0.5,
-    );
+  const expectBytes = config.expectBytes;
+  if (expectBytes !== undefined) {
+    const off = rows.filter((r) => Math.abs(r.bytes - expectBytes) > 0.5);
     if (off.length > 0) {
       const detail = off
         .map((r) => `    ${r.label}: ${r.bytes.toFixed(1)} B`)
         .join("\n");
       throw new Error(
-        `config ${config.name} declares expectBytes ${config.expectBytes} but ` +
-          `${off.length} of ${rows.length} arms encode to a different size:\n${detail}\n` +
-          "  Arms that override only part of a layout inherit the rest from the " +
-          "shipped default; pin every field the budget depends on.",
+        `config ${config.name} declares expectBytes ${expectBytes} but ${off.length} of ${rows.length} arms encode to a different size:\n${detail}\n  Arms that override only part of a layout inherit the rest from the shipped default; pin every field the budget depends on.`,
       );
     }
   }
