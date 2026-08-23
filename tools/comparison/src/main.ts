@@ -237,26 +237,21 @@ async function main(): Promise<void> {
     }
   }
 
-  // Fetch natural images from Picsum (on-demand with local cache)
+  // Fetch natural images from Picsum (on-demand with local cache). Both
+  // fetchers are content-pinned and throw on a mismatch or a network failure
+  // rather than returning a short list — scoring a partial corpus would move
+  // every mean in the report without saying so.
   if (!skipNatural) {
     console.log("Ensuring natural images are cached...");
     const naturalPaths = await ensureNaturalImages();
-    if (naturalPaths.length > 0) {
-      console.log(`${naturalPaths.length} natural image(s) available.`);
-    } else {
-      console.warn("No natural images available (network may be offline).");
-    }
+    console.log(`${naturalPaths.length} natural image(s) available.`);
   }
 
   // Fetch the Kodak holdout suite (on-demand with local cache)
   if (!skipHoldout) {
     console.log("Ensuring holdout images are cached...");
     const holdoutPaths = await ensureHoldoutImages();
-    if (holdoutPaths.length > 0) {
-      console.log(`${holdoutPaths.length} holdout image(s) available.`);
-    } else {
-      console.warn("No holdout images available (network may be offline).");
-    }
+    console.log(`${holdoutPaths.length} holdout image(s) available.`);
   }
 
   // Find all image files
