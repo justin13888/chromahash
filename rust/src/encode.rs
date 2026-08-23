@@ -1,17 +1,17 @@
 use crate::aspect::encode_aspect;
 use crate::bitpack::write_bits;
-use crate::color::oklab_to_linear_srgb;
+use crate::color::{linear_rgb_to_oklab, oklab_to_linear_srgb};
 use crate::constants::{
-    A_DC_BITS, A_SCALE_BITS, ALPHA_AC_BITS, ALPHA_DC_BITS, ALPHA_FLAG_BIT, ALPHA_PREFIX_BITS,
-    ALPHA_SCALE_BITS, B_DC_BITS, B_SCALE_BITS, DESCRIPTOR_BITS, FORMAT_VERSION, Gamut, L_DC_BITS,
-    L_SCALE_BITS, MAX_TIER, PREFIX_BITS, Tunables, VERSION_BITS, ac_payload_bits, ac_shape,
-    body_len_bytes,
+    ALPHA_AC_BITS, ALPHA_DC_BITS, ALPHA_FLAG_BIT, ALPHA_PREFIX_BITS, ALPHA_SCALE_BITS,
+    FORMAT_VERSION, Gamut, MAX_TIER, Tunables, VERSION_BITS, ac_payload_bits, ac_shape,
+    body_len_bytes, prefix_bits,
 };
 use crate::dct::{
-    Selection, dct_encode_selected, precompute_cos_table, select_coefficients_weighted,
+    Selection, SelectionOrder, dct_decode_pixel_separable, dct_encode_selected, interleaved_order,
+    precompute_cos_table, window_weights,
 };
 use crate::math_utils::{clamp_neg1_1, clamp01, round_half_away_from_zero};
-use crate::mulaw::{compand_dequantize, compand_quantize};
+use crate::mulaw::{compand_dequantize, compand_quantize, mu_compress, mu_expand};
 use crate::transfer::{adobe_rgb_eotf, bt2020_pq_eotf, prophoto_rgb_eotf, srgb_eotf, srgb_gamma};
 
 /// Build a 256-entry EOTF lookup table for the given gamut. Per spec §5.2.
@@ -33,9 +33,9 @@ fn build_eotf_lut(gamut: Gamut) -> [f64; 256] {
 /// dequantize → clamp L → linear sRGB → per-channel clip → gamma. Returns the
 /// gamma-encoded sRGB triple the decoder would render for a flat region.
 fn dc_decode_sim(l_q: u32, a_q: u32, b_q: u32, t: &Tunables) -> [f64; 3] {
-    let l = l_q as f64 / 127.0;
-    let a = (a_q as f64 - 64.0) / 63.0 * t.max_chroma_a;
-    let b = (b_q as f64 - 64.0) / 63.0 * t.max_chroma_b;
+    let l = dequantize_l_dc(l_q, t.l_dc_bits);
+    let a = dequantize_c_dc(a_q, t.max_chroma_a, t.a_dc_bits);
+    let b = dequantize_c_dc(b_q, t.max_chroma_b, t.b_dc_bits);
     let rgb = oklab_to_linear_srgb([clamp01(l), a, b]);
     [
         srgb_gamma(clamp01(rgb[0])),
@@ -54,13 +54,16 @@ fn dc_decode_sim(l_q: u32, a_q: u32, b_q: u32, t: &Tunables) -> [f64; 3] {
 /// iteration order and strict improvement (`<`) keep it deterministic; ties
 /// keep the nominal codes.
 fn select_dc_codes(l_mean: f64, a_mean: f64, b_mean: f64, t: &Tunables) -> (u32, u32, u32) {
-    let l0 = round_half_away_from_zero(127.0 * clamp01(l_mean)) as i64;
-    let a0 = round_half_away_from_zero(64.0 + 63.0 * clamp_neg1_1(a_mean / t.max_chroma_a)) as i64;
-    let b0 = round_half_away_from_zero(64.0 + 63.0 * clamp_neg1_1(b_mean / t.max_chroma_b)) as i64;
+    let l0 = quantize_l_dc(l_mean, t.l_dc_bits) as i64;
+    let a0 = quantize_c_dc(a_mean, t.max_chroma_a, t.a_dc_bits) as i64;
+    let b0 = quantize_c_dc(b_mean, t.max_chroma_b, t.b_dc_bits) as i64;
 
     if !t.dc_search {
         return (l0 as u32, a0 as u32, b0 as u32);
     }
+    let l_hi = ((1i64 << t.l_dc_bits) - 1).max(0);
+    let a_hi = ((1i64 << t.a_dc_bits) - 1).max(0);
+    let b_hi = ((1i64 << t.b_dc_bits) - 1).max(0);
 
     // Target = what the decoder could at best show for the true average color
     // (out-of-gamut targets are clipped per-channel, same as the decoder).
@@ -76,9 +79,9 @@ fn select_dc_codes(l_mean: f64, a_mean: f64, b_mean: f64, t: &Tunables) -> (u32,
     for dl in [0i64, -1, 1] {
         for da in [0i64, -1, 1] {
             for db in [0i64, -1, 1] {
-                let l_q = (l0 + dl).clamp(0, 127) as u32;
-                let a_q = (a0 + da).clamp(1, 127) as u32;
-                let b_q = (b0 + db).clamp(1, 127) as u32;
+                let l_q = (l0 + dl).clamp(0, l_hi) as u32;
+                let a_q = (a0 + da).clamp(1, a_hi) as u32;
+                let b_q = (b0 + db).clamp(1, b_hi) as u32;
                 let cand = dc_decode_sim(l_q, a_q, b_q, t);
                 let dr = cand[0] - target[0];
                 let dg = cand[1] - target[1];
@@ -106,11 +109,25 @@ pub(crate) fn band_split_index(count: usize, split: f64) -> usize {
 struct Analysis {
     has_alpha: bool,
     aspect: u8,
+    /// The value actually written into the (possibly narrowed) aspect field.
+    aspect_code: u32,
     shape: crate::constants::AcShape,
     l: (f64, Vec<f64>, f64),
     a: (f64, Vec<f64>, f64),
     b: (f64, Vec<f64>, f64),
     alpha: (f64, Vec<f64>, f64),
+    /// Encoder-input geometry and the composited OKLAB channels, kept so the
+    /// pixel-domain refinement can score candidate codes against the source it
+    /// was actually derived from (see [`refine_codes`]).
+    w: usize,
+    h: usize,
+    l_chan: Vec<f64>,
+    a_chan: Vec<f64>,
+    b_chan: Vec<f64>,
+    l_sel: Selection,
+    c_sel: Selection,
+    cos_x: Vec<Vec<f64>>,
+    cos_y: Vec<Vec<f64>>,
 }
 
 /// Signal-path front half of the encoder (spec §10 steps 1–7): color
@@ -187,14 +204,17 @@ fn analyze(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables, tier: u8) ->
     }
 
     // 5. Select coefficients (top-K isotropic frequencies, scaled to the tier)
-    let aspect = encode_aspect(w as u32, h as u32);
-    let shape = ac_shape(&t.layout, has_alpha, tier);
+    // The aspect field may be narrower than a byte; encoder and decoder must
+    // both select and render on the *reconstructed* aspect.
+    let (aspect_code, aspect) = quantize_aspect(encode_aspect(w as u32, h as u32), t.aspect_bits);
+    let shape = ac_shape(t, has_alpha, tier);
     let l_count = shape.l_count();
     let c_count = shape.c_count;
-    let l_sel: Selection = select_coefficients_weighted(aspect, tier, l_count, t.aniso_oblique);
-    let c_sel: Selection = select_coefficients_weighted(aspect, tier, c_count, t.aniso_oblique);
+    let order = SelectionOrder::new(aspect, tier, t.aniso_oblique, t.sel_hv);
+    let l_sel: Selection = order.take(l_count);
+    let c_sel: Selection = order.take(c_count);
     let alpha_sel = if has_alpha {
-        select_coefficients_weighted(aspect, tier, shape.alpha_ac_count, t.aniso_oblique)
+        order.take(shape.alpha_ac_count)
     } else {
         Selection {
             coeffs: vec![],
@@ -238,11 +258,105 @@ fn analyze(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables, tier: u8) ->
     Analysis {
         has_alpha,
         aspect,
+        aspect_code,
         shape,
         l,
         a,
         b,
         alpha,
+        w,
+        h,
+        l_chan,
+        a_chan,
+        b_chan,
+        l_sel,
+        c_sel,
+        cos_x,
+        cos_y,
+    }
+}
+
+// ── Tunable header field widths ───────────────────────────────────────────
+//
+// The 54-bit prefix (descriptor + aspect + DC + scales) is 21% of a 32-byte
+// hash and 32% of a 21-byte one. These helpers let a sweep resize each field
+// so the cost of that framing can be measured instead of assumed. With the
+// shipped widths every one of them reproduces the v1 bytes exactly.
+
+/// Coarsen the aspect byte to `bits`, symmetrically about 1:1 (byte 128) so the
+/// portrait/landscape mirror symmetry the validator enforces survives.
+/// Returns `(code, reconstructed_byte)`.
+pub(crate) fn quantize_aspect(aspect: u8, bits: u32) -> (u32, u8) {
+    if bits >= 8 {
+        return (aspect as u32, aspect);
+    }
+    let step = 1i64 << (8 - bits);
+    let center = 1i64 << (bits - 1);
+    let d = aspect as i64 - 128;
+    let code = (round_half_away_from_zero(d as f64 / step as f64) as i64 + center)
+        .clamp(0, (1i64 << bits) - 1);
+    let recon = (128 + (code - center) * step).clamp(0, 255) as u8;
+    (code as u32, recon)
+}
+
+/// Reconstruct the aspect byte a decoder sees from a coarsened aspect code.
+pub(crate) fn dequantize_aspect(code: u32, bits: u32) -> u8 {
+    if bits >= 8 {
+        return code as u8;
+    }
+    let step = 1i64 << (8 - bits);
+    let center = 1i64 << (bits - 1);
+    (128 + (code as i64 - center) * step).clamp(0, 255) as u8
+}
+
+/// Quantize a luma DC value in [0, 1] to a `bits`-wide code.
+pub(crate) fn quantize_l_dc(value: f64, bits: u32) -> u32 {
+    let max = ((1u32 << bits) - 1) as f64;
+    round_half_away_from_zero(max * clamp01(value)) as u32
+}
+
+/// Dequantize a luma DC code.
+pub(crate) fn dequantize_l_dc(code: u32, bits: u32) -> f64 {
+    code as f64 / ((1u32 << bits) - 1) as f64
+}
+
+/// Quantize a chroma DC value to a `bits`-wide code centred on zero. At 7 bits
+/// this is the shipped `round(64 + 63·x)`.
+pub(crate) fn quantize_c_dc(value: f64, range: f64, bits: u32) -> u32 {
+    let center = (1u32 << (bits - 1)) as f64;
+    let span = center - 1.0;
+    round_half_away_from_zero(center + span * clamp_neg1_1(value / range)) as u32
+}
+
+/// Dequantize a chroma DC code.
+pub(crate) fn dequantize_c_dc(code: u32, range: f64, bits: u32) -> f64 {
+    let center = (1u32 << (bits - 1)) as f64;
+    let span = center - 1.0;
+    (code as f64 - center) / span * range
+}
+
+/// Quantize an AC scale into a `bits`-wide code. `scale_mu` = 0 is the shipped
+/// linear grid; a positive value companded the code µ-law style, which puts the
+/// resolution where corpus scales actually sit (near zero).
+pub(crate) fn quantize_scale(scale: f64, range: f64, bits: u32, scale_mu: f64) -> u32 {
+    let code_max = ((1u32 << bits) - 1) as f64;
+    let x = clamp01(scale / range);
+    let companded = if scale_mu > 0.0 {
+        mu_compress(x, scale_mu)
+    } else {
+        x
+    };
+    round_half_away_from_zero(code_max * companded) as u32
+}
+
+/// Dequantize an AC scale code.
+pub(crate) fn dequantize_scale(code: u32, range: f64, bits: u32, scale_mu: f64) -> f64 {
+    let code_max = ((1u32 << bits) - 1) as f64;
+    let x = code as f64 / code_max;
+    if scale_mu > 0.0 {
+        mu_expand(x, scale_mu) * range
+    } else {
+        x * range
     }
 }
 
@@ -262,6 +376,10 @@ struct AcQuantJob<'a> {
     max_scale: f64,
     /// Largest writable scale code (2^bits − 1).
     code_max: u32,
+    /// Width of the scale field (for the µ-law scale grid).
+    scale_bits: u32,
+    /// µ-law parameter of the scale grid (0 = linear, the shipped grid).
+    scale_mu: f64,
     family: crate::constants::Companding,
     mu: f64,
     table: &'a crate::constants::QuantTable,
@@ -292,7 +410,14 @@ impl AcQuantJob<'_> {
 /// wins; otherwise this is bit-for-bit the shipped `compand_quantize`.
 fn quantize_one(job: &AcQuantJob, value: f64, scale: f64, bits: u32, nearest: bool) -> u32 {
     let normalized = if scale == 0.0 { 0.0 } else { value / scale };
-    let q = compand_quantize(normalized, bits, job.family, job.mu, job.table, job.deadzone);
+    let q = compand_quantize(
+        normalized,
+        bits,
+        job.family,
+        job.mu,
+        job.table,
+        job.deadzone,
+    );
     if !nearest || scale == 0.0 {
         return q;
     }
@@ -333,9 +458,8 @@ fn channel_sse(job: &AcQuantJob, scale: f64, nearest: bool) -> f64 {
 /// and coefficients are normalized by the *unquantized* max|AC|, even though
 /// the decoder will dequantize with the rounded scale.
 fn quantize_ac_channel(job: &AcQuantJob, raw_scale: f64, t: &Tunables) -> (u32, Vec<u32>) {
-    let nominal =
-        round_half_away_from_zero(job.code_max as f64 * clamp01(raw_scale / job.max_scale)) as u32;
-    let dq = |code: u32| code as f64 / job.code_max as f64 * job.max_scale;
+    let nominal = quantize_scale(raw_scale, job.max_scale, job.scale_bits, job.scale_mu);
+    let dq = |code: u32| dequantize_scale(code, job.max_scale, job.scale_bits, job.scale_mu);
 
     let (code, norm_scale) = match t.scale_fit {
         0 => (nominal, raw_scale),
@@ -363,9 +487,469 @@ fn quantize_ac_channel(job: &AcQuantJob, raw_scale: f64, t: &Tunables) -> (u32, 
     let mut codes = Vec::with_capacity(job.values.len());
     for (i, &v) in job.values.iter().enumerate() {
         let bits = job.bits_at(i);
-        codes.push(quantize_one(job, v, norm_scale * job.gain_at(i), bits, t.ac_nearest));
+        codes.push(quantize_one(
+            job,
+            v,
+            norm_scale * job.gain_at(i),
+            bits,
+            t.ac_nearest,
+        ));
     }
     (code, codes)
+}
+
+// ── Pixel-domain refinement (encoder-only) ─────────────────────────────────
+//
+// Independent scalar rounding minimizes *coefficient* squared error, and the
+// selected cosine basis is orthogonal, so on that objective there is nothing
+// left to win. The decoded error is a different function: the render path
+// clamps L into [0, 1] and clips each output channel into gamut, and both are
+// non-linear, so the pixel error is not separable across coefficients. This
+// module scores candidate codes on the decoded pixels instead, by coordinate
+// descent over the AC codes (optionally the DC and scale codes too).
+
+/// Number of entries in the linear→gamma lookup used by the refinement
+/// objective; matches the decoder's render LUT resolution.
+const REFINE_GAMMA_LUT: usize = 4096;
+
+/// The refinement objective: maps a reconstructed OKLAB triple into the space
+/// the error is measured in, and holds the mapped source as the target.
+struct PixelObjective {
+    obj: u32,
+    /// Channel weights for the weighted clipped-OKLAB objective (obj 3).
+    wl: f64,
+    wc: f64,
+    /// Mapped source, one triple per encoder-input pixel.
+    target: Vec<[f64; 3]>,
+    /// linear → gamma, sampled at `REFINE_GAMMA_LUT` points (objective 0).
+    gamma: Vec<f64>,
+}
+
+impl PixelObjective {
+    fn new(obj: u32, wl: f64, wc: f64, l_chan: &[f64], a_chan: &[f64], b_chan: &[f64]) -> Self {
+        let gamma: Vec<f64> = (0..REFINE_GAMMA_LUT)
+            .map(|i| srgb_gamma(i as f64 / (REFINE_GAMMA_LUT - 1) as f64))
+            .collect();
+        let mut me = Self {
+            obj,
+            wl,
+            wc,
+            target: Vec::new(),
+            gamma,
+        };
+        me.target = (0..l_chan.len())
+            .map(|p| me.map(l_chan[p], a_chan[p], b_chan[p]))
+            .collect();
+        me
+    }
+
+    /// Gamma-encode a linear value through the LUT (same grid as the decoder).
+    #[inline]
+    fn gamma_of(&self, x: f64) -> f64 {
+        let idx = (round_half_away_from_zero(clamp01(x) * (REFINE_GAMMA_LUT - 1) as f64) as i64)
+            .clamp(0, REFINE_GAMMA_LUT as i64 - 1) as usize;
+        self.gamma[idx]
+    }
+
+    /// Map a reconstructed OKLAB triple into the objective space.
+    #[inline]
+    fn map(&self, l: f64, a: f64, b: f64) -> [f64; 3] {
+        match self.obj {
+            // OKLAB with no clipping model — the control. Independent rounding
+            // is already optimal here, so this variant should find ~nothing.
+            1 => [l, a, b],
+            // Weighted clipped OKLAB: the same, with the L and chroma terms
+            // reweighted so the objective can be steered toward colour.
+            3 => {
+                let rgb = oklab_to_linear_srgb([clamp01(l), a, b]);
+                let lab = linear_rgb_to_oklab(
+                    [clamp01(rgb[0]), clamp01(rgb[1]), clamp01(rgb[2])],
+                    Gamut::Srgb,
+                );
+                [lab[0] * self.wl, lab[1] * self.wc, lab[2] * self.wc]
+            }
+            // OKLAB after the gamut clip: perceptual *and* clip-aware.
+            2 => {
+                let rgb = oklab_to_linear_srgb([clamp01(l), a, b]);
+                linear_rgb_to_oklab(
+                    [clamp01(rgb[0]), clamp01(rgb[1]), clamp01(rgb[2])],
+                    Gamut::Srgb,
+                )
+            }
+            // Gamma-encoded sRGB: the bytes the decoder actually emits.
+            _ => {
+                let rgb = oklab_to_linear_srgb([clamp01(l), a, b]);
+                [
+                    self.gamma_of(rgb[0]),
+                    self.gamma_of(rgb[1]),
+                    self.gamma_of(rgb[2]),
+                ]
+            }
+        }
+    }
+
+    /// Squared error of a whole reconstruction against the target.
+    fn sse(&self, l: &[f64], a: &[f64], b: &[f64]) -> f64 {
+        let mut acc = 0.0;
+        for p in 0..self.target.len() {
+            let m = self.map(l[p], a[p], b[p]);
+            let t = self.target[p];
+            let d0 = m[0] - t[0];
+            let d1 = m[1] - t[1];
+            let d2 = m[2] - t[2];
+            acc += d0 * d0 + d1 * d1 + d2 * d2;
+        }
+        acc
+    }
+}
+
+/// Add `dval · basis(cx, cy)` into a per-pixel channel.
+#[inline]
+#[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
+fn add_basis(
+    dst: &mut [f64],
+    w: usize,
+    h: usize,
+    cx: usize,
+    cy: usize,
+    dval: f64,
+    cos_x: &[Vec<f64>],
+    cos_y: &[Vec<f64>],
+) {
+    let fx = if cx > 0 { 2.0 } else { 1.0 };
+    let fy = if cy > 0 { 2.0 } else { 1.0 };
+    for y in 0..h {
+        let cyv = cos_y[cy][y] * fy;
+        let row = y * w;
+        for x in 0..w {
+            dst[row + x] += dval * cos_x[cx][x] * fx * cyv;
+        }
+    }
+}
+
+/// SSE of the reconstruction with one channel perturbed by `dval · basis`,
+/// without materializing the perturbed channel.
+#[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
+fn sse_with_delta(
+    obj: &PixelObjective,
+    l: &[f64],
+    a: &[f64],
+    b: &[f64],
+    which: usize,
+    w: usize,
+    h: usize,
+    cx: usize,
+    cy: usize,
+    dval: f64,
+    cos_x: &[Vec<f64>],
+    cos_y: &[Vec<f64>],
+) -> f64 {
+    let fx = if cx > 0 { 2.0 } else { 1.0 };
+    let fy = if cy > 0 { 2.0 } else { 1.0 };
+    let mut acc = 0.0;
+    for y in 0..h {
+        let cyv = cos_y[cy][y] * fy;
+        let row = y * w;
+        for x in 0..w {
+            let p = row + x;
+            let d = dval * cos_x[cx][x] * fx * cyv;
+            let (lv, av, bv) = match which {
+                0 => (l[p] + d, a[p], b[p]),
+                1 => (l[p], a[p] + d, b[p]),
+                _ => (l[p], a[p], b[p] + d),
+            };
+            let m = obj.map(lv, av, bv);
+            let t = obj.target[p];
+            let d0 = m[0] - t[0];
+            let d1 = m[1] - t[1];
+            let d2 = m[2] - t[2];
+            acc += d0 * d0 + d1 * d1 + d2 * d2;
+        }
+    }
+    acc
+}
+
+/// The luma AC values a decoder reconstructs, in selection order — the CfL
+/// predictor's input. Excludes the decode-side synthesis window, which the
+/// decoder applies to the summed chroma value, not to the predictor.
+fn decoded_luma_ac(job: &AcQuantJob, scale_code: u32, codes: &[u32]) -> Vec<f64> {
+    let scale = dequantize_scale(scale_code, job.max_scale, job.scale_bits, job.scale_mu);
+    codes
+        .iter()
+        .enumerate()
+        .map(|(i, &q)| {
+            compand_dequantize(q, job.bits_at(i), job.family, job.mu, job.table)
+                * scale
+                * job.gain_at(i)
+        })
+        .collect()
+}
+
+/// Least-squares CfL gain: the alpha minimizing ‖chroma − alpha·luma‖² over the
+/// indices both channels share (chroma is always the shorter set).
+fn cfl_gain(chroma: &[f64], luma: &[f64]) -> f64 {
+    let mut num = 0.0;
+    let mut den = 0.0;
+    for (i, &c) in chroma.iter().enumerate() {
+        let l = luma.get(i).copied().unwrap_or(0.0);
+        num += c * l;
+        den += l * l;
+    }
+    if den <= 0.0 { 0.0 } else { num / den }
+}
+
+/// Quantize a CfL gain into a `bits`-wide code centred on zero.
+pub(crate) fn quantize_cfl_gain(alpha: f64, range: f64, bits: u32) -> u32 {
+    let center = (1u32 << (bits - 1)) as f64;
+    let span = center - 1.0;
+    round_half_away_from_zero(center + span * clamp_neg1_1(alpha / range)) as u32
+}
+
+/// Dequantize a CfL gain code.
+pub(crate) fn dequantize_cfl_gain(code: u32, range: f64, bits: u32) -> f64 {
+    let center = (1u32 << (bits - 1)) as f64;
+    let span = center - 1.0;
+    (code as f64 - center) / span * range
+}
+
+/// Project a channel onto the full DCT basis of a `rw × rh` grid and evaluate
+/// it there: the ideal, alias-free rendering of the source at the decoder's
+/// natural size. Used as the refinement target when `refine_grid = 1`, so the
+/// encoder optimizes the pixels a decoder will actually emit rather than the
+/// encoder input it will never show.
+fn resample_channel_dct(chan: &[f64], w: usize, h: usize, rw: usize, rh: usize) -> Vec<f64> {
+    let fx = rw.min(w);
+    let fy = rh.min(h);
+    let mut coeffs: Vec<(usize, usize)> = Vec::with_capacity(fx * fy);
+    for cy in 0..fy {
+        for cx in 0..fx {
+            if cx == 0 && cy == 0 {
+                continue;
+            }
+            coeffs.push((cx, cy));
+        }
+    }
+    let cos_x = precompute_cos_table(w, fx);
+    let cos_y = precompute_cos_table(h, fy);
+    let (dc, ac, _) = dct_encode_selected(chan, w, h, &coeffs, &cos_x, &cos_y);
+    let rcos_x = precompute_cos_table(rw, fx);
+    let rcos_y = precompute_cos_table(rh, fy);
+    let mut out = vec![0.0f64; rw * rh];
+    for y in 0..rh {
+        for x in 0..rw {
+            out[y * rw + x] = dct_decode_pixel_separable(dc, &ac, &coeffs, x, y, &rcos_x, &rcos_y);
+        }
+    }
+    out
+}
+
+/// Coordinate descent over the quantized codes, scored on the decoded pixels.
+///
+/// `dc`, `scl` and `codes` are the L/a/b header and AC codes, updated in place.
+/// Only codes that strictly reduce the objective are accepted, and candidates
+/// are visited in a fixed order, so the result is deterministic.
+#[allow(clippy::too_many_arguments)]
+fn refine_codes(
+    t: &Tunables,
+    w: usize,
+    h: usize,
+    cos_x: &[Vec<f64>],
+    cos_y: &[Vec<f64>],
+    sels: [&Selection; 3],
+    jobs: [&AcQuantJob; 3],
+    chans: [&[f64]; 3],
+    // Encoder-input dims, used only to decide which selected frequencies the
+    // source could represent; may differ from the refinement grid.
+    src: (usize, usize),
+    dc: &mut [u32; 3],
+    scl: &mut [u32; 3],
+    codes: &mut [Vec<u32>; 3],
+) {
+    let obj = PixelObjective::new(
+        t.refine_obj,
+        t.refine_wl,
+        t.refine_wc,
+        chans[0],
+        chans[1],
+        chans[2],
+    );
+    let windows = [
+        window_weights(sels[0], t.w_min_l, t.w_exp_l),
+        window_weights(sels[1], t.w_min_c, t.w_exp_c),
+        window_weights(sels[2], t.w_min_c, t.w_exp_c),
+    ];
+    // The DC code ranges the shipped DC search uses (chroma never writes 0).
+    let dc_lo = [0i64, 1, 1];
+    let dc_hi = [127i64, 127, 127];
+
+    let dc_val = |ch: usize, q: u32| -> f64 {
+        match ch {
+            0 => q as f64 / 127.0,
+            1 => (q as f64 - 64.0) / 63.0 * t.max_chroma_a,
+            _ => (q as f64 - 64.0) / 63.0 * t.max_chroma_b,
+        }
+    };
+    let scale_val =
+        |ch: usize, q: u32| -> f64 { q as f64 / jobs[ch].code_max as f64 * jobs[ch].max_scale };
+    let ac_val = |ch: usize, i: usize, code: u32, scale: f64| -> f64 {
+        let j = jobs[ch];
+        compand_dequantize(code, j.bits_at(i), j.family, j.mu, j.table)
+            * scale
+            * j.gain_at(i)
+            * windows[ch][i]
+    };
+    // A selected frequency the encoder input cannot represent was emitted as an
+    // exact zero; refining it would invent energy the source does not have (and
+    // its cosine row was never built).
+    let live = |ch: usize, i: usize| -> bool {
+        let (cx, cy) = sels[ch].coeffs[i];
+        cx < src.0 && cy < src.1 && cx < w && cy < h
+    };
+    let build = |ch: usize, scale: f64, codes_ch: &[u32], dcq: u32| -> Vec<f64> {
+        let mut r = vec![dc_val(ch, dcq); w * h];
+        for (i, &code) in codes_ch.iter().enumerate() {
+            if !live(ch, i) {
+                continue;
+            }
+            let v = ac_val(ch, i, code, scale);
+            if v == 0.0 {
+                continue;
+            }
+            let (cx, cy) = sels[ch].coeffs[i];
+            add_basis(&mut r, w, h, cx, cy, v, cos_x, cos_y);
+        }
+        r
+    };
+
+    let mut recon = [
+        build(0, scale_val(0, scl[0]), &codes[0], dc[0]),
+        build(1, scale_val(1, scl[1]), &codes[1], dc[1]),
+        build(2, scale_val(2, scl[2]), &codes[2], dc[2]),
+    ];
+    let mut best = obj.sse(&recon[0], &recon[1], &recon[2]);
+
+    let sse_of = |ch: usize, r: &[f64], recon: &[Vec<f64>; 3]| -> f64 {
+        match ch {
+            0 => obj.sse(r, &recon[1], &recon[2]),
+            1 => obj.sse(&recon[0], r, &recon[2]),
+            _ => obj.sse(&recon[0], &recon[1], r),
+        }
+    };
+
+    for _pass in 0..t.refine_passes {
+        let pass_start = best;
+
+        // Scale codes: amplitude clipped away at decode is amplitude wasted, so
+        // a narrower scale can buy resolution for everything that survives.
+        if t.refine_scale && !t.b_scale_from_a {
+            for ch in 0..3 {
+                let cur = scl[ch];
+                let mut chosen: Option<(u32, Vec<u32>, Vec<f64>, f64)> = None;
+                for d in [-2i64, -1, 1, 2] {
+                    let cand = (cur as i64 + d).clamp(0, jobs[ch].code_max as i64) as u32;
+                    if cand == cur {
+                        continue;
+                    }
+                    let s = scale_val(ch, cand);
+                    let cc: Vec<u32> = (0..codes[ch].len())
+                        .map(|i| {
+                            quantize_one(
+                                jobs[ch],
+                                jobs[ch].values[i],
+                                s * jobs[ch].gain_at(i),
+                                jobs[ch].bits_at(i),
+                                t.ac_nearest,
+                            )
+                        })
+                        .collect();
+                    let rr = build(ch, s, &cc, dc[ch]);
+                    let e = sse_of(ch, &rr, &recon);
+                    let better = chosen.as_ref().map_or(e < best, |(_, _, _, be)| e < *be);
+                    if better {
+                        chosen = Some((cand, cc, rr, e));
+                    }
+                }
+                if let Some((cand, cc, rr, e)) = chosen {
+                    scl[ch] = cand;
+                    codes[ch] = cc;
+                    recon[ch] = rr;
+                    best = e;
+                }
+            }
+        }
+
+        // DC codes: the shipped search picked these against a flat target, with
+        // the AC set assumed zero.
+        if t.refine_dc {
+            for ch in 0..3 {
+                let cur = dc[ch];
+                let mut chosen: Option<(u32, f64)> = None;
+                for d in [-1i64, 1] {
+                    let cand = (cur as i64 + d).clamp(dc_lo[ch], dc_hi[ch]) as u32;
+                    if cand == cur {
+                        continue;
+                    }
+                    let delta = dc_val(ch, cand) - dc_val(ch, cur);
+                    let e = sse_with_delta(
+                        &obj, &recon[0], &recon[1], &recon[2], ch, w, h, 0, 0, delta, cos_x, cos_y,
+                    );
+                    let better = chosen.as_ref().map_or(e < best, |&(_, be)| e < be);
+                    if better {
+                        chosen = Some((cand, e));
+                    }
+                }
+                if let Some((cand, e)) = chosen {
+                    let delta = dc_val(ch, cand) - dc_val(ch, cur);
+                    add_basis(&mut recon[ch], w, h, 0, 0, delta, cos_x, cos_y);
+                    dc[ch] = cand;
+                    best = e;
+                }
+            }
+        }
+
+        // AC codes.
+        for ch in 0..3 {
+            let scale = scale_val(ch, scl[ch]);
+            for i in 0..codes[ch].len() {
+                if !live(ch, i) {
+                    continue;
+                }
+                let cur = codes[ch][i];
+                let bits = jobs[ch].bits_at(i);
+                let max_idx = (1u32 << bits) - 2;
+                let base = ac_val(ch, i, cur, scale);
+                let (cx, cy) = sels[ch].coeffs[i];
+                let mut chosen: Option<(u32, f64)> = None;
+                for d in 1..=t.refine_delta as i64 {
+                    for sgn in [-1i64, 1] {
+                        let cand = (cur as i64 + sgn * d).clamp(0, max_idx as i64) as u32;
+                        if cand == cur {
+                            continue;
+                        }
+                        let dval = ac_val(ch, i, cand, scale) - base;
+                        let e = sse_with_delta(
+                            &obj, &recon[0], &recon[1], &recon[2], ch, w, h, cx, cy, dval, cos_x,
+                            cos_y,
+                        );
+                        let better = chosen.as_ref().map_or(e < best, |&(_, be)| e < be);
+                        if better {
+                            chosen = Some((cand, e));
+                        }
+                    }
+                }
+                if let Some((cand, e)) = chosen {
+                    let dval = ac_val(ch, i, cand, scale) - base;
+                    add_basis(&mut recon[ch], w, h, cx, cy, dval, cos_x, cos_y);
+                    codes[ch][i] = cand;
+                    best = e;
+                }
+            }
+        }
+
+        if best >= pass_start {
+            break;
+        }
+    }
 }
 
 /// Encode an image into a ChromaHash body with explicit tunables and quality
@@ -374,12 +958,22 @@ fn quantize_ac_channel(job: &AcQuantJob, raw_scale: f64, t: &Tunables) -> (u32, 
 pub fn encode_with(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables, tier: u8) -> Box<[u8]> {
     let Analysis {
         has_alpha,
-        aspect,
+        aspect: _aspect,
+        aspect_code,
         shape,
         l: (l_dc, l_ac, l_scale),
         a: (a_dc, a_ac, a_scale),
         b: (b_dc, b_ac, b_scale),
         alpha: (alpha_dc, alpha_ac, alpha_scale),
+        w: src_w,
+        h: src_h,
+        l_chan,
+        a_chan,
+        b_chan,
+        l_sel,
+        c_sel,
+        cos_x,
+        cos_y,
     } = analyze(w, h, rgba, gamut, t, tier);
 
     // 8. Quantize header values (decode-aware DC code search, v0.6)
@@ -398,7 +992,9 @@ pub fn encode_with(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables, tier
         split: l_split,
         band_gain: t.band_gain_l,
         max_scale: t.max_l_scale,
-        code_max: (1u32 << L_SCALE_BITS) - 1,
+        code_max: (1u32 << t.l_scale_bits) - 1,
+        scale_bits: t.l_scale_bits,
+        scale_mu: t.scale_mu,
         family: t.compand_l,
         mu: t.mu_l,
         table: &t.table_l,
@@ -410,7 +1006,9 @@ pub fn encode_with(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables, tier
         split: c_split,
         band_gain: t.band_gain_c,
         max_scale: t.max_a_scale,
-        code_max: (1u32 << A_SCALE_BITS) - 1,
+        code_max: (1u32 << t.a_scale_bits) - 1,
+        scale_bits: t.a_scale_bits,
+        scale_mu: t.scale_mu,
         family: t.compand_c,
         mu: t.mu_c,
         table: &t.table_c,
@@ -421,40 +1019,195 @@ pub fn encode_with(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables, tier
         tiers: &c_tiers,
         split: c_split,
         band_gain: t.band_gain_c,
-        max_scale: t.max_b_scale,
-        code_max: (1u32 << B_SCALE_BITS) - 1,
+        // With `b_scale_from_a` the b channel is quantized against the a
+        // channel's field entirely: same range, same width, same code.
+        max_scale: if t.b_scale_from_a {
+            t.max_a_scale
+        } else {
+            t.max_b_scale
+        },
+        code_max: (1u32
+            << if t.b_scale_from_a {
+                t.a_scale_bits
+            } else {
+                t.b_scale_bits
+            })
+            - 1,
+        scale_bits: if t.b_scale_from_a {
+            t.a_scale_bits
+        } else {
+            t.b_scale_bits
+        },
+        scale_mu: t.scale_mu,
         family: t.compand_c,
         mu: t.mu_c,
         table: &t.table_c,
         deadzone: t.deadzone_c,
     };
     let (l_scl_q, l_codes) = quantize_ac_channel(&l_job, l_scale, t);
+
+    // Chroma-from-luma: recode each chroma coefficient as a residual against
+    // `alpha · (the luma AC value the decoder will reconstruct)`. The gains are
+    // signalled, so the predictor is exactly reproducible; the chroma scale
+    // field then carries the *residual* scale, which is the whole point.
+    let (cfl_a_code, cfl_b_code, a_res, b_res) = if t.cfl_bits > 0 {
+        let l_deq = decoded_luma_ac(&l_job, l_scl_q, &l_codes);
+        let ga = cfl_gain(&a_ac, &l_deq);
+        let gb = cfl_gain(&b_ac, &l_deq);
+        let ca = quantize_cfl_gain(ga, t.cfl_range, t.cfl_bits);
+        let cb = quantize_cfl_gain(gb, t.cfl_range, t.cfl_bits);
+        let aq = dequantize_cfl_gain(ca, t.cfl_range, t.cfl_bits);
+        let bq = dequantize_cfl_gain(cb, t.cfl_range, t.cfl_bits);
+        let ra: Vec<f64> = a_ac
+            .iter()
+            .enumerate()
+            .map(|(i, v)| v - aq * l_deq.get(i).copied().unwrap_or(0.0))
+            .collect();
+        let rb: Vec<f64> = b_ac
+            .iter()
+            .enumerate()
+            .map(|(i, v)| v - bq * l_deq.get(i).copied().unwrap_or(0.0))
+            .collect();
+        (ca, cb, ra, rb)
+    } else {
+        (0, 0, Vec::new(), Vec::new())
+    };
+    let (a_job, b_job, a_scale, b_scale) = if t.cfl_bits > 0 {
+        let a_scale = a_res.iter().fold(0.0f64, |m, v| m.max(v.abs()));
+        let b_scale = b_res.iter().fold(0.0f64, |m, v| m.max(v.abs()));
+        (
+            AcQuantJob {
+                values: &a_res,
+                ..a_job
+            },
+            AcQuantJob {
+                values: &b_res,
+                ..b_job
+            },
+            a_scale,
+            b_scale,
+        )
+    } else {
+        (a_job, b_job, a_scale, b_scale)
+    };
+
     let (a_scl_q, a_codes) = quantize_ac_channel(&a_job, a_scale, t);
-    let (b_scl_q, b_codes) = quantize_ac_channel(&b_job, b_scale, t);
+    let (b_scl_q, b_codes) = if t.b_scale_from_a {
+        let shared = dequantize_scale(a_scl_q, b_job.max_scale, b_job.scale_bits, b_job.scale_mu);
+        let codes = (0..b_job.values.len())
+            .map(|i| {
+                quantize_one(
+                    &b_job,
+                    b_job.values[i],
+                    shared * b_job.gain_at(i),
+                    b_job.bits_at(i),
+                    t.ac_nearest,
+                )
+            })
+            .collect();
+        (a_scl_q, codes)
+    } else {
+        quantize_ac_channel(&b_job, b_scale, t)
+    };
+
+    // Encoder-only pixel-domain refinement (off by default). Rebinds the header
+    // and AC codes; the decoder is untouched and the byte length is unchanged.
+    let mut dc_codes = [l_dc_q, a_dc_q, b_dc_q];
+    let mut scale_codes = [l_scl_q, a_scl_q, b_scl_q];
+    let mut ac_codes = [l_codes, a_codes, b_codes];
+    if t.refine_passes > 0 && t.cfl_bits == 0 {
+        if t.refine_grid == 1 {
+            // Score on the decoder's natural render grid, against the ideal
+            // full-basis downsample of the source.
+            let (rw, rh) = crate::aspect::decode_output_size(_aspect, tier);
+            let (rw, rh) = (rw as usize, rh as usize);
+            let tl = resample_channel_dct(&l_chan, src_w, src_h, rw, rh);
+            let ta = resample_channel_dct(&a_chan, src_w, src_h, rw, rh);
+            let tb = resample_channel_dct(&b_chan, src_w, src_h, rw, rh);
+            let max_cx = l_sel
+                .coeffs
+                .iter()
+                .chain(c_sel.coeffs.iter())
+                .map(|&(cx, _)| cx)
+                .max()
+                .unwrap_or(0);
+            let max_cy = l_sel
+                .coeffs
+                .iter()
+                .chain(c_sel.coeffs.iter())
+                .map(|&(_, cy)| cy)
+                .max()
+                .unwrap_or(0);
+            let rcos_x = precompute_cos_table(rw, (max_cx + 1).min(rw.max(1)));
+            let rcos_y = precompute_cos_table(rh, (max_cy + 1).min(rh.max(1)));
+            refine_codes(
+                t,
+                rw,
+                rh,
+                &rcos_x,
+                &rcos_y,
+                [&l_sel, &c_sel, &c_sel],
+                [&l_job, &a_job, &b_job],
+                [&tl, &ta, &tb],
+                (src_w, src_h),
+                &mut dc_codes,
+                &mut scale_codes,
+                &mut ac_codes,
+            );
+        } else {
+            refine_codes(
+                t,
+                src_w,
+                src_h,
+                &cos_x,
+                &cos_y,
+                [&l_sel, &c_sel, &c_sel],
+                [&l_job, &a_job, &b_job],
+                [&l_chan, &a_chan, &b_chan],
+                (src_w, src_h),
+                &mut dc_codes,
+                &mut scale_codes,
+                &mut ac_codes,
+            );
+        }
+    }
+    let [l_dc_q, a_dc_q, b_dc_q] = dc_codes;
+    let [l_scl_q, a_scl_q, b_scl_q] = scale_codes;
+    let [l_codes, a_codes, b_codes] = ac_codes;
 
     // 9. Allocate the variable-length body and write the descriptor bytes.
     //    Byte 0: version (bits 0..3) | tier (bits 3..6) | hasAlpha (bit 6) |
     //    reserved (bit 7, 0). Byte 1: aspect. (v1, spec §3.1)
-    let body_len = body_len_bytes(&t.layout, has_alpha, tier);
+    let body_len = body_len_bytes(t, has_alpha, tier);
     let mut hash = vec![0u8; body_len];
     hash[0] = FORMAT_VERSION | (tier << VERSION_BITS) | ((has_alpha as u8) << ALPHA_FLAG_BIT);
-    hash[1] = aspect;
 
-    // 10. DC + scale prefix (bits 16..54).
-    let mut bitpos = DESCRIPTOR_BITS as usize;
-    write_bits(&mut hash, bitpos, L_DC_BITS, l_dc_q);
-    bitpos += L_DC_BITS as usize;
-    write_bits(&mut hash, bitpos, A_DC_BITS, a_dc_q);
-    bitpos += A_DC_BITS as usize;
-    write_bits(&mut hash, bitpos, B_DC_BITS, b_dc_q);
-    bitpos += B_DC_BITS as usize;
-    write_bits(&mut hash, bitpos, L_SCALE_BITS, l_scl_q);
-    bitpos += L_SCALE_BITS as usize;
-    write_bits(&mut hash, bitpos, A_SCALE_BITS, a_scl_q);
-    bitpos += A_SCALE_BITS as usize;
-    write_bits(&mut hash, bitpos, B_SCALE_BITS, b_scl_q);
-    bitpos += B_SCALE_BITS as usize;
-    debug_assert_eq!(bitpos, PREFIX_BITS as usize);
+    // 10. Aspect + DC + scale prefix. With the shipped widths this is byte 1 =
+    //     aspect followed by bits 16..54, byte-for-byte the v1 layout.
+    let mut bitpos = 8usize;
+    write_bits(&mut hash, bitpos, t.aspect_bits, aspect_code);
+    bitpos += t.aspect_bits as usize;
+    write_bits(&mut hash, bitpos, t.l_dc_bits, l_dc_q);
+    bitpos += t.l_dc_bits as usize;
+    write_bits(&mut hash, bitpos, t.a_dc_bits, a_dc_q);
+    bitpos += t.a_dc_bits as usize;
+    write_bits(&mut hash, bitpos, t.b_dc_bits, b_dc_q);
+    bitpos += t.b_dc_bits as usize;
+    write_bits(&mut hash, bitpos, t.l_scale_bits, l_scl_q);
+    bitpos += t.l_scale_bits as usize;
+    write_bits(&mut hash, bitpos, t.a_scale_bits, a_scl_q);
+    bitpos += t.a_scale_bits as usize;
+    if !t.b_scale_from_a {
+        write_bits(&mut hash, bitpos, t.b_scale_bits, b_scl_q);
+        bitpos += t.b_scale_bits as usize;
+    }
+    if t.cfl_bits > 0 {
+        write_bits(&mut hash, bitpos, t.cfl_bits, cfl_a_code);
+        bitpos += t.cfl_bits as usize;
+        write_bits(&mut hash, bitpos, t.cfl_bits, cfl_b_code);
+        bitpos += t.cfl_bits as usize;
+    }
+    debug_assert_eq!(bitpos, prefix_bits(t) as usize);
 
     // 11. AC payload (codes computed above; µ-law by default, the
     //     family/deadzone/band knobs are sweep-only and default to no-ops).
@@ -483,25 +1236,39 @@ pub fn encode_with(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables, tier
         bitpos += ALPHA_SCALE_BITS as usize;
     }
 
-    // L AC in selection order across the precision tiers (counts scaled by tier)
-    let mut l_idx = 0usize;
-    for &(count, bits) in &shape.l_tiers {
-        for _ in 0..count {
-            write_bits(&mut hash, bitpos, bits, l_codes[l_idx]);
-            bitpos += bits as usize;
-            l_idx += 1;
-        }
-    }
-
-    // Chroma AC
     let c_bits = shape.c_bits;
-    for &q in &a_codes {
-        write_bits(&mut hash, bitpos, c_bits, q);
-        bitpos += c_bits as usize;
-    }
-    for &q in &b_codes {
-        write_bits(&mut hash, bitpos, c_bits, q);
-        bitpos += c_bits as usize;
+    if t.interleave && !has_alpha {
+        // Embedded order: all three channels merged by frequency priority, so a
+        // truncated payload still carries every channel's lowest frequencies.
+        for (ch, i) in interleaved_order(&l_sel, &c_sel, shape.l_count(), shape.c_count) {
+            let (bits, q) = match ch {
+                0 => (l_job.bits_at(i), l_codes[i]),
+                1 => (c_bits, a_codes[i]),
+                _ => (c_bits, b_codes[i]),
+            };
+            write_bits(&mut hash, bitpos, bits, q);
+            bitpos += bits as usize;
+        }
+    } else {
+        // L AC in selection order across the precision tiers (counts scaled by tier)
+        let mut l_idx = 0usize;
+        for &(count, bits) in &shape.l_tiers {
+            for _ in 0..count {
+                write_bits(&mut hash, bitpos, bits, l_codes[l_idx]);
+                bitpos += bits as usize;
+                l_idx += 1;
+            }
+        }
+
+        // Chroma AC
+        for &q in &a_codes {
+            write_bits(&mut hash, bitpos, c_bits, q);
+            bitpos += c_bits as usize;
+        }
+        for &q in &b_codes {
+            write_bits(&mut hash, bitpos, c_bits, q);
+            bitpos += c_bits as usize;
+        }
     }
 
     if has_alpha {
@@ -528,7 +1295,7 @@ pub fn encode_with(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables, tier
     };
     debug_assert_eq!(
         bitpos,
-        PREFIX_BITS as usize + alpha_prefix + ac_payload_bits(&shape)
+        prefix_bits(t) as usize + alpha_prefix + ac_payload_bits(&shape)
     );
     debug_assert_eq!(body_len, bitpos.div_ceil(8));
 
@@ -647,29 +1414,29 @@ mod tests {
         #[rustfmt::skip]
         let cases: &[(u8, u8, u8, Gamut, [u8; 32])] = &[
             (128, 128, 128, Gamut::Srgb,
-                [0, 128, 76, 32, 16, 0, 192, 123, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 119, 119, 119, 119, 119, 119, 119, 119, 119]),
+                [0, 128, 76, 32, 16, 0, 192, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 182, 109, 219, 182, 109, 219, 182, 109, 219, 182, 109]),
             (255, 0, 0, Gamut::Srgb,
-                [0, 128, 208, 116, 22, 0, 192, 123, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 119, 119, 119, 119, 119, 119, 119, 119, 119]),
+                [0, 128, 208, 116, 22, 0, 192, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 182, 109, 219, 182, 109, 219, 182, 109, 219, 182, 109]),
             (0, 255, 0, Gamut::Srgb,
-                [0, 128, 238, 202, 24, 0, 192, 123, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 119, 119, 119, 119, 119, 119, 119, 119, 119]),
+                [0, 128, 238, 202, 24, 0, 192, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 182, 109, 219, 182, 109, 219, 182, 109, 219, 182, 109]),
             (0, 0, 255, Gamut::Srgb,
-                [0, 128, 57, 29, 1, 0, 192, 123, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 119, 119, 119, 119, 119, 119, 119, 119, 119]),
+                [0, 128, 57, 29, 1, 0, 192, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 182, 109, 219, 182, 109, 219, 182, 109, 219, 182, 109]),
             (255, 255, 255, Gamut::Srgb,
-                [0, 128, 127, 32, 16, 0, 192, 123, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 119, 119, 119, 119, 119, 119, 119, 119, 119]),
+                [0, 128, 127, 32, 16, 0, 192, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 182, 109, 219, 182, 109, 219, 182, 109, 219, 182, 109]),
             (0, 0, 0, Gamut::Srgb,
-                [0, 128, 0, 32, 16, 0, 192, 123, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 119, 119, 119, 119, 119, 119, 119, 119, 119]),
+                [0, 128, 0, 32, 16, 0, 192, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 182, 109, 219, 182, 109, 219, 182, 109, 219, 182, 109]),
             // Wide-gamut solids: the same pixels map through a different M1
             // matrix (and EOTF for ProPhoto) → distinct OKLAB and DC codes.
             (200, 100, 50, Gamut::DisplayP3,
-                [0, 128, 79, 171, 21, 0, 192, 123, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 119, 119, 119, 119, 119, 119, 119, 119, 119]),
+                [0, 128, 79, 171, 21, 0, 192, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 182, 109, 219, 182, 109, 219, 182, 109, 219, 182, 109]),
             (220, 50, 30, Gamut::ProPhotoRgb,
-                [0, 128, 85, 62, 22, 0, 192, 123, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 119, 119, 119, 119, 119, 119, 119, 119, 119]),
+                [0, 128, 85, 62, 22, 0, 192, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 182, 109, 219, 182, 109, 219, 182, 109, 219, 182, 109]),
             // Adobe RGB (γ = 2.2 EOTF) and BT.2020 (PQ→Reinhard EOTF) are the two
             // source-gamut transfer arms no other golden vector exercises.
             (200, 100, 50, Gamut::AdobeRgb,
-                [0, 128, 211, 171, 21, 0, 192, 123, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 119, 119, 119, 119, 119, 119, 119, 119, 119]),
+                [0, 128, 211, 171, 21, 0, 192, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 182, 109, 219, 182, 109, 219, 182, 109, 219, 182, 109]),
             (200, 100, 50, Gamut::Bt2020,
-                [0, 128, 89, 52, 23, 0, 192, 123, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 119, 119, 119, 119, 119, 119, 119, 119, 119]),
+                [0, 128, 89, 52, 23, 0, 192, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 182, 109, 219, 182, 109, 219, 182, 109, 219, 182, 109]),
         ];
         for &(r, g, b, gamut, expected) in cases {
             let rgba = solid(4, 4, r, g, b, 255);
@@ -682,7 +1449,7 @@ mod tests {
 
         // 1×1 solid (aspect-byte extreme, single-pixel DCT).
         #[rustfmt::skip]
-        let one = [0, 128, 78, 233, 20, 0, 192, 123, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 239, 189, 247, 222, 123, 119, 119, 119, 119, 119, 119, 119, 119, 119];
+        let one = [0, 128, 78, 233, 20, 0, 192, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 182, 109, 219, 182, 109, 219, 182, 109, 219, 182, 109];
         assert_eq!(
             encode(1, 1, &solid(1, 1, 200, 100, 50, 255), Gamut::Srgb).as_ref(),
             &one
@@ -704,7 +1471,7 @@ mod tests {
             255, 182, 72, 0, 255, 218, 36, 0, 255, 255, 0, 0, 255,
         ];
         #[rustfmt::skip]
-        let h8x4 = [0, 159, 72, 166, 141, 120, 245, 9, 29, 160, 230, 56, 181, 206, 185, 231, 94, 140, 16, 186, 247, 222, 123, 192, 151, 118, 87, 87, 144, 117, 119, 118];
+        let h8x4 = [0, 159, 72, 166, 141, 120, 245, 128, 131, 53, 165, 222, 225, 157, 225, 221, 221, 221, 221, 221, 29, 58, 78, 219, 182, 109, 19, 168, 105, 219, 182, 109];
         assert_eq!(encode(8, 4, &g8x4, Gamut::Srgb).as_ref(), &h8x4);
 
         let g4x8: [u8; 128] = [
@@ -717,7 +1484,7 @@ mod tests {
             170, 0, 255, 170, 85, 0, 255, 255, 0, 0, 255,
         ];
         #[rustfmt::skip]
-        let h4x8 = [0, 96, 201, 38, 142, 144, 113, 208, 5, 84, 232, 166, 71, 209, 189, 247, 30, 116, 15, 186, 247, 222, 123, 91, 144, 118, 119, 7, 86, 116, 119, 151];
+        let h4x8 = [0, 96, 201, 38, 142, 136, 49, 176, 28, 164, 250, 205, 33, 222, 217, 221, 221, 157, 221, 221, 93, 133, 113, 219, 182, 109, 131, 52, 109, 220, 182, 109];
         assert_eq!(encode(4, 8, &g4x8, Gamut::Srgb).as_ref(), &h4x8);
     }
 
@@ -741,7 +1508,7 @@ mod tests {
             0, 255,
         ];
         #[rustfmt::skip]
-        let expected = [64, 128, 208, 116, 22, 0, 0, 132, 247, 222, 123, 239, 189, 247, 222, 123, 239, 189, 247, 222, 187, 187, 187, 187, 187, 187, 187, 187, 187, 187, 243, 59];
+        let expected = [64, 128, 208, 116, 22, 0, 0, 132, 247, 222, 123, 239, 189, 247, 222, 123, 239, 189, 247, 222, 187, 187, 187, 187, 187, 187, 187, 187, 187, 187, 59, 63];
         assert_eq!(encode(8, 8, &cb, Gamut::Srgb).as_ref(), &expected);
     }
 

@@ -6,7 +6,7 @@ mod tests {
     use crate::bitpack::{read_bits, write_bits};
     use crate::color::{gamma_rgb_to_oklab, linear_rgb_to_oklab, oklab_to_linear_srgb};
     use crate::constants::{Gamut, Tunables, ac_shape};
-    use crate::dct::select_coefficients;
+    use crate::dct::SelectionOrder;
     use crate::math_utils::{cbrt_halley, cbrt_signed};
     use crate::mulaw::{mu_compress, mu_expand, mu_law_dequantize, mu_law_quantize};
     use crate::{ChromaHash, MAX_TIER};
@@ -178,14 +178,19 @@ mod tests {
         // --- unit-selection.json (v1: top-K isotropic selection) ---
         // Enumerate unique (W, H, K) selections across all 256 aspect bytes at
         // tier 0 for every K the format uses, derived from the tier-0 shape so
-        // the list cannot drift: chroma (9), alpha (5), L alpha-mode (20), L (26).
-        // Higher tiers reuse the same priority ordering on a larger grid; that
+        // the list cannot drift: chroma (15), alpha (5), L alpha-mode (20),
+        // L (28). Higher tiers reuse the same ordering on a larger grid; that
         // grid scaling is pinned by unit-aspect, and higher-tier selection is
         // exercised end-to-end by the integration-decode-capped vectors.
+        //
+        // Each (W, H, K) is emitted twice: once with the weights zeroed (the
+        // bare priority order) and once with the shipped weights of §6.2,
+        // which is the order the format actually transmits in. The two together
+        // pin both halves of `selection_key`.
         {
-            let lay = Tunables::DEFAULT.layout;
-            let s0 = ac_shape(&lay, false, 0);
-            let sa = ac_shape(&lay, true, 0);
+            let t0 = Tunables::DEFAULT;
+            let s0 = ac_shape(&t0, false, 0);
+            let sa = ac_shape(&t0, true, 0);
             let mut ks: Vec<usize> = vec![
                 sa.alpha_ac_count,
                 s0.c_count,
@@ -204,21 +209,25 @@ mod tests {
                 for &k in &ks {
                     let key = (dw, dh, k);
                     if seen.insert(key) {
-                        let sel = select_coefficients(byte, 0, k);
-                        let pairs: Vec<String> = sel
-                            .coeffs
-                            .iter()
-                            .map(|&(cx, cy)| format!("[{cx},{cy}]"))
-                            .collect();
-                        cases.push(format!(
-                            r#"  {{
-    "name": "selection_w{dw}h{dh}_k{k}",
-    "input": {{ "aspect_byte": {byte}, "tier": 0, "k": {k} }},
+                        for (suffix, aniso, hv) in
+                            [("", 0.0, 0.0), ("_w", t0.aniso_oblique, t0.sel_hv)]
+                        {
+                            let sel = SelectionOrder::new(byte, 0, aniso, hv).take(k);
+                            let pairs: Vec<String> = sel
+                                .coeffs
+                                .iter()
+                                .map(|&(cx, cy)| format!("[{cx},{cy}]"))
+                                .collect();
+                            cases.push(format!(
+                                r#"  {{
+    "name": "selection_w{dw}h{dh}_k{k}{suffix}",
+    "input": {{ "aspect_byte": {byte}, "tier": 0, "k": {k}, "aniso": {aniso}, "hv": {hv} }},
     "expected": {{ "coeffs": [{}], "p_k": {} }}
   }}"#,
-                            pairs.join(","),
-                            sel.p_k,
-                        ));
+                                pairs.join(","),
+                                sel.p_k,
+                            ));
+                        }
                     }
                 }
             }

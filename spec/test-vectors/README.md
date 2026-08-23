@@ -17,7 +17,11 @@ cargo test --manifest-path rust/Cargo.toml -- generate_test_vectors --nocapture 
   never-written top code's clamp-down behavior
 - `unit-selection.json` — Top-K coefficient selection per spec §6: selected
   `(cx, cy)` pairs and `p_k` for every unique `(W, H, K)` across all 256
-  aspect bytes (replaces v0.4's `unit-dct.json` scan orders)
+  aspect bytes (replaces v0.4's `unit-dct.json` scan orders). Each `(W, H, K)`
+  appears twice — the `input` carries the `aniso`/`hv` selection weights, and
+  the two rows are the bare priority order (both zero) and the shipped order
+  (`_w` suffix, §6.2). Passing both proves an implementation's `selectionKey`
+  integer arithmetic, not just its sort
 - `unit-aspect.json` — Aspect ratio encoding/decoding and output sizes
 - `unit-bitpack.json` — Bit packing `readBits`/`writeBits` operations
 - `unit-cbrt.json` — Halley cube root accuracy

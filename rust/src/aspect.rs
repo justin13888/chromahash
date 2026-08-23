@@ -107,7 +107,7 @@ mod tests {
     #[test]
     fn decode_output_size_min_dims() {
         // The short side never collapses below 2 px — the selection domain
-        // (§6.1) relies on (W, H) ≥ (2, 2) to offer ≥ 63 candidates at tier 0.
+        // (§6.2) relies on (W, H) ≥ (2, 2) to offer ≥ 63 candidates at tier 0.
         for byte in 0u8..=255 {
             let (w, h) = decode_output_size(byte, 0);
             assert!(w >= 2 && h >= 2, "byte={byte} gave {w}x{h}");

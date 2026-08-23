@@ -14,83 +14,141 @@ pub struct Selection {
     pub p_k: u64,
 }
 
-/// Select the K lowest-spatial-frequency AC coefficients for an aspect byte at
-/// a given quality `tier`. Per spec §6.1 (v1).
+/// Fixed-point shift for the selection weight (spec §6.2). `aniso` and `hv`
+/// ride as Q12 integers and the direction term is evaluated in Q12; the weight
+/// itself lands in Q16.
+pub const SEL_Q: u32 = 12;
+/// `1 << SEL_Q` — Q12 unity.
+pub const SEL_ONE: i64 = 1 << SEL_Q;
+
+/// Quantize a selection-weight parameter onto the Q12 grid the order is defined on.
+#[inline]
+pub fn sel_weight_q12(v: f64) -> i64 {
+    (v * SEL_ONE as f64).round() as i64
+}
+
+/// The integer sort key of one candidate frequency. Per spec §6.2 (v1).
+///
+/// The order is `priority · (1 + aniso·sin²2θ) · (1 + hv·cos2θ)` — human contrast
+/// sensitivity is lower on the diagonals, so the budget buys axis-aligned detail
+/// first. Writing `s = (cx·H)²`, `t = (cy·W)²`, `p = s + t` and `d = s − t`, the
+/// identities `cos2θ = d/p` and `sin²2θ = 1 − (d/p)²` collapse both factors into
+/// polynomials in the single ratio `d/p`, which is what makes an exact integer
+/// form possible at all:
+///
+/// ```text
+///   X = trunc(d · 2^12 / p)                 ∈ [−2^12, 2^12]   (Q12)
+///   U = (2^12 + A)·2^12 − ((A·X²) >> 12)    ≥ 2^24            (Q24)
+///   V = 2^24 + H·X                          > 0               (Q24)
+///   W = (U·V) >> 32                                           (Q16)
+///   key = p · W
+/// ```
+///
+/// `A`/`H` are `aniso`/`hv` in Q12; `>>` is an arithmetic (floor) shift and `/`
+/// truncates toward zero. With `A = H = 0` the key is exactly `p << 16`, so the
+/// unweighted order of v0.6 is this order with the weights zeroed, coefficient
+/// for coefficient. Every intermediate stays under 2^51 for the parameter ranges
+/// the format allows (`aniso ∈ [0, 8]`, `|hv| < 1`) at every tier, so an
+/// implementation with exact 53-bit integers — a JavaScript `number` — computes
+/// it without a bignum, and the order is bit-exact across languages.
+#[inline]
+pub fn selection_key(px: u64, py: u64, a_q12: i64, h_q12: i64) -> u64 {
+    let s = (px * px) as i64;
+    let t = (py * py) as i64;
+    let p = s + t;
+    if a_q12 == 0 && h_q12 == 0 {
+        return (p as u64) << 16;
+    }
+    let x = (s - t) * SEL_ONE / p;
+    let u = (SEL_ONE + a_q12) * SEL_ONE - ((a_q12 * x * x) >> SEL_Q);
+    let v = SEL_ONE * SEL_ONE + h_q12 * x;
+    (p as u64) * ((u * v) >> 32) as u64
+}
+
+/// Every candidate frequency for one (aspect byte, tier), sorted into selection
+/// order once. Per spec §6.
 ///
 /// Candidates are all (cx, cy) in [0, W) × [0, H) except DC, where (W, H) =
 /// decodeOutputSize(aspect_byte, tier) — exactly the frequencies representable
 /// at the natural render, which makes selecting an unrepresentable (aliasing)
-/// frequency structurally impossible. Priority (cx·H)² + (cy·W)² is the
-/// squared isotropic per-pixel frequency scaled by (W·H)²; ties break by
-/// (cx, cy) ascending. Pure integer ordering ⇒ bit-exact across languages.
+/// frequency structurally impossible. Ties on the key break by (cx, cy)
+/// ascending.
 ///
-/// The candidate count is ≥ 64·4^tier − 1 for every aspect byte (the 16:1
-/// extreme), and every per-channel K(tier) the format uses is < that bound, so
-/// the selection is always fully satisfied.
-pub fn select_coefficients(aspect_byte: u8, tier: u8, k: usize) -> Selection {
-    let (w, h) = decode_output_size(aspect_byte, tier);
-    let (w, h) = (w as usize, h as usize);
-    let mut entries = candidate_entries(w, h);
-    entries.sort_unstable_by_key(|&(p, cx, cy)| (p, cx, cy));
-    build_selection(entries, k)
+/// Every per-channel selection at a tier is a **prefix** of this one list, so
+/// luma, chroma and alpha share a single sort instead of repeating it per
+/// channel. The candidate count is ≥ 64·4^tier − 1 for every aspect byte (the
+/// 16:1 extreme), and every per-channel K(tier) the format uses is below that
+/// bound, so every selection is fully satisfied.
+pub struct SelectionOrder {
+    entries: Vec<(u64, usize, usize)>,
+    w: usize,
+    h: usize,
 }
 
-/// [`select_coefficients`] with an anisotropic (CSF oblique-effect) weight —
-/// sweep-only. Human contrast sensitivity is lower for diagonal frequencies,
-/// so candidates sort by `priority · (1 + aniso · sin²2θ)` (sin²2θ = 0 on the
-/// axes, 1 on the diagonal), spending the budget on axis-aligned detail first.
-///
-/// `aniso = 0.0` takes the shipped pure-integer path bit-exactly. The weighted
-/// order compares f64 keys (`total_cmp`), which is fine for a doc-hidden
-/// experiment but would need an integer reformulation before entering the
-/// spec. `priorities`/`p_k` always report the unweighted integer priorities.
-pub fn select_coefficients_weighted(aspect_byte: u8, tier: u8, k: usize, aniso: f64) -> Selection {
-    if aniso == 0.0 {
-        return select_coefficients(aspect_byte, tier, k);
-    }
-    let (w, h) = decode_output_size(aspect_byte, tier);
-    let (w, h) = (w as usize, h as usize);
-    let mut entries = candidate_entries(w, h);
-    entries.sort_unstable_by(|&(pa, cxa, cya), &(pb, cxb, cyb)| {
-        let key = |p: u64, cx: usize, cy: usize| -> f64 {
-            let px = (cx * h) as f64;
-            let py = (cy * w) as f64;
-            // sin²2θ = (2·px·py)² / (px²+py²)²; p = px²+py².
-            let sin2_2theta = (2.0 * px * py) * (2.0 * px * py) / (p as f64 * p as f64);
-            p as f64 * (1.0 + aniso * sin2_2theta)
-        };
-        key(pa, cxa, cya)
-            .total_cmp(&key(pb, cxb, cyb))
-            .then_with(|| (cxa, cya).cmp(&(cxb, cyb)))
-    });
-    build_selection(entries, k)
-}
-
-/// Every non-DC (priority, cx, cy) candidate on the natural render grid.
-fn candidate_entries(w: usize, h: usize) -> Vec<(u64, usize, usize)> {
-    let mut entries: Vec<(u64, usize, usize)> = Vec::with_capacity(w * h - 1);
-    for cy in 0..h {
-        for cx in 0..w {
-            if cx == 0 && cy == 0 {
-                continue;
+impl SelectionOrder {
+    /// Sort the candidate grid for one (aspect byte, tier) under the §6.2 weights.
+    pub fn new(aspect_byte: u8, tier: u8, aniso: f64, hv: f64) -> Self {
+        let (w, h) = decode_output_size(aspect_byte, tier);
+        let (w, h) = (w as usize, h as usize);
+        let (a_q12, h_q12) = (sel_weight_q12(aniso), sel_weight_q12(hv));
+        let mut entries: Vec<(u64, usize, usize)> = Vec::with_capacity(w * h - 1);
+        for cy in 0..h {
+            for cx in 0..w {
+                if cx == 0 && cy == 0 {
+                    continue;
+                }
+                let key = selection_key((cx * h) as u64, (cy * w) as u64, a_q12, h_q12);
+                entries.push((key, cx, cy));
             }
-            let px = (cx * h) as u64;
-            let py = (cy * w) as u64;
-            entries.push((px * px + py * py, cx, cy));
+        }
+        entries.sort_unstable_by_key(|&(key, cx, cy)| (key, cx, cy));
+        Self { entries, w, h }
+    }
+
+    /// The first `k` frequencies in selection order.
+    ///
+    /// `priorities`/`p_k` report the **unweighted** integer priority
+    /// `(cx·H)² + (cy·W)²`: the synthesis window and the CfL taper are defined
+    /// on the true spatial frequency, not on the perceptual sort key.
+    pub fn take(&self, k: usize) -> Selection {
+        let n = k.min(self.entries.len());
+        let mut coeffs = Vec::with_capacity(n);
+        let mut priorities = Vec::with_capacity(n);
+        for &(_, cx, cy) in &self.entries[..n] {
+            let (px, py) = ((cx * self.h) as u64, (cy * self.w) as u64);
+            coeffs.push((cx, cy));
+            priorities.push(px * px + py * py);
+        }
+        let p_k = priorities.last().copied().unwrap_or(1);
+        Selection {
+            coeffs,
+            priorities,
+            p_k,
         }
     }
-    entries
 }
 
-/// Truncate sorted candidates to K and package them as a [`Selection`].
-fn build_selection(mut entries: Vec<(u64, usize, usize)>, k: usize) -> Selection {
-    entries.truncate(k);
-    let p_k = entries.last().map(|&(p, _, _)| p).unwrap_or(1);
-    Selection {
-        coeffs: entries.iter().map(|&(_, cx, cy)| (cx, cy)).collect(),
-        priorities: entries.iter().map(|&(p, _, _)| p).collect(),
-        p_k,
+/// Merged AC write order for the embedded/progressive layout: `(channel, index)`
+/// pairs sorted by frequency priority (L = 0, a = 1, b = 2), with the channel
+/// and index as deterministic tie-breaks. Encoder and decoder derive it from the
+/// selections alone, so it costs no bits.
+pub fn interleaved_order(
+    l_sel: &Selection,
+    c_sel: &Selection,
+    l_count: usize,
+    c_count: usize,
+) -> Vec<(u8, usize)> {
+    let mut v: Vec<(u64, u8, usize)> = Vec::with_capacity(l_count + 2 * c_count);
+    for i in 0..l_count.min(l_sel.priorities.len()) {
+        v.push((l_sel.priorities[i], 0, i));
     }
+    for ch in [1u8, 2] {
+        for i in 0..c_count.min(c_sel.priorities.len()) {
+            v.push((c_sel.priorities[i], ch, i));
+        }
+    }
+    v.sort_unstable();
+    v.into_iter().map(|(_, ch, i)| (ch, i)).collect()
 }
 
 /// Decode-side synthesis window weights for a selection. Per spec §11 (v0.6).
@@ -217,6 +275,23 @@ pub fn dct_decode_pixel_separable(
 
 #[cfg(test)]
 mod tests {
+
+    /// The bare priority order (both selection weights zeroed) — the base the
+    /// weighted order of §6.2 must reproduce exactly at `aniso = hv = 0`.
+    fn select_coefficients(aspect_byte: u8, tier: u8, k: usize) -> Selection {
+        SelectionOrder::new(aspect_byte, tier, 0.0, 0.0).take(k)
+    }
+
+    /// One-shot weighted selection, for the tests that only need a single K.
+    fn select_coefficients_weighted(
+        aspect_byte: u8,
+        tier: u8,
+        k: usize,
+        aniso: f64,
+        hv: f64,
+    ) -> Selection {
+        SelectionOrder::new(aspect_byte, tier, aniso, hv).take(k)
+    }
     use super::*;
 
     #[test]
@@ -236,7 +311,7 @@ mod tests {
         for byte in [0u8, 64, 128, 191, 255] {
             for tier in [0u8, 1] {
                 let base = select_coefficients(byte, tier, 26);
-                let weighted = select_coefficients_weighted(byte, tier, 26, 0.0);
+                let weighted = select_coefficients_weighted(byte, tier, 26, 0.0, 0.0);
                 assert_eq!(base.coeffs, weighted.coeffs, "byte={byte} tier={tier}");
                 assert_eq!(base.priorities, weighted.priorities);
                 assert_eq!(base.p_k, weighted.p_k);
@@ -245,12 +320,71 @@ mod tests {
     }
 
     #[test]
+    fn integer_selection_key_matches_the_real_valued_weight() {
+        // The spec orders on an exact integer key; the *definition* it stands in
+        // for is priority·(1 + aniso·sin²2θ)·(1 + hv·cos2θ) over the reals. Pin
+        // the two together at the shipped weights over every aspect byte, at the
+        // tier whose order the format actually transmits in.
+        let t = crate::constants::Tunables::DEFAULT;
+        for byte in 0u8..=255 {
+            let (w, h) = decode_output_size(byte, 0);
+            let (w, h) = (w as usize, h as usize);
+            let mut real: Vec<(f64, usize, usize)> = Vec::new();
+            for cy in 0..h {
+                for cx in 0..w {
+                    if cx == 0 && cy == 0 {
+                        continue;
+                    }
+                    let (px, py) = ((cx * h) as f64, (cy * w) as f64);
+                    let p = px * px + py * py;
+                    let sin2_2t = (2.0 * px * py) * (2.0 * px * py) / (p * p);
+                    let cos_2t = (px * px - py * py) / p;
+                    let key = p * (1.0 + t.aniso_oblique * sin2_2t) * (1.0 + t.sel_hv * cos_2t);
+                    real.push((key, cx, cy));
+                }
+            }
+            real.sort_by(|a, b| {
+                a.0.total_cmp(&b.0)
+                    .then_with(|| (a.1, a.2).cmp(&(b.1, b.2)))
+            });
+            let order = SelectionOrder::new(byte, 0, t.aniso_oblique, t.sel_hv);
+            for &k in &[5usize, 9, 15, 20, 28] {
+                let want: Vec<(usize, usize)> =
+                    real.iter().take(k).map(|&(_, cx, cy)| (cx, cy)).collect();
+                assert_eq!(order.take(k).coeffs, want, "byte={byte} k={k}");
+            }
+        }
+    }
+
+    #[test]
+    fn selection_key_stays_inside_53_bits() {
+        // An implementation with exact 53-bit integers (a JavaScript `number`)
+        // must be able to evaluate the key without a bignum at every tier.
+        let t = crate::constants::Tunables::DEFAULT;
+        let (a, hv) = (sel_weight_q12(t.aniso_oblique), sel_weight_q12(t.sel_hv));
+        let mut worst = 0u64;
+        for tier in 0..=crate::constants::MAX_TIER {
+            for byte in [0u8, 128, 255] {
+                let (w, h) = decode_output_size(byte, tier);
+                let (w, h) = (w as usize, h as usize);
+                for &(cx, cy) in &[(w - 1, h - 1), (w - 1, 0), (0, h - 1)] {
+                    worst = worst.max(selection_key((cx * h) as u64, (cy * w) as u64, a, hv));
+                }
+            }
+        }
+        assert!(
+            worst < (1u64 << 53),
+            "worst key {worst} needs more than 53 bits"
+        );
+    }
+
+    #[test]
     fn weighted_selection_penalizes_diagonals() {
         // Square grid: (1,1) has priority 2·32² = 2048 and sin²2θ = 1, while
         // (2,0)/(0,2) have priority 4096 and sin²2θ = 0. With aniso = 1.5 the
         // diagonal's weighted key (5120) exceeds the axis pair's (4096), so the
         // axis frequencies must now be selected first.
-        let sel = select_coefficients_weighted(128, 0, 4, 1.5);
+        let sel = select_coefficients_weighted(128, 0, 4, 1.5, 0.0);
         let first_four = &sel.coeffs[..4];
         assert!(first_four.contains(&(2, 0)), "got {first_four:?}");
         assert!(first_four.contains(&(0, 2)), "got {first_four:?}");

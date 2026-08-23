@@ -57,7 +57,13 @@ fn read_hash_from_stdin() -> ChromaHash {
     })
 }
 
-/// Parse CHROMAHASH_TUNE overrides on top of the v0.6 defaults.
+/// Apply a raw layout override to both the tier-0 table and the tier-1..3 base.
+fn set_layouts(t: &mut Tunables, mut f: impl FnMut(&mut chromahash::AcLayout)) {
+    f(&mut t.layout);
+    f(&mut t.layout_upper);
+}
+
+/// Parse CHROMAHASH_TUNE overrides on top of `Tunables::DEFAULT`.
 /// Unknown keys or malformed values abort loudly — a silently ignored knob
 /// would corrupt a whole sweep.
 ///
@@ -92,11 +98,13 @@ fn tunables_from_env() -> Tunables {
                     "B" => chromahash::LAYOUT_B,
                     "C" => chromahash::LAYOUT_C,
                     "D" => chromahash::LAYOUT_D,
+                    "T0" => chromahash::LAYOUT_T0,
                     _ => {
                         eprintln!("CHROMAHASH_TUNE: unknown layout '{value}'");
                         std::process::exit(1);
                     }
-                }
+                };
+                t.layout_upper = t.layout;
             }
             "max_chroma_a" => t.max_chroma_a = parse_f64(),
             "max_chroma_b" => t.max_chroma_b = parse_f64(),
@@ -129,21 +137,49 @@ fn tunables_from_env() -> Tunables {
             "aniso" => t.aniso_oblique = parse_f64(),
             "ac_nearest" => t.ac_nearest = value == "1" || value == "true",
             "scale_fit" => t.scale_fit = parse_u32(),
-            // Raw AcLayout overrides ("count:bits"), applied on top of `layout`
-            "l1" => t.layout.l_tiers[0] = parse_count_bits(key, value),
-            "l2" => t.layout.l_tiers[1] = parse_count_bits(key, value),
-            "c" => {
+            "refine_passes" => t.refine_passes = parse_u32(),
+            "refine_delta" => t.refine_delta = parse_u32(),
+            "refine_obj" => t.refine_obj = parse_u32(),
+            "refine_dc" => t.refine_dc = value == "1" || value == "true",
+            "refine_scale" => t.refine_scale = value == "1" || value == "true",
+            "reproject_passes" => t.reproject_passes = parse_u32(),
+            "aspect_bits" => t.aspect_bits = parse_u32(),
+            "l_dc_bits" => t.l_dc_bits = parse_u32(),
+            "a_dc_bits" => t.a_dc_bits = parse_u32(),
+            "b_dc_bits" => t.b_dc_bits = parse_u32(),
+            "l_scale_bits" => t.l_scale_bits = parse_u32(),
+            "a_scale_bits" => t.a_scale_bits = parse_u32(),
+            "b_scale_bits" => t.b_scale_bits = parse_u32(),
+            "b_scale_from_a" => t.b_scale_from_a = value == "1" || value == "true",
+            "scale_mu" => t.scale_mu = parse_f64(),
+            "sel_hv" => t.sel_hv = parse_f64(),
+            "refine_grid" => t.refine_grid = parse_u32(),
+            "refine_wl" => t.refine_wl = parse_f64(),
+            "refine_wc" => t.refine_wc = parse_f64(),
+            "cfl_bits" => t.cfl_bits = parse_u32(),
+            "cfl_range" => t.cfl_range = parse_f64(),
+            "synth_count" => t.synth_count = parse_u32() as usize,
+            "synth_gain" => t.synth_gain = parse_f64(),
+            "interleave" => t.interleave = value == "1" || value == "true",
+            "trunc_bytes" => t.trunc_bytes = parse_u32() as usize,
+            // Raw AcLayout overrides ("count:bits"), applied on top of `layout`.
+            // v1 splits the layout in two (tier 0 vs. the tier-1..3 base); these
+            // knobs write *both*, so a sweep keeps the historical "one base,
+            // scaled by 4^tier" meaning at whatever tier it runs at.
+            "l1" => set_layouts(&mut t, |l| l.l_tiers[0] = parse_count_bits(key, value)),
+            "l2" => set_layouts(&mut t, |l| l.l_tiers[1] = parse_count_bits(key, value)),
+            "c" => set_layouts(&mut t, |l| {
                 let (count, bits) = parse_count_bits(key, value);
-                t.layout.c_count = count;
-                t.layout.c_bits = bits;
-            }
-            "la1" => t.layout.la_tiers[0] = parse_count_bits(key, value),
-            "la2" => t.layout.la_tiers[1] = parse_count_bits(key, value),
-            "ca" => {
+                l.c_count = count;
+                l.c_bits = bits;
+            }),
+            "la1" => set_layouts(&mut t, |l| l.la_tiers[0] = parse_count_bits(key, value)),
+            "la2" => set_layouts(&mut t, |l| l.la_tiers[1] = parse_count_bits(key, value)),
+            "ca" => set_layouts(&mut t, |l| {
                 let (count, bits) = parse_count_bits(key, value);
-                t.layout.ca_count = count;
-                t.layout.ca_bits = bits;
-            }
+                l.ca_count = count;
+                l.ca_bits = bits;
+            }),
             _ => {
                 eprintln!("CHROMAHASH_TUNE: unknown key '{key}'");
                 std::process::exit(1);

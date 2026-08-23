@@ -105,7 +105,7 @@ use constants::{
 // locked into the spec.
 #[doc(hidden)]
 pub use constants::{
-    AcLayout, Companding, LAYOUT_A, LAYOUT_B, LAYOUT_C, LAYOUT_D, QuantTable, Tunables,
+    AcLayout, Companding, LAYOUT_A, LAYOUT_B, LAYOUT_C, LAYOUT_D, LAYOUT_T0, QuantTable, Tunables,
 };
 #[doc(hidden)]
 pub use encode::{CoeffDump, encode_debug_coefficients};
@@ -222,7 +222,7 @@ impl ChromaHash {
             return Err(ChromaHashError::ReservedBitSet);
         }
         let has_alpha = (b0 >> ALPHA_FLAG_BIT) & 1 == 1;
-        if bytes.len() != body_len_bytes(&Tunables::DEFAULT.layout, has_alpha, tier) {
+        if bytes.len() != body_len_bytes(&Tunables::DEFAULT, has_alpha, tier) {
             return Err(ChromaHashError::LengthMismatch);
         }
         Ok(Self {
@@ -237,7 +237,7 @@ impl ChromaHash {
     /// same `Tunables` it encoded with.
     #[doc(hidden)]
     pub fn from_bytes_tuned(bytes: &[u8], t: &Tunables) -> Result<Self, ChromaHashError> {
-        if bytes.len() < (PREFIX_BITS as usize).div_ceil(8) {
+        if bytes.len() < (crate::constants::prefix_bits(t) as usize).div_ceil(8) {
             return Err(ChromaHashError::TooShort);
         }
         let b0 = bytes[0];
@@ -252,7 +252,7 @@ impl ChromaHash {
             return Err(ChromaHashError::ReservedBitSet);
         }
         let has_alpha = (b0 >> ALPHA_FLAG_BIT) & 1 == 1;
-        if bytes.len() != body_len_bytes(&t.layout, has_alpha, tier) {
+        if bytes.len() != body_len_bytes(t, has_alpha, tier) {
             return Err(ChromaHashError::LengthMismatch);
         }
         Ok(Self {
@@ -490,9 +490,10 @@ mod tests {
         // encode_with debug_asserts the exact AC payload bit position; running
         // every layout over opaque and transparent images across extreme
         // dimensions exercises those asserts for both alpha modes.
-        for layout in [LAYOUT_A, LAYOUT_B, LAYOUT_C, LAYOUT_D] {
+        for layout in [LAYOUT_A, LAYOUT_B, LAYOUT_C, LAYOUT_D, LAYOUT_T0] {
             let t = Tunables {
                 layout,
+                layout_upper: layout,
                 ..Tunables::DEFAULT
             };
             for &(w, h) in &[(1u32, 1u32), (1, 100), (100, 1), (16, 9), (9, 16), (32, 2)] {
@@ -649,8 +650,8 @@ mod tests {
         let hash = ChromaHash::encode(w, h, &rgba, Gamut::Srgb);
         #[rustfmt::skip]
         let expected_hash = [
-            0, 128, 79, 97, 48, 16, 136, 17, 1, 36, 18, 13, 90, 42, 161, 145, 4, 61, 167, 152, 89,
-            140, 104, 17, 48, 53, 88, 210, 238, 60, 76, 179,
+            0, 128, 79, 97, 48, 16, 136, 0, 0, 77, 96, 21, 145, 64, 230, 140, 5, 136, 84, 204, 24,
+            16, 40, 33, 229, 201, 182, 235, 180, 18, 197, 40,
         ];
         assert_eq!(hash.as_bytes(), &expected_hash);
 
@@ -659,10 +660,10 @@ mod tests {
         let (dw, dh, px) = hash.decode();
         assert_eq!((dw, dh), (32, 32));
         let p = |i: usize| &px[i * 4..i * 4 + 4];
-        assert_eq!(p(0), [86, 69, 0, 255]);
-        assert_eq!(p(17), [144, 121, 69, 255]);
-        assert_eq!(p(500), [146, 139, 154, 255]);
-        assert_eq!(p(1000), [151, 136, 148, 255]);
+        assert_eq!(p(0), [78, 51, 0, 255]);
+        assert_eq!(p(17), [158, 124, 62, 255]);
+        assert_eq!(p(500), [153, 144, 158, 255]);
+        assert_eq!(p(1000), [143, 127, 159, 255]);
 
         // Aggressive cap: coefficients with cx ≥ 4 or cy ≥ 4 must be dropped, not
         // kept — asserting the whole 4×4 pins the off-axis pixels where those
@@ -670,22 +671,22 @@ mod tests {
         let (cw, ch, cpx) = hash.decode_capped(4, 4);
         assert_eq!((cw, ch), (4, 4));
         let expected: [[u8; 4]; 16] = [
-            [127, 110, 0, 255],
-            [156, 131, 42, 255],
-            [143, 127, 115, 255],
-            [137, 136, 198, 255],
-            [152, 140, 125, 255],
-            [137, 127, 124, 255],
-            [147, 137, 153, 255],
-            [144, 135, 165, 255],
-            [145, 136, 146, 255],
-            [141, 134, 148, 255],
-            [143, 137, 142, 255],
-            [142, 133, 125, 255],
-            [137, 127, 145, 255],
-            [149, 133, 138, 255],
-            [143, 130, 131, 255],
-            [133, 129, 139, 255],
+            [121, 105, 0, 255],
+            [155, 132, 26, 255],
+            [147, 128, 105, 255],
+            [141, 137, 198, 255],
+            [153, 141, 126, 255],
+            [134, 126, 123, 255],
+            [147, 138, 153, 255],
+            [147, 137, 161, 255],
+            [147, 137, 142, 255],
+            [144, 134, 140, 255],
+            [143, 135, 149, 255],
+            [142, 131, 128, 255],
+            [128, 126, 163, 255],
+            [151, 134, 136, 255],
+            [144, 130, 141, 255],
+            [134, 130, 146, 255],
         ];
         for (i, e) in expected.iter().enumerate() {
             assert_eq!(&cpx[i * 4..i * 4 + 4], e, "capped pixel {i}");
@@ -705,10 +706,10 @@ mod tests {
         let (ww, wh, wpx) = hash.decode_tuned(&windowed);
         assert_eq!((ww, wh), (32, 32));
         let wp = |i: usize| &wpx[i * 4..i * 4 + 4];
-        assert_eq!(wp(0), [106, 91, 0, 255]);
-        assert_eq!(wp(17), [143, 125, 93, 255]);
-        assert_eq!(wp(500), [145, 137, 148, 255]);
-        assert_eq!(wp(1000), [147, 134, 144, 255]);
+        assert_eq!(wp(0), [101, 79, 0, 255]);
+        assert_eq!(wp(17), [152, 127, 84, 255]);
+        assert_eq!(wp(500), [149, 140, 150, 255]);
+        assert_eq!(wp(1000), [142, 129, 154, 255]);
     }
 
     #[test]
