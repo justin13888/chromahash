@@ -78,6 +78,12 @@ nothing special about 32/108/411/1623 B beyond ×4 arithmetic.
 
 ## 2. Cross-format at equal bytes, same corpus, same scoring
 
+> **Superseded by §11.14.** Every ChromaHash row below was measured with a
+> layout synthesized to fill the budget at 5 b/4 b — the pre-v0.7 shape — so it
+> understates the shipped format. §11.14 re-measures this table with the shipped
+> tiers at the shipped anchors. The competitor rows and the shape of the
+> conclusions are unchanged.
+
 `rd-budget`, **tune split**. Bold marks the leader in a column within a byte
 neighbourhood.
 
@@ -994,6 +1000,9 @@ would be worth more than the next round of sweeps.
 
 ### 8.6 What the optimized recipe does to the cross-format positioning
 
+> **Superseded by §11.14** for the same reason as §2, and because the alpha
+> allocation and the compact tier both landed after it.
+
 Holdout split, competitors from `rd-budget --split holdout`, ChromaHash rows
 from `budget-ladder-optimized`/`final-candidates` (same corpus, same split, same
 scoring config, same metric cache — the two runners share all of it).
@@ -1714,4 +1723,60 @@ What is still not measured, and is now the honest list for v0.8:
   history. Both photographic corpora are professional captures.
 * **Entropy-coded AC** (−4.3%), which remains refused on the fail-fast O(1)
   length check rather than on its quality (§7.13).
+
+### 11.14 Cross-format positioning, re-measured against the shipped constants
+
+The tables in §2 and §8.6 were taken before v0.7 and are kept as the record of
+those rounds. These are the current figures, and they are the first ones in this
+file taken with `rd-budget` running the **shipped tiers** at the shipped byte
+anchors rather than a layout synthesized to fill the budget.
+
+That distinction mattered. `allocate()` builds a 5 b/4 b layout — the pre-v0.7
+shape — so every previous ChromaHash row in a cross-format table was the old
+constants under the current name. At 21 B on holdout the synthesized row loses
+SSIMULACRA2 (−342.2) and Butteraugli (32.60) to ThumbHash; the shipped compact
+tier wins both. Off-anchor budgets are still synthesized and are now labelled
+`(resized)`.
+
+**Holdout split (32 photographs).** Bold marks the leader in a byte
+neighbourhood.
+
+| Bytes | Format | ΔE00 ↓ | SSIM2 ↑ | Butter ↓ | DSSIM ↓ |
+|---|---|---|---|---|---|
+| 21.1 | ThumbHash | 12.851 | −326.3 | 31.75 | 0.2589 |
+| **21** | **ChromaHash compact** | **12.047** | **−323.2** | **30.52** | **0.2576** |
+| **32** | **ChromaHash tier 0** | **11.150** | **−285.8** | **28.49** | **0.2550** |
+| 47.8 | WebP | 15.570 | −406.0 | 37.87 | 0.2852 |
+| 62.3 | lqip-modern r8 | 13.275 | −315.4 | 31.08 | 0.2582 |
+| 63.5 | WebP | 12.198 | −259.5 | 27.47 | 0.2556 |
+| 79.5 | WebP | 11.085 | −203.5 | 24.72 | 0.2534 |
+| 82.2 | lqip-modern r16 | 11.230 | **−183.3** | **23.86** | 0.2525 |
+| 107.2 | WebP | 10.255 | −167.5 | 22.91 | **0.2498** |
+| **108** | **ChromaHash tier 1** | **9.281** | **−159.4** | **22.51** | 0.2505 |
+| 128.6 | lqip-modern r24 | 10.223 | −124.4 | 21.22 | 0.2487 |
+| 188.3 | **WebP** | **8.763** | **−93.7** | **18.33** | **0.2410** |
+| 262.3 | lqip-modern r48 | 8.132 | −66.7 | 15.64 | 0.2351 |
+| 405.7 | **WebP** | **7.289** | **−62.2** | **14.01** | **0.2285** |
+| 411 | ChromaHash tier 2 | 7.604 | −76.3 | 17.76 | 0.2441 |
+
+Four things this settles.
+
+1. **The compact tier beats ThumbHash on all four metrics at its own size**,
+   out of sample. That is the positioning claim §8.6 wanted and no shipped
+   constant set had previously been able to make.
+2. **No general codec reaches these budgets.** WebP's smallest usable output on
+   this corpus is ~48 B and it scores 15.570 there — worse than ChromaHash at
+   **12 bytes**. Between 12 and 48 bytes the comparison set is other LQIPs and
+   raw pixels, and ChromaHash leads all of them.
+3. **Tier 1 (108 B) is the format's strongest point.** It beats size-matched
+   WebP on ΔE00 by 9.5% *and* takes SSIMULACRA2 and Butteraugli, losing only
+   DSSIM by 0.0007. It also beats lqip-modern at 129 B while being 20 B smaller.
+4. **WebP wins from ~190 B up, on every axis.** The ΔE00 crossover is between
+   108 and 188 B, and by 411 B WebP leads all four. §14.1 of the spec states
+   this rather than arguing around it.
+
+The structural weakness §2 identified is narrowed but not gone: lqip-modern
+still takes SSIMULACRA2 and Butteraugli at ~82 B, where ChromaHash wins ΔE00 by
+13%. The format still buys colour accuracy with structural accuracy; it now does
+so over a wider range and loses the trade later.
 
