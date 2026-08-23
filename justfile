@@ -135,6 +135,32 @@ sweep config *args: build-compare
     cargo build --manifest-path rust/Cargo.toml --release --example encode_stdin
     mise exec -- node tools/comparison/dist/sweep.js tools/comparison/sweeps/{{config}}.json {{args}}
 
+# Cross-format rate-distortion at arbitrary byte budgets, on the same corpus
+# split as `just sweep` — so a ladder row and a ThumbHash row are directly
+# comparable. Emits a guard-aware winner-per-metric summary alongside the curve.
+# Long: it re-encodes WebP/JPEG/AVIF at every budget (~1h per split).
+rd-budget *args: build-compare
+    cargo build --manifest-path rust/Cargo.toml --release --example encode_stdin
+    mise exec -- node tools/comparison/dist/rd-budget.js {{args}}
+
+# Chroma-from-luma sizing probe: how linearly predictable is each chroma AC
+# coefficient from the luma coefficient at the same selection index.
+cfl-probe *args: build-compare
+    cargo build --manifest-path rust/Cargo.toml --release --example encode_stdin
+    mise exec -- node tools/comparison/dist/cfl-probe.js {{args}}
+
+# Coefficient statistics: entropy headroom of the AC code stream, and how much
+# luma energy the l2-ball prefix captures against the best fixed/oracle set.
+coeff-stats *args: build-compare
+    cargo build --manifest-path rust/Cargo.toml --release --example encode_stdin
+    mise exec -- node tools/comparison/dist/coeff-stats.js {{args}}
+
+# What entropy-coding the AC payload would actually buy, costed with a real
+# coder and scored leave-one-image-out rather than as an in-sample entropy.
+entropy-budget *args: build-compare
+    cargo build --manifest-path rust/Cargo.toml --release --example encode_stdin
+    mise exec -- node tools/comparison/dist/entropy-budget.js {{args}}
+
 # Train Lloyd-Max codebooks and run the chroma VQ probe on the tune split's
 # dumped coefficients (→ output/sweeps/tables.json with ready-to-paste
 # CHROMAHASH_TUNE fragments for the companding-family sweep).

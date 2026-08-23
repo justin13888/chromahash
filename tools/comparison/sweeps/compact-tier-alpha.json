@@ -1,0 +1,81 @@
+{
+  "name": "compact-tier-alpha",
+  "corpus": "alpha",
+  "backdrops": "white-black-grey",
+  "alphaFidelity": true,
+  "description": "SS11.5 - the alpha-mode row of a 21-byte compact tier. Alpha mode spends 9 extra prefix bits and 20 on alpha AC, so the opaque compact layouts do not fit: the same coefficient counts cost 25 bytes. This is the 21-byte alpha grid (161-168 bits: 54 prefix + 9 alpha DC/scale + L*lb + 2*C*cb + 5*4 alpha AC), with the shipped tier-0 alpha shape resized to 21 B as the incumbent.",
+  "variants": [
+    {
+      "label": "shipped shape L9@5 C5@4",
+      "tune": "la1=9:5 ca=5:4"
+    },
+    {
+      "label": "L17@4 C2@3",
+      "tune": "la1=17:4 ca=2:3"
+    },
+    {
+      "label": "L12@4 C6@3",
+      "tune": "la1=12:4 ca=6:3"
+    },
+    {
+      "label": "L4@4 C11@3",
+      "tune": "la1=4:4 ca=11:3"
+    },
+    {
+      "label": "L22@3 C2@3",
+      "tune": "la1=22:3 ca=2:3"
+    },
+    {
+      "label": "L12@3 C7@3",
+      "tune": "la1=12:3 ca=7:3"
+    },
+    {
+      "label": "L4@3 C12@3",
+      "tune": "la1=4:3 ca=12:3"
+    },
+    {
+      "label": "L13@5 C2@4",
+      "tune": "la1=13:5 ca=2:4"
+    },
+    {
+      "label": "L4@5 C8@4",
+      "tune": "la1=4:5 ca=8:4"
+    },
+    {
+      "label": "L16@4 C2@4",
+      "tune": "la1=16:4 ca=2:4"
+    },
+    {
+      "label": "L11@4 C5@4",
+      "tune": "la1=11:4 ca=5:4"
+    },
+    {
+      "label": "L5@4 C8@4",
+      "tune": "la1=5:4 ca=8:4"
+    },
+    {
+      "label": "L24@3 C2@2",
+      "tune": "la1=24:3 ca=2:2"
+    },
+    {
+      "label": "L13@3 C10@2",
+      "tune": "la1=13:3 ca=10:2"
+    },
+    {
+      "label": "L4@3 C18@2",
+      "tune": "la1=4:3 ca=18:2"
+    },
+    {
+      "label": "L14@5 C2@3",
+      "tune": "la1=14:5 ca=2:3"
+    },
+    {
+      "label": "L9@5 C6@3",
+      "tune": "la1=9:5 ca=6:3"
+    },
+    {
+      "label": "L5@5 C10@3",
+      "tune": "la1=5:5 ca=10:3"
+    }
+  ]
+}
