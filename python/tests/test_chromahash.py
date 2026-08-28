@@ -9,14 +9,21 @@ the Rust core (the single source of truth).
 import json
 import os
 
-from chromahash import ChromaHash, Gamut
+import pytest
+
+from chromahash import COMPACT_TIER, DEFAULT_TIER, MAX_TIER, ChromaHash, Gamut
 
 SPEC_VECTORS = os.path.join(os.path.dirname(__file__), "../../spec/test-vectors")
 
 
 def load_vectors(name: str) -> list:
-    with open(os.path.join(SPEC_VECTORS, name)) as f:
-        return json.load(f)
+    """A missing or empty vector file is a broken gate, not a reason to pass."""
+    path = os.path.join(SPEC_VECTORS, name)
+    assert os.path.exists(path), f"spec vector file not found: {path}"
+    with open(path) as f:
+        cases = json.load(f)
+    assert cases, f"spec vector file is empty: {name}"
+    return cases
 
 
 def gamut_from_name(name: str) -> Gamut:
@@ -26,7 +33,8 @@ def gamut_from_name(name: str) -> Gamut:
         "Adobe RGB": Gamut.ADOBE_RGB,
         "BT.2020": Gamut.BT2020,
         "ProPhoto RGB": Gamut.PROPHOTO_RGB,
-    }.get(name, Gamut.SRGB)
+    }[name]  # KeyError names the gamut; a silent sRGB fallback would surface
+    # as a hash mismatch on an unrelated assertion instead.
 
 
 def solid_image(w: int, h: int, r: int, g: int, b: int, a: int) -> bytes:
@@ -75,19 +83,73 @@ def test_integration_decode_capped():
         assert list(rgba) == tc["expected"]["rgba"], f"{name}: rgba mismatch"
 
 
-def test_encode_produces_32_bytes():
-    ch = ChromaHash.encode(4, 4, solid_image(4, 4, 128, 128, 128, 255), Gamut.SRGB)
-    assert len(ch.as_bytes()) == 32
+# The byte length is a function of the tier alone, so assert all five rather
+# than only the default. These are the lengths spec §3.3 tabulates.
+@pytest.mark.parametrize(("tier", "expected"), [(0, 21), (1, 32), (2, 108), (3, 411), (4, 1623)])
+def test_each_tier_encodes_to_its_documented_length(tier: int, expected: int):
+    rgba = solid_image(4, 4, 128, 128, 128, 255)
+    ch = ChromaHash.encode_with_quality(4, 4, rgba, Gamut.SRGB, tier)
+    assert len(ch.as_bytes()) == expected
 
 
-def test_decode_valid_dimensions():
-    ch = ChromaHash.encode(4, 4, solid_image(4, 4, 128, 64, 32, 255), Gamut.SRGB)
+def test_encode_defaults_to_the_default_tier():
+    rgba = solid_image(4, 4, 128, 128, 128, 255)
+    plain = ChromaHash.encode(4, 4, rgba, Gamut.SRGB)
+    explicit = ChromaHash.encode_with_quality(4, 4, rgba, Gamut.SRGB, DEFAULT_TIER)
+    assert plain.as_bytes() == explicit.as_bytes()
+    # ...and the compact tier is genuinely a different, smaller code.
+    compact = ChromaHash.encode_with_quality(4, 4, rgba, Gamut.SRGB, COMPACT_TIER)
+    assert len(compact.as_bytes()) < len(plain.as_bytes())
+
+
+# Decoded dimensions come from the aspect byte and the tier's raster. A range
+# check wide enough to pass for every tier cannot tell them apart.
+@pytest.mark.parametrize(("tier", "edge"), [(0, 32), (1, 32), (2, 64), (3, 128), (4, 256)])
+def test_decoded_dimensions_follow_the_tier_raster(tier: int, edge: int):
+    rgba = solid_image(4, 4, 128, 64, 32, 255)
+    ch = ChromaHash.encode_with_quality(4, 4, rgba, Gamut.SRGB, tier)
     w, h, pixels = ch.decode()
-    assert 0 < w <= 32
-    assert 0 < h <= 32
+    assert (w, h) == (edge, edge)
     assert len(pixels) == w * h * 4
 
 
 def test_from_bytes_roundtrip():
     ch = ChromaHash.encode(4, 4, solid_image(4, 4, 128, 64, 32, 255), Gamut.SRGB)
     assert ChromaHash.from_bytes(ch.as_bytes()) == ch
+
+
+@pytest.mark.parametrize("tier", range(MAX_TIER + 1))
+def test_decode_rejects_wrong_length(tier: int):
+    """Every tier has its own exact length, so a fixed one is not a valid
+    assertion about any of them — bracket each tier's own encoding.
+
+    ``from_bytes`` defers validation to first use (unlike the C, WASM, UniFFI,
+    C#, Swift and TypeScript facades, which reject eagerly), so the rejection
+    surfaces here rather than at construction.
+    """
+    encoded = ChromaHash.encode_with_quality(
+        4, 4, solid_image(4, 4, 128, 64, 32, 255), Gamut.SRGB, tier
+    ).as_bytes()
+    ChromaHash.from_bytes(encoded).decode()  # accepted, and decodes
+
+    with pytest.raises(Exception):
+        ChromaHash.from_bytes(encoded[:-1]).decode()
+    with pytest.raises(Exception):
+        ChromaHash.from_bytes(encoded + b"\x00").decode()
+    with pytest.raises(Exception):
+        ChromaHash.from_bytes(b"").decode()
+
+
+def test_encode_rejects_invalid_input():
+    with pytest.raises(Exception):
+        ChromaHash.encode(0, 4, b"", Gamut.SRGB)
+    with pytest.raises(Exception):
+        ChromaHash.encode(4, 0, b"", Gamut.SRGB)
+    with pytest.raises(Exception):
+        ChromaHash.encode(4, 4, bytes(63), Gamut.SRGB)
+
+
+def test_encode_with_quality_rejects_a_reserved_tier():
+    rgba = solid_image(4, 4, 128, 64, 32, 255)
+    with pytest.raises(Exception):
+        ChromaHash.encode_with_quality(4, 4, rgba, Gamut.SRGB, MAX_TIER + 1)

@@ -3,6 +3,7 @@ package chromahash
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"testing"
@@ -58,6 +59,8 @@ func verticalGradient(w, h int) []byte {
 
 func gamutFromString(s string) Gamut {
 	switch s {
+	case "sRGB":
+		return GamutSRGB
 	case "Display P3":
 		return GamutDisplayP3
 	case "Adobe RGB":
@@ -67,7 +70,10 @@ func gamutFromString(s string) Gamut {
 	case "ProPhoto RGB":
 		return GamutProPhotoRGB
 	default:
-		return GamutSRGB
+		// Falling back to sRGB turned an unrecognised gamut into a hash
+		// mismatch on an unrelated assertion. Fail where the cause is, as the
+		// Rust and C vector harnesses do.
+		panic(fmt.Sprintf("unknown gamut in spec vector: %q", s))
 	}
 }
 
@@ -226,10 +232,43 @@ func TestIntegrationDecodeCapped(t *testing.T) {
 
 // ── property tests ─────────────────────────────────────────────────────────────
 
-func TestEncodeProduces32Bytes(t *testing.T) {
-	ch := Encode(4, 4, solidImage(4, 4, 128, 128, 128, 255), GamutSRGB)
-	if len(ch.Hash) != 32 {
-		t.Errorf("hash length = %d, want 32", len(ch.Hash))
+// The byte length is a function of the tier alone, so assert all five rather
+// than only the default. These are the lengths spec §3.3 tabulates.
+func TestEachTierEncodesToItsDocumentedLength(t *testing.T) {
+	rgba := solidImage(4, 4, 128, 128, 128, 255)
+	for tier, want := range map[uint8]int{0: 21, 1: 32, 2: 108, 3: 411, 4: 1623} {
+		ch := EncodeWithQuality(4, 4, rgba, GamutSRGB, tier)
+		if len(ch.Hash) != want {
+			t.Errorf("tier %d: hash length = %d, want %d", tier, len(ch.Hash), want)
+		}
+	}
+	if got := len(Encode(4, 4, rgba, GamutSRGB).Hash); got != 32 {
+		t.Errorf("Encode default length = %d, want 32", got)
+	}
+}
+
+// FromBytes defers validation to first use, so the rejection surfaces as a
+// panic from Decode rather than an error from FromBytes. Pin that contract:
+// nothing here had ever exercised the invalid-hash path.
+func TestDecodeRejectsWrongLength(t *testing.T) {
+	valid := Encode(4, 4, solidImage(4, 4, 128, 64, 32, 255), GamutSRGB).Hash
+
+	for _, tc := range []struct {
+		name  string
+		bytes []byte
+	}{
+		{"one byte short", valid[:len(valid)-1]},
+		{"one byte long", append(append([]byte{}, valid...), 0)},
+		{"empty", []byte{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("Decode accepted a %d-byte hash", len(tc.bytes))
+				}
+			}()
+			FromBytes(tc.bytes).Decode()
+		})
 	}
 }
 
@@ -240,13 +279,18 @@ func TestFromBytesRoundtrip(t *testing.T) {
 	}
 }
 
-func TestValidDecodeDimensions(t *testing.T) {
-	ch := Encode(4, 4, solidImage(4, 4, 128, 64, 32, 255), GamutSRGB)
-	w, h, pixels := ch.Decode()
-	if w <= 0 || w > 32 || h <= 0 || h > 32 {
-		t.Errorf("decoded dims out of range: %dx%d", w, h)
-	}
-	if len(pixels) != w*h*4 {
-		t.Errorf("pixel length %d, want %d", len(pixels), w*h*4)
+// Decoded dimensions come from the aspect byte and the tier's raster. A range
+// check wide enough to pass for every tier cannot tell them apart, so assert
+// the values.
+func TestDecodedDimensionsFollowTheTierRaster(t *testing.T) {
+	rgba := solidImage(4, 4, 128, 64, 32, 255)
+	for tier, edge := range map[uint8]int{0: 32, 1: 32, 2: 64, 3: 128, 4: 256} {
+		w, h, pixels := EncodeWithQuality(4, 4, rgba, GamutSRGB, tier).Decode()
+		if w != edge || h != edge {
+			t.Errorf("tier %d: decoded %dx%d, want %dx%d", tier, w, h, edge, edge)
+		}
+		if len(pixels) != w*h*4 {
+			t.Errorf("tier %d: pixel length %d, want %d", tier, len(pixels), w*h*4)
+		}
 	}
 }
