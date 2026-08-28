@@ -64,8 +64,9 @@ def format_ks(tier: int) -> list[int]:
     )
 
 
-# Every per-channel K at the default tier, in ascending order.
-FORMAT_KS = format_ks(0)
+# Every per-channel K at the default tier, in ascending order. Not format_ks(0)
+# -- the tier codes are ordered by quality, so 0 is the compact tier.
+FORMAT_KS = format_ks(DEFAULT_TIER)
 
 
 def q12(v: float) -> int:

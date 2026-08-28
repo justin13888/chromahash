@@ -174,7 +174,7 @@ LAYOUT_T0 = AcLayout(
     a_bits=3,
 )
 
-# Layout TC: the compact-tier row (tier code 4, 21 bytes).
+# Layout TC: the compact-tier row (tier code 0, 21 bytes).
 #   no alpha = 54 + 19·4 L + 2·6·3 chroma                          = 166 bits
 #   alpha    = 54 + 9 + 12·4 L + 2·1·3 chroma + 16·3 alpha         = 165 bits
 # Both round up to 21 bytes. The compact row wants fewer alpha coefficients than
