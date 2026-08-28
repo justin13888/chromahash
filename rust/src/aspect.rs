@@ -14,7 +14,7 @@ pub fn decode_aspect(byte: u8) -> f64 {
     portable_pow(2.0, byte as f64 / 255.0 * 8.0 - 4.0)
 }
 
-/// Base (tier-0) output size from an aspect byte. Longer side = `BASE_LONG_EDGE`
+/// Base (render-level-0) output size from an aspect byte. Longer side = `BASE_LONG_EDGE`
 /// (32 px), shorter side ≥ 2 across the whole aspect range. Per spec §8.2.
 fn base_output_size(byte: u8) -> (u32, u32) {
     let edge = BASE_LONG_EDGE as f64;
@@ -29,11 +29,11 @@ fn base_output_size(byte: u8) -> (u32, u32) {
 }
 
 /// Decode the natural output size for an aspect byte at a given `tier` code.
-/// The tier-0 size is scaled by a power of two — `(w << level, h << level)` — so
+/// The base size is scaled by a power of two — `(w << level, h << level)` — so
 /// the long edge is `32 · 2^level` (32 / 64 / 128 / 256 px). Per spec §8.2 (v1).
 ///
 /// The shift is on the tier's *render level*, not its code: the compact tier is
-/// code 4 and renders at tier 0's size, so shifting by the code would give it a
+/// code 0 and renders at the default tier's size, so shifting by the code would give it a
 /// 512 px render — the opposite of what it is for.
 ///
 /// Scaling the *already-rounded* base size by a bit shift (rather than
@@ -112,7 +112,7 @@ mod tests {
     #[test]
     fn decode_output_size_min_dims() {
         // The short side never collapses below 2 px — the selection domain
-        // (§6.2) relies on (W, H) ≥ (2, 2) to offer ≥ 63 candidates at tier 0.
+        // (§6.2) relies on (W, H) ≥ (2, 2) to offer ≥ 63 candidates at render level 0.
         for byte in 0u8..=255 {
             let (w, h) = decode_output_size(byte, 0);
             assert!(w >= 2 && h >= 2, "byte={byte} gave {w}x{h}");
@@ -138,16 +138,17 @@ mod tests {
 
     #[test]
     fn decode_output_size_tier_is_base_bit_shifted() {
-        // Each tier doubles both dimensions: the natural long edge is 32·2^tier.
+        // Each level doubles both dimensions: the natural long edge is 32·2^level.
         // Scaling must be a bit shift of the rounded base size, NOT a re-rounded
         // 32·2^tier/ratio — those disagree for non-power-of-two ratios.
         for byte in [0u8, 64, 100, 128, 159, 191, 255] {
             let (bw, bh) = decode_output_size(byte, 0);
-            for tier in 0u8..=3 {
+            for tier in 0u8..=crate::constants::MAX_TIER {
+                let level = crate::constants::render_level(tier);
                 let (w, h) = decode_output_size(byte, tier);
-                assert_eq!((w, h), (bw << tier, bh << tier), "byte={byte} tier={tier}");
-                assert_eq!(w.max(h), 32u32 << tier, "long side must be 32·2^tier");
-                assert!(w >= 2 << tier && h >= 2 << tier);
+                assert_eq!((w, h), (bw << level, bh << level), "byte={byte} tier={tier}");
+                assert_eq!(w.max(h), 32u32 << level, "long side must be 32·2^level");
+                assert!(w >= 2 << level && h >= 2 << level);
             }
         }
     }

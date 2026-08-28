@@ -75,7 +75,7 @@ pub enum ChromaHashStatus {
 
 /// A ChromaHash placeholder. Opaque handle; create with [`chromahash_encode`]
 /// or [`chromahash_from_bytes`], release with [`chromahash_free`]. The encoded
-/// form is variable length (32 bytes at tier 0); query it with
+/// form is variable length (32 bytes at the default tier); query it with
 /// [`chromahash_byte_len`].
 pub struct ChromaHash {
     inner: CoreHash,
@@ -148,7 +148,7 @@ fn boxed_handle(inner: CoreHash) -> *mut ChromaHash {
 
 // ─── construct ────────────────────────────────────────────────────────────────
 
-/// Encode an RGBA image (4 bytes/pixel) into a tier-0 (32-byte) ChromaHash. On
+/// Encode an RGBA image (4 bytes/pixel) into a default-tier (32-byte) ChromaHash. On
 /// success `*out_hash` receives a new handle to free with [`chromahash_free`].
 #[no_mangle]
 pub unsafe extern "C" fn chromahash_encode(
@@ -181,8 +181,9 @@ pub unsafe extern "C" fn chromahash_encode(
     }
 }
 
-/// Encode an RGBA image at an explicit quality tier (`0..=3`; 0 is the 32-byte
-/// default, each higher tier ~4× larger). Rejects an out-of-range tier with
+/// Encode an RGBA image at an explicit quality tier (`0..=4`, ordered by
+/// quality; `1` is the 32-byte default and `0` the 21-byte compact tier, each
+/// higher code ~4× larger). Rejects an out-of-range tier with
 /// [`ChromaHashStatus::InvalidData`]. On success `*out_hash` receives a new
 /// handle to free with [`chromahash_free`].
 #[no_mangle]
@@ -262,7 +263,7 @@ pub unsafe extern "C" fn chromahash_free(hash: *mut ChromaHash) {
 
 // ─── inspect / serialize ──────────────────────────────────────────────────────
 
-/// The length in bytes of this hash's encoded form (32 at tier 0, more at higher
+/// The length in bytes of this hash's encoded form (32 at the default tier, more at higher
 /// tiers or when an alpha channel is present). Returns 0 for a NULL handle. Use
 /// it to size the buffer for [`chromahash_as_bytes`].
 #[no_mangle]
@@ -500,9 +501,9 @@ pub unsafe extern "C" fn chromahash_batch_encode(
             h: it.height,
             rgba: Arc::from(slice),
             gamut: it.gamut.into(),
-            // Batch mirrors chromahash_encode: tier 0. Higher tiers are a future
-            // additive API (chromahash_batch_encode_quality).
-            quality: 0,
+            // Batch mirrors chromahash_encode: the default tier. Higher tiers
+            // are a future additive API (chromahash_batch_encode_quality).
+            quality: chromahash::DEFAULT_TIER,
         });
     }
 

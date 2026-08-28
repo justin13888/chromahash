@@ -25,13 +25,22 @@ public enum Gamut: Sendable {
 ///
 /// A thin facade over the UniFFI-generated bindings to the Rust core; output is
 /// byte-identical to every other ChromaHash implementation. The hash is variable
-/// length (32 bytes at quality tier 0) and native objects are created transiently
+/// length (32 bytes at the default quality tier) and native objects are created transiently
 /// per operation.
 public struct ChromaHash: Sendable, Equatable {
-    /// The raw hash bytes (32 at tier 0, more at higher tiers).
+    /// The 21-byte compact tier — the smallest and lowest fidelity, rendered at
+    /// ``defaultTier``'s resolution. Tier codes are ordered by quality (spec §2.5).
+    public static let compactTier: UInt8 = 0
+    /// The 32-byte tier ``encode(width:height:rgba:gamut:)`` produces. Pass this
+    /// rather than a literal — a bare 0 is the compact tier.
+    public static let defaultTier: UInt8 = 1
+    /// The highest valid tier code; codes 5...7 are reserved.
+    public static let maxTier: UInt8 = 4
+
+    /// The raw hash bytes (32 at the default tier, more at higher tiers).
     public let hash: [UInt8]
 
-    /// Encode an image into a tier-0 (32-byte) ChromaHash.
+    /// Encode an image into a default-tier (32-byte) ChromaHash.
     ///
     /// - Parameters:
     ///   - width: image width (must be >= 1)
@@ -39,11 +48,14 @@ public struct ChromaHash: Sendable, Equatable {
     ///   - rgba: pixel data in RGBA format (4 bytes per pixel)
     ///   - gamut: source color space
     public static func encode(width: Int, height: Int, rgba: [UInt8], gamut: Gamut) -> ChromaHash {
-        return encodeWithQuality(width: width, height: height, rgba: rgba, gamut: gamut, quality: 0)
+        return encodeWithQuality(
+            width: width, height: height, rgba: rgba, gamut: gamut, quality: Self.defaultTier)
     }
 
-    /// Encode an image at an explicit quality tier (0...3). Tier 0 is the 32-byte
-    /// default; each higher tier carries more detail in a larger hash.
+    /// Encode an image at an explicit quality tier (0...maxTier, ordered by
+    /// quality). `defaultTier` is the 32-byte tier and `compactTier` the 21-byte
+    /// one — pass those rather than a literal, since a bare 0 is the compact
+    /// tier. Each higher code carries more detail in a larger hash.
     public static func encodeWithQuality(
         width: Int, height: Int, rgba: [UInt8], gamut: Gamut, quality: UInt8
     ) -> ChromaHash {

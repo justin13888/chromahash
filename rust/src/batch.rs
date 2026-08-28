@@ -27,8 +27,10 @@ pub struct ImageInput {
     pub rgba: Arc<[u8]>,
     /// Source color space.
     pub gamut: Gamut,
-    /// Tier code (`0..=`[`crate::MAX_TIER`], or [`crate::COMPACT_TIER`]);
-    /// 0 is the default 32-byte hash.
+    /// Tier code (`0..=`[`crate::MAX_TIER`], ordered by quality).
+    ///
+    /// Use [`crate::DEFAULT_TIER`] for the 32-byte hash — a literal `0` here is
+    /// [`crate::COMPACT_TIER`], which is 21 bytes.
     pub quality: u8,
 }
 
@@ -52,7 +54,7 @@ struct Job {
 ///     h: 2,
 ///     rgba: Arc::from(vec![128u8; 2 * 2 * 4]),
 ///     gamut: Gamut::Srgb,
-///     quality: 0,
+///     quality: chromahash::DEFAULT_TIER,
 /// }];
 /// let hashes = encoder.encode_batch(&items);
 /// assert_eq!(hashes.len(), 1);
@@ -137,9 +139,8 @@ impl BatchEncoder {
             );
             assert!(
                 crate::constants::is_valid_tier(item.quality),
-                "item {i}: tier must be 0..={} or the compact tier {}",
-                crate::MAX_TIER,
-                crate::COMPACT_TIER
+                "item {i}: tier must be a valid code 0..={}",
+                crate::MAX_TIER
             );
         }
 
@@ -233,35 +234,35 @@ mod tests {
                 h: 4,
                 rgba: solid_image(4, 4, 200, 100, 50, 255),
                 gamut: Gamut::Srgb,
-                quality: 0,
+                quality: crate::DEFAULT_TIER,
             },
             ImageInput {
                 w: 8,
                 h: 4,
                 rgba: horizontal_gradient(8, 4),
                 gamut: Gamut::DisplayP3,
-                quality: 0,
+                quality: crate::DEFAULT_TIER,
             },
             ImageInput {
                 w: 4,
                 h: 8,
                 rgba: solid_image(4, 8, 30, 200, 120, 128), // semi-transparent
                 gamut: Gamut::AdobeRgb,
-                quality: 0,
+                quality: crate::DEFAULT_TIER,
             },
             ImageInput {
                 w: 16,
                 h: 16,
                 rgba: horizontal_gradient(16, 16),
                 gamut: Gamut::Bt2020,
-                quality: 0,
+                quality: crate::DEFAULT_TIER,
             },
             ImageInput {
                 w: 1,
                 h: 1,
                 rgba: solid_image(1, 1, 255, 0, 0, 255),
                 gamut: Gamut::ProPhotoRgb,
-                quality: 0,
+                quality: crate::DEFAULT_TIER,
             },
         ]
     }
@@ -288,7 +289,7 @@ mod tests {
         // tiers must still equal encoding each item serially at its own tier.
         let mut items = mixed_items();
         for (i, item) in items.iter_mut().enumerate() {
-            item.quality = (i % 3) as u8; // tiers 0, 1, 2, …
+            item.quality = (i % 3) as u8 + crate::COMPACT_TIER; // codes 0, 1, 2, …
         }
         let batch = BatchEncoder::new().encode_batch(&items);
         assert_eq!(batch, encode_serial(&items));
@@ -303,7 +304,7 @@ mod tests {
                 h: 8,
                 rgba: solid_image(8, 8, i as u8, (255 - i) as u8, (i * 3) as u8, 255),
                 gamut: Gamut::Srgb,
-                quality: 0,
+                quality: crate::DEFAULT_TIER,
             })
             .collect();
         let batch = BatchEncoder::new().encode_batch(&items);
@@ -343,14 +344,14 @@ mod tests {
                 h: 2,
                 rgba: solid_image(2, 2, 0, 0, 0, 255),
                 gamut: Gamut::Srgb,
-                quality: 0,
+                quality: crate::DEFAULT_TIER,
             },
             ImageInput {
                 w: 2,
                 h: 2,
                 rgba: Arc::from(vec![0u8; 3]), // wrong length
                 gamut: Gamut::Srgb,
-                quality: 0,
+                quality: crate::DEFAULT_TIER,
             },
         ];
         let _ = BatchEncoder::new().encode_batch(&items);

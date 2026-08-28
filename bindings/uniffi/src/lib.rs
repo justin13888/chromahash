@@ -79,7 +79,7 @@ pub struct RgbaColor {
     pub a: i32,
 }
 
-/// A ChromaHash placeholder (variable length — 32 bytes at tier 0).
+/// A ChromaHash placeholder (variable length — 32 bytes at the default tier).
 /// Mirrors [`chromahash::ChromaHash`].
 #[derive(Debug, uniffi::Object)]
 pub struct ChromaHash {
@@ -88,7 +88,7 @@ pub struct ChromaHash {
 
 #[uniffi::export]
 impl ChromaHash {
-    /// Encode an image (RGBA, 4 bytes/pixel) into a tier-0 (32-byte) ChromaHash.
+    /// Encode an image (RGBA, 4 bytes/pixel) into a default-tier (32-byte) ChromaHash.
     #[uniffi::constructor]
     pub fn encode(w: u32, h: u32, rgba: Vec<u8>, gamut: Gamut) -> Arc<Self> {
         Arc::new(Self {
@@ -96,8 +96,9 @@ impl ChromaHash {
         })
     }
 
-    /// Encode at an explicit quality tier (0..=3). Tier 0 is the 32-byte default;
-    /// each higher tier carries more detail in a larger hash.
+    /// Encode at an explicit quality tier (0..=4, ordered by quality). Tier 1 is
+    /// the 32-byte default and tier 0 the 21-byte compact tier; each higher code
+    /// carries more detail in a larger hash.
     #[uniffi::constructor]
     pub fn encode_with_quality(
         w: u32,
@@ -163,7 +164,7 @@ impl ChromaHash {
         }
     }
 
-    /// The raw hash bytes (32 at tier 0, more at higher tiers).
+    /// The raw hash bytes (32 at the default tier, more at higher tiers).
     pub fn as_bytes(&self) -> Vec<u8> {
         self.inner.as_bytes().to_vec()
     }
@@ -218,9 +219,9 @@ impl BatchEncoder {
                 h: it.h,
                 rgba: Arc::from(it.rgba),
                 gamut: it.gamut.into(),
-                // Batch mirrors ChromaHash::encode: tier 0. Higher tiers are a
+                // Batch mirrors ChromaHash::encode: the default tier. Higher tiers are a
                 // future additive API.
-                quality: 0,
+                quality: chromahash::DEFAULT_TIER,
             })
             .collect();
         let guard = self.inner.lock().expect("batch encoder mutex poisoned");

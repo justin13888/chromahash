@@ -53,6 +53,7 @@ from constants import (
     body_len_bytes,
     tier_count_scale,
     COMPACT_TIER,
+    DEFAULT_TIER,
     is_valid_tier,
     render_level,
     ALPHA_FLAG_BIT,)
@@ -416,21 +417,22 @@ def validate_selection():
                     ok = False
         return ok, satisfied
 
-    # Tier 0: exhaustive over all 256 aspect bytes (preserves v0.6 coverage).
-    ok0, sat0 = check_invariants(range(256), 0)
-    check(ok0, "Tier 0, all 256 bytes × all K: count, DC excluded, in-bounds, "
+    # Default tier: exhaustive over all 256 aspect bytes (preserves v0.6 coverage).
+    ok0, sat0 = check_invariants(range(256), DEFAULT_TIER)
+    check(ok0, "Default tier, all 256 bytes × all K: count, DC excluded, in-bounds, "
                "ascending priority, p_k consistent")
-    check(sat0, "Tier 0: every K ≤ candidate count (selection fully satisfied)")
+    check(sat0, "Default tier: every K ≤ candidate count (selection fully satisfied)")
 
-    # Tiers 1..MAX_TIER: representative aspect bytes, K scaled by 4^tier.
+    # Every other code: representative aspect bytes, K scaled by 4^level.
     okN, satN = True, True
-    for tier in range(1, MAX_TIER + 1):
+    others = [t for t in range(MAX_TIER + 1) if t != DEFAULT_TIER]
+    for tier in others:
         o, s = check_invariants(representative, tier)
         okN = okN and o
         satN = satN and s
-    check(okN, f"Tiers 1..{MAX_TIER} (representative bytes): same invariants with "
-               "K(tier) = K·4^tier")
-    check(satN, f"Tiers 1..{MAX_TIER}: every K(tier) ≤ candidate count")
+    check(okN, f"Codes {others} (representative bytes): same invariants with "
+               "K(tier) = K·4^level")
+    check(satN, f"Codes {others}: every K(tier) ≤ candidate count")
 
     # ── The bare order (both weights zeroed) ─────────────────────────────
     # Square at byte=128 (W=H=32): radial order, ℓ2 ball
@@ -465,19 +467,20 @@ def validate_selection():
     # Same K returns the same low frequencies at any tier: the key is
     # homogeneous, so doubling the grid scales every key by 4 and leaves the
     # order untouched. Per spec §6.2.
-    coeffs_w26, _ = select_coefficients(128, 0, 26)
+    coeffs_w26, _ = select_coefficients(128, DEFAULT_TIER, 26)
     same_across_tiers = all(
         select_coefficients(128, t, 26)[0] == coeffs_w26 for t in range(MAX_TIER + 1)
     )
     check(same_across_tiers,
-          f"Same K=26 ⇒ identical low frequencies across tiers 0..{MAX_TIER}")
+          f"Same K=26 ⇒ identical low frequencies across codes 0..{MAX_TIER}")
     # The larger high-tier grid is what lets K itself scale to reach genuinely
     # higher frequencies (always satisfiable).
     max0 = max(max(cx, cy) for cx, cy in coeffs_w26)
-    coeffs_hi, _ = select_coefficients(128, MAX_TIER, 26 << (2 * MAX_TIER))
+    top_level = render_level(MAX_TIER)
+    coeffs_hi, _ = select_coefficients(128, MAX_TIER, 26 << (2 * top_level))
     max_hi = max(max(cx, cy) for cx, cy in coeffs_hi)
     check(max_hi > max0,
-          f"tier {MAX_TIER} with K·4^tier reaches higher frequencies "
+          f"code {MAX_TIER} with K·4^level reaches higher frequencies "
           f"({max_hi} > {max0})")
 
     # Both weights must be observable on the square grid (W = H = 32), where
@@ -555,31 +558,39 @@ def validate_length_formula():
     """
     print("\n10. v1 length formula and tier scaling")
 
-    layout = DEFAULT_LAYOUT  # tier 0; tiers 1..=3 use tier_layout(tier)
+    layout = DEFAULT_LAYOUT  # the default tier; other codes use tier_layout(tier)
 
     # Version / tier descriptor constants are consistent.
     check(FORMAT_VERSION == 0, f"FORMAT_VERSION = {FORMAT_VERSION} (format v1)")
-    check(MAX_TIER == 3,
-          f"MAX_TIER = {MAX_TIER} (highest QUALITY tier)")
-    # The compact tier takes a code from the formerly-reserved range. MAX_TIER
-    # is not "the largest valid code" any more, and code 4 is valid while being
-    # BELOW tier 0 in quality — the one hazard in this design, so pin it.
-    check(COMPACT_TIER == 4, f"COMPACT_TIER = {COMPACT_TIER} (code 4)")
-    check(is_valid_tier(COMPACT_TIER), "compact tier code 4 is valid")
+    check(MAX_TIER == 4,
+          f"MAX_TIER = {MAX_TIER} (highest tier code, and highest quality)")
+    # The codes are ordered by quality: compact is the smallest code as well as
+    # the smallest hash, and the default is one above it. Pin both, and pin that
+    # the two share a render level — the only place the ordering is not 1:1.
+    check(COMPACT_TIER == 0, f"COMPACT_TIER = {COMPACT_TIER} (code 0)")
+    check(DEFAULT_TIER == 1, f"DEFAULT_TIER = {DEFAULT_TIER} (code 1)")
+    check(COMPACT_TIER < DEFAULT_TIER < MAX_TIER,
+          "tier codes are ordered by quality")
+    check(all(is_valid_tier(t) for t in range(MAX_TIER + 1)),
+          f"codes 0..={MAX_TIER} are all valid")
     check(all(not is_valid_tier(t) for t in (5, 6, 7)),
           "codes 5..=7 remain reserved and are rejected")
     check(render_level(COMPACT_TIER) == 0,
-          "compact tier renders at level 0 (tier 0's resolution), not level 4")
+          "compact tier renders at level 0 (the default tier's resolution)")
+    check(render_level(DEFAULT_TIER) == 0,
+          "the default tier renders at level 0 too")
     check(tier_count_scale(COMPACT_TIER) == 1,
-          "compact tier scales coefficient counts by 1, not 4^4")
-    # It must be genuinely smaller than tier 0 in both alpha modes, or it is not
-    # a compact tier at all.
+          "compact tier scales coefficient counts by 1")
+    check(all(render_level(t) == max(0, t - 1) for t in range(MAX_TIER + 1)),
+          "renderLevel(tier) = max(0, tier - 1) for every code")
+    # It must be genuinely smaller than the default in both alpha modes, or it
+    # is not a compact tier at all.
     for has_alpha in (False, True):
         label = "alpha" if has_alpha else "no-alpha"
         nc = body_len_bytes(tier_layout(COMPACT_TIER), has_alpha, COMPACT_TIER)
-        n0 = body_len_bytes(tier_layout(0), has_alpha, 0)
+        n0 = body_len_bytes(tier_layout(DEFAULT_TIER), has_alpha, DEFAULT_TIER)
         check(nc == 21, f"compact {label} length = {nc} bytes (= 21)")
-        check(nc < n0, f"compact {label} ({nc} B) is smaller than tier 0 ({n0} B)")
+        check(nc < n0, f"compact {label} ({nc} B) is smaller than the default ({n0} B)")
 
     # Fixed prefix framing: 16-bit descriptor/aspect + 38-bit DC/scale = 54 bits.
     check(PREFIX_BITS == 54, f"PREFIX_BITS = {PREFIX_BITS} (= 54)")
@@ -589,64 +600,74 @@ def validate_length_formula():
     check(ALPHA_PREFIX_BITS == 9,
           f"ALPHA_PREFIX_BITS = {ALPHA_PREFIX_BITS} (= 9: alpha DC 5 + scale 4)")
 
-    # Tier 0 is exactly 32 bytes for both alpha modes.
+    # The default tier is exactly 32 bytes for both alpha modes.
     for has_alpha in (False, True):
         label = "alpha" if has_alpha else "no-alpha"
-        n = body_len_bytes(layout, has_alpha, 0)
-        check(n == 32, f"tier-0 {label} length = {n} bytes (= 32)")
+        n = body_len_bytes(layout, has_alpha, DEFAULT_TIER)
+        check(n == 32, f"default-tier {label} length = {n} bytes (= 32)")
 
-    # Tier-0 bit accounting matches the spec's stated split.
-    no_alpha_bits = PREFIX_BITS + ac_payload_bits(ac_shape(layout, False, 0))
+    # Default-tier bit accounting matches the spec's stated split.
+    no_alpha_bits = PREFIX_BITS + ac_payload_bits(ac_shape(layout, False, DEFAULT_TIER))
     check(no_alpha_bits == 256,
-          f"tier-0 no-alpha = {no_alpha_bits} bits (54 prefix + 112 L + 90 chroma)")
+          f"default-tier no-alpha = {no_alpha_bits} bits (54 prefix + 112 L + 90 chroma)")
     alpha_bits = (PREFIX_BITS + ALPHA_PREFIX_BITS
-                  + ac_payload_bits(ac_shape(layout, True, 0)))
+                  + ac_payload_bits(ac_shape(layout, True, DEFAULT_TIER)))
     check(alpha_bits == 253,
-          f"tier-0 alpha = {alpha_bits} bits (54 + 9 + 88 L + 18 chroma + 84 alpha)")
+          f"default-tier alpha = {alpha_bits} bits (54 + 9 + 88 L + 18 chroma + 84 alpha)")
     # The alpha channel must never have fewer coefficients at a higher tier than
     # at a lower one — the failure the per-row allocation of §11.3 introduces if
     # a row is updated in isolation.
-    prev_a = ac_shape(tier_layout(COMPACT_TIER), True, COMPACT_TIER).alpha_ac_count
-    for tier in range(0, MAX_TIER + 1):
+    prev_a = 0
+    for tier in range(MAX_TIER + 1):
         n = ac_shape(tier_layout(tier), True, tier).alpha_ac_count
         check(n >= prev_a,
-              f"alpha AC count at tier {tier} is {n} (>= {prev_a} at the tier below)")
+              f"alpha AC count at code {tier} is {n} (>= {prev_a} at the code below)")
         prev_a = n
 
-    # Higher tiers: positive, strictly growing, and approaching 4× per tier.
+    # Higher tiers: positive, strictly growing, and approaching 4× per level.
     for has_alpha in (False, True):
         label = "alpha" if has_alpha else "no-alpha"
-        prev = body_len_bytes(layout, has_alpha, 0)
-        for tier in range(1, MAX_TIER + 1):
+        prev = body_len_bytes(layout, has_alpha, DEFAULT_TIER)
+        for tier in range(DEFAULT_TIER + 1, MAX_TIER + 1):
             n = body_len_bytes(tier_layout(tier), has_alpha, tier)
             ratio = n / prev
             check(n > 0 and n > prev,
-                  f"{label} tier {tier} length {n} bytes > tier {tier - 1} ({prev})")
+                  f"{label} code {tier} length {n} bytes > code {tier - 1} ({prev})")
             check(3.0 <= ratio <= 4.0,
-                  f"{label} tier {tier}/{tier - 1} length ratio {ratio:.3f} ≈ 4×")
+                  f"{label} code {tier}/{tier - 1} length ratio {ratio:.3f} ≈ 4×")
             prev = n
 
-    # Within the tier-1..=3 band the AC payload scales by EXACTLY 4^tier and bit
-    # widths stay constant. Tier 0 is excluded on purpose: it has its own layout
-    # (§3.2), so it is *not* the tier-1 base scaled down.
+    # The whole ladder is strictly increasing in byte length, which is what
+    # "the codes are ordered by quality" means on the wire.
     for has_alpha in (False, True):
         label = "alpha" if has_alpha else "no-alpha"
-        upper = tier_layout(1)
-        base = ac_shape(upper, has_alpha, 0)
+        lengths = [body_len_bytes(tier_layout(t), has_alpha, t)
+                   for t in range(MAX_TIER + 1)]
+        check(all(a < b for a, b in zip(lengths, lengths[1:])),
+              f"{label} byte length is strictly increasing in the tier code: {lengths}")
+
+    # Within the codes-2..=4 band the AC payload scales by EXACTLY 4^level and
+    # bit widths stay constant. Codes 0 and 1 are excluded on purpose: each has
+    # its own layout (§3.2), so neither is the code-2 base scaled down.
+    for has_alpha in (False, True):
+        label = "alpha" if has_alpha else "no-alpha"
+        upper = tier_layout(DEFAULT_TIER + 1)
+        base = ac_shape(upper, has_alpha, DEFAULT_TIER)
         base_payload = ac_payload_bits(base)
-        for tier in range(1, MAX_TIER + 1):
+        for tier in range(DEFAULT_TIER + 1, MAX_TIER + 1):
             s = tier_count_scale(tier)
-            check(s == 4 ** tier, f"tier_count_scale({tier}) = {s} (= 4^{tier})")
+            level = render_level(tier)
+            check(s == 4 ** level, f"tier_count_scale({tier}) = {s} (= 4^{level})")
             shape = ac_shape(upper, has_alpha, tier)
             check(ac_payload_bits(shape) == base_payload * s,
                   f"{label} tier {tier} AC payload scales ×{s} "
                   f"(= {base_payload * s} bits)")
             check(shape.l_count() == base.l_count() * s,
-                  f"{label} tier {tier} L count {shape.l_count()} "
-                  f"= {base.l_count()}·4^{tier}")
+                  f"{label} code {tier} L count {shape.l_count()} "
+                  f"= {base.l_count()}·4^{level}")
             check(shape.c_count == base.c_count * s,
-                  f"{label} tier {tier} chroma count {shape.c_count} "
-                  f"= {base.c_count}·4^{tier}")
+                  f"{label} code {tier} chroma count {shape.c_count} "
+                  f"= {base.c_count}·4^{level}")
             check(shape.alpha_ac_count == base.alpha_ac_count * s,
                   f"{label} tier {tier} alpha-AC count = {shape.alpha_ac_count}")
             check(shape.c_bits == base.c_bits

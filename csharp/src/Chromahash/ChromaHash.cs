@@ -4,11 +4,26 @@ namespace ChromaHash;
 /// <remarks>
 /// A thin managed wrapper over the chromahash-c C ABI (which exposes the Rust
 /// core via P/Invoke). Output is byte-identical to every other ChromaHash
-/// implementation. The hash is variable length (32 bytes at quality tier 0);
+/// implementation. The hash is variable length (32 bytes at the default quality tier);
 /// native handles are created transiently per operation.
 /// </remarks>
 public sealed class ChromaHash : IEquatable<ChromaHash>
 {
+    /// <summary>
+    /// The 21-byte compact tier — the smallest and lowest fidelity, rendered at
+    /// <see cref="DefaultTier"/>'s resolution. Tier codes are ordered by quality.
+    /// </summary>
+    public const byte CompactTier = 0;
+
+    /// <summary>
+    /// The 32-byte tier <see cref="Encode"/> produces. Pass this rather than a
+    /// literal — a bare 0 is the compact tier.
+    /// </summary>
+    public const byte DefaultTier = 1;
+
+    /// <summary>The highest valid tier code; codes 5..=7 are reserved.</summary>
+    public const byte MaxTier = 4;
+
     private readonly byte[] _hash;
 
     private ChromaHash(byte[] hash)
@@ -24,17 +39,19 @@ public sealed class ChromaHash : IEquatable<ChromaHash>
     /// <param name="rgba">Pixel data in RGBA format (4 bytes per pixel, row-major).</param>
     /// <param name="gamut">Source color space.</param>
     public static ChromaHash Encode(uint width, uint height, byte[] rgba, Gamut gamut) =>
-        EncodeWithQuality(width, height, rgba, gamut, 0);
+        EncodeWithQuality(width, height, rgba, gamut, DefaultTier);
 
     /// <summary>
-    /// Encode an image at an explicit quality tier (0..=3). Tier 0 is the 32-byte
-    /// default; each higher tier carries more detail in a larger hash.
+    /// Encode an image at an explicit quality tier (0..=MaxTier, ordered by
+    /// quality). <see cref="DefaultTier"/> is the 32-byte tier and
+    /// <see cref="CompactTier"/> the 21-byte one — pass those rather than a
+    /// literal, since a bare 0 is the compact tier.
     /// </summary>
     /// <param name="width">Image width (>= 1).</param>
     /// <param name="height">Image height (>= 1).</param>
     /// <param name="rgba">Pixel data in RGBA format (4 bytes per pixel, row-major).</param>
     /// <param name="gamut">Source color space.</param>
-    /// <param name="quality">Quality tier (0..=3).</param>
+    /// <param name="quality">Quality tier (0..=<see cref="MaxTier"/>).</param>
     public static ChromaHash EncodeWithQuality(uint width, uint height, byte[] rgba, Gamut gamut, byte quality)
     {
         ArgumentNullException.ThrowIfNull(rgba);
@@ -129,7 +146,7 @@ public sealed class ChromaHash : IEquatable<ChromaHash>
         return new ChromaHash(copy);
     }
 
-    /// <summary>Get the raw hash bytes (32 at tier 0, more at higher tiers).</summary>
+    /// <summary>Get the raw hash bytes (32 at the default tier, more at higher tiers).</summary>
     public byte[] AsBytes()
     {
         byte[] copy = new byte[_hash.Length];

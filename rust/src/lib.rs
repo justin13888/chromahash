@@ -2,7 +2,7 @@
 //!
 //! ChromaHash encodes any image into a compact code that decodes back
 //! into a smooth, color-accurate thumbnail — the kind of blurred placeholder you
-//! show while the full image loads. The default code is **32 bytes** (tier 0); a
+//! show while the full image loads. The default code is **32 bytes** ([`DEFAULT_TIER`]); a
 //! [quality multiplier](ChromaHash::encode_with_quality) trades size for detail.
 //! It works in the perceptual
 //! [OKLab](https://bottosson.github.io/posts/oklab/) color space, supports
@@ -22,7 +22,7 @@
 //!     0, 0, 255, 255, /**/ 255, 255, 0, 255,
 //! ];
 //!
-//! // Encode to a compact hash (tier 0 = 32 bytes), tagging the source space.
+//! // Encode to a compact hash (the default tier = 32 bytes), tagging the source space.
 //! let hash = ChromaHash::encode(2, 2, &rgba, Gamut::Srgb);
 //! let bytes: &[u8] = hash.as_bytes(); // store or transmit these
 //!
@@ -48,7 +48,7 @@
 //! - [`average_color`](ChromaHash::average_color) — the DC color, without a full
 //!   decode.
 //! - [`encode_with_quality`](ChromaHash::encode_with_quality) — image → hash at a
-//!   chosen tier (`0..=3`, or `COMPACT_TIER` for a 21-byte code); higher tiers
+//!   chosen tier (`0..=4`, ordered by quality; `COMPACT_TIER` = 0 is 21 bytes); higher tiers
 //!   carry more detail in more bytes.
 //! - [`from_bytes`](ChromaHash::from_bytes) / [`as_bytes`](ChromaHash::as_bytes)
 //!   — round-trip the raw bytes; `from_bytes` validates and is fallible.
@@ -91,18 +91,23 @@ mod test_vectors;
 mod transfer;
 
 pub use batch::{BatchEncoder, ImageInput};
-/// Tier code of the **compact tier** — 21 bytes, below tier 0 in quality and
-/// size, rendered at tier 0's resolution. Accepted by
-/// [`ChromaHash::encode_with_quality`] alongside `0..=`[`MAX_TIER`].
+/// Tier code of the **compact tier** — 21 bytes, the smallest and lowest-
+/// fidelity tier, rendered at [`DEFAULT_TIER`]'s resolution.
 pub use constants::COMPACT_TIER;
-pub use constants::Gamut;
-/// Highest quality tier [`ChromaHash::encode_with_quality`] accepts (`0..=3`).
+/// Tier code of the **default tier** — exactly 32 bytes, what
+/// [`ChromaHash::encode`] produces.
 ///
-/// Not the largest valid tier *code* — see [`COMPACT_TIER`] and
-/// [`is_valid_tier`].
+/// Pass this rather than a literal to [`ChromaHash::encode_with_quality`]: the
+/// codes are ordered by quality, so a bare `0` selects the compact tier.
+pub use constants::DEFAULT_TIER;
+pub use constants::Gamut;
+/// Highest tier code [`ChromaHash::encode_with_quality`] accepts (`0..=4`).
+///
+/// Tier codes are ordered by quality, so this is both the highest-quality tier
+/// and the largest valid code.
 pub use constants::MAX_TIER;
-/// Is `tier` a code this format defines? `0..=`[`MAX_TIER`] and
-/// [`COMPACT_TIER`]; codes `5..=7` remain reserved and are rejected.
+/// Is `tier` a code this format defines? `0..=`[`MAX_TIER`]; codes `5..=7`
+/// remain reserved and are rejected.
 pub use constants::is_valid_tier;
 
 use constants::{
@@ -111,7 +116,7 @@ use constants::{
 };
 
 // Tuning interface for the comparison harness: not part of the public API.
-// `Tunables::DEFAULT` is the v1 tier-0 format; overrides exist solely so the
+// `Tunables::DEFAULT` is the v1 default-tier format; overrides exist solely so the
 // corpus sweep (tools/comparison) can explore constants before they are
 // locked into the spec.
 #[doc(hidden)]
@@ -124,7 +129,7 @@ pub use encode::{CoeffDump, encode_debug_coefficients};
 
 /// ChromaHash: a compact LQIP (Low Quality Image Placeholder).
 ///
-/// The encoded form is variable length: 32 bytes at tier 0, and roughly 4×
+/// The encoded form is variable length: 32 bytes at the default tier, and roughly 4×
 /// larger per quality tier (see [`encode_with_quality`](Self::encode_with_quality)).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChromaHash {
@@ -148,16 +153,19 @@ impl ChromaHash {
         }
     }
 
-    /// Encode an image at an explicit `tier` (`0..=`[`MAX_TIER`], or
-    /// [`COMPACT_TIER`]).
+    /// Encode an image at an explicit `tier` (`0..=`[`MAX_TIER`], ordered by
+    /// quality).
     ///
-    /// Tier 0 is the default 32-byte placeholder. Each higher tier doubles the
-    /// natural render resolution (long edge `32 · 2^tier`) and roughly
-    /// quadruples the byte length, carrying proportionally more detail.
-    /// [`encode`](Self::encode) is exactly `encode_with_quality(.., 0)`.
+    /// [`DEFAULT_TIER`] (1) is the 32-byte placeholder; [`COMPACT_TIER`] (0) is
+    /// 21 bytes at the same render resolution. Each code above the default
+    /// doubles the natural render resolution (long edge `32 · 2^level`) and
+    /// roughly quadruples the byte length, carrying proportionally more detail.
+    /// [`encode`](Self::encode) is exactly
+    /// `encode_with_quality(.., DEFAULT_TIER)` — note that a literal `0` here
+    /// selects the *compact* tier, not the default.
     ///
-    /// Decode cost grows ~16× per tier, so tier 3 (256 px) is best reserved for
-    /// when the extra fidelity is worth the compute.
+    /// Decode cost grows ~16× per level, so [`MAX_TIER`] (256 px) is best
+    /// reserved for when the extra fidelity is worth the compute.
     ///
     /// # Panics
     ///
@@ -277,7 +285,7 @@ impl ChromaHash {
     #[doc(hidden)]
     pub fn encode_tuned(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables) -> Self {
         Self {
-            hash: encode::encode_with(w, h, rgba, gamut, t, 0),
+            hash: encode::encode_with(w, h, rgba, gamut, t, DEFAULT_TIER),
         }
     }
 
@@ -328,7 +336,7 @@ impl ChromaHash {
     }
 
     /// Get the raw encoded bytes (length depends on the quality tier; 32 bytes
-    /// at tier 0).
+    /// at the default tier).
     pub fn as_bytes(&self) -> &[u8] {
         &self.hash
     }
@@ -368,6 +376,35 @@ impl std::error::Error for ChromaHashError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The default encode must stay exactly 32 bytes.
+    ///
+    /// The tier codes are ordered by quality, so `DEFAULT_TIER` is 1 and a bare
+    /// `0` selects the 21-byte compact tier. Nothing about that mistake fails to
+    /// compile and nothing about it fails to decode — only the byte count moves.
+    /// This is the guard for it.
+    #[test]
+    fn default_encode_is_32_bytes() {
+        let rgba = solid_image(4, 4, 128, 128, 128, 255);
+        assert_eq!(ChromaHash::encode(4, 4, &rgba, Gamut::Srgb).as_bytes().len(), 32);
+        assert_eq!(
+            ChromaHash::encode_with_quality(4, 4, &rgba, Gamut::Srgb, DEFAULT_TIER)
+                .as_bytes()
+                .len(),
+            32
+        );
+        // ...and the compact tier is genuinely a different, smaller code.
+        assert_eq!(
+            ChromaHash::encode_with_quality(4, 4, &rgba, Gamut::Srgb, COMPACT_TIER)
+                .as_bytes()
+                .len(),
+            21
+        );
+        assert_eq!(
+            ChromaHash::encode(4, 4, &rgba, Gamut::Srgb).as_bytes(),
+            ChromaHash::encode_with_quality(4, 4, &rgba, Gamut::Srgb, DEFAULT_TIER).as_bytes()
+        );
+    }
 
     /// Create a solid-color RGBA image.
     fn solid_image(w: u32, h: u32, r: u8, g: u8, b: u8, a: u8) -> Vec<u8> {
@@ -540,11 +577,10 @@ mod tests {
             Err(ChromaHashError::UnsupportedVersion)
         );
 
-        // The first code that is still reserved. Not `MAX_TIER + 1`: that is the
-        // compact tier, which is valid and below tier 0 in quality rather than
-        // above tier 3 in it.
+        // The first code that is still reserved. The codes are ordered by
+        // quality, so `MAX_TIER + 1` is exactly that code.
         let mut bad_tier = bytes.clone();
-        bad_tier[0] = (bad_tier[0] & !(0b111 << 3)) | ((COMPACT_TIER + 1) << 3);
+        bad_tier[0] = (bad_tier[0] & !(0b111 << 3)) | ((MAX_TIER + 1) << 3);
         assert_eq!(
             ChromaHash::from_bytes(&bad_tier),
             Err(ChromaHashError::InvalidTier)
@@ -666,7 +702,7 @@ mod tests {
         let hash = ChromaHash::encode(w, h, &rgba, Gamut::Srgb);
         #[rustfmt::skip]
         let expected_hash = [
-            0, 128, 79, 97, 48, 16, 136, 0, 0, 77, 96, 21, 145, 64, 230, 140, 5, 136, 84, 204, 24,
+            8, 128, 79, 97, 48, 16, 136, 0, 0, 77, 96, 21, 145, 64, 230, 140, 5, 136, 84, 204, 24,
             16, 40, 33, 229, 201, 182, 235, 180, 18, 197, 40,
         ];
         assert_eq!(hash.as_bytes(), &expected_hash);

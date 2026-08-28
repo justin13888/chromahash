@@ -5,7 +5,7 @@ mod tests {
     use crate::aspect::{decode_aspect, decode_output_size, encode_aspect};
     use crate::bitpack::{read_bits, write_bits};
     use crate::color::{gamma_rgb_to_oklab, linear_rgb_to_oklab, oklab_to_linear_srgb};
-    use crate::constants::{COMPACT_TIER, Gamut, Tunables, ac_shape};
+    use crate::constants::{COMPACT_TIER, DEFAULT_TIER, Gamut, Tunables, ac_shape};
     use crate::dct::SelectionOrder;
     use crate::math_utils::{cbrt_halley, cbrt_signed};
     use crate::mulaw::{mu_compress, mu_expand, mu_law_dequantize, mu_law_quantize};
@@ -189,8 +189,8 @@ mod tests {
         // pin both halves of `selection_key`.
         {
             let t0 = Tunables::DEFAULT;
-            let s0 = ac_shape(&t0, false, 0);
-            let sa = ac_shape(&t0, true, 0);
+            let s0 = ac_shape(&t0, false, DEFAULT_TIER);
+            let sa = ac_shape(&t0, true, DEFAULT_TIER);
             let mut ks: Vec<usize> = vec![
                 sa.alpha_ac_count,
                 s0.c_count,
@@ -205,14 +205,14 @@ mod tests {
             let mut seen = std::collections::BTreeSet::new();
 
             for byte in 0u8..=255 {
-                let (dw, dh) = decode_output_size(byte, 0);
+                let (dw, dh) = decode_output_size(byte, DEFAULT_TIER);
                 for &k in &ks {
                     let key = (dw, dh, k);
                     if seen.insert(key) {
                         for (suffix, aniso, hv) in
                             [("", 0.0, 0.0), ("_w", t0.aniso_oblique, t0.sel_hv)]
                         {
-                            let sel = SelectionOrder::new(byte, 0, aniso, hv).take(k);
+                            let sel = SelectionOrder::new(byte, DEFAULT_TIER, aniso, hv).take(k);
                             let pairs: Vec<String> = sel
                                 .coeffs
                                 .iter()
@@ -221,7 +221,7 @@ mod tests {
                             cases.push(format!(
                                 r#"  {{
     "name": "selection_w{dw}h{dh}_k{k}{suffix}",
-    "input": {{ "aspect_byte": {byte}, "tier": 0, "k": {k}, "aniso": {aniso}, "hv": {hv} }},
+    "input": {{ "aspect_byte": {byte}, "tier": {DEFAULT_TIER}, "k": {k}, "aniso": {aniso}, "hv": {hv} }},
     "expected": {{ "coeffs": [{}], "p_k": {} }}
   }}"#,
                                 pairs.join(","),
@@ -256,7 +256,7 @@ mod tests {
                 // included deliberately: its size is the half of the render-level
                 // rule that no length check can catch, because the byte length
                 // depends only on the coefficient counts.
-                for tier in [COMPACT_TIER, 0, 1, 2, 3] {
+                for tier in 0..=MAX_TIER {
                     let (dw, dh) = decode_output_size(byte, tier);
                     cases.push(format!(
                         r#"  {{
@@ -482,9 +482,9 @@ mod tests {
                 "solid_red_4x4",
             ];
             for (name, w, h, rgba, gamut) in &test_images {
-                let mut tiers = vec![COMPACT_TIER, 0u8];
+                let mut tiers = vec![COMPACT_TIER, DEFAULT_TIER];
                 if higher_tier_images.contains(name) {
-                    tiers.extend(1..=MAX_TIER);
+                    tiers.extend((DEFAULT_TIER + 1)..=MAX_TIER);
                 }
                 let rgba_str: Vec<String> = rgba.iter().map(|b| b.to_string()).collect();
                 let gamut_name = match gamut {
@@ -735,10 +735,10 @@ mod tests {
             let valid_alpha =
                 ChromaHash::encode(4, 4, &solid_image(4, 4, 200, 60, 40, 128), Gamut::Srgb);
             let valid_t2 =
-                ChromaHash::encode_with_quality(16, 16, &gradient_image(16, 16), Gamut::Srgb, 2);
-            // The compact tier occupies a code from the formerly-reserved range,
-            // so both modes are pinned: a decoder that rejects code 4 outright is
-            // a v1 decoder written before it existed, and must be caught here.
+                ChromaHash::encode_with_quality(16, 16, &gradient_image(16, 16), Gamut::Srgb, 3);
+            // Both compact modes are pinned: the compact tier is code 0, so a
+            // decoder that treats 0 as the 32-byte default mis-reads its length
+            // instead of rejecting it, and must be caught here.
             let valid_compact = ChromaHash::encode_with_quality(
                 4,
                 4,
@@ -757,11 +757,10 @@ mod tests {
             let base: Vec<u8> = valid.as_bytes().to_vec();
             let mut bad_version = base.clone();
             bad_version[0] = (bad_version[0] & !0b111) | 1; // version 1 (unsupported)
-            // The first code that is still reserved. Not `MAX_TIER + 1`: that is
-            // the compact tier, which is valid — it sits below tier 0 in quality
-            // rather than above tier 3 in it.
+            // The first code that is still reserved. The codes are ordered by
+            // quality, so `MAX_TIER + 1` is exactly that code.
             let mut bad_tier = base.clone();
-            bad_tier[0] = (bad_tier[0] & !(0b111 << 3)) | ((COMPACT_TIER + 1) << 3);
+            bad_tier[0] = (bad_tier[0] & !(0b111 << 3)) | ((MAX_TIER + 1) << 3);
             let mut reserved = base.clone();
             reserved[0] |= 1 << 7; // reserved bit set
             let mut too_long = base.clone();
@@ -770,9 +769,9 @@ mod tests {
             let tiny = base[..3].to_vec(); // shorter than the fixed header
 
             let inputs: Vec<(&str, Vec<u8>)> = vec![
-                ("valid_tier0", base.clone()),
-                ("valid_tier0_alpha", valid_alpha.as_bytes().to_vec()),
-                ("valid_tier2", valid_t2.as_bytes().to_vec()),
+                ("valid_default", base.clone()),
+                ("valid_default_alpha", valid_alpha.as_bytes().to_vec()),
+                ("valid_tier3", valid_t2.as_bytes().to_vec()),
                 ("valid_compact", valid_compact.as_bytes().to_vec()),
                 (
                     "valid_compact_alpha",

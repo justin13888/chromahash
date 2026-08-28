@@ -63,18 +63,18 @@ TIER_BITS = 3           # Width of the byte-0 tier field (bits 3..6)
 ALPHA_FLAG_BIT = 6      # Bit position of the hasAlpha flag within byte 0
 RESERVED_FLAG_BIT = 7   # Bit position of the reserved flag (MUST be 0 in v1)
 
-# Highest *quality* tier v1 defines. Deliberately not "the largest valid tier
-# code": COMPACT_TIER is code 4 and is valid, but sits BELOW tier 0 in quality.
-# Validate with is_valid_tier() and order codes with render_level(); comparing a
-# raw code against MAX_TIER is what makes tier 4 look like an out-of-range 5.
-MAX_TIER = 3
-# The compact tier's code (§3.1): 21 bytes, below tier 0 in quality and in size,
-# at tier 0's render resolution. It occupies a code from the formerly-reserved
-# 4..=7 range, so a v1 decoder written before it existed rejects it rather than
-# mis-decoding it. Codes 5..=7 remain reserved.
-COMPACT_TIER = 4
+# Highest valid tier code v1 defines (§2.5). Tier codes are 0..=MAX_TIER,
+# ordered by quality; codes 5..=7 remain reserved.
+MAX_TIER = 4
+# The compact tier's code (§3.1): 21 bytes, the smallest and lowest-fidelity
+# tier, rendered at DEFAULT_TIER's resolution.
+COMPACT_TIER = 0
+# The default tier's code (§3.5): exactly 32 bytes, the v0.6 footprint. Never
+# write the literal 1 for this -- the codes are ordered by quality, so a bare 0
+# default would silently select the 21-byte compact tier.
+DEFAULT_TIER = 1
 # Tier-0 natural-render long edge (px). The long edge scales to
-# BASE_LONG_EDGE << tier (32 / 64 / 128 / 256 px).
+# BASE_LONG_EDGE << render_level(tier) (32 / 64 / 128 / 256 px).
 BASE_LONG_EDGE = 32
 
 # DC code bit widths (L, a, b) — identical quantization to v0.6.
@@ -105,7 +105,7 @@ ALPHA_PREFIX_BITS = ALPHA_DC_BITS + ALPHA_SCALE_BITS
 # AC Layout (§3.2, §6.4)
 # =========================================================================
 # How the per-channel AC budget is split at one quality tier. v1 carries TWO
-# of these: tier 0 has its own table (LAYOUT_T0) and tiers 1..=3 scale a single
+# of these: the default tier has its own table (LAYOUT_T0) and codes 2..=4 scale a single
 # base (LAYOUT_B) by 4^m — bits per coefficient stay constant, so higher tiers
 # carry MORE coefficients, not finer ones. The split exists because the
 # count-vs-precision optimum moves with the budget: at 32 bytes the format is
@@ -119,7 +119,7 @@ ALPHA_PREFIX_BITS = ALPHA_DC_BITS + ALPHA_SCALE_BITS
 
 @dataclass(frozen=True)
 class AcLayout:
-    """AC bit layout: tier-0 base counts and bit widths (mirrors Rust AcLayout)."""
+    """AC bit layout: base counts and bit widths (mirrors Rust AcLayout)."""
 
     l_tiers: tuple[tuple[int, int], tuple[int, int]]   # no-alpha L (count, bits) ×2
     c_count: int                                       # no-alpha chroma a/b count
@@ -128,19 +128,19 @@ class AcLayout:
     ca_count: int                                      # alpha-mode chroma a/b count
     ca_bits: int
     # Alpha AC coefficient count and bit width (alpha mode only). Part of the
-    # row rather than one global: §11.3 measured tier 0 wanting 28 coefficients
+    # row rather than one global: §11.3 measured the default tier wanting 28 coefficients
     # where the compact tier's smaller budget wants 16.
     a_count: int
     a_bits: int
 
 
-# Layout B: the v1 tier-0 base (the shipped default). Sized so a tier-0 hash is
+# Layout B: the v1 upper-tier base (the shipped default). Sized so a default-tier hash is
 # exactly 32 bytes for both alpha modes (the v0.6 footprint, for equal-budget
 # comparison):
 #   no-alpha = 54 prefix + 26·5 L + 2·9·4 chroma                  = 256 bits
 #   alpha    = 54 + 9 + 22·4 L + 2·3·3 chroma + 28·3 alpha        = 253 bits
 # (both round up to 32 bytes). The alpha row is the §11.3 allocation, which
-# measured essentially tied for best at tier 1 as well as at tier 0.
+# measured essentially tied for best at code 2 as well as at the default tier.
 LAYOUT_B = AcLayout(
     l_tiers=((26, 5), (0, 5)),
     c_count=9,
@@ -152,7 +152,7 @@ LAYOUT_B = AcLayout(
     a_bits=3,
 )
 
-# Layout T0: the v1 TIER-0 layout (the shipped default at tier 0). At a 32-byte
+# Layout T0: the v1 DEFAULT-TIER layout (the shipped default at code 1). At a 32-byte
 # budget the AC payload is 202 bits, and spending it on 28 luma coefficients at
 # 4 bits plus 15 chroma at 3 beats LAYOUT_B's 26@5 / 9@4 split by 3.5% mean
 # ΔE00 on the never-tuned holdout split (spec/EXPERIMENTS.md §8.3):
@@ -178,7 +178,7 @@ LAYOUT_T0 = AcLayout(
 #   no alpha = 54 + 19·4 L + 2·6·3 chroma                          = 166 bits
 #   alpha    = 54 + 9 + 12·4 L + 2·1·3 chroma + 16·3 alpha         = 165 bits
 # Both round up to 21 bytes. The compact row wants fewer alpha coefficients than
-# tier 0 (16 vs 28) because its whole budget is smaller — which is why the
+# the default tier (16 vs 28) because its whole budget is smaller — which is why the
 # allocation lives per row rather than as one global.
 LAYOUT_TC = AcLayout(
     l_tiers=((19, 4), (0, 4)),
@@ -192,34 +192,34 @@ LAYOUT_TC = AcLayout(
 )
 
 # The shipped default layouts (Tunables::DEFAULT in the Rust reference):
-# tier 0 has its own table, tiers 1..=3 share one base scaled by 4^tier.
+# the default tier has its own table, codes 2..=4 share one base scaled by 4^level.
 DEFAULT_LAYOUT = LAYOUT_T0
 DEFAULT_LAYOUT_UPPER = LAYOUT_B
 DEFAULT_LAYOUT_COMPACT = LAYOUT_TC
 
 
 def is_valid_tier(tier: int) -> bool:
-    """Is `tier` a code this format defines? 0..=MAX_TIER and COMPACT_TIER."""
-    return tier <= MAX_TIER or tier == COMPACT_TIER
+    """Is `tier` a code this format defines? 0..=MAX_TIER; 5..=7 stay reserved."""
+    return tier <= MAX_TIER
 
 
 def render_level(tier: int) -> int:
     """Quality ordinal of a tier code: how many times the natural render size
     doubles, and the exponent behind the 4^level coefficient scaling.
 
-    The compact tier renders at tier 0's size, so it has level 0. Every place
-    that would shift by the raw tier code must shift by this instead — code 4
-    would otherwise mean a 512 px render at 256x the coefficients."""
-    return 0 if tier == COMPACT_TIER else tier
+    The compact tier renders at the default tier's size, so codes 0 and 1 share
+    level 0 and every higher code is one level above its predecessor."""
+    return max(0, tier - 1)
 
 
 def tier_layout(tier: int) -> AcLayout:
     """The shipped layout governing a tier code. Per spec §3.2 (v1).
 
-    Three rows: the compact tier, tier 0, and one base tiers 1..=3 scale."""
+    Three rows: the compact tier, the default tier, and one base codes 2..=4
+    scale."""
     if tier == COMPACT_TIER:
         return DEFAULT_LAYOUT_COMPACT
-    return DEFAULT_LAYOUT if tier == 0 else DEFAULT_LAYOUT_UPPER
+    return DEFAULT_LAYOUT if tier == DEFAULT_TIER else DEFAULT_LAYOUT_UPPER
 
 # =========================================================================
 # Selection weights (§6.2)
@@ -260,13 +260,13 @@ class AcShape:
 
 def tier_count_scale(tier: int) -> int:
     """4^level — the count multiplier for a tier code (1, 4, 16, 64; 1 for the
-    compact tier, which shares tier 0's render level)."""
+    compact tier, which shares the default tier's render level)."""
     return 1 << (2 * render_level(tier))
 
 
 def ac_shape(layout: AcLayout, has_alpha: bool, tier: int) -> AcShape:
     """Resolve the base layout for a (alpha mode, tier): pick the alpha or
-    no-alpha base counts, then scale every count by 4^tier."""
+    no-alpha base counts, then scale every count by 4^level."""
     s = tier_count_scale(tier)
     if has_alpha:
         return AcShape(

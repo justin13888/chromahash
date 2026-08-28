@@ -31,43 +31,41 @@ pub const ALPHA_FLAG_BIT: u32 = 6;
 /// Bit position of the reserved flag within byte 0 (MUST be 0 in v1).
 pub const RESERVED_FLAG_BIT: u32 = 7;
 
-/// Highest *quality* tier the v1 format defines. Quality tiers are `0..=MAX_TIER`.
-///
-/// This is deliberately not "the largest valid tier code": [`COMPACT_TIER`] is
-/// code 4 and is valid, but it is *below* tier 0 in quality. Use
-/// [`is_valid_tier`] to validate a code and [`render_level`] to order codes by
-/// quality; comparing a raw code against `MAX_TIER` is what makes tier 4 look
-/// like an out-of-range tier 5.
-pub const MAX_TIER: u8 = 3;
+/// Highest valid tier code the v1 format defines (spec §2.5). Tier codes are
+/// `0..=MAX_TIER`, ordered by quality; codes `5..=7` remain reserved.
+pub const MAX_TIER: u8 = 4;
 
-/// The compact tier's code (spec §3.1). 21 bytes: below tier 0 in quality and
-/// in size, at tier 0's render resolution.
+/// The compact tier's code (spec §3.1). 21 bytes: the smallest and lowest-
+/// fidelity tier, rendered at [`DEFAULT_TIER`]'s resolution.
+pub const COMPACT_TIER: u8 = 0;
+
+/// The default tier's code (spec §3.5). Exactly 32 bytes, matching the v0.6
+/// footprint — what [`crate::ChromaHash::encode`] produces.
 ///
-/// It occupies a code from the reserved `4..=7` range, so a v1 decoder written
-/// before it existed rejects it rather than mis-decoding it — which is what
-/// makes adding it a compatible extension rather than a format break.
-pub const COMPACT_TIER: u8 = 4;
+/// Never write the literal `1` for this: the codes are ordered by quality, so a
+/// bare `0` default would silently select the 21-byte compact tier.
+pub const DEFAULT_TIER: u8 = 1;
 
 /// Is `tier` a code this format defines? Codes `5..=7` remain reserved.
 #[inline]
 pub const fn is_valid_tier(tier: u8) -> bool {
-    tier <= MAX_TIER || tier == COMPACT_TIER
+    tier <= MAX_TIER
 }
 
 /// Quality ordinal of a tier code: how many times the natural render size
 /// doubles, and the exponent behind the `4^level` coefficient scaling.
 ///
-/// The compact tier renders at tier 0's size, so it has level 0. Every place
-/// that previously shifted by the raw tier code must shift by this instead —
-/// code 4 would otherwise mean a 512 px render at 256x the coefficients, the
-/// exact opposite of compact.
+/// The compact tier renders at the default tier's size, so codes 0 and 1 share
+/// level 0 and every higher code is one level above its predecessor. Every
+/// place that scales with quality shifts by this rather than by the raw code.
 #[inline]
 pub const fn render_level(tier: u8) -> u8 {
-    if tier == COMPACT_TIER { 0 } else { tier }
+    tier.saturating_sub(1)
 }
 
-/// Natural render long-edge in pixels at tier 0. The natural render size scales
-/// to `BASE_LONG_EDGE << tier` on the long edge (32 / 64 / 128 / 256 px).
+/// Natural render long-edge in pixels at render level 0. The natural render size
+/// scales to `BASE_LONG_EDGE << render_level(tier)` on the long edge
+/// (32 / 64 / 128 / 256 px).
 pub const BASE_LONG_EDGE: u32 = 32;
 
 /// DC code bit widths (L, a, b) — identical quantization to v0.6.
@@ -98,7 +96,7 @@ pub const PREFIX_BITS: u32 = DESCRIPTOR_BITS + DC_SCALE_BITS;
 /// AC bit layout: how the per-channel AC budget is split at one quality tier.
 ///
 /// v1 carries **two** of these (see [`Tunables::layout`] and
-/// [`Tunables::layout_upper`]): tier 0 has its own table, and tiers 1..=3 scale
+/// [`Tunables::layout_upper`]): the default tier has its own table, and codes 2..=4 scale
 /// a single base by `4^m` (bits per coefficient stay constant — higher tiers
 /// carry *more* coefficients, not finer ones). The split exists because the
 /// count-vs-precision optimum moves with the budget: at 32 bytes the format is
@@ -121,7 +119,7 @@ pub struct AcLayout {
     /// Alpha AC coefficient count and bit width (alpha mode only).
     ///
     /// Part of the layout row rather than one global, because the rows
-    /// disagree: §11.3 measured tier 0 wanting 28 coefficients where the
+    /// disagree: §11.3 measured the default tier wanting 28 coefficients where the
     /// compact tier's smaller budget wants 16. A global would force one of
     /// them to be wrong.
     pub a_count: usize,
@@ -140,7 +138,7 @@ pub const LAYOUT_A: AcLayout = AcLayout {
     a_bits: 4,
 };
 
-/// Layout B: the **v1 tier-0 base** (the shipped default). Sized so a tier-0
+/// Layout B: the **v1 upper-tier base** (the shipped default). Sized so a default-tier
 /// hash is exactly 32 bytes — the v0.6 footprint — for equal-budget comparison:
 /// no-alpha = 54 prefix + 26·5 L + 2·9·4 chroma = 256 bits; alpha = 54 + 9 +
 /// 20·5 L + 2·9·4 chroma + 5·4 alpha = 255 bits (both → 32 bytes).
@@ -155,7 +153,7 @@ pub const LAYOUT_B: AcLayout = AcLayout {
     a_bits: 3,
 };
 
-/// Layout T0: the **v1 tier-0 layout** (the shipped default at tier 0). At a
+/// Layout T0: the **v1 default-tier layout** (the shipped default at code 1). At a
 /// 32-byte budget the AC payload is 202 bits, and spending it on 28 luma
 /// coefficients at 4 bits plus 15 chroma at 3 beats the 26@5 / 9@4 split of
 /// [`LAYOUT_B`] by 3.5% mean ΔE00 on the never-tuned holdout split, with
@@ -224,7 +222,7 @@ pub const LAYOUT_TC: AcLayout = AcLayout {
 };
 
 /// Per-channel AC counts/bit-widths resolved for one (alpha mode, tier). The
-/// base [`AcLayout`] describes tier 0; tier `m` scales every coefficient *count*
+/// base [`AcLayout`] describes the default tier; tier `m` scales every coefficient *count*
 /// by `4^m` while bit widths stay fixed.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct AcShape {
@@ -247,24 +245,25 @@ impl AcShape {
 }
 
 /// `4^level` — the count multiplier for a tier code (1, 4, 16, 64; 1 for the
-/// compact tier, which shares tier 0's render level).
+/// compact tier, which shares the default tier's render level).
 #[inline]
 pub(crate) fn tier_count_scale(tier: u8) -> usize {
     1usize << (2 * render_level(tier) as usize)
 }
 
 /// The [`AcLayout`] that governs a tier code. The table has three rows: the
-/// compact tier, tier 0, and one base that tiers 1..=3 scale by `4^tier`.
+/// compact tier, the default tier, and one base that codes 2..=4 scale by
+/// `4^level`.
 pub(crate) fn tier_layout(t: &Tunables, tier: u8) -> &AcLayout {
     match tier {
         COMPACT_TIER => &t.layout_compact,
-        0 => &t.layout,
+        DEFAULT_TIER => &t.layout,
         _ => &t.layout_upper,
     }
 }
 
 /// Resolve the layout for a (alpha mode, tier): pick the tier's table, then the
-/// alpha or no-alpha counts, then scale them by `4^tier`.
+/// alpha or no-alpha counts, then scale them by `4^level`.
 pub(crate) fn ac_shape(t: &Tunables, has_alpha: bool, tier: u8) -> AcShape {
     let layout = tier_layout(t, tier);
     let s = tier_count_scale(tier);
@@ -371,9 +370,9 @@ impl QuantTable {
 /// that parser in lockstep — an unhandled key aborts the whole sweep.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Tunables {
-    /// AC layout at **tier 0** (32 bytes).
+    /// AC layout at the **default tier** (code 1, 32 bytes).
     pub layout: AcLayout,
-    /// AC layout base for **tiers 1..=3**, scaled by `4^tier`.
+    /// AC layout base for **codes 2..=4**, scaled by `4^level`.
     pub layout_upper: AcLayout,
     /// AC layout of the compact tier (code 4). The third row of the table.
     pub layout_compact: AcLayout,
@@ -526,7 +525,7 @@ pub struct Tunables {
     /// (reconstruct the source as well as possible), `1` = the **natural render
     /// grid**, against the ideal full-basis downsample of the source — i.e. the
     /// pixels a decoder will actually emit. The two are different objectives:
-    /// the encoder input is 100 px here while a tier-0 decode is 32 px.
+    /// the encoder input is 100 px here while a default-tier decode is 32 px.
     pub refine_grid: u32,
     /// Per-channel weights for `refine_obj = 3` (clipped OKLAB, weighted).
     /// `refine_wl` scales the L term, `refine_wc` the a/b terms. Lets the
@@ -582,15 +581,15 @@ impl Tunables {
     /// −3.50% mean ΔE00 with SSIMULACRA2, Butteraugli and DSSIM all improving
     /// (EXPERIMENTS.md §8):
     ///
-    /// * [`LAYOUT_T0`] at tier 0 — more, coarser coefficients where the budget
-    ///   is tightest, while tiers 1..=3 keep [`LAYOUT_B`] scaled by `4^tier`.
+    /// * [`LAYOUT_T0`] at the default tier — more, coarser coefficients where the
+    ///   budget is tightest, while codes 2..=4 keep [`LAYOUT_B`] scaled by `4^level`.
     /// * `aniso_oblique = 1.2`, `sel_hv = 0.15` — a perceptual selection order
     ///   (spec §6.2), integer-exact and free at decode.
     /// * `scale_fit = 2`, `ac_nearest = true` — encoder-only quantization
     ///   decisions that cost no bits and leave the decoder untouched.
     ///
     /// Deliberately *not* default: the pixel-domain refinement of §8.2. It is
-    /// worth a further −0.6 pp at tier 0 and costs ~54× encode time, so it
+    /// worth a further −0.6 pp at the default tier and costs ~54× encode time, so it
     /// belongs behind an encoder quality setting, not here.
     pub const DEFAULT: Tunables = Tunables {
         layout: LAYOUT_T0,

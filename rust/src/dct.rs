@@ -76,7 +76,7 @@ pub fn selection_key(px: u64, py: u64, a_q12: i64, h_q12: i64) -> u64 {
 ///
 /// Every per-channel selection at a tier is a **prefix** of this one list, so
 /// luma, chroma and alpha share a single sort instead of repeating it per
-/// channel. The candidate count is ≥ 64·4^tier − 1 for every aspect byte (the
+/// channel. The candidate count is ≥ 64·4^level − 1 for every aspect byte (the
 /// 16:1 extreme), and every per-channel K(tier) the format uses is below that
 /// bound, so every selection is fully satisfied.
 pub struct SelectionOrder {
@@ -309,7 +309,7 @@ mod tests {
     fn weighted_selection_zero_matches_integer_path() {
         // aniso = 0.0 must be the shipped selection, coefficient for coefficient.
         for byte in [0u8, 64, 128, 191, 255] {
-            for tier in [0u8, 1] {
+            for tier in [1u8, 2] {
                 let base = select_coefficients(byte, tier, 26);
                 let weighted = select_coefficients_weighted(byte, tier, 26, 0.0, 0.0);
                 assert_eq!(base.coeffs, weighted.coeffs, "byte={byte} tier={tier}");
@@ -396,38 +396,39 @@ mod tests {
 
     #[test]
     fn selection_scales_with_tier() {
-        // Priority (cx·H)² + (cy·W)² scales uniformly by 4^tier when the grid
+        // Priority (cx·H)² + (cy·W)² scales uniformly by 4^level when the grid
         // doubles, so the *same* K returns the *same* low frequencies at any
         // tier. The higher tier's larger grid is what lets K itself scale by
-        // 4^tier and reach genuinely higher frequencies — always satisfiable.
+        // 4^level and reach genuinely higher frequencies — always satisfiable.
         assert_eq!(
-            select_coefficients(128, 0, 26).coeffs,
-            select_coefficients(128, 2, 26).coeffs,
+            select_coefficients(128, 1, 26).coeffs,
+            select_coefficients(128, 3, 26).coeffs,
             "same K ⇒ same low frequencies across tiers"
         );
-        for tier in 0u8..=3 {
-            let k = 26usize << (2 * tier as usize); // 26·4^tier
+        for tier in 0u8..=crate::constants::MAX_TIER {
+            let level = crate::constants::render_level(tier) as usize;
+            let k = 26usize << (2 * level); // 26·4^level
             assert_eq!(
                 select_coefficients(255, tier, k).coeffs.len(),
                 k,
                 "K(tier) must be fully satisfied even at 16:1, tier={tier}"
             );
         }
-        let max0 = select_coefficients(128, 0, 26)
+        let max_base = select_coefficients(128, crate::constants::DEFAULT_TIER, 26)
             .coeffs
             .iter()
             .map(|&(cx, cy)| cx.max(cy))
             .max()
             .unwrap();
-        let max3 = select_coefficients(128, 3, 26 << 6)
+        let max_top = select_coefficients(128, crate::constants::MAX_TIER, 26 << 6)
             .coeffs
             .iter()
             .map(|&(cx, cy)| cx.max(cy))
             .max()
             .unwrap();
         assert!(
-            max3 > max0,
-            "tier 3 must reach higher frequencies: {max3} vs {max0}"
+            max_top > max_base,
+            "the top tier must reach higher frequencies: {max_top} vs {max_base}"
         );
     }
 

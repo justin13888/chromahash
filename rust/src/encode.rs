@@ -2,7 +2,7 @@ use crate::aspect::encode_aspect;
 use crate::bitpack::write_bits;
 use crate::color::{linear_rgb_to_oklab, oklab_to_linear_srgb};
 use crate::constants::{
-    ALPHA_FLAG_BIT, COMPACT_TIER, FORMAT_VERSION, Gamut, MAX_TIER, Tunables, VERSION_BITS,
+    ALPHA_FLAG_BIT, DEFAULT_TIER, FORMAT_VERSION, Gamut, MAX_TIER, Tunables, VERSION_BITS,
     ac_payload_bits, ac_shape, body_len_bytes, is_valid_tier, prefix_bits,
 };
 use crate::dct::{
@@ -141,7 +141,7 @@ fn analyze(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables, tier: u8) ->
     );
     assert!(
         is_valid_tier(tier),
-        "tier must be 0..={MAX_TIER} or the compact tier {COMPACT_TIER}"
+        "tier must be a valid code 0..={MAX_TIER}"
     );
 
     let w = w as usize;
@@ -964,7 +964,7 @@ fn refine_codes(
 
 /// Encode an image into a ChromaHash body with explicit tunables and quality
 /// `tier`. Per spec §10 (v1). Returns the variable-length encoded bytes
-/// (tier 0 = 32 bytes; each higher tier roughly quadruples the length).
+/// (the default tier = 32 bytes; each higher code roughly quadruples the length).
 pub fn encode_with(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables, tier: u8) -> Box<[u8]> {
     let Analysis {
         has_alpha,
@@ -1374,12 +1374,13 @@ pub fn encode_debug_coefficients(
     }
 }
 
-/// Encode an image into a ChromaHash at tier 0. Per spec §10 (v1).
+/// Encode an image into a ChromaHash at the default tier. Per spec §10 (v1).
 pub fn encode(w: u32, h: u32, rgba: &[u8], gamut: Gamut) -> Box<[u8]> {
-    encode_with(w, h, rgba, gamut, &Tunables::DEFAULT, 0)
+    encode_with(w, h, rgba, gamut, &Tunables::DEFAULT, DEFAULT_TIER)
 }
 
-/// Encode an image at a given quality `tier` (0..=`MAX_TIER`). Per spec §10 (v1).
+/// Encode an image at a given quality `tier` (`0..=MAX_TIER`, ordered by
+/// quality). Per spec §10 (v1).
 pub fn encode_quality(w: u32, h: u32, rgba: &[u8], gamut: Gamut, tier: u8) -> Box<[u8]> {
     encode_with(w, h, rgba, gamut, &Tunables::DEFAULT, tier)
 }
@@ -1442,34 +1443,34 @@ mod tests {
         // Saturated gamut corners exercise the decode-aware DC code search; the
         // neutral/extreme tones pin the DC and scale quantizers and the header
         // packing. (spec/test-vectors/integration-encode.json)
-        // v1: byte 0 = descriptor (0 = version 0, tier 0, opaque), byte 1 =
+        // v1: byte 0 = descriptor (8 = version 0, tier 1, opaque), byte 1 =
         // aspect (128 for 1:1), then the 38-bit DC/scale prefix, then AC.
         #[rustfmt::skip]
         let cases: &[(u8, u8, u8, Gamut, [u8; 32])] = &[
             (128, 128, 128, Gamut::Srgb,
-                [0, 128, 76, 32, 16, 0, 192, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 182, 109, 219, 182, 109, 219, 182, 109, 219, 182, 109]),
+                [8, 128, 76, 32, 16, 0, 192, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 182, 109, 219, 182, 109, 219, 182, 109, 219, 182, 109]),
             (255, 0, 0, Gamut::Srgb,
-                [0, 128, 208, 116, 22, 0, 192, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 182, 109, 219, 182, 109, 219, 182, 109, 219, 182, 109]),
+                [8, 128, 208, 116, 22, 0, 192, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 182, 109, 219, 182, 109, 219, 182, 109, 219, 182, 109]),
             (0, 255, 0, Gamut::Srgb,
-                [0, 128, 238, 202, 24, 0, 192, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 182, 109, 219, 182, 109, 219, 182, 109, 219, 182, 109]),
+                [8, 128, 238, 202, 24, 0, 192, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 182, 109, 219, 182, 109, 219, 182, 109, 219, 182, 109]),
             (0, 0, 255, Gamut::Srgb,
-                [0, 128, 57, 29, 1, 0, 192, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 182, 109, 219, 182, 109, 219, 182, 109, 219, 182, 109]),
+                [8, 128, 57, 29, 1, 0, 192, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 182, 109, 219, 182, 109, 219, 182, 109, 219, 182, 109]),
             (255, 255, 255, Gamut::Srgb,
-                [0, 128, 127, 32, 16, 0, 192, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 182, 109, 219, 182, 109, 219, 182, 109, 219, 182, 109]),
+                [8, 128, 127, 32, 16, 0, 192, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 182, 109, 219, 182, 109, 219, 182, 109, 219, 182, 109]),
             (0, 0, 0, Gamut::Srgb,
-                [0, 128, 0, 32, 16, 0, 192, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 182, 109, 219, 182, 109, 219, 182, 109, 219, 182, 109]),
+                [8, 128, 0, 32, 16, 0, 192, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 182, 109, 219, 182, 109, 219, 182, 109, 219, 182, 109]),
             // Wide-gamut solids: the same pixels map through a different M1
             // matrix (and EOTF for ProPhoto) → distinct OKLAB and DC codes.
             (200, 100, 50, Gamut::DisplayP3,
-                [0, 128, 79, 171, 21, 0, 192, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 182, 109, 219, 182, 109, 219, 182, 109, 219, 182, 109]),
+                [8, 128, 79, 171, 21, 0, 192, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 182, 109, 219, 182, 109, 219, 182, 109, 219, 182, 109]),
             (220, 50, 30, Gamut::ProPhotoRgb,
-                [0, 128, 85, 62, 22, 0, 192, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 182, 109, 219, 182, 109, 219, 182, 109, 219, 182, 109]),
+                [8, 128, 85, 62, 22, 0, 192, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 182, 109, 219, 182, 109, 219, 182, 109, 219, 182, 109]),
             // Adobe RGB (γ = 2.2 EOTF) and BT.2020 (PQ→Reinhard EOTF) are the two
             // source-gamut transfer arms no other golden vector exercises.
             (200, 100, 50, Gamut::AdobeRgb,
-                [0, 128, 211, 171, 21, 0, 192, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 182, 109, 219, 182, 109, 219, 182, 109, 219, 182, 109]),
+                [8, 128, 211, 171, 21, 0, 192, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 182, 109, 219, 182, 109, 219, 182, 109, 219, 182, 109]),
             (200, 100, 50, Gamut::Bt2020,
-                [0, 128, 89, 52, 23, 0, 192, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 182, 109, 219, 182, 109, 219, 182, 109, 219, 182, 109]),
+                [8, 128, 89, 52, 23, 0, 192, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 182, 109, 219, 182, 109, 219, 182, 109, 219, 182, 109]),
         ];
         for &(r, g, b, gamut, expected) in cases {
             let rgba = solid(4, 4, r, g, b, 255);
@@ -1482,7 +1483,7 @@ mod tests {
 
         // 1×1 solid (aspect-byte extreme, single-pixel DCT).
         #[rustfmt::skip]
-        let one = [0, 128, 78, 233, 20, 0, 192, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 182, 109, 219, 182, 109, 219, 182, 109, 219, 182, 109];
+        let one = [8, 128, 78, 233, 20, 0, 192, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 221, 182, 109, 219, 182, 109, 219, 182, 109, 219, 182, 109];
         assert_eq!(
             encode(1, 1, &solid(1, 1, 200, 100, 50, 255), Gamut::Srgb).as_ref(),
             &one
@@ -1504,7 +1505,7 @@ mod tests {
             255, 182, 72, 0, 255, 218, 36, 0, 255, 255, 0, 0, 255,
         ];
         #[rustfmt::skip]
-        let h8x4 = [0, 159, 72, 166, 141, 120, 245, 128, 131, 53, 165, 222, 225, 157, 225, 221, 221, 221, 221, 221, 29, 58, 78, 219, 182, 109, 19, 168, 105, 219, 182, 109];
+        let h8x4 = [8, 159, 72, 166, 141, 120, 245, 128, 131, 53, 165, 222, 225, 157, 225, 221, 221, 221, 221, 221, 29, 58, 78, 219, 182, 109, 19, 168, 105, 219, 182, 109];
         assert_eq!(encode(8, 4, &g8x4, Gamut::Srgb).as_ref(), &h8x4);
 
         let g4x8: [u8; 128] = [
@@ -1517,7 +1518,7 @@ mod tests {
             170, 0, 255, 170, 85, 0, 255, 255, 0, 0, 255,
         ];
         #[rustfmt::skip]
-        let h4x8 = [0, 96, 201, 38, 142, 136, 49, 176, 28, 164, 250, 205, 33, 222, 217, 221, 221, 157, 221, 221, 93, 133, 113, 219, 182, 109, 131, 52, 109, 220, 182, 109];
+        let h4x8 = [8, 96, 201, 38, 142, 136, 49, 176, 28, 164, 250, 205, 33, 222, 217, 221, 221, 157, 221, 221, 93, 133, 113, 219, 182, 109, 131, 52, 109, 220, 182, 109];
         assert_eq!(encode(4, 8, &g4x8, Gamut::Srgb).as_ref(), &h4x8);
     }
 
@@ -1541,7 +1542,7 @@ mod tests {
             0, 255,
         ];
         #[rustfmt::skip]
-        let expected = [64, 128, 208, 116, 22, 0, 0, 132, 187, 187, 187, 187, 187, 187, 187, 187, 187, 187, 187, 109, 219, 182, 117, 219, 214, 117, 219, 54, 111, 155, 55, 15];
+        let expected = [72, 128, 208, 116, 22, 0, 0, 132, 187, 187, 187, 187, 187, 187, 187, 187, 187, 187, 187, 109, 219, 182, 117, 219, 214, 117, 219, 54, 111, 155, 55, 15];
         assert_eq!(encode(8, 8, &cb, Gamut::Srgb).as_ref(), &expected);
     }
 
@@ -1551,7 +1552,7 @@ mod tests {
         // default to black rather than divide by zero (`avg_alpha > 0.0` guard).
         let hash = encode(4, 4, &[0u8; 4 * 4 * 4], Gamut::Srgb);
         #[rustfmt::skip]
-        let expected = [64, 128, 0, 32, 16, 0, 0, 128, 187, 187, 187, 187, 187, 187, 187, 187, 187, 187, 187, 109, 219, 182, 109, 219, 182, 109, 219, 182, 109, 219, 182, 13];
+        let expected = [72, 128, 0, 32, 16, 0, 0, 128, 187, 187, 187, 187, 187, 187, 187, 187, 187, 187, 187, 109, 219, 182, 109, 219, 182, 109, 219, 182, 109, 219, 182, 13];
         assert_eq!(hash.as_ref(), &expected);
     }
 
@@ -1574,7 +1575,7 @@ mod tests {
             }
         }
         #[rustfmt::skip]
-        let expected = [64, 128, 71, 174, 20, 0, 192, 187, 187, 187, 187, 187, 187, 187, 187, 187, 187, 187, 187, 109, 219, 134, 109, 219, 180, 109, 219, 182, 109, 219, 182, 13];
+        let expected = [72, 128, 71, 174, 20, 0, 192, 187, 187, 187, 187, 187, 187, 187, 187, 187, 187, 187, 187, 109, 219, 134, 109, 219, 180, 109, 219, 182, 109, 219, 182, 13];
         assert_eq!(encode(w, h, &rgba, Gamut::Srgb).as_ref(), &expected);
     }
 }

@@ -4,7 +4,7 @@
 v1 keeps v0.6's single deterministic top-K selection over the natural-decode
 frequency domain, now parameterized by quality tier and by a perceptual weight:
 
-  1. (W, H) = decodeOutputSize(aspect_byte, tier)   # long edge 32·2^tier
+  1. (W, H) = decodeOutputSize(aspect_byte, tier)   # long edge 32·2^level
   2. Candidates: all (cx, cy) in [0, W) × [0, H) except DC (0, 0).
      The bound makes selecting a frequency unrepresentable at the natural
      render structurally impossible.
@@ -22,14 +22,14 @@ selection; it is reserved for frequency-normalized decoder extensions and
 pinned by the test vectors. It is the UNWEIGHTED priority: the synthesis window
 is defined on the true spatial frequency, not on the perceptual sort key.
 
-K per channel at tier 0 (constants.py LAYOUT_T0): L = 28 (no-alpha) /
+K per channel at the default tier (constants.py LAYOUT_T0): L = 28 (no-alpha) /
 20 (alpha mode), chroma a/b = 15 / 9, alpha = 5. Tiers 1..=3 scale the LAYOUT_B
 counts by 4^m, and the larger grid keeps the higher K satisfiable
 (candidates ≥ 64·4^m − 1).
 
 Usage:
-    python3 spec/selection.py           # pretty-print (tier 0)
-    python3 spec/selection.py --json    # JSON output (tier 0)
+    python3 spec/selection.py           # pretty-print (default tier)
+    python3 spec/selection.py --json    # JSON output (default tier)
 """
 
 import json
@@ -39,6 +39,7 @@ import sys
 from constants import (
     ANISO_OBLIQUE,
     BASE_LONG_EDGE,
+    DEFAULT_TIER,
     SEL_HV,
     SEL_ONE,
     SEL_Q,
@@ -63,7 +64,7 @@ def format_ks(tier: int) -> list[int]:
     )
 
 
-# Every per-channel K at tier 0, in ascending order.
+# Every per-channel K at the default tier, in ascending order.
 FORMAT_KS = format_ks(0)
 
 
@@ -123,12 +124,12 @@ def base_output_size(aspect_byte: int) -> tuple[int, int]:
 def decode_output_size(aspect_byte: int, tier: int) -> tuple[int, int]:
     """Natural output size for an aspect byte at a tier code. Per spec §8.2 (v1).
 
-    The tier-0 size is scaled by a power of two — (w << level, h << level), where
+    The base size is scaled by a power of two — (w << level, h << level), where
     level is render_level(tier) — so the long edge is 32·2^level
     (32 / 64 / 128 / 256 px). The shift is on the RENDER LEVEL, not the tier
-    code: the compact tier is code 4 and renders at tier 0's size, so shifting by
+    code: the compact tier is code 0 and renders at the default tier's size, so shifting by
     the code would give it a 512 px grid. Scaling the already-rounded
-    base size by a bit shift (rather than re-rounding 32·2^tier/ratio) is
+    base size by a bit shift (rather than re-rounding 32·2^level/ratio) is
     mandatory: the two disagree for non-power-of-two ratios (round(64/3) = 21 vs
     round(32/3) << 1 = 22), and the encoder and decoder MUST derive identical
     grids or the reconstruction desynchronizes.
@@ -151,7 +152,7 @@ def select_coefficients(
     bare priority order. `p_k` is always the unweighted priority of the
     last pair in selection order.
 
-    The candidate count is ≥ 64·4^tier − 1 for every aspect byte (the 16:1
+    The candidate count is ≥ 64·4^level − 1 for every aspect byte (the 16:1
     extreme), and every per-channel K(tier) the format uses is < that bound, so
     the selection is always fully satisfied.
     """
@@ -174,7 +175,7 @@ def select_coefficients(
 
 def main() -> None:
     use_json = "--json" in sys.argv
-    tier = 0  # the canonical table is dumped at tier 0
+    tier = DEFAULT_TIER  # the canonical table is dumped at the default tier
 
     # Enumerate all unique (W, H, K) selections across all 256 aspect bytes.
     seen: set[tuple[int, int, int]] = set()

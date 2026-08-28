@@ -84,7 +84,7 @@ typedef int32_t ChromaHashStatus;
 /**
  * A ChromaHash placeholder. Opaque handle; create with [`chromahash_encode`]
  * or [`chromahash_from_bytes`], release with [`chromahash_free`]. The encoded
- * form is variable length (32 bytes at tier 0); query it with
+ * form is variable length (32 bytes at the default tier); query it with
  * [`chromahash_byte_len`].
  */
 typedef struct ChromaHash ChromaHash;
@@ -134,7 +134,7 @@ extern "C" {
 #endif // __cplusplus
 
 /**
- * Encode an RGBA image (4 bytes/pixel) into a tier-0 (32-byte) ChromaHash. On
+ * Encode an RGBA image (4 bytes/pixel) into a default-tier (32-byte) ChromaHash. On
  * success `*out_hash` receives a new handle to free with [`chromahash_free`].
  */
 ChromaHashStatus chromahash_encode(uint32_t width,
@@ -145,8 +145,9 @@ ChromaHashStatus chromahash_encode(uint32_t width,
                                    ChromaHash **out_hash);
 
 /**
- * Encode an RGBA image at an explicit quality tier (`0..=3`; 0 is the 32-byte
- * default, each higher tier ~4× larger). Rejects an out-of-range tier with
+ * Encode an RGBA image at an explicit quality tier (`0..=4`, ordered by
+ * quality; `1` is the 32-byte default and `0` the 21-byte compact tier, each
+ * higher code ~4× larger). Rejects an out-of-range tier with
  * [`ChromaHashStatus::InvalidData`]. On success `*out_hash` receives a new
  * handle to free with [`chromahash_free`].
  */
@@ -173,7 +174,7 @@ ChromaHashStatus chromahash_from_bytes(const uint8_t *bytes, size_t len, ChromaH
 void chromahash_free(ChromaHash *hash);
 
 /**
- * The length in bytes of this hash's encoded form (32 at tier 0, more at higher
+ * The length in bytes of this hash's encoded form (32 at the default tier, more at higher
  * tiers or when an alpha channel is present). Returns 0 for a NULL handle. Use
  * it to size the buffer for [`chromahash_as_bytes`].
  */

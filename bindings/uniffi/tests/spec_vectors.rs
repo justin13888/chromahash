@@ -138,16 +138,37 @@ fn integration_decode_vectors() {
 
 #[test]
 fn from_bytes_rejects_wrong_length() {
+    // The expected length is a function of the descriptor byte, so each buffer
+    // has to carry the descriptor for the tier whose length it is claiming.
+    // Descriptor 8 = version 0, tier 1 (the 32-byte default); descriptor 0 =
+    // the compact tier, which is 21 bytes.
+    let mut default_tier = vec![0u8; 32];
+    default_tier[0] = 8;
     assert!(
-        ChromaHash::from_bytes(vec![0u8; 16]).is_err(),
+        ChromaHash::from_bytes(default_tier.clone()).is_ok(),
+        "from_bytes should accept a 32-byte default-tier buffer"
+    );
+    assert!(
+        ChromaHash::from_bytes(vec![0u8; 21]).is_ok(),
+        "from_bytes should accept a 21-byte compact-tier buffer"
+    );
+
+    let mut short = default_tier.clone();
+    short.truncate(16);
+    assert!(
+        ChromaHash::from_bytes(short).is_err(),
         "from_bytes should reject a 16-byte buffer"
     );
+    let mut long = default_tier.clone();
+    long.push(0);
     assert!(
-        ChromaHash::from_bytes(vec![0u8; 33]).is_err(),
+        ChromaHash::from_bytes(long).is_err(),
         "from_bytes should reject a 33-byte buffer"
     );
+    // A compact descriptor on a 32-byte buffer is the renumbering's own hazard:
+    // it must be a length mismatch, not a silently mis-read default-tier hash.
     assert!(
-        ChromaHash::from_bytes(vec![0u8; 32]).is_ok(),
-        "from_bytes should accept a 32-byte buffer"
+        ChromaHash::from_bytes(vec![0u8; 32]).is_err(),
+        "a compact-tier descriptor on 32 bytes must be rejected"
     );
 }

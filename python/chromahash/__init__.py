@@ -14,13 +14,23 @@ _GAMUT_TO_CORE = {
     Gamut.PROPHOTO_RGB: _CoreGamut.PRO_PHOTO_RGB,
 }
 
+# Tier codes, ordered by quality (spec §2.5). Codes 5..=7 are reserved.
+#: The 21-byte compact tier -- the smallest and lowest fidelity, rendered at
+#: ``DEFAULT_TIER``'s resolution.
+COMPACT_TIER = 0
+#: The 32-byte tier :meth:`ChromaHash.encode` produces. Pass this rather than a
+#: literal: the codes are ordered by quality, so a bare ``0`` is the compact tier.
+DEFAULT_TIER = 1
+#: The highest valid tier code.
+MAX_TIER = 4
+
 
 class ChromaHash:
     """ChromaHash: a compact LQIP (Low Quality Image Placeholder).
 
     A thin facade over the UniFFI-generated bindings to the Rust core. Output is
     byte-identical to every other ChromaHash implementation. The hash is variable
-    length (32 bytes at quality tier 0); native objects are created transiently
+    length (32 bytes at the default quality tier); native objects are created transiently
     per operation.
     """
 
@@ -35,7 +45,7 @@ class ChromaHash:
         rgba: bytes | bytearray,
         gamut: Gamut = Gamut.SRGB,
     ) -> "ChromaHash":
-        """Encode an image into a tier-0 ChromaHash.
+        """Encode an image into a default-tier (32-byte) ChromaHash.
 
         Args:
             w: image width (>= 1)
@@ -53,11 +63,14 @@ class ChromaHash:
         h: int,
         rgba: bytes | bytearray,
         gamut: Gamut = Gamut.SRGB,
-        quality: int = 0,
+        quality: int = DEFAULT_TIER,
     ) -> "ChromaHash":
-        """Encode an image at an explicit quality tier (0..=3).
+        """Encode an image at an explicit quality tier (0..=MAX_TIER, ordered
+        by quality).
 
-        Tier 0 is the 32-byte default; each higher tier carries more detail in a
+        DEFAULT_TIER is the 32-byte tier and COMPACT_TIER the 21-byte one --
+        pass those rather than a literal, since a bare 0 is the compact tier.
+        Each higher code carries more detail in a
         larger hash. See :meth:`encode` for the argument contract.
         """
         obj = _CoreHash.encode_with_quality(w, h, bytes(rgba), _GAMUT_TO_CORE[gamut], quality)
@@ -104,7 +117,7 @@ class ChromaHash:
         return cls(hash_bytes)
 
     def as_bytes(self) -> bytes:
-        """Get the raw hash bytes (32 at tier 0, more at higher tiers)."""
+        """Get the raw hash bytes (32 at the default tier, more at higher tiers)."""
         return self._hash
 
     def __eq__(self, other: object) -> bool:

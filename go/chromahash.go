@@ -1,6 +1,6 @@
 // Package chromahash implements the ChromaHash LQIP (Low Quality Image
 // Placeholder) format — a compact, variable-length representation of an image
-// (32 bytes at quality tier 0, larger at higher tiers).
+// (32 bytes at the default quality tier, larger at higher tiers).
 //
 // This package is a thin cgo wrapper over the chromahash-c C ABI, which exposes
 // the zero-dependency Rust core. Output is byte-identical to every other
@@ -22,8 +22,21 @@ import (
 	"unsafe"
 )
 
+// Tier codes, ordered by quality (spec §2.5). Codes 5..=7 are reserved.
+const (
+	// CompactTier is the 21-byte compact tier — the smallest and lowest
+	// fidelity, rendered at DefaultTier's resolution.
+	CompactTier uint8 = 0
+	// DefaultTier is the 32-byte tier Encode produces. Pass this rather than a
+	// literal: the codes are ordered by quality, so a bare 0 selects the
+	// compact tier.
+	DefaultTier uint8 = 1
+	// MaxTier is the highest valid tier code.
+	MaxTier uint8 = 4
+)
+
 // ChromaHash is a variable-length LQIP representation of an image (32 bytes at
-// tier 0; the length is self-describing via the header).
+// the default tier; the length is self-describing via the header).
 type ChromaHash struct {
 	Hash []byte
 }
@@ -46,12 +59,13 @@ func Encode(w, h int, rgba []byte, gamut Gamut) ChromaHash {
 		panic("chromahash: rgba length mismatch")
 	}
 
-	return EncodeWithQuality(w, h, rgba, gamut, 0)
+	return EncodeWithQuality(w, h, rgba, gamut, DefaultTier)
 }
 
-// EncodeWithQuality encodes an RGBA image at an explicit quality tier (0..=3).
-// Tier 0 is the 32-byte default; each higher tier carries more detail in a
-// larger hash. See Encode for the argument contract.
+// EncodeWithQuality encodes an RGBA image at an explicit quality tier
+// (0..=MaxTier, ordered by quality). DefaultTier is the 32-byte tier and
+// CompactTier the 21-byte one; each higher code carries more detail in a larger
+// hash. See Encode for the argument contract.
 func EncodeWithQuality(w, h int, rgba []byte, gamut Gamut, quality uint8) ChromaHash {
 	if w < 1 {
 		panic("chromahash: width must be >= 1")

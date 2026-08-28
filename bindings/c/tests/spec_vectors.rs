@@ -306,8 +306,10 @@ fn batch_encode_matches_single_encode() {
     assert_eq!(status, ChromaHashStatus::Ok, "batch_encode error");
 
     for (i, (w, h, rgba, gamut)) in owned.iter().enumerate() {
-        // The batch API encodes at tier 0, so compare against a tier-0 single encode.
-        let single = encode(*w, *h, rgba, *gamut, 0);
+        // The batch API encodes at the default tier, so compare against a
+        // default-tier single encode. Not a literal 0 -- the tier codes are
+        // ordered by quality, so 0 is the 21-byte compact tier.
+        let single = encode(*w, *h, rgba, *gamut, chromahash::DEFAULT_TIER);
         assert_eq!(
             hash_bytes(out[i]),
             hash_bytes(single),

@@ -54,7 +54,7 @@ impl DecodeResult {
     }
 }
 
-/// A ChromaHash placeholder (variable length — 32 bytes at tier 0).
+/// A ChromaHash placeholder (variable length — 32 bytes at the default tier).
 /// Mirrors [`chromahash::ChromaHash`].
 #[wasm_bindgen]
 pub struct ChromaHash {
@@ -63,15 +63,16 @@ pub struct ChromaHash {
 
 #[wasm_bindgen]
 impl ChromaHash {
-    /// Encode an RGBA image (4 bytes/pixel) into a tier-0 (32-byte) ChromaHash.
+    /// Encode an RGBA image (4 bytes/pixel) into a default-tier (32-byte) ChromaHash.
     pub fn encode(w: u32, h: u32, rgba: &[u8], gamut: Gamut) -> ChromaHash {
         ChromaHash {
             inner: CoreHash::encode(w, h, rgba, gamut.into()),
         }
     }
 
-    /// Encode at an explicit quality tier (0..=3). Tier 0 is the 32-byte default;
-    /// each higher tier carries more detail in a larger hash.
+    /// Encode at an explicit quality tier (0..=4, ordered by quality). Tier 1 is
+    /// the 32-byte default and tier 0 the 21-byte compact tier; each higher code
+    /// carries more detail in a larger hash.
     #[wasm_bindgen(js_name = encodeWithQuality)]
     pub fn encode_with_quality(
         w: u32,
@@ -133,7 +134,7 @@ impl ChromaHash {
         self.inner.average_color().to_vec()
     }
 
-    /// The raw hash bytes (32 at tier 0, more at higher tiers).
+    /// The raw hash bytes (32 at the default tier, more at higher tiers).
     #[wasm_bindgen(js_name = asBytes)]
     pub fn as_bytes(&self) -> Vec<u8> {
         self.inner.as_bytes().to_vec()
