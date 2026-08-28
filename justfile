@@ -8,31 +8,31 @@ default:
 
 # Format all implementations
 [parallel]
-format: format-rust format-c format-wasm format-ts format-jvm format-swift format-go format-python format-csharp format-android format-compare format-thumbhash format-gamutref
+format: format-rust format-c format-wasm format-ts format-jvm format-swift format-go format-python format-csharp format-android format-compare format-thumbhash format-gamutref format-benchmark
 
 # Lint all implementations
 [parallel]
-lint: lint-rust lint-c lint-wasm lint-ts lint-jvm lint-swift lint-go lint-python lint-csharp lint-android lint-compare lint-thumbhash lint-gamutref
+lint: lint-rust lint-c lint-wasm lint-ts lint-jvm lint-swift lint-go lint-python lint-csharp lint-android lint-compare lint-thumbhash lint-gamutref lint-benchmark
 
 # Auto-fix formatting in all implementations
 [parallel]
-format-fix: format-fix-rust format-fix-c format-fix-wasm format-fix-ts format-fix-jvm format-fix-swift format-fix-go format-fix-python format-fix-csharp format-fix-android format-fix-compare format-fix-thumbhash format-fix-gamutref
+format-fix: format-fix-rust format-fix-c format-fix-wasm format-fix-ts format-fix-jvm format-fix-swift format-fix-go format-fix-python format-fix-csharp format-fix-android format-fix-compare format-fix-thumbhash format-fix-gamutref format-fix-benchmark
 
 # Auto-fix linting in all implementations
 [parallel]
-lint-fix: lint-fix-rust lint-fix-c lint-fix-wasm lint-fix-ts lint-fix-jvm lint-fix-swift lint-fix-go lint-fix-python lint-fix-csharp lint-fix-android lint-fix-compare lint-fix-thumbhash lint-fix-gamutref
+lint-fix: lint-fix-rust lint-fix-c lint-fix-wasm lint-fix-ts lint-fix-jvm lint-fix-swift lint-fix-go lint-fix-python lint-fix-csharp lint-fix-android lint-fix-compare lint-fix-thumbhash lint-fix-gamutref lint-fix-benchmark
 
 # Run all tests
 [parallel]
-test: test-rust test-c test-wasm test-ts test-jvm test-swift test-go test-python test-csharp test-android
+test: test-rust test-c test-wasm test-ts test-jvm test-swift test-go test-python test-csharp test-android test-thumbhash test-gamutref
 
 # Build all implementations
 [parallel]
-build: build-rust build-c build-wasm build-ts build-jvm build-swift build-go build-python build-csharp build-android-crate
+build: build-rust build-c build-wasm build-ts build-jvm build-swift build-go build-python build-csharp build-android-crate build-thumbhash build-gamutref
 
 # Check formatting (no writes) across all implementations
 [parallel]
-format-check: format-check-rust format-check-c format-check-wasm format-check-ts format-check-jvm format-check-swift format-check-go format-check-python format-check-csharp format-check-android format-check-compare format-check-thumbhash format-check-gamutref
+format-check: format-check-rust format-check-c format-check-wasm format-check-ts format-check-jvm format-check-swift format-check-go format-check-python format-check-csharp format-check-android format-check-compare format-check-thumbhash format-check-gamutref format-check-benchmark
 
 # ─── Comparison tool ────────────────────────────────────────────────────────
 
@@ -50,6 +50,25 @@ lint-compare:
 lint-fix-compare:
     mise exec -- pnpm --prefix tools/comparison run lint:fix
 
+# ─── Benchmark driver (Python) ────────────────────────────────────────────────
+# The cross-language performance harness. Not published, but every benchmark
+# number quoted in the docs comes out of it, so it is held to the same lint and
+# format contract as the `python/` package (see tools/benchmark/pyproject.toml).
+
+format-benchmark:
+    mise exec -- uvx ruff format tools/benchmark
+
+format-fix-benchmark: format-benchmark
+
+format-check-benchmark:
+    mise exec -- uvx ruff format --check tools/benchmark
+
+lint-benchmark:
+    mise exec -- uvx ruff check tools/benchmark
+
+lint-fix-benchmark:
+    mise exec -- uvx ruff check --fix tools/benchmark
+
 # ─── ThumbHash baseline (native Rust) ─────────────────────────────────────────
 # Standalone benchmark harness crate (keeps the core chromahash crate zero-dep).
 
@@ -63,6 +82,12 @@ format-check-thumbhash:
 
 lint-thumbhash:
     cargo clippy --manifest-path tools/thumbhash-rs/Cargo.toml --all-targets -- -D warnings
+
+build-thumbhash:
+    cargo build --manifest-path tools/thumbhash-rs/Cargo.toml
+
+test-thumbhash:
+    cargo test --manifest-path tools/thumbhash-rs/Cargo.toml
 
 lint-fix-thumbhash:
     cargo clippy --manifest-path tools/thumbhash-rs/Cargo.toml --fix --allow-staged --allow-dirty
@@ -82,6 +107,12 @@ format-check-gamutref:
 
 lint-gamutref:
     cargo clippy --manifest-path tools/gamut-ref-stdin/Cargo.toml --all-targets -- -D warnings
+
+build-gamutref:
+    cargo build --manifest-path tools/gamut-ref-stdin/Cargo.toml
+
+test-gamutref:
+    cargo test --manifest-path tools/gamut-ref-stdin/Cargo.toml
 
 lint-fix-gamutref:
     cargo clippy --manifest-path tools/gamut-ref-stdin/Cargo.toml --fix --allow-staged --allow-dirty

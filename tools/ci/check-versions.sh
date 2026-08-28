@@ -44,6 +44,10 @@ check csharp/src/Chromahash/Chromahash.csproj \
 for f in bindings/uniffi/jvm/build.gradle.kts bindings/uniffi/android/build.gradle.kts; do
     check "$f" "$(grep -m1 '^version = ' "$f" | cut -d'"' -f2)"
 done
+# Not publishable, but it prints its version into benchmark output that gets
+# quoted in the docs, so a stale one mislabels the numbers.
+check tools/benchmark/pyproject.toml \
+    "$(grep -m1 '^version = ' tools/benchmark/pyproject.toml | cut -d'"' -f2)"
 
 if [ "$fail" -ne 0 ]; then
     echo >&2

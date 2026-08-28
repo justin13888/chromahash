@@ -66,10 +66,13 @@ HARNESSES: dict[str, dict] = {
         "cmd": "uv run python -m chromahash.encode_stdin",
         "cwd": str(ROOT / "python"),
     },
-    "Kotlin": {"cmd": str(ROOT / "bindings/uniffi/jvm/build/install/chromahash-jvm/bin/chromahash-jvm")},
+    "Kotlin": {
+        "cmd": str(ROOT / "bindings/uniffi/jvm/build/install/chromahash-jvm/bin/chromahash-jvm")
+    },
     "Swift": {"cmd": str(ROOT / "swift/.build/release/ChromaHashCLI")},
     "C#": {
-        "cmd": f"dotnet exec {ROOT / 'csharp/src/Chromahash.Cli/bin/Release/net9.0/Chromahash.Cli.dll'}",
+        "cmd": "dotnet exec "
+        + str(ROOT / "csharp/src/Chromahash.Cli/bin/Release/net9.0/Chromahash.Cli.dll"),
     },
     # Fastest native ThumbHash — official crate, parallel bulk encode. The
     # apples-to-apples opponent for native chromahash.
@@ -93,6 +96,7 @@ ALL_TIERS = list(range(COMPACT_TIER, MAX_TIER + 1))
 # Encoded length of each tier code (no-alpha), per spec §3.5.
 TIER_BYTES = {0: 21, 1: 32, 2: 108, 3: 411, 4: 1623}
 
+
 def parse_tiers(raw: str) -> list[int]:
     """Parse the --tiers argument: 'all', or a comma-separated list of codes."""
     if raw.strip().lower() == "all":
@@ -107,9 +111,7 @@ def parse_tiers(raw: str) -> list[int]:
         except ValueError:
             raise argparse.ArgumentTypeError(f"{part!r} is not a tier code") from None
         if tier not in ALL_TIERS:
-            raise argparse.ArgumentTypeError(
-                f"tier {tier} is not a valid code (0..={MAX_TIER})"
-            )
+            raise argparse.ArgumentTypeError(f"tier {tier} is not a valid code (0..={MAX_TIER})")
         tiers.append(tier)
     if not tiers:
         raise argparse.ArgumentTypeError("no tiers given")
@@ -144,22 +146,44 @@ def build_harnesses() -> None:
             str(ROOT),
         ),
         ("TypeScript", ["pnpm", "--prefix", str(ROOT / "typescript"), "run", "build"], str(ROOT)),
-        ("Go", ["go", "build", "-o", str(ROOT / "go/encode-stdin"), "./cmd/encode-stdin"], str(ROOT / "go")),
+        (
+            "Go",
+            ["go", "build", "-o", str(ROOT / "go/encode-stdin"), "./cmd/encode-stdin"],
+            str(ROOT / "go"),
+        ),
         ("Kotlin", ["./gradlew", "installDist", "-q"], str(ROOT / "bindings/uniffi/jvm")),
         ("Swift", ["swift", "build", "-c", "release"], str(ROOT / "swift")),
         (
             "C#",
-            ["dotnet", "build", str(ROOT / "csharp/src/Chromahash.Cli"), "-c", "Release", "--verbosity", "quiet"],
+            [
+                "dotnet",
+                "build",
+                str(ROOT / "csharp/src/Chromahash.Cli"),
+                "-c",
+                "Release",
+                "--verbosity",
+                "quiet",
+            ],
             str(ROOT),
         ),
         # Native ThumbHash harness — standalone crate (keeps the core zero-dep).
         (
             "ThumbHash (Rust)",
-            ["cargo", "build", "--manifest-path", str(ROOT / "tools/thumbhash-rs/Cargo.toml"), "--release"],
+            [
+                "cargo",
+                "build",
+                "--manifest-path",
+                str(ROOT / "tools/thumbhash-rs/Cargo.toml"),
+                "--release",
+            ],
             str(ROOT),
         ),
         # JS ThumbHash harness lives in the comparison tool (which owns the dep).
-        ("ThumbHash (JS)", ["pnpm", "--prefix", str(ROOT / "tools/comparison"), "run", "build"], str(ROOT)),
+        (
+            "ThumbHash (JS)",
+            ["pnpm", "--prefix", str(ROOT / "tools/comparison"), "run", "build"],
+            str(ROOT),
+        ),
     ]
 
     for label, cmd, cwd in steps:
@@ -331,7 +355,9 @@ def run_benchmarks(
                 )
                 continue
             except FileNotFoundError:
-                print("    ERROR: hyperfine not found. Install it: https://github.com/sharkdp/hyperfine")
+                print(
+                    "    ERROR: hyperfine not found. Install it: https://github.com/sharkdp/hyperfine"
+                )
                 sys.exit(1)
 
             try:
@@ -387,13 +413,12 @@ def format_table(
             "",
             heading,
             "",
-            "| Implementation | encode single | decode single | encode bulk (total) | encode bulk (per-op) | decode bulk (total) | decode bulk (per-op) |",
+            "| Implementation | encode single | decode single | encode bulk (total) "
+            "| encode bulk (per-op) | decode bulk (total) | decode bulk (per-op) |",
             "| --- | --- | --- | --- | --- | --- | --- |",
         ]
         for name in HARNESSES:
-            label = (
-                f"{name} _(ThumbHash baseline)_" if HARNESSES[name].get("thumbhash") else name
-            )
+            label = f"{name} _(ThumbHash baseline)_" if HARNESSES[name].get("thumbhash") else name
             lines.append(
                 f"| {label} | {ms(name, 'encode', 'single')} | {ms(name, 'decode', 'single')} "
                 f"| {ms(name, 'encode', 'bulk')} | {per_op_us(name, 'encode')} "
@@ -439,9 +464,7 @@ def generate_charts(
         vals = [medians.get(n, {}).get((op, "single"), np.nan) * 1000 for n in names]
         ax.bar(x + i * width, vals, width, label=op)
     ax.set_ylabel("Median time (ms)")
-    ax.set_title(
-        f"Single call, tier {tier} — process startup + one op (startup-dominated)"
-    )
+    ax.set_title(f"Single call, tier {tier} — process startup + one op (startup-dominated)")
     ax.set_xticks(x + width / 2)
     ax.set_xticklabels(names, rotation=30, ha="right")
     ax.set_yscale("log")
@@ -472,10 +495,14 @@ def generate_charts(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="ChromaHash vs ThumbHash performance benchmark")
-    parser.add_argument("--output-dir", type=Path, default=OUTPUT_DIR_DEFAULT, help="Directory for benchmark output")
+    parser.add_argument(
+        "--output-dir", type=Path, default=OUTPUT_DIR_DEFAULT, help="Directory for benchmark output"
+    )
     parser.add_argument("--warmup", type=int, default=3, help="Number of warmup runs per benchmark")
     parser.add_argument("--min-runs", type=int, default=10, help="Minimum number of timed runs")
-    parser.add_argument("--bulk-count", type=int, default=DEFAULT_BULK_COUNT, help="Images per bulk run")
+    parser.add_argument(
+        "--bulk-count", type=int, default=DEFAULT_BULK_COUNT, help="Images per bulk run"
+    )
     parser.add_argument(
         "--timeout",
         type=int,

@@ -1,0 +1,99 @@
+name: CI (Tools)
+
+# The three helper crates/scripts under tools/ that no other workflow covers:
+# thumbhash-rs (the native ThumbHash baseline the benchmark compares against),
+# gamut-ref-stdin (the metric-reference gamut converter the comparison harness
+# shells out to), and benchmark (the Python driver). tools/comparison has its
+# own workflow.
+#
+# These are not published, but the comparison harness and every benchmark number
+# in the docs depend on them building and behaving; before this they could break
+# and only be discovered by hand, locally.
+on:
+  push:
+    branches: [master]
+    paths:
+      - "tools/thumbhash-rs/**"
+      - "tools/gamut-ref-stdin/**"
+      - "tools/benchmark/**"
+      - "tools/ci/**"
+      - ".github/workflows/ci-tools.yml"
+  pull_request:
+    paths:
+      - "tools/thumbhash-rs/**"
+      - "tools/gamut-ref-stdin/**"
+      - "tools/benchmark/**"
+      - "tools/ci/**"
+      - ".github/workflows/ci-tools.yml"
+
+jobs:
+  rust-tools:
+    name: Rust tools · ${{ matrix.crate }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        crate: [thumbhash-rs, gamut-ref-stdin]
+    defaults:
+      run:
+        working-directory: tools/${{ matrix.crate }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            tools/${{ matrix.crate }}/target
+          # Cargo.lock is gitignored repo-wide, so key off the manifest.
+          key: ${{ runner.os }}-cargo-${{ matrix.crate }}-${{ hashFiles(format('tools/{0}/Cargo.toml', matrix.crate)) }}
+
+      - name: Format check
+        run: cargo fmt --check
+
+      - name: Lint
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Build
+        run: cargo build
+
+      - name: Test
+        run: cargo test
+
+  benchmark-script:
+    name: Benchmark driver
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Format check
+        run: uvx ruff format --check tools/benchmark
+
+      - name: Lint
+        run: uvx ruff check tools/benchmark
+
+      # The driver imports matplotlib and reads its own pyproject; compiling it
+      # catches a syntax or import-time error without running the (slow, native-
+      # library-dependent) benchmark itself.
+      - name: Byte-compile
+        run: python3 -m compileall -q tools/benchmark/benchmark.py
+
+  # Guards the release pipeline: every publishable manifest must agree with the
+  # core crate's version. Duplicated from ci-repo.yml's `versions` job only in
+  # that this one also fires when the script itself changes.
+  versions:
+    name: Manifest versions agree
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash tools/ci/check-versions.sh
