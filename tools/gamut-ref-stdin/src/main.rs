@@ -80,7 +80,10 @@ fn main() {
             *e = profile.eotf(i as f64 / 255.0);
         }
 
-        for px in rgba.chunks_exact_mut(4) {
+        // `as_chunks_mut` over `chunks_exact_mut`: the RGBA stride is a constant, so
+        // the chunk length is known to the compiler and the remainder is `&mut []`.
+        let (pixels, _rest) = rgba.as_chunks_mut::<4>();
+        for px in pixels {
             // gamut-linear RGB → LMS (M1[gamut]) → linear sRGB (M1⁻¹[sRGB]).
             let lin = matvec3(
                 m1,
