@@ -108,4 +108,21 @@ internal static partial class Native
 
     [LibraryImport(Lib)]
     internal static partial void chromahash_image_free(ref Image image);
+
+    /// <summary>
+    /// Read one of the C ABI's exported <c>uint8_t</c> constants
+    /// (<c>CHROMAHASH_COMPACT_TIER</c> and friends) by name.
+    /// </summary>
+    /// <remarks>
+    /// The tier codes are declared as C# <c>const</c>s on <see cref="ChromaHash"/>
+    /// so they can be used in constant expressions, but the format owns them and
+    /// the native ABI exports them. This is how the test suite proves the two
+    /// agree; <c>LibraryImport</c> binds functions only, so the symbol is
+    /// resolved by hand.
+    /// </remarks>
+    internal static byte ReadExportedByte(string symbol)
+    {
+        IntPtr lib = NativeLibrary.Load(Lib, typeof(Native).Assembly, null);
+        return Marshal.ReadByte(NativeLibrary.GetExport(lib, symbol));
+    }
 }

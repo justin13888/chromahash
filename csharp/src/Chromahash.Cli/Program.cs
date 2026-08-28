@@ -129,9 +129,10 @@ switch (args[0])
             using var stdin = Console.OpenStandardInput();
             byte[] rgba = ReadExact(stdin, (int)(w * h * 4));
 
+            byte tier = TierFromEnv();
             var items = new ImageInput[count];
             for (int i = 0; i < count; i++)
-                items[i] = new ImageInput(w, h, rgba, gamut);
+                items[i] = new ImageInput(w, h, rgba, gamut, tier);
 
             using var enc = new BatchEncoder();
             var hashes = enc.EncodeBatch(items);

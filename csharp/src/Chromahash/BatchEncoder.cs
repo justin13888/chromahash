@@ -3,7 +3,22 @@ using System.Collections.Concurrent;
 namespace ChromaHash;
 
 /// <summary>One image to encode in a batch.</summary>
-public readonly record struct ImageInput(uint Width, uint Height, byte[] Rgba, Gamut Gamut);
+/// <param name="Width">Image width (>= 1).</param>
+/// <param name="Height">Image height (>= 1).</param>
+/// <param name="Rgba">Pixel data in RGBA format (4 bytes per pixel, row-major).</param>
+/// <param name="Gamut">Source color space.</param>
+/// <param name="Quality">
+/// Quality tier (0..=<see cref="ChromaHash.MaxTier"/>, ordered by quality).
+/// Defaults to <see cref="ChromaHash.DefaultTier"/>, matching
+/// <see cref="ChromaHash.Encode"/>.
+/// </param>
+public readonly record struct ImageInput(
+    uint Width,
+    uint Height,
+    byte[] Rgba,
+    Gamut Gamut,
+    byte Quality = ChromaHash.DefaultTier
+);
 
 /// <summary>
 /// Stateful, self-parallelizing batch encoder backed by an owned pool of worker
@@ -12,8 +27,8 @@ public readonly record struct ImageInput(uint Width, uint Height, byte[] Rgba, G
 /// then release it with <see cref="Dispose"/>.
 /// </summary>
 /// <remarks>
-/// Output is byte-identical to calling <see cref="ChromaHash.Encode"/> on each
-/// image individually.
+/// Output is byte-identical to calling <see cref="ChromaHash.EncodeWithQuality"/>
+/// on each image individually at that image's tier.
 /// </remarks>
 public sealed class BatchEncoder : IDisposable
 {
@@ -53,7 +68,13 @@ public sealed class BatchEncoder : IDisposable
         foreach (var job in _jobs.GetConsumingEnumerable())
         {
             var it = job.Input;
-            job.Output[job.Index] = ChromaHash.Encode(it.Width, it.Height, it.Rgba, it.Gamut);
+            job.Output[job.Index] = ChromaHash.EncodeWithQuality(
+                it.Width,
+                it.Height,
+                it.Rgba,
+                it.Gamut,
+                it.Quality
+            );
             job.Done.Signal();
         }
     }
@@ -64,7 +85,8 @@ public sealed class BatchEncoder : IDisposable
     /// <remarks>
     /// All items are validated up front, before any work is dispatched, so an
     /// invalid item throws on the calling thread (identifying its index) rather
-    /// than failing a worker mid-flight. Validation matches <see cref="ChromaHash.Encode"/>.
+    /// than failing a worker mid-flight. Validation matches
+    /// <see cref="ChromaHash.EncodeWithQuality"/>.
     /// </remarks>
     public ChromaHash[] EncodeBatch(IReadOnlyList<ImageInput> items)
     {
@@ -86,6 +108,11 @@ public sealed class BatchEncoder : IDisposable
                 );
             if (it.Rgba.Length != (int)it.Width * (int)it.Height * 4)
                 throw new ArgumentException($"item {i}: rgba length mismatch", nameof(items));
+            if (it.Quality > ChromaHash.MaxTier)
+                throw new ArgumentOutOfRangeException(
+                    nameof(items),
+                    $"item {i}: quality tier must be 0..={ChromaHash.MaxTier}"
+                );
         }
 
         var output = new ChromaHash[items.Count];

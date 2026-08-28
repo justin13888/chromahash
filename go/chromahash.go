@@ -18,6 +18,7 @@ package chromahash
 import "C"
 
 import (
+	"errors"
 	"runtime"
 	"unsafe"
 )
@@ -34,6 +35,18 @@ const (
 	// MaxTier is the highest valid tier code.
 	MaxTier uint8 = 4
 )
+
+// abiTierCodes returns the tier codes as the linked C ABI exports them.
+//
+// The codes above are declared as Go consts so they can be used in constant
+// expressions, but the format owns them and the C ABI is where this package
+// gets everything else. cgo is unavailable in _test.go files, so the parity
+// test reaches the exported symbols through here.
+func abiTierCodes() (compact, def, max uint8) {
+	return uint8(C.CHROMAHASH_COMPACT_TIER),
+		uint8(C.CHROMAHASH_DEFAULT_TIER),
+		uint8(C.CHROMAHASH_MAX_TIER)
+}
 
 // ChromaHash is a variable-length LQIP representation of an image (32 bytes at
 // the default tier; the length is self-describing via the header).
@@ -108,14 +121,44 @@ func readHash(handle *C.ChromaHash) ChromaHash {
 	return out
 }
 
-// FromBytes creates a ChromaHash from raw hash bytes. Validation happens lazily
-// when the hash is used (Decode / AverageColor reconstruct and validate it).
-func FromBytes(b []byte) ChromaHash {
-	return ChromaHash{Hash: b}
+// ErrInvalidHash is returned by FromBytes for bytes that are not a valid v1
+// ChromaHash: an unsupported version, a reserved tier code, a set reserved bit,
+// or a length that disagrees with the self-describing header.
+var ErrInvalidHash = errors.New("chromahash: not a valid ChromaHash")
+
+// FromBytes creates a ChromaHash from raw hash bytes, validating them up front.
+//
+// The format is self-describing, so the header fixes the exact byte length: a
+// ChromaHash that comes back from FromBytes is guaranteed to decode. Anything
+// else returns ErrInvalidHash rather than deferring the failure to Decode.
+func FromBytes(b []byte) (ChromaHash, error) {
+	if len(b) == 0 {
+		return ChromaHash{}, ErrInvalidHash
+	}
+	var handle *C.ChromaHash
+	status := C.chromahash_from_bytes(
+		(*C.uint8_t)(unsafe.Pointer(&b[0])),
+		C.size_t(len(b)),
+		&handle,
+	)
+	runtime.KeepAlive(b)
+	if status != C.CHROMA_HASH_STATUS_OK || handle == nil {
+		return ChromaHash{}, ErrInvalidHash
+	}
+	C.chromahash_free(handle)
+
+	// Copy: the caller keeps ownership of b, and a ChromaHash that validated
+	// must not be invalidated by a later write to the caller's slice.
+	hash := make([]byte, len(b))
+	copy(hash, b)
+	return ChromaHash{Hash: hash}, nil
 }
 
 // handle reconstructs an opaque C handle from the hash bytes, validating the
-// v1 header. The caller must free it with C.chromahash_free.
+// v1 header. Reachable with invalid bytes only through a hand-built
+// ChromaHash literal — FromBytes validates — so it panics rather than
+// widening every accessor to return an error. The caller must free the handle
+// with C.chromahash_free.
 func (ch *ChromaHash) handle() *C.ChromaHash {
 	if len(ch.Hash) == 0 {
 		panic("chromahash: from_bytes failed")

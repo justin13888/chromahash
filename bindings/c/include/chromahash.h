@@ -127,11 +127,39 @@ typedef struct {
     const uint8_t *rgba;
     size_t rgba_len;
     ChromaHashGamut gamut;
+    /**
+     * Quality tier (`0..=CHROMAHASH_MAX_TIER`, ordered by quality). Set it to
+     * `CHROMAHASH_DEFAULT_TIER` for the 32-byte default; a zeroed struct
+     * selects the 21-byte compact tier, not the default.
+     */
+    uint8_t quality;
 } ChromaHashImageInput;
 
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
+
+/**
+ * The lowest quality tier: a 21-byte hash. Tier codes are ordered by quality.
+ */
+extern const uint8_t CHROMAHASH_COMPACT_TIER;
+
+/**
+ * The default quality tier: a 32-byte hash. What [`chromahash_encode`] uses.
+ */
+extern const uint8_t CHROMAHASH_DEFAULT_TIER;
+
+/**
+ * The highest quality tier this build implements. Codes above it are reserved
+ * and rejected with [`ChromaHashStatus::InvalidData`].
+ */
+extern const uint8_t CHROMAHASH_MAX_TIER;
+
+/**
+ * The format generation this build writes and accepts (the `version` field of
+ * byte 0).
+ */
+extern const uint8_t CHROMAHASH_FORMAT_VERSION;
 
 /**
  * Encode an RGBA image (4 bytes/pixel) into a default-tier (32-byte) ChromaHash. On
@@ -255,7 +283,8 @@ void chromahash_batch_encoder_free(ChromaHashBatchEncoder *enc);
  * Encode `count` images in parallel. `out_hashes` must point to an array of
  * `count` handle slots; on success each is set to a new handle to free
  * individually with [`chromahash_free`]. On any error no handle is allocated.
- * Output is byte-identical to calling [`chromahash_encode`] on each image.
+ * Output is byte-identical to calling [`chromahash_encode_with_quality`] on
+ * each image at that image's `quality` tier.
  */
 ChromaHashStatus chromahash_batch_encode(ChromaHashBatchEncoder *enc,
                                          const ChromaHashImageInput *items,

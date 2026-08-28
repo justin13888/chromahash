@@ -94,7 +94,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "failed to read hash from stdin: %v\n", err)
 			os.Exit(1)
 		}
-		ch := chromahash.FromBytes(hash)
+		ch, err := chromahash.FromBytes(hash)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			os.Exit(1)
+		}
 		_, _, rgba := ch.Decode()
 		os.Stdout.Write(rgba)
 
@@ -104,7 +108,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "failed to read hash from stdin: %v\n", err)
 			os.Exit(1)
 		}
-		ch := chromahash.FromBytes(hash)
+		ch, err := chromahash.FromBytes(hash)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			os.Exit(1)
+		}
 		r, g, b, a := ch.AverageColor()
 		os.Stdout.Write([]byte{r, g, b, a})
 
@@ -140,9 +148,10 @@ func main() {
 			os.Exit(1)
 		}
 
+		tier := tierFromEnv()
 		items := make([]chromahash.ImageInput, count)
 		for i := range items {
-			items[i] = chromahash.ImageInput{W: w, H: h, Rgba: rgba, Gamut: gamut}
+			items[i] = chromahash.ImageInput{W: w, H: h, Rgba: rgba, Gamut: gamut, Quality: tier}
 		}
 		be := chromahash.NewBatchEncoder()
 		hashes := be.EncodeBatch(items)
@@ -166,7 +175,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "failed to read hash from stdin: %v\n", err)
 			os.Exit(1)
 		}
-		ch := chromahash.FromBytes(hash)
+		ch, err := chromahash.FromBytes(hash)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			os.Exit(1)
+		}
 		var acc byte
 		for i := 0; i < count; i++ {
 			_, _, rgba := ch.Decode()

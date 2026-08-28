@@ -11,6 +11,8 @@ use chromahash_c::{
     chromahash_decode, chromahash_decode_capped, chromahash_encode, chromahash_encode_with_quality,
     chromahash_free, chromahash_from_bytes, chromahash_image_free, ChromaHash, ChromaHashColor,
     ChromaHashGamut, ChromaHashImage, ChromaHashImageInput, ChromaHashStatus,
+    CHROMAHASH_COMPACT_TIER, CHROMAHASH_DEFAULT_TIER, CHROMAHASH_FORMAT_VERSION,
+    CHROMAHASH_MAX_TIER,
 };
 use serde_json::Value;
 
@@ -286,14 +288,20 @@ fn batch_encode_matches_single_encode() {
         })
         .collect();
 
+    // Cycle through every tier so the test would fail if `quality` were ignored
+    // and every item silently encoded at the default.
+    let tier_of = |i: usize| (i % (chromahash::MAX_TIER as usize + 1)) as u8;
+
     let items: Vec<ChromaHashImageInput> = owned
         .iter()
-        .map(|(w, h, rgba, gamut)| ChromaHashImageInput {
+        .enumerate()
+        .map(|(i, (w, h, rgba, gamut))| ChromaHashImageInput {
             width: *w,
             height: *h,
             rgba: rgba.as_ptr(),
             rgba_len: rgba.len(),
             gamut: *gamut,
+            quality: tier_of(i),
         })
         .collect();
 
@@ -306,18 +314,54 @@ fn batch_encode_matches_single_encode() {
     assert_eq!(status, ChromaHashStatus::Ok, "batch_encode error");
 
     for (i, (w, h, rgba, gamut)) in owned.iter().enumerate() {
-        // The batch API encodes at the default tier, so compare against a
-        // default-tier single encode. Not a literal 0 -- the tier codes are
-        // ordered by quality, so 0 is the 21-byte compact tier.
-        let single = encode(*w, *h, rgba, *gamut, chromahash::DEFAULT_TIER);
+        let single = encode(*w, *h, rgba, *gamut, tier_of(i));
         assert_eq!(
             hash_bytes(out[i]),
             hash_bytes(single),
-            "batch item {i} diverges from single encode"
+            "batch item {i} diverges from single encode at tier {}",
+            tier_of(i)
         );
         unsafe { chromahash_free(single) };
         unsafe { chromahash_free(out[i]) };
     }
 
     unsafe { chromahash_batch_encoder_free(encoder) };
+}
+
+#[test]
+fn batch_encode_rejects_a_reserved_tier() {
+    // The batch path validates every item up front, exactly like the single
+    // encode: one bad tier fails the whole call and allocates no handle.
+    let rgba = [128u8; 4 * 4 * 4];
+    let items = [ChromaHashImageInput {
+        width: 4,
+        height: 4,
+        rgba: rgba.as_ptr(),
+        rgba_len: rgba.len(),
+        gamut: ChromaHashGamut::Srgb,
+        quality: chromahash::MAX_TIER + 1,
+    }];
+
+    let encoder = chromahash_batch_encoder_new();
+    assert!(!encoder.is_null(), "batch encoder creation failed");
+    let mut out: Vec<*mut ChromaHash> = vec![ptr::null_mut(); items.len()];
+    let status =
+        unsafe { chromahash_batch_encode(encoder, items.as_ptr(), items.len(), out.as_mut_ptr()) };
+    assert_eq!(status, ChromaHashStatus::InvalidData);
+    assert!(out[0].is_null(), "no handle may be allocated on error");
+    unsafe { chromahash_batch_encoder_free(encoder) };
+}
+
+#[test]
+fn exported_tier_constants_match_the_core() {
+    // The C# and Go bindings link these symbols instead of restating the codes.
+    // If the core renumbers a tier, this is where the ABI notices.
+    assert_eq!(CHROMAHASH_COMPACT_TIER, chromahash::COMPACT_TIER);
+    assert_eq!(CHROMAHASH_DEFAULT_TIER, chromahash::DEFAULT_TIER);
+    assert_eq!(CHROMAHASH_MAX_TIER, chromahash::MAX_TIER);
+    assert_eq!(CHROMAHASH_FORMAT_VERSION, chromahash::FORMAT_VERSION);
+
+    // And the codes are ordered by quality, with the default not at zero.
+    assert!(CHROMAHASH_COMPACT_TIER < CHROMAHASH_DEFAULT_TIER);
+    assert!(CHROMAHASH_DEFAULT_TIER < CHROMAHASH_MAX_TIER);
 }

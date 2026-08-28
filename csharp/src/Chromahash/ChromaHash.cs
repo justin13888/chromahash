@@ -55,6 +55,13 @@ public sealed class ChromaHash : IEquatable<ChromaHash>
     public static ChromaHash EncodeWithQuality(uint width, uint height, byte[] rgba, Gamut gamut, byte quality)
     {
         ArgumentNullException.ThrowIfNull(rgba);
+        // Rejected natively too, but as a status code that carries no parameter
+        // name; check here so the caller gets the argument that was wrong.
+        if (quality > MaxTier)
+            throw new ArgumentOutOfRangeException(
+                nameof(quality),
+                $"quality tier must be 0..={MaxTier}"
+            );
         var status = Native.chromahash_encode_with_quality(
             width,
             height,
@@ -135,14 +142,31 @@ public sealed class ChromaHash : IEquatable<ChromaHash>
     }
 
     /// <summary>
-    /// Create a ChromaHash from raw hash bytes. The bytes are validated lazily
-    /// when the hash is used (Decode / AverageColor reconstruct and validate it).
+    /// Create a ChromaHash from raw hash bytes, validating them up front.
     /// </summary>
+    /// <remarks>
+    /// The format is self-describing, so the header determines the exact byte
+    /// length; a ChromaHash that constructs is guaranteed to decode. Bad
+    /// version, reserved tier code, set reserved bit, or a length that
+    /// disagrees with the header all throw here rather than at first use.
+    /// </remarks>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="data"/> is not a valid v1 ChromaHash.
+    /// </exception>
     public static ChromaHash FromBytes(byte[] data)
     {
         ArgumentNullException.ThrowIfNull(data);
         byte[] copy = new byte[data.Length];
         data.CopyTo(copy, 0);
+
+        var status = Native.chromahash_from_bytes(copy, (nuint)copy.Length, out IntPtr handle);
+        if (status != Native.Status.Ok || handle == IntPtr.Zero)
+            throw new ArgumentException(
+                $"not a valid ChromaHash ({status})",
+                nameof(data)
+            );
+        Native.chromahash_free(handle);
+
         return new ChromaHash(copy);
     }
 

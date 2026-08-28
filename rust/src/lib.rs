@@ -110,10 +110,19 @@ pub use constants::MAX_TIER;
 /// remain reserved and are rejected.
 pub use constants::is_valid_tier;
 
-use constants::{
-    ALPHA_FLAG_BIT, FORMAT_VERSION, PREFIX_BITS, RESERVED_FLAG_BIT, TIER_BITS, VERSION_BITS,
-    body_len_bytes,
+/// The wire layout of byte 0 and the fixed prefix, as named constants.
+///
+/// These describe the format, not this crate's implementation of it, and every
+/// binding needs them to build or inspect a header without magic numbers. They
+/// were private, so `typescript/src/header.ts` re-derived the whole layout by
+/// hand and six other bindings hand-declared the tier codes — seven copies free
+/// to drift from the format independently.
+pub use constants::{
+    ALPHA_FLAG_BIT, BASE_LONG_EDGE, DESCRIPTOR_BITS, FORMAT_VERSION, PREFIX_BITS,
+    RESERVED_FLAG_BIT, TIER_BITS, VERSION_BITS, render_level,
 };
+
+use constants::body_len_bytes;
 
 // Tuning interface for the comparison harness: not part of the public API.
 // `Tunables::DEFAULT` is the v1 default-tier format; overrides exist solely so the

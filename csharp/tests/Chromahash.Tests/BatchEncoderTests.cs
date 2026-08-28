@@ -3,22 +3,32 @@ using CH = ChromaHash.ChromaHash;
 
 public class BatchEncoderTests
 {
-    /// <summary>A spread of dimensions, gamuts, and alpha, mirroring the bulk-migration use case.</summary>
+    /// <summary>
+    /// A spread of dimensions, gamuts, and alpha, mirroring the bulk-migration
+    /// use case. It also spans every tier, so a batch path that ignored
+    /// <see cref="ImageInput.Quality"/> would fail.
+    /// </summary>
     private static List<ImageInput> MixedItems() =>
         new()
         {
-            new ImageInput(4, 4, Helpers.SolidImage(4, 4, 200, 100, 50, 255), Gamut.Srgb),
-            new ImageInput(8, 4, Helpers.HorizontalGradient(8, 4), Gamut.DisplayP3),
-            new ImageInput(4, 8, Helpers.SolidImage(4, 8, 30, 200, 120, 128), Gamut.AdobeRgb),
-            new ImageInput(16, 16, Helpers.VerticalGradient(16, 16), Gamut.Bt2020),
-            new ImageInput(1, 1, Helpers.SolidImage(1, 1, 255, 0, 0, 255), Gamut.ProPhotoRgb),
+            new ImageInput(4, 4, Helpers.SolidImage(4, 4, 200, 100, 50, 255), Gamut.Srgb, CH.CompactTier),
+            new ImageInput(8, 4, Helpers.HorizontalGradient(8, 4), Gamut.DisplayP3, CH.DefaultTier),
+            new ImageInput(4, 8, Helpers.SolidImage(4, 8, 30, 200, 120, 128), Gamut.AdobeRgb, 2),
+            new ImageInput(16, 16, Helpers.VerticalGradient(16, 16), Gamut.Bt2020, 3),
+            new ImageInput(1, 1, Helpers.SolidImage(1, 1, 255, 0, 0, 255), Gamut.ProPhotoRgb, CH.MaxTier),
         };
 
     private static CH[] EncodeSerial(IReadOnlyList<ImageInput> items)
     {
         var output = new CH[items.Count];
         for (int i = 0; i < items.Count; i++)
-            output[i] = CH.Encode(items[i].Width, items[i].Height, items[i].Rgba, items[i].Gamut);
+            output[i] = CH.EncodeWithQuality(
+                items[i].Width,
+                items[i].Height,
+                items[i].Rgba,
+                items[i].Gamut,
+                items[i].Quality
+            );
         return output;
     }
 
@@ -53,6 +63,53 @@ public class BatchEncoderTests
         var serial = EncodeSerial(items);
         for (int i = 0; i < items.Count; i++)
             Assert.Equal(serial[i], batch[i]);
+    }
+
+    /// <summary>
+    /// Pins the tier down to the byte count. Comparing batch against serial
+    /// alone would pass if both silently encoded at one tier.
+    /// </summary>
+    [Fact]
+    public void BatchHonorsQuality()
+    {
+        var rgba = Helpers.SolidImage(8, 8, 200, 100, 50, 255);
+        var items = new List<ImageInput>();
+        for (byte tier = CH.CompactTier; tier <= CH.MaxTier; tier++)
+            items.Add(new ImageInput(8, 8, rgba, Gamut.Srgb, tier));
+
+        using var encoder = new BatchEncoder();
+        var batch = encoder.EncodeBatch(items);
+
+        int[] expected = { 21, 32, 108, 411, 1623 };
+        for (int tier = 0; tier < expected.Length; tier++)
+            Assert.Equal(expected[tier], batch[tier].AsBytes().Length);
+    }
+
+    /// <summary>
+    /// A default-constructed item must encode exactly like <c>Encode</c>: the
+    /// tier codes are ordered by quality, so a zero default would silently be
+    /// the 21-byte compact tier.
+    /// </summary>
+    [Fact]
+    public void OmittedQualityIsTheDefaultTier()
+    {
+        var rgba = Helpers.SolidImage(8, 8, 200, 100, 50, 255);
+        using var encoder = new BatchEncoder();
+        var batch = encoder.EncodeBatch(new List<ImageInput> { new(8, 8, rgba, Gamut.Srgb) });
+        Assert.Equal(CH.Encode(8, 8, rgba, Gamut.Srgb), batch[0]);
+    }
+
+    [Fact]
+    public void ReservedTierThrowsWithIndex()
+    {
+        using var encoder = new BatchEncoder();
+        var items = new List<ImageInput>
+        {
+            new(2, 2, Helpers.SolidImage(2, 2, 0, 0, 0, 255), Gamut.Srgb),
+            new(2, 2, Helpers.SolidImage(2, 2, 0, 0, 0, 255), Gamut.Srgb, CH.MaxTier + 1),
+        };
+        var ex = Assert.Throws<ArgumentOutOfRangeException>(() => encoder.EncodeBatch(items));
+        Assert.Contains("item 1", ex.Message);
     }
 
     [Fact]

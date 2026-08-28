@@ -11,6 +11,10 @@ type ImageInput struct {
 	H     int
 	Rgba  []byte
 	Gamut Gamut
+	// Quality is the tier to encode this image at (0..=MaxTier, ordered by
+	// quality). Note that the zero value is CompactTier, not DefaultTier —
+	// set it explicitly to DefaultTier for the 32-byte hash Encode produces.
+	Quality uint8
 }
 
 // batchJob is a unit of work handed to a worker goroutine: which item it is,
@@ -49,7 +53,7 @@ func NewBatchEncoderN(n int) *BatchEncoder {
 		go func() {
 			for job := range be.jobs {
 				it := job.input
-				job.out[job.index] = Encode(it.W, it.H, it.Rgba, it.Gamut)
+				job.out[job.index] = EncodeWithQuality(it.W, it.H, it.Rgba, it.Gamut, it.Quality)
 				job.done <- struct{}{}
 			}
 		}()
@@ -58,10 +62,12 @@ func NewBatchEncoderN(n int) *BatchEncoder {
 }
 
 // EncodeBatch encodes every item, returning hashes in the same order as items.
+// Each hash is byte-identical to EncodeWithQuality on that item at its Quality
+// tier.
 //
 // All items are validated up front, before any work is dispatched, so an
 // invalid item panics on the calling goroutine (identifying its index) rather
-// than crashing a worker mid-flight. Validation matches Encode.
+// than crashing a worker mid-flight. Validation matches EncodeWithQuality.
 func (be *BatchEncoder) EncodeBatch(items []ImageInput) []ChromaHash {
 	if be.closed {
 		panic("chromahash: EncodeBatch called on closed BatchEncoder")
@@ -75,6 +81,9 @@ func (be *BatchEncoder) EncodeBatch(items []ImageInput) []ChromaHash {
 		}
 		if len(it.Rgba) != it.W*it.H*4 {
 			panic("chromahash: item " + strconv.Itoa(i) + ": rgba length mismatch")
+		}
+		if it.Quality > MaxTier {
+			panic("chromahash: item " + strconv.Itoa(i) + ": quality tier out of range")
 		}
 	}
 

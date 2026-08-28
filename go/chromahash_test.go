@@ -3,6 +3,7 @@ package chromahash
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -164,7 +165,11 @@ func TestIntegrationDecode(t *testing.T) {
 			for i, v := range tc.Input.Hash {
 				hashBytes[i] = byte(v)
 			}
-			w, h, rgba := FromBytes(hashBytes).Decode()
+			ch, err := FromBytes(hashBytes)
+			if err != nil {
+				t.Fatalf("FromBytes rejected a spec vector: %v", err)
+			}
+			w, h, rgba := ch.Decode()
 			if w != tc.Expected.Width {
 				t.Errorf("width = %d, want %d", w, tc.Expected.Width)
 			}
@@ -214,7 +219,11 @@ func TestIntegrationDecodeCapped(t *testing.T) {
 			for i, v := range tc.Input.Hash {
 				hashBytes[i] = byte(v)
 			}
-			w, h, rgba := FromBytes(hashBytes).DecodeCapped(tc.Input.MaxWidth, tc.Input.MaxHt)
+			ch, err := FromBytes(hashBytes)
+			if err != nil {
+				t.Fatalf("FromBytes rejected a spec vector: %v", err)
+			}
+			w, h, rgba := ch.DecodeCapped(tc.Input.MaxWidth, tc.Input.MaxHt)
 			if w != tc.Expected.Width {
 				t.Errorf("width = %d, want %d", w, tc.Expected.Width)
 			}
@@ -232,25 +241,47 @@ func TestIntegrationDecodeCapped(t *testing.T) {
 
 // ── property tests ─────────────────────────────────────────────────────────────
 
+// tierByteLengths is the opaque-image hash length for each tier code, indexed
+// by the code — the table spec §3.3 tabulates.
+var tierByteLengths = [MaxTier + 1]int{21, 32, 108, 411, 1623}
+
 // The byte length is a function of the tier alone, so assert all five rather
-// than only the default. These are the lengths spec §3.3 tabulates.
+// than only the default.
 func TestEachTierEncodesToItsDocumentedLength(t *testing.T) {
 	rgba := solidImage(4, 4, 128, 128, 128, 255)
-	for tier, want := range map[uint8]int{0: 21, 1: 32, 2: 108, 3: 411, 4: 1623} {
-		ch := EncodeWithQuality(4, 4, rgba, GamutSRGB, tier)
+	for tier, want := range tierByteLengths {
+		ch := EncodeWithQuality(4, 4, rgba, GamutSRGB, uint8(tier))
 		if len(ch.Hash) != want {
 			t.Errorf("tier %d: hash length = %d, want %d", tier, len(ch.Hash), want)
 		}
 	}
-	if got := len(Encode(4, 4, rgba, GamutSRGB).Hash); got != 32 {
-		t.Errorf("Encode default length = %d, want 32", got)
+	if got := len(Encode(4, 4, rgba, GamutSRGB).Hash); got != tierByteLengths[DefaultTier] {
+		t.Errorf("Encode default length = %d, want %d", got, tierByteLengths[DefaultTier])
 	}
 }
 
-// FromBytes defers validation to first use, so the rejection surfaces as a
-// panic from Decode rather than an error from FromBytes. Pin that contract:
-// nothing here had ever exercised the invalid-hash path.
-func TestDecodeRejectsWrongLength(t *testing.T) {
+// The tier codes are declared here as Go consts for idiom, but the format
+// defines them and the C ABI exports them. Assert the two agree, so a renumber
+// in the core cannot leave this package quietly one code behind.
+func TestTierConstantsMatchTheCABI(t *testing.T) {
+	abiCompact, abiDefault, abiMax := abiTierCodes()
+	for _, tc := range []struct {
+		name    string
+		go_, c_ uint8
+	}{
+		{"CompactTier", CompactTier, abiCompact},
+		{"DefaultTier", DefaultTier, abiDefault},
+		{"MaxTier", MaxTier, abiMax},
+	} {
+		if tc.go_ != tc.c_ {
+			t.Errorf("%s = %d in Go, %d in the C ABI", tc.name, tc.go_, tc.c_)
+		}
+	}
+}
+
+// The header is self-describing, so a length that disagrees with it is rejected
+// at construction — not deferred to Decode.
+func TestFromBytesRejectsWrongLength(t *testing.T) {
 	valid := Encode(4, 4, solidImage(4, 4, 128, 64, 32, 255), GamutSRGB).Hash
 
 	for _, tc := range []struct {
@@ -260,22 +291,39 @@ func TestDecodeRejectsWrongLength(t *testing.T) {
 		{"one byte short", valid[:len(valid)-1]},
 		{"one byte long", append(append([]byte{}, valid...), 0)},
 		{"empty", []byte{}},
+		{"reserved tier code", append([]byte{(MaxTier + 1) << 3}, valid[1:]...)},
+		{"reserved bit set", append([]byte{valid[0] | 0x80}, valid[1:]...)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			defer func() {
-				if recover() == nil {
-					t.Errorf("Decode accepted a %d-byte hash", len(tc.bytes))
-				}
-			}()
-			FromBytes(tc.bytes).Decode()
+			if _, err := FromBytes(tc.bytes); !errors.Is(err, ErrInvalidHash) {
+				t.Errorf("FromBytes accepted %d bytes (err = %v)", len(tc.bytes), err)
+			}
 		})
 	}
 }
 
 func TestFromBytesRoundtrip(t *testing.T) {
 	ch := Encode(4, 4, solidImage(4, 4, 128, 64, 32, 255), GamutSRGB)
-	if !bytes.Equal(FromBytes(ch.Hash).Hash, ch.Hash) {
+	got, err := FromBytes(ch.Hash)
+	if err != nil {
+		t.Fatalf("FromBytes rejected its own output: %v", err)
+	}
+	if !bytes.Equal(got.Hash, ch.Hash) {
 		t.Error("FromBytes roundtrip failed")
+	}
+}
+
+// FromBytes copies, so a later write to the caller's slice cannot invalidate a
+// ChromaHash that already validated.
+func TestFromBytesCopiesTheInput(t *testing.T) {
+	src := Encode(4, 4, solidImage(4, 4, 128, 64, 32, 255), GamutSRGB).Hash
+	ch, err := FromBytes(src)
+	if err != nil {
+		t.Fatalf("FromBytes: %v", err)
+	}
+	src[0] ^= 0xff
+	if ch.Hash[0] == src[0] {
+		t.Error("FromBytes aliased the caller's slice")
 	}
 }
 

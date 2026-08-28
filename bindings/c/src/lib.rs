@@ -53,6 +53,30 @@ impl From<ChromaHashGamut> for CoreGamut {
     }
 }
 
+// ─── quality tiers ────────────────────────────────────────────────────────────
+//
+// Re-exported from the core rather than restated, so a C consumer (and the C#
+// and Go bindings that link this ABI) names the tiers instead of writing a
+// literal that the format is free to renumber underneath it.
+
+/// The lowest quality tier: a 21-byte hash. Tier codes are ordered by quality.
+#[no_mangle]
+pub static CHROMAHASH_COMPACT_TIER: u8 = chromahash::COMPACT_TIER;
+
+/// The default quality tier: a 32-byte hash. What [`chromahash_encode`] uses.
+#[no_mangle]
+pub static CHROMAHASH_DEFAULT_TIER: u8 = chromahash::DEFAULT_TIER;
+
+/// The highest quality tier this build implements. Codes above it are reserved
+/// and rejected with [`ChromaHashStatus::InvalidData`].
+#[no_mangle]
+pub static CHROMAHASH_MAX_TIER: u8 = MAX_TIER;
+
+/// The format generation this build writes and accepts (the `version` field of
+/// byte 0).
+#[no_mangle]
+pub static CHROMAHASH_FORMAT_VERSION: u8 = chromahash::FORMAT_VERSION;
+
 /// Status code returned by every fallible entry point. `Ok` is `0`.
 #[repr(i32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,6 +140,10 @@ pub struct ChromaHashImageInput {
     pub rgba: *const u8,
     pub rgba_len: usize,
     pub gamut: ChromaHashGamut,
+    /// Quality tier (`0..=CHROMAHASH_MAX_TIER`, ordered by quality). Set it to
+    /// `CHROMAHASH_DEFAULT_TIER` for the 32-byte default; a zeroed struct
+    /// selects the 21-byte compact tier, not the default.
+    pub quality: u8,
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -463,7 +491,8 @@ pub unsafe extern "C" fn chromahash_batch_encoder_free(enc: *mut ChromaHashBatch
 /// Encode `count` images in parallel. `out_hashes` must point to an array of
 /// `count` handle slots; on success each is set to a new handle to free
 /// individually with [`chromahash_free`]. On any error no handle is allocated.
-/// Output is byte-identical to calling [`chromahash_encode`] on each image.
+/// Output is byte-identical to calling [`chromahash_encode_with_quality`] on
+/// each image at that image's `quality` tier.
 #[no_mangle]
 pub unsafe extern "C" fn chromahash_batch_encode(
     enc: *mut ChromaHashBatchEncoder,
@@ -495,15 +524,16 @@ pub unsafe extern "C" fn chromahash_batch_encode(
         if it.rgba.is_null() {
             return ChromaHashStatus::NullPointer;
         }
+        if it.quality > MAX_TIER {
+            return ChromaHashStatus::InvalidData;
+        }
         let slice = std::slice::from_raw_parts(it.rgba, it.rgba_len);
         inputs.push(CoreInput {
             w: it.width,
             h: it.height,
             rgba: Arc::from(slice),
             gamut: it.gamut.into(),
-            // Batch mirrors chromahash_encode: the default tier. Higher tiers
-            // are a future additive API (chromahash_batch_encode_quality).
-            quality: chromahash::DEFAULT_TIER,
+            quality: it.quality,
         });
     }
 
