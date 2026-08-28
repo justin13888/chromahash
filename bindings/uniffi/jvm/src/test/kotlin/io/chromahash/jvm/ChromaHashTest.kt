@@ -1,7 +1,14 @@
 package io.chromahash.jvm
 
+import io.chromahash.ffi.BatchEncoder
 import io.chromahash.ffi.ChromaHash
+import io.chromahash.ffi.ChromaHashException
 import io.chromahash.ffi.Gamut
+import io.chromahash.ffi.ImageInput
+import io.chromahash.ffi.compactTier
+import io.chromahash.ffi.defaultTier
+import io.chromahash.ffi.formatVersion
+import io.chromahash.ffi.maxTier
 import org.json.JSONArray
 import java.io.File
 import java.nio.file.Paths
@@ -218,24 +225,93 @@ class ChromaHashTest {
         }
     }
 
+    /**
+     * The core panics on invalid input, and a panic across the FFI boundary is
+     * undefined behaviour — so the binding validates first and throws a typed
+     * error, matching the C ABI's status codes.
+     */
     @Test
     fun `encode rejects invalid dimensions`() {
-        assertFailsWith<Exception> { ChromaHash.encode(0u, 4u, ByteArray(0), Gamut.SRGB) }
-        assertFailsWith<Exception> { ChromaHash.encode(4u, 0u, ByteArray(0), Gamut.SRGB) }
+        assertFailsWith<ChromaHashException.InvalidDimensions> {
+            ChromaHash.encode(0u, 4u, ByteArray(0), Gamut.SRGB)
+        }
+        assertFailsWith<ChromaHashException.InvalidDimensions> {
+            ChromaHash.encode(4u, 0u, ByteArray(0), Gamut.SRGB)
+        }
         // rgba shorter than w * h * 4
-        assertFailsWith<Exception> { ChromaHash.encode(4u, 4u, ByteArray(63), Gamut.SRGB) }
+        assertFailsWith<ChromaHashException.InvalidLength> {
+            ChromaHash.encode(4u, 4u, ByteArray(63), Gamut.SRGB)
+        }
     }
 
     @Test
     fun `encodeWithQuality rejects a reserved tier code`() {
         val rgba = solid4x4()
-        assertFailsWith<Exception> {
+        assertFailsWith<ChromaHashException.InvalidTier> {
             ChromaHash.encodeWithQuality(4u, 4u, rgba, Gamut.SRGB, (MAX_TIER + 1).toUByte())
         }
     }
 
+    /**
+     * Pins the tier down to the byte count. Comparing the batch against the
+     * serial path alone would pass if both silently used one tier.
+     */
+    @Test
+    fun `batch encoding honors each item's tier`() {
+        val rgba = solid4x4()
+        val items = (0..MAX_TIER).map { ImageInput(4u, 4u, rgba, Gamut.SRGB, it.toUByte()) }
+        BatchEncoder().use { encoder ->
+            val lengths = encoder.encodeBatch(items).map { it.use { h -> h.asBytes().size } }
+            assertContentEquals(listOf(21, 32, 108, 411, 1623), lengths)
+        }
+    }
+
+    /**
+     * An item with no explicit tier must match `encode` — the codes are ordered
+     * by quality, so a zero default would be the 21-byte compact tier.
+     */
+    @Test
+    fun `batch encoding defaults to the default tier`() {
+        val rgba = solid4x4()
+        val expected = ChromaHash.encode(4u, 4u, rgba, Gamut.SRGB).use { it.asBytes() }
+        BatchEncoder().use { encoder ->
+            val batched =
+                encoder.encodeBatch(listOf(ImageInput(4u, 4u, rgba, Gamut.SRGB))).single().use {
+                    it.asBytes()
+                }
+            assertContentEquals(expected, batched)
+        }
+    }
+
+    @Test
+    fun `batch encoding rejects a reserved tier code, naming the item`() {
+        val rgba = solid4x4()
+        val items =
+            listOf(
+                ImageInput(4u, 4u, rgba, Gamut.SRGB),
+                ImageInput(4u, 4u, rgba, Gamut.SRGB, (MAX_TIER + 1).toUByte()),
+            )
+        BatchEncoder().use { encoder ->
+            val e =
+                assertFailsWith<ChromaHashException.InvalidTier> { encoder.encodeBatch(items) }
+            assertTrue(e.message!!.contains("item 1"), "error should name the item: ${e.message}")
+        }
+    }
+
+    /**
+     * The tier codes reach Kotlin through the FFI rather than being restated
+     * here, so this asserts the ordering the format guarantees.
+     */
+    @Test
+    fun `tier constants come from the core`() {
+        assertEquals(0, compactTier().toInt())
+        assertEquals(MAX_TIER, maxTier().toInt())
+        assertTrue(compactTier() < defaultTier() && defaultTier() < maxTier())
+        assertEquals(0, formatVersion().toInt())
+    }
+
     private companion object {
         /** Highest tier code the format defines; codes above it are reserved. */
-        const val MAX_TIER = 4
+        val MAX_TIER = maxTier().toInt()
     }
 }

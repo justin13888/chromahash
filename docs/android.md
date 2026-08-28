@@ -59,9 +59,14 @@ the `DecodeResult` / `RgbaColor` records. `uniffi.toml` sets the generated packa
 
 Two deliberate differences from a naïve 1:1 mapping, both at the FFI boundary:
 
-- **`fromBytes` is fallible.** It returns `Result<Arc<Self>, ChromaHashError>` in Rust →
-  `@Throws(ChromaHashException::class)` in Kotlin, throwing `InvalidLength` if the input is not
-  the length its descriptor byte implies. A panic across the FFI boundary is unsafe, so the binding validates instead.
+- **Every fallible entry point throws.** A panic across the FFI boundary is
+  undefined behaviour, so the binding validates first and returns
+  `Result<_, ChromaHashError>` in Rust → `@Throws(ChromaHashException::class)`
+  in Kotlin. That covers `fromBytes` (`InvalidData` — bad version, reserved tier
+  code, set reserved bit, or a length its header does not imply) and
+  `encode` / `encodeWithQuality` / `encodeBatch` (`InvalidDimensions`,
+  `InvalidLength`, `InvalidTier`). The variants mirror the C ABI's status codes,
+  so the taxonomy is the same in every binding.
 - **Record integers are signed.** `DecodeResult.width/height` and `RgbaColor.r/g/b/a` are declared
   `i32` (→ Kotlin `Int`), matching the pure-Kotlin API and Android's `Bitmap`/ARGB call sites. Only
   *size parameters* (`encode`'s `w`/`h`, `decodeCapped`'s `maxW`/`maxH`) remain `u32` → Kotlin
@@ -143,7 +148,7 @@ in [§3](#3-the-api-bindingsandroidsrclibrs):
 
 | Pure Kotlin (`chromahash`)             | Native (UniFFI, `io.chromahash.ffi`)      |
 | -------------------------------------- | ----------------------------------------- |
-| `ChromaHash.encode(w, h, rgba, gamut)` | `ChromaHash.encode(w, h, rgba, gamut)`    |
+| `ChromaHash.encode(w, h, rgba, gamut)` | `ChromaHash.encode(w, h, rgba, gamut)` — `@Throws` |
 | `ChromaHash.fromBytes(bytes)`          | `ChromaHash.fromBytes(bytes)` — `@Throws` |
 | `chromaHash.decode(): DecodeResult`    | `chromaHash.decode(): DecodeResult`       |
 | `chromaHash.averageColor(): RgbaColor` | `chromaHash.averageColor(): RgbaColor`    |
@@ -152,7 +157,7 @@ in [§3](#3-the-api-bindingsandroidsrclibrs):
 | `Gamut` enum                           | `Gamut` enum                              |
 
 Swapping the import (`chromahash.ChromaHash` → `io.chromahash.ffi.ChromaHash`) and handling the
-`fromBytes` exception is the bulk of the migration.
+`encode` / `fromBytes` exceptions is the bulk of the migration.
 
 ## 7. Validate correctness
 

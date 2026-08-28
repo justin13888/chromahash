@@ -15,7 +15,7 @@ import { availableParallelism } from "node:os";
 import { dirname, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
-import { BatchEncoder, ChromaHash, init } from "./index.ts";
+import { BatchEncoder, ChromaHash, DEFAULT_TIER, init } from "./index.ts";
 import type { Gamut, ImageInput } from "./index.ts";
 
 // Node has no `fetch` of `file://`, so feed the WASM module its bytes directly.
@@ -48,7 +48,15 @@ function makeImage(seed: number): ImageInput {
 }
 
 function encodeSerial(items: ImageInput[]): ChromaHash[] {
-  return items.map((it) => ChromaHash.encode(it.w, it.h, it.rgba, it.gamut));
+  return items.map((it) =>
+    ChromaHash.encodeWithQuality(
+      it.w,
+      it.h,
+      it.rgba,
+      it.gamut,
+      it.quality ?? DEFAULT_TIER,
+    ),
+  );
 }
 
 function imagesPerSec(n: number, secs: number): number {

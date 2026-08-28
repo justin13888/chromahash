@@ -36,8 +36,12 @@ func makeImage(_ seed: Int) -> ImageInput {
 }
 
 func encodeSerial(_ items: [ImageInput]) -> [ChromaHash] {
+  // The bench builds its own valid inputs, so a failure here is a bug in the
+  // bench, not something to report to the caller.
   items.map {
-    ChromaHash.encode(width: $0.width, height: $0.height, rgba: $0.rgba, gamut: $0.gamut)
+    // swiftlint:disable:next force_try
+    try! ChromaHash.encodeWithQuality(
+      width: $0.width, height: $0.height, rgba: $0.rgba, gamut: $0.gamut, quality: $0.quality)
   }
 }
 
@@ -58,7 +62,9 @@ let items = (0..<n).map(makeImage)
 
 // Warm up and verify correctness.
 let warmSerial = encodeSerial(items)
-let warmBatch = BatchEncoder().encodeBatch(items)
+// The bench builds its own valid inputs; a throw here is a bug in the bench.
+// swiftlint:disable force_try
+let warmBatch = try! BatchEncoder().encodeBatch(items)
 precondition(warmSerial == warmBatch, "batch output must equal serial")
 
 let serialSecs = seconds {
@@ -71,9 +77,9 @@ print(
     imagesPerSec(n, serialSecs)))
 
 let encoder = BatchEncoder()
-_ = encoder.encodeBatch(items)  // warm the pool
+_ = try! encoder.encodeBatch(items)  // warm the pool
 let batchSecs = seconds {
-  let out = encoder.encodeBatch(items)
+  let out = try! encoder.encodeBatch(items)
   precondition(out.count == n)
 }
 print(
@@ -86,9 +92,9 @@ var threadCounts = [1, 2, 4, 8]
 if !threadCounts.contains(cores) { threadCounts.append(cores) }
 for t in threadCounts {
   let enc = BatchEncoder(threads: t)
-  _ = enc.encodeBatch(items)  // warm
+  _ = try! enc.encodeBatch(items)  // warm
   let secs = seconds {
-    let out = enc.encodeBatch(items)
+    let out = try! enc.encodeBatch(items)
     precondition(out.count == n)
   }
   print(
@@ -96,3 +102,4 @@ for t in threadCounts {
       format: "  threads=%-3d      : %8.4fs  %10.0f img/s  (%.2fx)",
       t, secs, imagesPerSec(n, secs), serialSecs / secs))
 }
+// swiftlint:enable force_try

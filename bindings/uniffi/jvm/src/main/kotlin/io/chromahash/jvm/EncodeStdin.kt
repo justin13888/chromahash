@@ -4,16 +4,19 @@ import io.chromahash.ffi.BatchEncoder
 import io.chromahash.ffi.ChromaHash
 import io.chromahash.ffi.Gamut
 import io.chromahash.ffi.ImageInput
+import io.chromahash.ffi.defaultTier
+import io.chromahash.ffi.maxTier
 
 /**
  * stdin/stdout CLI used by the cross-language comparison harness, mirroring the
  * other languages' `encode-stdin`. Backed by the UniFFI binding (`io.chromahash.ffi`).
  *
- * Tier codes are ordered by quality (spec §2.5): 1 is the 32-byte default.
+ * Tier codes are ordered by quality (spec §2.5) and come from the core across
+ * the FFI, so a renumbering cannot leave a stale literal here.
  */
 
-private const val DEFAULT_TIER: UByte = 1u
-private const val MAX_TIER: UByte = 4u
+private val DEFAULT_TIER: UByte = defaultTier()
+private val MAX_TIER: UByte = maxTier()
 
 /**
  * Quality tier from CHROMAHASH_TIER, matching the Rust harness so the
@@ -105,7 +108,8 @@ fun main(args: Array<String>) {
             val count = args[4].toInt()
 
             val rgba = System.`in`.readNBytes(w * h * 4)
-            val items = List(count) { ImageInput(w.toUInt(), h.toUInt(), rgba, gamut) }
+            val tier = tierFromEnv()
+            val items = List(count) { ImageInput(w.toUInt(), h.toUInt(), rgba, gamut, tier) }
             val firstByte = BatchEncoder().use { it.encodeBatch(items)[0].asBytes()[0] }
             // Write one result-derived byte so the work cannot be optimized away.
             System.out.write(byteArrayOf(firstByte))

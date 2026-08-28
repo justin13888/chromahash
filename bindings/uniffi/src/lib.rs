@@ -7,9 +7,11 @@
 //! The generated Kotlin lives in package `io.chromahash.ffi` (see `uniffi.toml`) and
 //! mirrors the pure-JVM `chromahash` API 1:1, with two deliberate differences at the
 //! FFI boundary:
-//!   - [`ChromaHash::from_bytes`] is **fallible** (throws on malformed input — bad
-//!     version, tier, reserved bit, or a length that disagrees with the header)
-//!     rather than panicking — a panic across FFI is unsafe.
+//!   - Every fallible entry point **throws** rather than panicking, because a
+//!     panic across FFI is undefined behaviour. That covers `from_bytes` on
+//!     malformed input and `encode`/`encode_with_quality`/`encode_batch` on
+//!     invalid dimensions, a mismatched `rgba` length, or a reserved tier code —
+//!     the same checks, and the same taxonomy, as the C ABI's status codes.
 //!   - Integer record fields are signed (`i32` → Kotlin `Int`), matching the
 //!     pure-Kotlin `DecodeResult`/`RgbaColor` types and Android's `Bitmap`/ARGB APIs.
 
@@ -20,6 +22,51 @@ use chromahash::{
 };
 
 uniffi::setup_scaffolding!();
+
+// ─── quality tiers ────────────────────────────────────────────────────────────
+//
+// Re-exported from the core rather than restated in each generated language, so
+// Kotlin, Swift, and Python name the tiers instead of writing a literal that the
+// format is free to renumber underneath them. UniFFI has no constant export, so
+// these are zero-cost functions the facades read once.
+
+/// The lowest quality tier: a 21-byte hash. Tier codes are ordered by quality.
+pub const COMPACT_TIER: u8 = chromahash::COMPACT_TIER;
+
+/// The default quality tier: a 32-byte hash. What [`ChromaHash::encode`] uses.
+pub const DEFAULT_TIER: u8 = chromahash::DEFAULT_TIER;
+
+/// The highest quality tier this build implements. Codes above it are reserved
+/// and rejected with [`ChromaHashError::InvalidTier`].
+pub const MAX_TIER: u8 = chromahash::MAX_TIER;
+
+/// The format generation this build writes and accepts (the `version` field of
+/// byte 0).
+pub const FORMAT_VERSION: u8 = chromahash::FORMAT_VERSION;
+
+/// The lowest quality tier: a 21-byte hash. Tier codes are ordered by quality.
+#[uniffi::export]
+pub fn compact_tier() -> u8 {
+    COMPACT_TIER
+}
+
+/// The default quality tier: a 32-byte hash. What [`ChromaHash::encode`] uses.
+#[uniffi::export]
+pub fn default_tier() -> u8 {
+    DEFAULT_TIER
+}
+
+/// The highest quality tier this build implements; higher codes are reserved.
+#[uniffi::export]
+pub fn max_tier() -> u8 {
+    MAX_TIER
+}
+
+/// The format generation this build writes and accepts.
+#[uniffi::export]
+pub fn format_version() -> u8 {
+    FORMAT_VERSION
+}
 
 /// Source/target color space. Mirrors [`chromahash::Gamut`].
 #[derive(Debug, Clone, Copy, uniffi::Enum)]
@@ -43,24 +90,87 @@ impl From<Gamut> for CoreGamut {
     }
 }
 
-/// Errors surfaced across the FFI boundary. Maps to a thrown Kotlin exception.
+/// Errors surfaced across the FFI boundary. Maps to a thrown Kotlin/Swift/Python
+/// exception.
+///
+/// The core encoder panics on invalid input, which is undefined behaviour across
+/// an FFI boundary — so every entry point validates first and returns one of
+/// these instead. The variants mirror the C ABI's `ChromaHashStatus` codes, so a
+/// caller sees the same taxonomy whichever binding it went through.
 #[derive(Debug, uniffi::Error)]
 pub enum ChromaHashError {
     /// `from_bytes` was given bytes that are not a valid v1 ChromaHash (bad
     /// version, tier, reserved bit, or a length that disagrees with the header).
     /// `reason` carries the core's precise message.
     InvalidData { reason: String },
+    /// A dimension was zero.
+    InvalidDimensions { reason: String },
+    /// `rgba.len()` was not `w * h * 4`.
+    InvalidLength { reason: String },
+    /// The quality tier was above [`MAX_TIER`]; codes above it are reserved.
+    InvalidTier { reason: String },
 }
 
 impl std::fmt::Display for ChromaHashError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ChromaHashError::InvalidData { reason } => write!(f, "{reason}"),
+            ChromaHashError::InvalidData { reason }
+            | ChromaHashError::InvalidDimensions { reason }
+            | ChromaHashError::InvalidLength { reason }
+            | ChromaHashError::InvalidTier { reason } => write!(f, "{reason}"),
         }
     }
 }
 
+/// Validate an encode's arguments, mirroring `chromahash_encode_with_quality`
+/// in the C ABI check-for-check. The core would panic on any of these, and a
+/// panic must not cross the FFI boundary.
+fn check_encode_args(w: u32, h: u32, rgba_len: usize, quality: u8) -> Result<(), ChromaHashError> {
+    if w == 0 || h == 0 {
+        return Err(ChromaHashError::InvalidDimensions {
+            reason: format!("width and height must be >= 1 (got {w}x{h})"),
+        });
+    }
+    let expected = (w as usize)
+        .checked_mul(h as usize)
+        .and_then(|p| p.checked_mul(4));
+    if expected != Some(rgba_len) {
+        return Err(ChromaHashError::InvalidLength {
+            reason: format!(
+                "rgba length must equal width * height * 4 (expected {}, got {rgba_len})",
+                expected.map_or("an overflowing count".to_string(), |n| n.to_string())
+            ),
+        });
+    }
+    if quality > MAX_TIER {
+        return Err(ChromaHashError::InvalidTier {
+            reason: format!("quality tier must be 0..={MAX_TIER} (got {quality})"),
+        });
+    }
+    Ok(())
+}
+
 impl std::error::Error for ChromaHashError {}
+
+/// Tag a batch item's validation failure with its index, so the caller learns
+/// which of `items` was rejected.
+fn prefix(e: ChromaHashError, index: usize) -> ChromaHashError {
+    let tag = |reason: String| format!("item {index}: {reason}");
+    match e {
+        ChromaHashError::InvalidData { reason } => ChromaHashError::InvalidData {
+            reason: tag(reason),
+        },
+        ChromaHashError::InvalidDimensions { reason } => ChromaHashError::InvalidDimensions {
+            reason: tag(reason),
+        },
+        ChromaHashError::InvalidLength { reason } => ChromaHashError::InvalidLength {
+            reason: tag(reason),
+        },
+        ChromaHashError::InvalidTier { reason } => ChromaHashError::InvalidTier {
+            reason: tag(reason),
+        },
+    }
+}
 
 /// A decoded RGBA image (≤ 32×32 px). `rgba` is row-major, 4 bytes/pixel (R, G, B, A).
 #[derive(Debug, uniffi::Record)]
@@ -88,17 +198,22 @@ pub struct ChromaHash {
 
 #[uniffi::export]
 impl ChromaHash {
-    /// Encode an image (RGBA, 4 bytes/pixel) into a default-tier (32-byte) ChromaHash.
+    /// Encode an image (RGBA, 4 bytes/pixel) into a default-tier (32-byte)
+    /// ChromaHash. Throws if a dimension is zero or `rgba.len() != w * h * 4`.
     #[uniffi::constructor]
-    pub fn encode(w: u32, h: u32, rgba: Vec<u8>, gamut: Gamut) -> Arc<Self> {
-        Arc::new(Self {
-            inner: CoreHash::encode(w, h, &rgba, gamut.into()),
-        })
+    pub fn encode(
+        w: u32,
+        h: u32,
+        rgba: Vec<u8>,
+        gamut: Gamut,
+    ) -> Result<Arc<Self>, ChromaHashError> {
+        Self::encode_with_quality(w, h, rgba, gamut, DEFAULT_TIER)
     }
 
     /// Encode at an explicit quality tier (0..=4, ordered by quality). Tier 1 is
     /// the 32-byte default and tier 0 the 21-byte compact tier; each higher code
-    /// carries more detail in a larger hash.
+    /// carries more detail in a larger hash. Throws on invalid dimensions, an
+    /// rgba length that disagrees with them, or a reserved tier code.
     #[uniffi::constructor]
     pub fn encode_with_quality(
         w: u32,
@@ -106,10 +221,11 @@ impl ChromaHash {
         rgba: Vec<u8>,
         gamut: Gamut,
         quality: u8,
-    ) -> Arc<Self> {
-        Arc::new(Self {
+    ) -> Result<Arc<Self>, ChromaHashError> {
+        check_encode_args(w, h, rgba.len(), quality)?;
+        Ok(Arc::new(Self {
             inner: CoreHash::encode_with_quality(w, h, &rgba, gamut.into(), quality),
-        })
+        }))
     }
 
     /// Reconstruct from raw hash bytes. Throws [`ChromaHashError::InvalidData`] if
@@ -178,6 +294,12 @@ pub struct ImageInput {
     pub h: u32,
     pub rgba: Vec<u8>,
     pub gamut: Gamut,
+    /// Quality tier (`0..=4`, ordered by quality). Defaults to the 32-byte
+    /// default tier, matching [`ChromaHash::encode`] — note that the tier
+    /// codes start at 0 for the *compact* tier, so an explicit 0 is the
+    /// 21-byte hash.
+    #[uniffi(default = 1)]
+    pub quality: u8,
 }
 
 /// A stateful batch encoder backed by a persistent worker pool. Output is
@@ -210,25 +332,33 @@ impl BatchEncoder {
         })
     }
 
-    /// Encode every item, returning hashes in the same order as `items`.
-    pub fn encode_batch(&self, items: Vec<ImageInput>) -> Vec<Arc<ChromaHash>> {
-        let inputs: Vec<CoreInput> = items
-            .into_iter()
-            .map(|it| CoreInput {
+    /// Encode every item, returning hashes in the same order as `items`. Each
+    /// hash is byte-identical to [`ChromaHash::encode_with_quality`] on that
+    /// item at its `quality` tier.
+    ///
+    /// Every item is validated before any work is dispatched, so an invalid item
+    /// throws on the calling thread (naming its index) rather than panicking a
+    /// worker across the FFI boundary.
+    pub fn encode_batch(
+        &self,
+        items: Vec<ImageInput>,
+    ) -> Result<Vec<Arc<ChromaHash>>, ChromaHashError> {
+        let mut inputs: Vec<CoreInput> = Vec::with_capacity(items.len());
+        for (i, it) in items.into_iter().enumerate() {
+            check_encode_args(it.w, it.h, it.rgba.len(), it.quality).map_err(|e| prefix(e, i))?;
+            inputs.push(CoreInput {
                 w: it.w,
                 h: it.h,
                 rgba: Arc::from(it.rgba),
                 gamut: it.gamut.into(),
-                // Batch mirrors ChromaHash::encode: the default tier. Higher tiers are a
-                // future additive API.
-                quality: chromahash::DEFAULT_TIER,
-            })
-            .collect();
+                quality: it.quality,
+            });
+        }
         let guard = self.inner.lock().expect("batch encoder mutex poisoned");
-        guard
+        Ok(guard
             .encode_batch(&inputs)
             .into_iter()
             .map(|inner| Arc::new(ChromaHash { inner }))
-            .collect()
+            .collect())
     }
 }

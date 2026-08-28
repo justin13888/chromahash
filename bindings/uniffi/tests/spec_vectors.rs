@@ -4,7 +4,10 @@
 //! exercises the Gamut conversion, record packing, the i32 casts, and the fallible
 //! `from_bytes` — without needing the Android NDK/SDK, so it runs in plain `cargo test`.
 
-use chromahash_uniffi::{BatchEncoder, ChromaHash, Gamut, ImageInput};
+use chromahash_uniffi::{
+    BatchEncoder, COMPACT_TIER, ChromaHash, ChromaHashError, DEFAULT_TIER, Gamut, ImageInput,
+    MAX_TIER, compact_tier, default_tier, format_version, max_tier,
+};
 use serde_json::Value;
 
 const ENCODE_VECTORS: &str = include_str!(concat!(
@@ -52,7 +55,8 @@ fn integration_encode_vectors() {
         let tier = input["tier"].as_u64().expect("tier") as u8;
         let rgba = bytes(&input["rgba"]);
 
-        let hash = ChromaHash::encode_with_quality(w, h, rgba, gamut, tier);
+        let hash = ChromaHash::encode_with_quality(w, h, rgba, gamut, tier)
+            .unwrap_or_else(|e| panic!("{name}: encode rejected a spec vector: {e}"));
 
         assert_eq!(
             hash.as_bytes(),
@@ -79,30 +83,126 @@ fn batch_encode_matches_single_encode() {
     let cases: Value = serde_json::from_str(ENCODE_VECTORS).expect("parse encode vectors");
     let cases = cases.as_array().expect("encode vectors should be an array");
 
+    // Cycle through every tier so the test would fail if `quality` were ignored
+    // and every item silently encoded at the default.
     let items: Vec<ImageInput> = cases
         .iter()
-        .map(|case| {
+        .enumerate()
+        .map(|(i, case)| {
             let input = &case["input"];
             ImageInput {
                 w: input["width"].as_u64().expect("width") as u32,
                 h: input["height"].as_u64().expect("height") as u32,
                 rgba: bytes(&input["rgba"]),
                 gamut: gamut_from_str(input["gamut"].as_str().expect("gamut")),
+                quality: (i % (MAX_TIER as usize + 1)) as u8,
             }
         })
         .collect();
 
-    let hashes = BatchEncoder::new().encode_batch(items.clone());
+    let hashes = BatchEncoder::new()
+        .encode_batch(items.clone())
+        .expect("batch rejected the spec vectors");
     assert_eq!(hashes.len(), items.len(), "batch returned wrong count");
 
     for (i, (item, batched)) in items.iter().zip(hashes.iter()).enumerate() {
-        let single = ChromaHash::encode(item.w, item.h, item.rgba.clone(), item.gamut);
+        let single = ChromaHash::encode_with_quality(
+            item.w,
+            item.h,
+            item.rgba.clone(),
+            item.gamut,
+            item.quality,
+        )
+        .expect("single encode rejected a spec vector");
         assert_eq!(
             batched.as_bytes(),
             single.as_bytes(),
-            "batch item {i} diverges from single encode"
+            "batch item {i} diverges from single encode at tier {}",
+            item.quality
         );
     }
+}
+
+/// Pin the tier down to the byte count. Comparing batch against single alone
+/// would pass if both silently used one tier.
+#[test]
+fn batch_encode_honors_quality() {
+    // Opaque: alpha < 255 selects the alpha layouts, whose lengths differ.
+    let rgba: Vec<u8> = std::iter::repeat_n([128, 128, 128, 255], 8 * 8)
+        .flatten()
+        .collect();
+    let items: Vec<ImageInput> = (COMPACT_TIER..=MAX_TIER)
+        .map(|quality| ImageInput {
+            w: 8,
+            h: 8,
+            rgba: rgba.clone(),
+            gamut: Gamut::Srgb,
+            quality,
+        })
+        .collect();
+
+    let hashes = BatchEncoder::new().encode_batch(items).expect("batch");
+    assert_eq!(
+        hashes
+            .iter()
+            .map(|h| h.as_bytes().len())
+            .collect::<Vec<_>>(),
+        vec![21, 32, 108, 411, 1623],
+        "the per-tier byte lengths spec §3.3 tabulates"
+    );
+}
+
+/// The core panics on invalid input; a panic across FFI is undefined behaviour,
+/// so the binding must have turned each one into a typed error first.
+#[test]
+fn encode_rejects_invalid_input_without_panicking() {
+    let rgba = vec![128u8; 4 * 4 * 4];
+
+    assert!(matches!(
+        ChromaHash::encode(0, 4, rgba.clone(), Gamut::Srgb),
+        Err(ChromaHashError::InvalidDimensions { .. })
+    ));
+    assert!(matches!(
+        ChromaHash::encode(4, 0, rgba.clone(), Gamut::Srgb),
+        Err(ChromaHashError::InvalidDimensions { .. })
+    ));
+    assert!(matches!(
+        ChromaHash::encode(4, 4, vec![0u8; 3], Gamut::Srgb),
+        Err(ChromaHashError::InvalidLength { .. })
+    ));
+    assert!(matches!(
+        ChromaHash::encode_with_quality(4, 4, rgba.clone(), Gamut::Srgb, MAX_TIER + 1),
+        Err(ChromaHashError::InvalidTier { .. })
+    ));
+
+    // And the batch path validates every item up front, naming the bad one.
+    let good = ImageInput {
+        w: 4,
+        h: 4,
+        rgba: rgba.clone(),
+        gamut: Gamut::Srgb,
+        quality: DEFAULT_TIER,
+    };
+    let bad = ImageInput {
+        quality: MAX_TIER + 1,
+        ..good.clone()
+    };
+    let err = BatchEncoder::new()
+        .encode_batch(vec![good, bad])
+        .expect_err("a reserved tier must fail the batch");
+    assert!(matches!(err, ChromaHashError::InvalidTier { .. }));
+    assert!(err.to_string().starts_with("item 1:"), "got {err}");
+}
+
+/// The tier codes reach Kotlin, Swift, and Python through these functions —
+/// UniFFI cannot export a constant. Assert they still agree with the core.
+#[test]
+fn exported_tier_functions_match_the_core() {
+    assert_eq!(compact_tier(), chromahash::COMPACT_TIER);
+    assert_eq!(default_tier(), chromahash::DEFAULT_TIER);
+    assert_eq!(max_tier(), chromahash::MAX_TIER);
+    assert_eq!(format_version(), chromahash::FORMAT_VERSION);
+    assert!(compact_tier() < default_tier() && default_tier() < max_tier());
 }
 
 #[test]

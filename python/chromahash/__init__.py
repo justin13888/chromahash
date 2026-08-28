@@ -2,7 +2,12 @@
 
 from ._constants import Gamut
 from ._uniffi import ChromaHash as _CoreHash
+from ._uniffi import ChromaHashError
 from ._uniffi import Gamut as _CoreGamut
+from ._uniffi import compact_tier as _compact_tier
+from ._uniffi import default_tier as _default_tier
+from ._uniffi import format_version as _format_version
+from ._uniffi import max_tier as _max_tier
 
 # The public Gamut keeps the `PROPHOTO_RGB` spelling; the generated enum uses
 # `PRO_PHOTO_RGB`. Map across the FFI explicitly.
@@ -15,14 +20,20 @@ _GAMUT_TO_CORE = {
 }
 
 # Tier codes, ordered by quality (spec §2.5). Codes 5..=7 are reserved.
+#
+# Read from the core through the FFI rather than restated here: the format owns
+# these, and a hand-written copy is free to drift from a renumbering.
 #: The 21-byte compact tier -- the smallest and lowest fidelity, rendered at
 #: ``DEFAULT_TIER``'s resolution.
-COMPACT_TIER = 0
+COMPACT_TIER = _compact_tier()
 #: The 32-byte tier :meth:`ChromaHash.encode` produces. Pass this rather than a
 #: literal: the codes are ordered by quality, so a bare ``0`` is the compact tier.
-DEFAULT_TIER = 1
+DEFAULT_TIER = _default_tier()
 #: The highest valid tier code.
-MAX_TIER = 4
+MAX_TIER = _max_tier()
+#: The format generation this build writes and accepts (the ``version`` field of
+#: byte 0).
+FORMAT_VERSION = _format_version()
 
 
 class ChromaHash:
@@ -52,6 +63,10 @@ class ChromaHash:
             h: image height (>= 1)
             rgba: pixel data in RGBA format (4 bytes per pixel)
             gamut: source color space
+
+        Raises:
+            ChromaHashError.InvalidDimensions: ``w`` or ``h`` is zero.
+            ChromaHashError.InvalidLength: ``len(rgba) != w * h * 4``.
         """
         obj = _CoreHash.encode(w, h, bytes(rgba), _GAMUT_TO_CORE[gamut])
         return cls(obj.as_bytes())
@@ -72,6 +87,11 @@ class ChromaHash:
         pass those rather than a literal, since a bare 0 is the compact tier.
         Each higher code carries more detail in a
         larger hash. See :meth:`encode` for the argument contract.
+
+        Raises:
+            ChromaHashError.InvalidDimensions: ``w`` or ``h`` is zero.
+            ChromaHashError.InvalidLength: ``len(rgba) != w * h * 4``.
+            ChromaHashError.InvalidTier: ``quality`` is above ``MAX_TIER``.
         """
         obj = _CoreHash.encode_with_quality(w, h, bytes(rgba), _GAMUT_TO_CORE[gamut], quality)
         return cls(obj.as_bytes())
@@ -109,11 +129,18 @@ class ChromaHash:
 
     @classmethod
     def from_bytes(cls, hash_bytes: bytes) -> "ChromaHash":
-        """Create a ChromaHash from raw hash bytes.
+        """Create a ChromaHash from raw hash bytes, validating them up front.
 
-        The bytes are validated lazily when the hash is used (``decode`` /
-        ``average_color`` reconstruct and validate it).
+        The format is self-describing, so the header fixes the exact byte
+        length: a ChromaHash that comes back from ``from_bytes`` is guaranteed
+        to decode.
+
+        Raises:
+            ChromaHashError.InvalidData: the bytes are not a valid v1
+                ChromaHash (bad version, reserved tier code, set reserved bit,
+                or a length that disagrees with the header).
         """
+        _CoreHash.from_bytes(bytes(hash_bytes))
         return cls(hash_bytes)
 
     def as_bytes(self) -> bytes:
@@ -131,4 +158,14 @@ class ChromaHash:
 
 from ._batch import BatchEncoder, ImageInput  # noqa: E402
 
-__all__ = ["BatchEncoder", "ChromaHash", "Gamut", "ImageInput"]
+__all__ = [
+    "COMPACT_TIER",
+    "DEFAULT_TIER",
+    "FORMAT_VERSION",
+    "MAX_TIER",
+    "BatchEncoder",
+    "ChromaHash",
+    "ChromaHashError",
+    "Gamut",
+    "ImageInput",
+]

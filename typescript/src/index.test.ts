@@ -4,6 +4,13 @@ import { dirname, resolve } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
+  compactTier as wasmCompactTier,
+  defaultTier as wasmDefaultTier,
+  formatVersion as wasmFormatVersion,
+  maxTier as wasmMaxTier,
+} from "../wasm/chromahash_wasm.js";
+import { FORMAT_VERSION } from "./header.ts";
+import {
   ChromaHash,
   COMPACT_TIER,
   DEFAULT_TIER,
@@ -215,5 +222,27 @@ describe("isVersionSupported", () => {
       // Round-trips through the self-describing length check.
       assert.deepStrictEqual(ChromaHash.fromBytes(ch.hash).hash, ch.hash);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The pure-TypeScript decoder in header.ts / decode.ts is a deliberate second
+// implementation — render-only consumers import it to skip the WASM init
+// entirely — so it declares the wire constants itself rather than reading them
+// from the module it exists to avoid. This is the tie that keeps the two
+// honest: the format owns these codes, and the core exports them.
+// ---------------------------------------------------------------------------
+
+describe("wire constants", () => {
+  it("agree between the pure-TS decoder and the WASM core", () => {
+    assert.strictEqual(COMPACT_TIER, wasmCompactTier());
+    assert.strictEqual(DEFAULT_TIER, wasmDefaultTier());
+    assert.strictEqual(MAX_TIER, wasmMaxTier());
+    assert.strictEqual(FORMAT_VERSION, wasmFormatVersion());
+  });
+
+  it("order the tier codes by quality", () => {
+    assert.ok(COMPACT_TIER < DEFAULT_TIER);
+    assert.ok(DEFAULT_TIER < MAX_TIER);
   });
 });

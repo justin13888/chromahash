@@ -4,7 +4,7 @@
 //! C and UniFFI parity gates.
 
 use chromahash::MAX_TIER;
-use chromahash_wasm::{ChromaHash, Gamut};
+use chromahash_wasm::{compact_tier, default_tier, format_version, max_tier, ChromaHash, Gamut};
 use serde_json::Value;
 use wasm_bindgen_test::*;
 
@@ -51,7 +51,8 @@ fn integration_encode_vectors() {
         let tier = input["tier"].as_u64().expect("tier") as u8;
         let rgba = bytes(&input["rgba"]);
 
-        let hash = ChromaHash::encode_with_quality(w, h, &rgba, gamut, tier);
+        let hash = ChromaHash::encode_with_quality(w, h, &rgba, gamut, tier)
+            .unwrap_or_else(|_| panic!("{name}: encode rejected a spec vector"));
         assert_eq!(
             hash.as_bytes(),
             bytes(&case["expected"]["hash"]),
@@ -110,7 +111,9 @@ fn from_bytes_accepts_every_tier_and_rejects_wrong_lengths() {
     let rgba = vec![128u8; 4 * 4 * 4];
 
     for tier in 0..=MAX_TIER {
-        let encoded = ChromaHash::encode_with_quality(4, 4, &rgba, Gamut::Srgb, tier).as_bytes();
+        let encoded = ChromaHash::encode_with_quality(4, 4, &rgba, Gamut::Srgb, tier)
+            .expect("encode should accept a valid tier")
+            .as_bytes();
 
         assert!(
             ChromaHash::from_bytes(&encoded).is_ok(),
@@ -131,4 +134,33 @@ fn from_bytes_accepts_every_tier_and_rejects_wrong_lengths() {
             "tier {tier}: from_bytes accepted a buffer one byte long"
         );
     }
+}
+
+/// A Rust panic in WebAssembly aborts the module instance, so every later call
+/// on it fails too — far worse than a thrown error. Each of these panics in the
+/// core, so the binding must reject them before they reach it.
+#[wasm_bindgen_test]
+fn encode_rejects_invalid_input_without_panicking() {
+    let rgba = [128u8; 4 * 4 * 4];
+
+    assert!(ChromaHash::encode(0, 4, &rgba, Gamut::Srgb).is_err());
+    assert!(ChromaHash::encode(4, 0, &rgba, Gamut::Srgb).is_err());
+    assert!(ChromaHash::encode(4, 4, &rgba[..3], Gamut::Srgb).is_err());
+    assert!(
+        ChromaHash::encode_with_quality(4, 4, &rgba, Gamut::Srgb, MAX_TIER + 1).is_err(),
+        "a reserved tier code must be rejected"
+    );
+
+    // And the module is still usable afterwards — the point of not panicking.
+    assert!(ChromaHash::encode(4, 4, &rgba, Gamut::Srgb).is_ok());
+}
+
+/// The TypeScript package reads the tier codes through these, and its own
+/// pure-TS decoder declares them independently. This is the tie between them.
+#[wasm_bindgen_test]
+fn exported_tier_functions_match_the_core() {
+    assert_eq!(compact_tier(), chromahash::COMPACT_TIER);
+    assert_eq!(default_tier(), chromahash::DEFAULT_TIER);
+    assert_eq!(max_tier(), chromahash::MAX_TIER);
+    assert_eq!(format_version(), chromahash::FORMAT_VERSION);
 }

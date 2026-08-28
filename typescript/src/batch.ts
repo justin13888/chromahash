@@ -2,6 +2,7 @@
  * Serial batch encoder (API parity with the parallel-language implementations).
  */
 
+import { DEFAULT_TIER, MAX_TIER } from "./header.ts";
 import { ChromaHash } from "./index.ts";
 import type { Gamut } from "./index.ts";
 
@@ -15,6 +16,12 @@ export interface ImageInput {
   rgba: Uint8Array;
   /** Source color space. */
   gamut: Gamut;
+  /**
+   * Quality tier (`0..=`{@link MAX_TIER}, ordered by quality). Defaults to
+   * {@link DEFAULT_TIER} — the codes start at 0 for the *compact* tier, so an
+   * explicit `0` is the 21-byte hash, not the 32-byte one.
+   */
+  quality?: number;
 }
 
 /**
@@ -24,7 +31,7 @@ export interface ImageInput {
  * serially: WebAssembly cannot use the core's worker pool without
  * `SharedArrayBuffer` + COOP/COEP, so the value here is API parity and a single
  * call site for bulk jobs. Output is identical to calling
- * {@link ChromaHash.encode} on each image individually.
+ * {@link ChromaHash.encodeWithQuality} on each image individually at its tier.
  *
  * Like {@link ChromaHash.encode}, this requires the WASM module to be ready —
  * `await init()` once before encoding.
@@ -34,7 +41,8 @@ export class BatchEncoder {
    * Encode every item, returning hashes in the same order as `items`.
    *
    * All items are validated up front (throwing, identifying the offending
-   * index) before any encoding, matching {@link ChromaHash.encode}.
+   * index) before any encoding, matching
+   * {@link ChromaHash.encodeWithQuality}.
    */
   encodeBatch(items: ImageInput[]): ChromaHash[] {
     for (const [i, it] of items.entries()) {
@@ -43,8 +51,20 @@ export class BatchEncoder {
       if (it.rgba.length !== it.w * it.h * 4) {
         throw new Error(`item ${i}: rgba length mismatch`);
       }
+      const quality = it.quality ?? DEFAULT_TIER;
+      if (!Number.isInteger(quality) || quality < 0 || quality > MAX_TIER) {
+        throw new Error(`item ${i}: quality tier must be 0..=${MAX_TIER}`);
+      }
     }
-    return items.map((it) => ChromaHash.encode(it.w, it.h, it.rgba, it.gamut));
+    return items.map((it) =>
+      ChromaHash.encodeWithQuality(
+        it.w,
+        it.h,
+        it.rgba,
+        it.gamut,
+        it.quality ?? DEFAULT_TIER,
+      ),
+    );
   }
 
   /** Release resources. A no-op for the serial implementation (no worker pool). */

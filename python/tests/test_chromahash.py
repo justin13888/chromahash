@@ -11,7 +11,17 @@ import os
 
 import pytest
 
-from chromahash import COMPACT_TIER, DEFAULT_TIER, MAX_TIER, ChromaHash, Gamut
+from chromahash import (
+    COMPACT_TIER,
+    DEFAULT_TIER,
+    FORMAT_VERSION,
+    MAX_TIER,
+    BatchEncoder,
+    ChromaHash,
+    ChromaHashError,
+    Gamut,
+    ImageInput,
+)
 
 SPEC_VECTORS = os.path.join(os.path.dirname(__file__), "../../spec/test-vectors")
 
@@ -119,37 +129,91 @@ def test_from_bytes_roundtrip():
 
 
 @pytest.mark.parametrize("tier", range(MAX_TIER + 1))
-def test_decode_rejects_wrong_length(tier: int):
+def test_from_bytes_rejects_wrong_length(tier: int):
     """Every tier has its own exact length, so a fixed one is not a valid
     assertion about any of them — bracket each tier's own encoding.
 
-    ``from_bytes`` defers validation to first use (unlike the C, WASM, UniFFI,
-    C#, Swift and TypeScript facades, which reject eagerly), so the rejection
-    surfaces here rather than at construction.
+    The header is self-describing, so a length that disagrees with it is
+    rejected at construction rather than deferred to ``decode``.
     """
     encoded = ChromaHash.encode_with_quality(
         4, 4, solid_image(4, 4, 128, 64, 32, 255), Gamut.SRGB, tier
     ).as_bytes()
     ChromaHash.from_bytes(encoded).decode()  # accepted, and decodes
 
-    with pytest.raises(Exception):
-        ChromaHash.from_bytes(encoded[:-1]).decode()
-    with pytest.raises(Exception):
-        ChromaHash.from_bytes(encoded + b"\x00").decode()
-    with pytest.raises(Exception):
-        ChromaHash.from_bytes(b"").decode()
+    with pytest.raises(ChromaHashError.InvalidData):
+        ChromaHash.from_bytes(encoded[:-1])
+    with pytest.raises(ChromaHashError.InvalidData):
+        ChromaHash.from_bytes(encoded + b"\x00")
+    with pytest.raises(ChromaHashError.InvalidData):
+        ChromaHash.from_bytes(b"")
 
 
-def test_encode_rejects_invalid_input():
-    with pytest.raises(Exception):
-        ChromaHash.encode(0, 4, b"", Gamut.SRGB)
-    with pytest.raises(Exception):
-        ChromaHash.encode(4, 0, b"", Gamut.SRGB)
-    with pytest.raises(Exception):
-        ChromaHash.encode(4, 4, bytes(63), Gamut.SRGB)
+def test_from_bytes_rejects_a_reserved_tier_code():
+    encoded = bytearray(ChromaHash.encode(4, 4, solid_image(4, 4, 1, 2, 3, 255)).as_bytes())
+    encoded[0] = (MAX_TIER + 1) << 3
+    with pytest.raises(ChromaHashError.InvalidData):
+        ChromaHash.from_bytes(bytes(encoded))
+
+
+# The core panics on invalid input, and a panic across the FFI boundary is
+# undefined behaviour — so the UniFFI layer validates first and raises a typed
+# error, matching the C ABI's status codes (issue #8).
+@pytest.mark.parametrize(
+    ("width", "height", "rgba_len", "error"),
+    [
+        (0, 4, 0, ChromaHashError.InvalidDimensions),
+        (4, 0, 0, ChromaHashError.InvalidDimensions),
+        (4, 4, 63, ChromaHashError.InvalidLength),
+    ],
+)
+def test_encode_rejects_invalid_input(width, height, rgba_len, error):
+    with pytest.raises(error):
+        ChromaHash.encode(width, height, bytes(rgba_len), Gamut.SRGB)
 
 
 def test_encode_with_quality_rejects_a_reserved_tier():
     rgba = solid_image(4, 4, 128, 64, 32, 255)
-    with pytest.raises(Exception):
+    with pytest.raises(ChromaHashError.InvalidTier):
         ChromaHash.encode_with_quality(4, 4, rgba, Gamut.SRGB, MAX_TIER + 1)
+
+
+# ── batch ──────────────────────────────────────────────────────────────────────
+
+
+def test_batch_encode_honors_quality():
+    """Pin the tier down to the byte count. Comparing the batch against the
+    serial path alone would pass if both silently used one tier.
+    """
+    rgba = solid_image(8, 8, 200, 100, 50, 255)
+    items = [ImageInput(8, 8, rgba, Gamut.SRGB, tier) for tier in range(COMPACT_TIER, MAX_TIER + 1)]
+    hashes = BatchEncoder().encode_batch(items)
+    assert [len(h.as_bytes()) for h in hashes] == [21, 32, 108, 411, 1623]
+
+
+def test_batch_encode_defaults_to_the_default_tier():
+    """An item with no explicit tier must match ``encode`` — the codes are
+    ordered by quality, so a zero default would be the 21-byte compact tier.
+    """
+    rgba = solid_image(8, 8, 200, 100, 50, 255)
+    (batched,) = BatchEncoder().encode_batch([ImageInput(8, 8, rgba, Gamut.SRGB)])
+    assert batched == ChromaHash.encode(8, 8, rgba, Gamut.SRGB)
+
+
+def test_batch_encode_rejects_a_reserved_tier():
+    rgba = solid_image(4, 4, 128, 64, 32, 255)
+    with pytest.raises(ValueError, match="item 1"):
+        BatchEncoder().encode_batch(
+            [
+                ImageInput(4, 4, rgba, Gamut.SRGB),
+                ImageInput(4, 4, rgba, Gamut.SRGB, MAX_TIER + 1),
+            ]
+        )
+
+
+def test_tier_constants_come_from_the_core():
+    """They are read across the FFI, not restated here — so this asserts the
+    ordering the format guarantees rather than re-hardcoding the codes.
+    """
+    assert COMPACT_TIER < DEFAULT_TIER < MAX_TIER
+    assert FORMAT_VERSION == 0

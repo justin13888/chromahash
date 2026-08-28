@@ -32,6 +32,17 @@ func tierFromEnv() -> UInt8 {
   return tier
 }
 
+/// Run a throwing call, or print the error and exit 1. The harness talks to
+/// this over pipes, so a readable message beats a trap.
+func orExit<T>(_ body: @autoclosure () throws -> T) -> T {
+  do {
+    return try body()
+  } catch {
+    FileHandle.standardError.write(Data("\(error)\n".utf8))
+    exit(1)
+  }
+}
+
 func printUsage() -> Never {
   FileHandle.standardError.write(
     Data(
@@ -75,19 +86,20 @@ case "encode":
     exit(1)
   }
 
-  let hash = ChromaHash.encodeWithQuality(
-    width: w, height: h, rgba: rgba, gamut: gamut, quality: tierFromEnv())
+  let hash = orExit(
+    try ChromaHash.encodeWithQuality(
+      width: w, height: h, rgba: rgba, gamut: gamut, quality: tierFromEnv()))
   FileHandle.standardOutput.write(Data(hash.hash))
 
 case "decode":
   let hashBytes = [UInt8](FileHandle.standardInput.readDataToEndOfFile())
-  let ch = ChromaHash.fromBytes(hashBytes)
+  let ch = orExit(try ChromaHash.fromBytes(hashBytes))
   let (_, _, rgba) = ch.decode()
   FileHandle.standardOutput.write(Data(rgba))
 
 case "average-color":
   let hashBytes = [UInt8](FileHandle.standardInput.readDataToEndOfFile())
-  let ch = ChromaHash.fromBytes(hashBytes)
+  let ch = orExit(try ChromaHash.fromBytes(hashBytes))
   let avg = ch.averageColor()
   FileHandle.standardOutput.write(Data([avg.r, avg.g, avg.b, avg.a]))
 
@@ -109,10 +121,11 @@ case "batch-encode":
   let gamut = parseGamut(CommandLine.arguments[4])
 
   let rgba = [UInt8](FileHandle.standardInput.readDataToEndOfFile())
+  let tier = tierFromEnv()
   let items = (0..<count).map { _ in
-    ImageInput(width: w, height: h, rgba: rgba, gamut: gamut)
+    ImageInput(width: w, height: h, rgba: rgba, gamut: gamut, quality: tier)
   }
-  let hashes = BatchEncoder().encodeBatch(items)
+  let hashes = orExit(try BatchEncoder().encodeBatch(items))
   // Write one result-derived byte so the work cannot be optimized away.
   FileHandle.standardOutput.write(Data([hashes[0].hash[0]]))
 
@@ -123,7 +136,7 @@ case "batch-decode":
     exit(1)
   }
   let hashBytes = [UInt8](FileHandle.standardInput.readDataToEndOfFile())
-  let ch = ChromaHash.fromBytes(hashBytes)
+  let ch = orExit(try ChromaHash.fromBytes(hashBytes))
   var acc: UInt8 = 0
   for _ in 0..<count {
     let (_, _, rgba) = ch.decode()

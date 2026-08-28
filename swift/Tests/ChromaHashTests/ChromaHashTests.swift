@@ -1,7 +1,6 @@
+import ChromaHash
 import Foundation
 import Testing
-
-import ChromaHash
 
 // The Swift package is now a thin facade over UniFFI-generated bindings to the Rust
 // core, so these tests exercise the public API end-to-end against the shared spec
@@ -46,7 +45,7 @@ func gamutFromName(_ name: String) -> Gamut {
 
 // MARK: - Integration: encode (spec vectors)
 
-@Test func integrationEncodeVectors() {
+@Test func integrationEncodeVectors() throws {
   let raw = loadVectors("integration-encode.json")
   #expect(!raw.isEmpty)
   for tc in raw {
@@ -63,7 +62,7 @@ func gamutFromName(_ name: String) -> Gamut {
       Issue.record("malformed integration-encode entry: \(name)")
       continue
     }
-    let hash = ChromaHash.encodeWithQuality(
+    let hash = try ChromaHash.encodeWithQuality(
       width: width, height: height, rgba: rgbaNums.map { UInt8($0) },
       gamut: gamutFromName(gamutName), quality: UInt8(tier)
     )
@@ -77,7 +76,7 @@ func gamutFromName(_ name: String) -> Gamut {
 
 // MARK: - Integration: decode (spec vectors)
 
-@Test func integrationDecodeVectors() {
+@Test func integrationDecodeVectors() throws {
   let raw = loadVectors("integration-decode.json")
   #expect(!raw.isEmpty)
   for tc in raw {
@@ -92,7 +91,7 @@ func gamutFromName(_ name: String) -> Gamut {
       Issue.record("malformed integration-decode entry: \(name)")
       continue
     }
-    let (w, h, rgba) = ChromaHash.fromBytes(hashNums.map { UInt8($0) }).decode()
+    let (w, h, rgba) = try ChromaHash.fromBytes(hashNums.map { UInt8($0) }).decode()
     #expect(w == expectedW, "\(name): width")
     #expect(h == expectedH, "\(name): height")
     #expect(rgba.map { Int($0) } == expectedRGBA, "\(name): rgba")
@@ -101,7 +100,7 @@ func gamutFromName(_ name: String) -> Gamut {
 
 // MARK: - Integration: capped decode (spec vectors)
 
-@Test func integrationDecodeCappedVectors() {
+@Test func integrationDecodeCappedVectors() throws {
   let raw = loadVectors("integration-decode-capped.json")
   #expect(!raw.isEmpty)
   for tc in raw {
@@ -118,7 +117,7 @@ func gamutFromName(_ name: String) -> Gamut {
       Issue.record("malformed integration-decode-capped entry: \(name)")
       continue
     }
-    let (w, h, rgba) = ChromaHash.fromBytes(hashNums.map { UInt8($0) })
+    let (w, h, rgba) = try ChromaHash.fromBytes(hashNums.map { UInt8($0) })
       .decodeCapped(maxWidth: maxW, maxHeight: maxH)
     #expect(w == expectedW, "\(name): width")
     #expect(h == expectedH, "\(name): height")
@@ -128,17 +127,97 @@ func gamutFromName(_ name: String) -> Gamut {
 
 // MARK: - Public-API properties
 
-@Test func encodeDecodeRoundtripDimensions() {
+@Test func encodeDecodeRoundtripDimensions() throws {
   let rgba: [UInt8] = Array(repeating: [128, 64, 32, 255], count: 16).flatMap { $0 }
-  let hash = ChromaHash.encode(width: 4, height: 4, rgba: rgba, gamut: .sRGB)
+  let hash = try ChromaHash.encode(width: 4, height: 4, rgba: rgba, gamut: .sRGB)
   let (w, h, pixels) = hash.decode()
   #expect(w > 0 && w <= 32)
   #expect(h > 0 && h <= 32)
   #expect(pixels.count == w * h * 4)
 }
 
-@Test func fromBytesRoundtrip() {
+@Test func fromBytesRoundtrip() throws {
   let rgba: [UInt8] = Array(repeating: [128, 64, 32, 255], count: 16).flatMap { $0 }
-  let hash = ChromaHash.encode(width: 4, height: 4, rgba: rgba, gamut: .sRGB)
-  #expect(ChromaHash.fromBytes(hash.hash) == hash)
+  let hash = try ChromaHash.encode(width: 4, height: 4, rgba: rgba, gamut: .sRGB)
+  #expect(try ChromaHash.fromBytes(hash.hash) == hash)
+}
+
+/// The byte length is a function of the tier alone, so assert all five — the
+/// table spec §3.3 tabulates. Nothing in this suite had ever exercised a tier
+/// other than the default outside the spec vectors.
+@Test func eachTierEncodesToItsDocumentedLength() throws {
+  let rgba: [UInt8] = Array(repeating: [128, 128, 128, 255], count: 16).flatMap { $0 }
+  var lengths: [Int] = []
+  for tier in ChromaHash.compactTier...ChromaHash.maxTier {
+    lengths.append(
+      try ChromaHash.encodeWithQuality(
+        width: 4, height: 4, rgba: rgba, gamut: .sRGB, quality: tier
+      ).hash.count)
+  }
+  #expect(lengths == [21, 32, 108, 411, 1623])
+  #expect(try ChromaHash.encode(width: 4, height: 4, rgba: rgba, gamut: .sRGB).hash.count == 32)
+}
+
+/// Decoded dimensions come from the aspect byte and the tier's raster. A range
+/// check wide enough to pass at every tier cannot tell them apart.
+@Test func decodedDimensionsFollowTheTierRaster() throws {
+  let rgba: [UInt8] = Array(repeating: [128, 64, 32, 255], count: 16).flatMap { $0 }
+  var edges: [Int] = []
+  for tier in ChromaHash.compactTier...ChromaHash.maxTier {
+    let (w, h, pixels) = try ChromaHash.encodeWithQuality(
+      width: 4, height: 4, rgba: rgba, gamut: .sRGB, quality: tier
+    ).decode()
+    #expect(w == h, "tier \(tier): raster should be square")
+    #expect(pixels.count == w * h * 4)
+    edges.append(w)
+  }
+  #expect(edges == [32, 32, 64, 128, 256])
+}
+
+// MARK: - Invalid input
+//
+// The core traps on all of these, and a trap must not cross the FFI boundary —
+// the binding checks first and throws. Nothing in this suite had exercised the
+// invalid-input path at all before.
+
+@Test func fromBytesRejectsWrongLength() throws {
+  let rgba: [UInt8] = Array(repeating: [128, 64, 32, 255], count: 16).flatMap { $0 }
+  let valid = try ChromaHash.encode(width: 4, height: 4, rgba: rgba, gamut: .sRGB).hash
+
+  #expect(throws: ChromaHashError.self) { try ChromaHash.fromBytes(Array(valid.dropLast())) }
+  #expect(throws: ChromaHashError.self) { try ChromaHash.fromBytes(valid + [0]) }
+  #expect(throws: ChromaHashError.self) { try ChromaHash.fromBytes([]) }
+}
+
+@Test func fromBytesRejectsAReservedTierCode() throws {
+  let rgba: [UInt8] = Array(repeating: [128, 64, 32, 255], count: 16).flatMap { $0 }
+  var bytes = try ChromaHash.encode(width: 4, height: 4, rgba: rgba, gamut: .sRGB).hash
+  bytes[0] = (ChromaHash.maxTier + 1) << 3
+  #expect(throws: ChromaHashError.self) { try ChromaHash.fromBytes(bytes) }
+}
+
+@Test func encodeRejectsInvalidInput() {
+  let rgba: [UInt8] = Array(repeating: [128, 64, 32, 255], count: 16).flatMap { $0 }
+  #expect(throws: ChromaHashError.self) {
+    try ChromaHash.encode(width: 0, height: 4, rgba: [], gamut: .sRGB)
+  }
+  #expect(throws: ChromaHashError.self) {
+    try ChromaHash.encode(width: 4, height: 0, rgba: [], gamut: .sRGB)
+  }
+  #expect(throws: ChromaHashError.self) {
+    try ChromaHash.encode(width: 4, height: 4, rgba: Array(rgba.dropLast()), gamut: .sRGB)
+  }
+  #expect(throws: ChromaHashError.self) {
+    try ChromaHash.encodeWithQuality(
+      width: 4, height: 4, rgba: rgba, gamut: .sRGB, quality: ChromaHash.maxTier + 1)
+  }
+}
+
+/// The tier codes reach Swift through the FFI rather than being restated here,
+/// so this asserts the ordering the format guarantees.
+@Test func tierConstantsComeFromTheCore() {
+  #expect(ChromaHash.compactTier == 0)
+  #expect(ChromaHash.compactTier < ChromaHash.defaultTier)
+  #expect(ChromaHash.defaultTier < ChromaHash.maxTier)
+  #expect(ChromaHash.formatVersion == 0)
 }

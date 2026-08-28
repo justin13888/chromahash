@@ -106,7 +106,7 @@ def main() -> None:
         count = int(sys.argv[5])
 
         rgba = sys.stdin.buffer.read(w * h * 4)
-        items = [ImageInput(w, h, rgba, gamut) for _ in range(count)]
+        items = [ImageInput(w, h, rgba, gamut, tier_from_env()) for _ in range(count)]
         encoder = BatchEncoder()
         hashes = encoder.encode_batch(items)
         encoder.close()

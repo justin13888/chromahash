@@ -143,11 +143,13 @@ switch (subcommand) {
     }
     const stdinBuf = await readStdin();
     const rgba = new Uint8Array(stdinBuf);
+    const quality = tierFromEnv();
     const items: ImageInput[] = Array.from({ length: count }, () => ({
       w,
       h,
       rgba,
       gamut,
+      quality,
     }));
     const encoder = new BatchEncoder();
     const hashes = encoder.encodeBatch(items);
