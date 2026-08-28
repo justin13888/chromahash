@@ -255,7 +255,7 @@ export interface RdCurveJson {
 
 /** Rate–distortion sweep results (present only in `--rd` runs). */
 export interface RdJson {
-  /** Canonical equal-byte anchors: the four ChromaHash tier sizes (no-alpha). */
+  /** Canonical equal-byte anchors: every ChromaHash tier size (no-alpha). */
   anchors: number[];
   curves: RdCurveJson[];
 }

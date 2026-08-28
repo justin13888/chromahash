@@ -430,7 +430,7 @@ export function generateRdSection(rd: RdJson, imageCount: number): string {
   return `${rdStyles(rd.curves)}
 <div class="rd-section">
 <h2 style="margin-bottom:4px">Rate–Distortion: which format wins at equal byte cost</h2>
-<p class="section-note">Each family's quality knob is swept and every point is the <strong>mean over ${imageCount} photographic image${imageCount === 1 ? "" : "s"}</strong> (bytes and metrics alike). Anchor gridlines mark the four ChromaHash tier sizes — the canonical byte budgets the codec baselines (dashed) target. WebP/JPEG/AVIF/JXL are real encoder files at the budget; RawRGB565 is the codec-free control (raw pixels, no header counted).</p>
+<p class="section-note">Each family's quality knob is swept and every point is the <strong>mean over ${imageCount} photographic image${imageCount === 1 ? "" : "s"}</strong> (bytes and metrics alike). Anchor gridlines mark every ChromaHash tier size — the canonical byte budgets the codec baselines (dashed) target. WebP/JPEG/AVIF/JXL are real encoder files at the budget; RawRGB565 is the codec-free control (raw pixels, no header counted).</p>
 ${renderLegend(rd.curves)}
 <div class="rd-charts">
 <div class="rd-chart-box"><h4>Color error — mean ΔE00 (lower is better)</h4>${ciedeChart}</div>

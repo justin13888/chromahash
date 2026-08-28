@@ -56,11 +56,12 @@ export function chromaHashLabel(tier: number): string {
 }
 
 /**
- * Canonical equal-byte anchors for the R-D comparison: the ChromaHash
- * quality-tier sizes in bytes. Codec baselines target these budgets so every
- * family is judged at the same byte cost.
+ * Canonical equal-byte anchors for the R-D comparison: every shipped ChromaHash
+ * tier size in bytes. Codec baselines target these budgets so every family is
+ * judged at the same byte cost. The 21 B compact anchor is where ThumbHash
+ * actually sits, so leaving it out hid the one budget the two formats share.
  */
-export const RD_ANCHORS: readonly number[] = [32, 108, 411, 1623];
+export const RD_ANCHORS: readonly number[] = [21, 32, 108, 411, 1623];
 
 /**
  * Grace factor for the equal-budget anchor table: a family's variant counts as
@@ -78,7 +79,7 @@ export interface RdVariant {
 }
 
 /** ChromaHash quality tiers swept (the whole point of the comparison). */
-const CHROMAHASH_TIERS: readonly number[] = [1, 2, 3, 4];
+const CHROMAHASH_TIERS: readonly number[] = ALL_TIERS;
 
 /**
  * The predecessor format, plotted as a single point at the 32 B anchor. v1's
