@@ -90,6 +90,32 @@ DEFAULT_TIER = 1
 MAX_TIER = 4
 # Every shipped tier, smallest first — the order reports present them in.
 ALL_TIERS = list(range(COMPACT_TIER, MAX_TIER + 1))
+# Encoded length of each tier code (no-alpha), per spec §3.5.
+TIER_BYTES = {0: 21, 1: 32, 2: 108, 3: 411, 4: 1623}
+
+def parse_tiers(raw: str) -> list[int]:
+    """Parse the --tiers argument: 'all', or a comma-separated list of codes."""
+    if raw.strip().lower() == "all":
+        return list(ALL_TIERS)
+    tiers = []
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            tier = int(part)
+        except ValueError:
+            raise argparse.ArgumentTypeError(f"{part!r} is not a tier code") from None
+        if tier not in ALL_TIERS:
+            raise argparse.ArgumentTypeError(
+                f"tier {tier} is not a valid code (0..={MAX_TIER})"
+            )
+        tiers.append(tier)
+    if not tiers:
+        raise argparse.ArgumentTypeError("no tiers given")
+    # Report order is the quality ladder, and each tier is measured once.
+    return sorted(set(tiers))
+
 
 OPERATIONS = ["encode", "decode"]
 MODES = ["single", "bulk"]
@@ -271,7 +297,7 @@ def run_benchmarks(
     for operation in OPERATIONS:
         for mode in MODES:
             idx += 1
-            json_file = results_dir / f"{operation}_{mode}.json"
+            json_file = results_dir / f"t{tier}_{operation}_{mode}.json"
             print(f"  [{idx}/{total}] {operation} — {mode}")
 
             cmd = [
@@ -330,32 +356,52 @@ def collect_medians(all_results: list[dict]) -> dict[str, dict[tuple[str, str], 
     return medians
 
 
-def format_table(medians: dict[str, dict[tuple[str, str], float]], count: int) -> str:
-    """Build the markdown summary table."""
+def format_table(
+    medians_by_tier: dict[int, dict[str, dict[tuple[str, str], float]]], count: int
+) -> str:
+    """Build the markdown summary: one table per tier, in the quality ladder's order."""
     lines = [
         f"## Benchmark Summary — 100×100 RGB gradient, bulk count = {count}",
         "",
-        "| Implementation | encode single | decode single | encode bulk (total) | encode bulk (per-op) | decode bulk (total) | decode bulk (per-op) |",
-        "| --- | --- | --- | --- | --- | --- | --- |",
+        "Tier codes are ordered by quality (spec §2.5): **0** is the 21-byte compact "
+        "tier, **1** the 32-byte default, **2–4** carry ~4× the coefficients each. "
+        "The ThumbHash baselines do not have tiers — they are the same measurement "
+        "in every table, repeated so each is directly comparable to the chromahash "
+        "rows beside it.",
     ]
 
-    def ms(name: str, op: str, mode: str) -> str:
-        v = medians.get(name, {}).get((op, mode))
-        return f"{v * 1000:.2f} ms" if v is not None else "N/A"
+    for tier in sorted(medians_by_tier):
+        medians = medians_by_tier[tier]
 
-    def per_op_us(name: str, op: str) -> str:
-        v = medians.get(name, {}).get((op, "bulk"))
-        return f"{v / count * 1e6:.2f} µs" if v is not None else "N/A"
+        def ms(name: str, op: str, mode: str, _m: dict = medians) -> str:
+            v = _m.get(name, {}).get((op, mode))
+            return f"{v * 1000:.2f} ms" if v is not None else "N/A"
 
-    for name in HARNESSES:
-        label = f"{name} _(ThumbHash baseline)_" if HARNESSES[name].get("thumbhash") else name
-        lines.append(
-            f"| {label} | {ms(name, 'encode', 'single')} | {ms(name, 'decode', 'single')} "
-            f"| {ms(name, 'encode', 'bulk')} | {per_op_us(name, 'encode')} "
-            f"| {ms(name, 'decode', 'bulk')} | {per_op_us(name, 'decode')} |"
-        )
+        def per_op_us(name: str, op: str, _m: dict = medians) -> str:
+            v = _m.get(name, {}).get((op, "bulk"))
+            return f"{v / count * 1e6:.2f} µs" if v is not None else "N/A"
+
+        bytes_at = TIER_BYTES.get(tier)
+        heading = f"### Tier {tier}" + (f" — {bytes_at} bytes" if bytes_at else "")
+        lines += [
+            "",
+            heading,
+            "",
+            "| Implementation | encode single | decode single | encode bulk (total) | encode bulk (per-op) | decode bulk (total) | decode bulk (per-op) |",
+            "| --- | --- | --- | --- | --- | --- | --- |",
+        ]
+        for name in HARNESSES:
+            label = (
+                f"{name} _(ThumbHash baseline)_" if HARNESSES[name].get("thumbhash") else name
+            )
+            lines.append(
+                f"| {label} | {ms(name, 'encode', 'single')} | {ms(name, 'decode', 'single')} "
+                f"| {ms(name, 'encode', 'bulk')} | {per_op_us(name, 'encode')} "
+                f"| {ms(name, 'decode', 'bulk')} | {per_op_us(name, 'decode')} |"
+            )
 
     lines += [
+        "",
         "",
         "> **single** times include process startup (JVM/.NET/Node cold start dominates) "
         "— a startup/latency proxy, not per-op compute. **bulk per-op** (= median / count) "
@@ -371,7 +417,10 @@ def format_table(medians: dict[str, dict[tuple[str, str], float]], count: int) -
 
 
 def generate_charts(
-    medians: dict[str, dict[tuple[str, str], float]], output_dir: Path, count: int
+    medians: dict[str, dict[tuple[str, str], float]],
+    output_dir: Path,
+    count: int,
+    tier: int,
 ) -> None:
     """Two charts: single-mode (startup-dominated) and bulk per-op (real compute)."""
     import matplotlib
@@ -390,16 +439,18 @@ def generate_charts(
         vals = [medians.get(n, {}).get((op, "single"), np.nan) * 1000 for n in names]
         ax.bar(x + i * width, vals, width, label=op)
     ax.set_ylabel("Median time (ms)")
-    ax.set_title("Single call — process startup + one op (startup-dominated)")
+    ax.set_title(
+        f"Single call, tier {tier} — process startup + one op (startup-dominated)"
+    )
     ax.set_xticks(x + width / 2)
     ax.set_xticklabels(names, rotation=30, ha="right")
     ax.set_yscale("log")
     ax.legend()
     ax.grid(axis="y", alpha=0.3)
     fig.tight_layout()
-    fig.savefig(output_dir / "benchmark-single.png", dpi=150)
+    fig.savefig(output_dir / f"benchmark-t{tier}-single.png", dpi=150)
     plt.close(fig)
-    print(f"  Saved {output_dir / 'benchmark-single.png'}")
+    print(f"  Saved {output_dir / f'benchmark-t{tier}-single.png'}")
 
     # ── Bulk per-op (real compute) ──
     fig, ax = plt.subplots(figsize=(12, 6))
@@ -407,16 +458,16 @@ def generate_charts(
         vals = [medians.get(n, {}).get((op, "bulk"), np.nan) / count * 1e6 for n in names]
         ax.bar(x + i * width, vals, width, label=op)
     ax.set_ylabel("Per-op time (µs)")
-    ax.set_title(f"Bulk {count} — per-op compute (median / count)")
+    ax.set_title(f"Bulk {count}, tier {tier} — per-op compute (median / count)")
     ax.set_xticks(x + width / 2)
     ax.set_xticklabels(names, rotation=30, ha="right")
     ax.set_yscale("log")
     ax.legend()
     ax.grid(axis="y", alpha=0.3)
     fig.tight_layout()
-    fig.savefig(output_dir / "benchmark-bulk.png", dpi=150)
+    fig.savefig(output_dir / f"benchmark-t{tier}-bulk.png", dpi=150)
     plt.close(fig)
-    print(f"  Saved {output_dir / 'benchmark-bulk.png'}")
+    print(f"  Saved {output_dir / f'benchmark-t{tier}-bulk.png'}")
 
 
 def main() -> None:
@@ -437,15 +488,16 @@ def main() -> None:
     )
     parser.add_argument("--skip-build", action="store_true", help="Skip building harnesses")
     parser.add_argument(
-        "--tier",
-        type=int,
-        default=DEFAULT_TIER,
-        choices=range(0, MAX_TIER + 1),
+        "--tiers",
+        type=parse_tiers,
+        default=[DEFAULT_TIER],
+        metavar="CODES",
         help=(
-            f"chromahash quality tier code (0-{MAX_TIER}, ordered by quality) to "
-            f"benchmark. {DEFAULT_TIER} is the 32-byte default and 0 the 21-byte "
-            "compact tier; each higher code carries more detail in more bytes "
-            "(~4x per code). ThumbHash baselines ignore this."
+            f"chromahash quality tier codes to benchmark: a comma-separated list "
+            f"(0-{MAX_TIER}, ordered by quality), or 'all' for every shipped tier. "
+            f"Default {DEFAULT_TIER} (the 32-byte tier); 0 is the 21-byte compact "
+            "tier, and each higher code carries more detail in more bytes (~4x per "
+            "code). ThumbHash baselines ignore this and are measured once."
         ),
     )
     args = parser.parse_args()
@@ -456,25 +508,33 @@ def main() -> None:
     if not args.skip_build:
         build_harnesses()
 
-    print(f"\nPreparing fixtures (100×100 gradient + decode hashes, tier {args.tier})...")
-    with tempfile.TemporaryDirectory(prefix="chromahash-bench-") as tmp_dir:
-        files = prepare_fixtures(Path(tmp_dir), args.tier)
+    # One full sweep per tier. The fixtures differ per tier (the decode hash is
+    # that tier's), so each tier gets its own temp dir, its own JSON files and
+    # its own charts; the summary stitches them into one table.
+    medians_by_tier: dict[int, dict] = {}
+    for tier in args.tiers:
+        print(f"\nPreparing fixtures (100×100 gradient + decode hashes, tier {tier})...")
+        with tempfile.TemporaryDirectory(prefix="chromahash-bench-") as tmp_dir:
+            files = prepare_fixtures(Path(tmp_dir), tier)
 
-        print(f"\nRunning benchmarks ({len(OPERATIONS)} operations × {len(MODES)} modes)...")
-        all_results = run_benchmarks(
-            files, output_dir, args.warmup, args.min_runs, args.bulk_count, args.timeout, args.tier
-        )
+            print(
+                f"\nRunning benchmarks, tier {tier} "
+                f"({len(OPERATIONS)} operations × {len(MODES)} modes)..."
+            )
+            all_results = run_benchmarks(
+                files, output_dir, args.warmup, args.min_runs, args.bulk_count, args.timeout, tier
+            )
 
-    if not all_results:
-        print("No benchmark results collected")
-        sys.exit(1)
+        if not all_results:
+            print(f"No benchmark results collected at tier {tier}")
+            sys.exit(1)
 
-    medians = collect_medians(all_results)
+        medians_by_tier[tier] = collect_medians(all_results)
 
-    print("\nGenerating charts...")
-    generate_charts(medians, output_dir, args.bulk_count)
+        print(f"\nGenerating charts (tier {tier})...")
+        generate_charts(medians_by_tier[tier], output_dir, args.bulk_count, tier)
 
-    table = format_table(medians, args.bulk_count)
+    table = format_table(medians_by_tier, args.bulk_count)
     print("\n" + table)
     (output_dir / "benchmark-summary.md").write_text(table + "\n")
     print(f"\nResults saved to {output_dir}")

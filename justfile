@@ -183,7 +183,7 @@ build-benchmark: go-cbuild swift-cbuild ts-cbuild python-cbuild csharp-cbuild
 
 # Run performance benchmark (encode/decode × single/bulk, chromahash vs ThumbHash)
 benchmark: build-benchmark
-    cd tools/benchmark && uv run benchmark.py --skip-build
+    cd tools/benchmark && uv run benchmark.py --skip-build --tiers all
 
 # ─── Batch benchmarks ─────────────────────────────────────────────────────────
 
