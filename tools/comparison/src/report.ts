@@ -30,7 +30,7 @@ interface ImageEntry {
 export interface ReportMeta {
   /** Full commit SHA the report was built from, or null when unknown. */
   commit: string | null;
-  /** Base repository URL (e.g. https://github.com/justin13888/chromahash), or null. */
+  /** Base repository URL (e.g. https://github.com/visualcommons/chromahash), or null. */
   repoUrl: string | null;
   /** Pre-formatted generation timestamp, e.g. "2026-05-29 14:32 UTC". */
   generatedAt: string;

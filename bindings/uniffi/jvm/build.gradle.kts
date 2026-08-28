@@ -14,7 +14,7 @@ plugins {
 
 // Maven coordinate group (GitHub-verified Sonatype Central namespace), shared
 // with the Android AAR. INDEPENDENT of the generated package `io.chromahash.ffi`.
-group = "io.github.justin13888"
+group = "io.github.visualcommons"
 version = "0.6.0" // tracks the chromahash core crate version
 
 repositories {
@@ -187,12 +187,12 @@ tasks.register<JavaExec>("bench") {
 
 // ─── Publishing ─────────────────────────────────────────────────────────────
 // Desktop/server companion to the Android AAR (issue #38). Coordinate
-// io.github.justin13888:chromahash-jvm:<version>. See RELEASING.md.
+// io.github.visualcommons:chromahash-jvm:<version>. See RELEASING.md.
 mavenPublishing {
     publishToMavenCentral()
     signAllPublications()
 
-    coordinates("io.github.justin13888", "chromahash-jvm", version.toString())
+    coordinates("io.github.visualcommons", "chromahash-jvm", version.toString())
 
     // Empty javadoc jar (Central requires one; generated bindings have no
     // meaningful javadoc). Sources jar is produced by default.
@@ -205,31 +205,31 @@ mavenPublishing {
                 "Kotlin/Java over JNA via UniFFI, packaged as a JAR with bundled host native libraries.",
         )
         inceptionYear.set("2026")
-        url.set("https://github.com/justin13888/chromahash")
+        url.set("https://github.com/visualcommons/chromahash")
         licenses {
             license {
                 name.set("MIT License")
-                url.set("https://github.com/justin13888/chromahash/blob/master/LICENSE-MIT")
+                url.set("https://github.com/visualcommons/chromahash/blob/master/LICENSE-MIT")
                 distribution.set("repo")
             }
             license {
                 name.set("The Apache License, Version 2.0")
-                url.set("https://github.com/justin13888/chromahash/blob/master/LICENSE-APACHE")
+                url.set("https://github.com/visualcommons/chromahash/blob/master/LICENSE-APACHE")
                 distribution.set("repo")
             }
         }
         developers {
             developer {
-                id.set("justin13888")
+                id.set("visualcommons")
                 name.set("Justin Chung")
                 email.set("noreply@justinchung.net")
-                url.set("https://github.com/justin13888")
+                url.set("https://github.com/visualcommons")
             }
         }
         scm {
-            url.set("https://github.com/justin13888/chromahash")
-            connection.set("scm:git:git://github.com/justin13888/chromahash.git")
-            developerConnection.set("scm:git:ssh://git@github.com/justin13888/chromahash.git")
+            url.set("https://github.com/visualcommons/chromahash")
+            connection.set("scm:git:git://github.com/visualcommons/chromahash.git")
+            developerConnection.set("scm:git:ssh://git@github.com/visualcommons/chromahash.git")
         }
     }
 }
@@ -240,7 +240,7 @@ publishing {
     repositories {
         maven {
             name = "GitHubPackages"
-            url = uri("https://maven.pkg.github.com/justin13888/chromahash")
+            url = uri("https://maven.pkg.github.com/visualcommons/chromahash")
             credentials {
                 username = System.getenv("GITHUB_ACTOR") ?: (findProperty("gpr.user") as String?)
                 password = System.getenv("GITHUB_TOKEN") ?: (findProperty("gpr.key") as String?)

@@ -37,8 +37,8 @@ just changelog
 3. **Update the link references** at the bottom of `CHANGELOG.md`:
 
    ```markdown
-   [Unreleased]: https://github.com/justin13888/chromahash/compare/vX.Y.Z...HEAD
-   [X.Y.Z]: https://github.com/justin13888/chromahash/compare/v<prev>...vX.Y.Z
+   [Unreleased]: https://github.com/visualcommons/chromahash/compare/vX.Y.Z...HEAD
+   [X.Y.Z]: https://github.com/visualcommons/chromahash/compare/v<prev>...vX.Y.Z
    ```
 
 4. **Bump the version** to `X.Y.Z` in every manifest (Go and Swift are versioned
@@ -84,18 +84,18 @@ is skipped, so re-pushing a tag is safe):
   [`ChromaHash`](https://www.nuget.org/packages/ChromaHash) on NuGet (multi-RID
   native assets bundled under `runtimes/<rid>/native`).
 - [`release-jvm`](.github/workflows/release-jvm.yml) →
-  `io.github.justin13888:chromahash-jvm` on Maven Central + GitHub Packages
+  `io.github.visualcommons:chromahash-jvm` on Maven Central + GitHub Packages
   (cross-platform fat JAR carrying every platform's JNA-loaded native lib).
 - [`release-android`](.github/workflows/release-android.yml) →
-  `io.github.justin13888:chromahash-android` (the AAR **only**) on Maven Central +
+  `io.github.visualcommons:chromahash-android` (the AAR **only**) on Maven Central +
   GitHub Packages.
 - [`release-go`](.github/workflows/release-go.yml) → indexes
-  `github.com/justin13888/chromahash/go` on pkg.go.dev. The module is a cgo wrapper,
+  `github.com/visualcommons/chromahash/go` on pkg.go.dev. The module is a cgo wrapper,
   so this builds the prebuilt static libs and commits them onto a **`go/vX.Y.Z`**
   subdirectory tag (the binaries live only on that tag, never on `master`) that
   `go get .../go@vX.Y.Z` resolves. You don't create the `go/` tag by hand.
 - [`release-swift`](.github/workflows/release-swift.yml) → makes the package
-  resolvable on the [Swift Package Index](https://swiftpackageindex.com/justin13888/chromahash).
+  resolvable on the [Swift Package Index](https://swiftpackageindex.com/visualcommons/chromahash).
   It builds the multi-platform xcframework, attaches it to the GitHub release, pins
   `Package.swift`'s `url`+`checksum`, and **moves the `vX.Y.Z` tag** onto that
   commit (which re-triggers the other workflows — they all skip, being idempotent).
@@ -113,7 +113,7 @@ first run succeeds:
 
 - **crates.io** — already bootstrapped.
 - **npm** — add a trusted publisher for `@chromahash/typescript` pointing at repo
-  `justin13888/chromahash`, workflow `release-npm.yml`. A scoped package may need a
+  `visualcommons/chromahash`, workflow `release-npm.yml`. A scoped package may need a
   single manual `npm publish --access public` to claim the name first.
 - **PyPI** — add a *pending publisher* for project `chromahash` → repo + workflow
   `release-pypi.yml`.

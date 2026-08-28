@@ -12,8 +12,8 @@ one binding:
 
 | Target | Artifact | Module |
 |---|---|---|
-| Desktop / server (Linux, macOS, Windows) | `io.github.justin13888:chromahash-jvm` (JAR) | `bindings/uniffi/jvm` |
-| Android | `io.github.justin13888:chromahash-android` (AAR) | `bindings/uniffi/android` |
+| Desktop / server (Linux, macOS, Windows) | `io.github.visualcommons:chromahash-jvm` (JAR) | `bindings/uniffi/jvm` |
+| Android | `io.github.visualcommons:chromahash-android` (AAR) | `bindings/uniffi/android` |
 
 Both are "the Java library" and expose the same Kotlin/Java API — pick the JAR
 for JVM apps and the AAR for Android.

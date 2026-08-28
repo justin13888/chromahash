@@ -12,10 +12,10 @@ chromahash is a multi-language library implementing a compact, high-fidelity Low
 | TypeScript | `@chromahash/typescript` | [npm](https://www.npmjs.com/package/@chromahash/typescript) |
 | Python | `chromahash` | [PyPI](https://pypi.org/project/chromahash/) |
 | C# | `ChromaHash` | [NuGet](https://www.nuget.org/packages/ChromaHash) |
-| Java / Kotlin (JVM) | `io.github.justin13888:chromahash-jvm` | [Maven Central](https://central.sonatype.com/artifact/io.github.justin13888/chromahash-jvm) |
-| Android | `io.github.justin13888:chromahash-android` | [Maven Central](https://central.sonatype.com/artifact/io.github.justin13888/chromahash-android) |
-| Go | `github.com/justin13888/chromahash/go` | [pkg.go.dev](https://pkg.go.dev/github.com/justin13888/chromahash/go) |
-| Swift | SwiftPM (`https://github.com/justin13888/chromahash`) | [Swift Package Index](https://swiftpackageindex.com/justin13888/chromahash) |
+| Java / Kotlin (JVM) | `io.github.visualcommons:chromahash-jvm` | [Maven Central](https://central.sonatype.com/artifact/io.github.visualcommons/chromahash-jvm) |
+| Android | `io.github.visualcommons:chromahash-android` | [Maven Central](https://central.sonatype.com/artifact/io.github.visualcommons/chromahash-android) |
+| Go | `github.com/visualcommons/chromahash/go` | [pkg.go.dev](https://pkg.go.dev/github.com/visualcommons/chromahash/go) |
+| Swift | SwiftPM (`https://github.com/visualcommons/chromahash`) | [Swift Package Index](https://swiftpackageindex.com/visualcommons/chromahash) |
 | C | `chromahash-c` | [source](bindings/c) (C ABI — the FFI foundation, no registry) |
 
 > Every package is published to its registry automatically on each tagged release — see [`RELEASING.md`](RELEASING.md).

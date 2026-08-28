@@ -6,10 +6,10 @@
   "author": "Justin Chung <noreply@justinchung.net>",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/justin13888/chromahash.git",
+    "url": "git+https://github.com/visualcommons/chromahash.git",
     "directory": "typescript"
   },
-  "homepage": "https://github.com/justin13888/chromahash#readme",
+  "homepage": "https://github.com/visualcommons/chromahash#readme",
   "keywords": ["image", "placeholder", "lqip", "thumbnail", "preview"],
   "type": "module",
   "main": "./dist/index.js",

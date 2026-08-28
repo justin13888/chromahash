@@ -6,7 +6,7 @@ import (
 	"os"
 	"strconv"
 
-	chromahash "github.com/justin13888/chromahash/go"
+	chromahash "github.com/visualcommons/chromahash/go"
 )
 
 // tierFromEnv reads the quality tier from CHROMAHASH_TIER, matching the Rust
