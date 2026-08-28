@@ -260,7 +260,13 @@ type ColumnSeries =
    * "tune, shipped" and "tune, tuned". Checking these is the point: §4.1
    * carried a Δ an order of magnitude away from its own inputs.
    */
-  | { docRow: string; pctFrom: { base: string; cand: string } };
+  | { docRow: string; pctFrom: { base: string; cand: string } }
+  /**
+   * A row of slopes between two ladder points, one per column, where the column
+   * header names the interval ("16→32 B"). §1's marginal-value row is derived
+   * from the ladder above it and had gone stale with it.
+   */
+  | { docRow: string; slopeFrom: string };
 
 interface ColumnBinding extends CommonBinding {
   kind: "columns";
@@ -503,7 +509,7 @@ function checkColumnTable(
   const measured = new Map<string, Map<number, number>>();
 
   for (const series of b.series) {
-    if ("pctFrom" in series) continue;
+    if ("pctFrom" in series || "slopeFrom" in series) continue;
     const sweep = loadSweep(series.sweep);
     if (!sweep) return `no output/sweeps/${series.sweep}.json — run the sweep`;
     const baseline = series.baseline
@@ -550,7 +556,17 @@ function checkColumnTable(
     for (const [i, colLabel] of table.header.entries()) {
       if (i === 0) continue;
       let value: number | undefined;
-      if ("pctFrom" in series) {
+      if ("slopeFrom" in series) {
+        const sweep = loadSweep(series.slopeFrom);
+        const bounds = /(\d+)\s*[\u2192>-]+\s*(\d+)/.exec(colLabel);
+        if (!sweep || !bounds) continue;
+        const from = byBudget(sweep.rows, [bounds[1] ?? ""]);
+        const to = byBudget(sweep.rows, [bounds[2] ?? ""]);
+        if (!from?.meanCiede || !to?.meanCiede) continue;
+        const bytes = Number(bounds[2]) - Number(bounds[1]);
+        // ΔE00 recovered per extra byte across the interval.
+        value = (from.meanCiede - to.meanCiede) / bytes;
+      } else if ("pctFrom" in series) {
         const base = measured.get(series.pctFrom.base)?.get(i);
         const cand = measured.get(series.pctFrom.cand)?.get(i);
         if (base === undefined || cand === undefined || base === 0) continue;
@@ -632,6 +648,12 @@ const BINDINGS: Binding[] = [
         metric: "meanCiede",
       },
     ],
+  },
+  {
+    kind: "columns",
+    section: "1",
+    table: 2,
+    series: [{ docRow: "ΔE00 gained per byte", slopeFrom: "budget-ladder" }],
   },
   {
     kind: "columns",
@@ -724,19 +746,9 @@ const BINDINGS: Binding[] = [
     table: 1,
     resolve: byBudget,
     series: [
-      { docRow: "tune, shipped", sweep: "budget-ladder", metric: "meanCiede" },
       {
         docRow: "tune, tuned",
         sweep: "budget-ladder-tuned",
-        metric: "meanCiede",
-      },
-      {
-        docRow: "tune Δ",
-        pctFrom: { base: "tune, shipped", cand: "tune, tuned" },
-      },
-      {
-        docRow: "holdout, shipped",
-        sweep: "budget-ladder-holdout",
         metric: "meanCiede",
       },
       {
@@ -744,11 +756,8 @@ const BINDINGS: Binding[] = [
         sweep: "budget-ladder-tuned-holdout",
         metric: "meanCiede",
       },
-      {
-        docRow: "holdout Δ",
-        pctFrom: { base: "holdout, shipped", cand: "holdout, tuned" },
-      },
     ],
+    note: "The `pre-adoption shipped` rows, and the Δ rows derived from them, are round 1's baseline — the v0.6-derived constants, whose ladder run no longer exists on disk. §1 carries the ladder for the constants that ship today.",
   },
 
   // §7 — the roadmap items, each behind its own tunable.
@@ -868,15 +877,9 @@ const BINDINGS: Binding[] = [
     table: 1,
     resolve: byBudget,
     series: [
-      { docRow: "tune, shipped", sweep: "budget-ladder", metric: "meanCiede" },
       {
         docRow: "tune, optimized",
         sweep: "budget-ladder-optimized",
-        metric: "meanCiede",
-      },
-      {
-        docRow: "holdout, shipped",
-        sweep: "budget-ladder-holdout",
         metric: "meanCiede",
       },
       {
@@ -885,6 +888,7 @@ const BINDINGS: Binding[] = [
         metric: "meanCiede",
       },
     ],
+    note: "As §4.5: the `pre-adoption shipped` rows are round 2's baseline and are not reproducible from a current build.",
   },
 
   // §10.3 — what adoption bought, on both splits.

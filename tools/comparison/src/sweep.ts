@@ -40,6 +40,7 @@ import { gamutToSrgbReference } from "./gamut.ts";
 import { DEFAULT_TIER } from "./rd/lineup.ts";
 import { generateFixtures } from "./generate-fixtures.ts";
 import { ensureAlphaImages } from "./alpha-images.ts";
+import { bootstrapCI } from "./stats.ts";
 import { ensureGraphicImages } from "./graphic-images.ts";
 import { ensureHoldoutImages } from "./holdout-images.ts";
 import { loadImage } from "./image-loader.ts";
@@ -155,6 +156,22 @@ interface SweepRow {
   /** Per-image ΔE00 in corpus order — the input to paired statistics and to
    * per-image (oracle) analyses the aggregate row cannot express. */
   perImageCiede: (number | null)[];
+  /**
+   * 95% bootstrap CI of the paired per-image ΔE00 delta against the incumbent,
+   * sign-normalised so **positive means this variant is better**. Excluding
+   * zero is a real, consistent shift rather than corpus spread — on this corpus
+   * the unpaired means of two builds overlap almost completely, so the mean
+   * alone cannot tell a 0.5% win from noise.
+   *
+   * §11's tables quote this column. It used to be computed out of band from
+   * `perImageCiede`, which is why the document and the tooling disagreed in the
+   * third decimal and no reproduction was exact.
+   */
+  pairedCi: [number, number] | null;
+  /** Images where this variant beat the incumbent, of those comparable. */
+  wins: number | null;
+  /** Images compared — the denominator of {@link wins}. */
+  pairs: number | null;
   /** Corpus image names, in the same order as {@link perImageCiede}. */
   imageNames: string[];
 }
@@ -399,14 +416,32 @@ async function scoreVariant(
     meanAlphaMae: mean(alphaMaes),
     ciedeDeltaPct: null,
     guardsOk: null,
+    pairedCi: null,
+    wins: null,
+    pairs: null,
   };
 }
 
-/** Fill ciedeDeltaPct/guardsOk on every row from the incumbent (row 0). */
+/** Fill ciedeDeltaPct/guardsOk/paired stats on every row from the incumbent. */
 function applyGuards(rows: SweepRow[]): void {
   const base = rows[0];
   if (!base) return;
   for (const row of rows.slice(1)) {
+    // Paired against the incumbent on the images both scored, sign-normalised
+    // so positive = this variant is better.
+    const deltas: number[] = [];
+    for (const [i, b] of base.perImageCiede.entries()) {
+      const c = row.perImageCiede[i];
+      if (b === null || b === undefined || c === null || c === undefined) {
+        continue;
+      }
+      deltas.push(b - c);
+    }
+    if (deltas.length > 0) {
+      row.pairedCi = bootstrapCI(deltas);
+      row.wins = deltas.filter((d) => d > 0).length;
+      row.pairs = deltas.length;
+    }
     if (row.meanCiede !== null && base.meanCiede !== null) {
       row.ciedeDeltaPct =
         ((row.meanCiede - base.meanCiede) / base.meanCiede) * 100;
@@ -510,15 +545,20 @@ async function main(): Promise<void> {
   // table stays exactly as wide as it was.
   const showAlpha = rows.some((r) => r.meanAlphaMae !== null);
   console.log(
-    `  ${"Variant".padEnd(28)} ${"Bytes".padStart(6)} ${"ΔE00".padStart(8)} ${"Δ%".padStart(7)} ${"Med".padStart(8)} ${"SSIM2".padStart(8)} ${"Butter".padStart(8)} ${"DSSIM".padStart(8)}${showAlpha ? ` ${"αMAE".padStart(8)}` : ""} Guards`,
+    `  ${"Variant".padEnd(28)} ${"Bytes".padStart(6)} ${"ΔE00".padStart(8)} ${"Δ%".padStart(7)} ${"Med".padStart(8)} ${"SSIM2".padStart(8)} ${"Butter".padStart(8)} ${"DSSIM".padStart(8)}${showAlpha ? ` ${"αMAE".padStart(8)}` : ""} ${"paired 95% CI".padStart(18)} ${"win/n".padStart(7)} Guards`,
   );
   const cell = (v: number | null, d: number, w: number) =>
     (v !== null ? v.toFixed(d) : "N/A").padStart(w);
   for (const r of rows) {
     const guards = r.guardsOk === null ? "(base)" : r.guardsOk ? "ok" : "FAIL";
     const alpha = showAlpha ? ` ${cell(r.meanAlphaMae, 4, 8)}` : "";
+    const signed = (n: number) => `${n >= 0 ? "+" : ""}${n.toFixed(3)}`;
+    const ci = r.pairedCi
+      ? `[${signed(r.pairedCi[0])}, ${signed(r.pairedCi[1])}]`
+      : "—";
+    const winN = r.wins !== null ? `${r.wins}/${r.pairs}` : "—";
     console.log(
-      `  ${r.label.padEnd(28)} ${r.bytes.toFixed(0).padStart(6)} ${cell(r.meanCiede, 3, 8)} ${cell(r.ciedeDeltaPct, 2, 7)} ${cell(r.medianCiede, 3, 8)} ${cell(r.meanSsimulacra2, 1, 8)} ${cell(r.meanButteraugli, 2, 8)} ${cell(r.meanDssim, 4, 8)}${alpha} ${guards}`,
+      `  ${r.label.padEnd(28)} ${r.bytes.toFixed(0).padStart(6)} ${cell(r.meanCiede, 3, 8)} ${cell(r.ciedeDeltaPct, 2, 7)} ${cell(r.medianCiede, 3, 8)} ${cell(r.meanSsimulacra2, 1, 8)} ${cell(r.meanButteraugli, 2, 8)} ${cell(r.meanDssim, 4, 8)}${alpha} ${ci.padStart(18)} ${winN.padStart(7)} ${guards}`,
     );
   }
 }
