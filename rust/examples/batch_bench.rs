@@ -36,7 +36,9 @@ fn make_image(seed: usize) -> ImageInput {
         chunk[0] = ((i * 3 + seed) % 256) as u8;
         chunk[1] = ((i * 5 + seed * 2) % 256) as u8;
         chunk[2] = ((i * 7 + seed * 3) % 256) as u8;
-        chunk[3] = if seed.is_multiple_of(3) { 200 } else { 255 };
+        // `%` rather than `is_multiple_of`, which is stable only from 1.87 —
+        // above this crate's declared MSRV (rust-version = 1.85).
+        chunk[3] = if seed % 3 == 0 { 200 } else { 255 };
     }
     ImageInput {
         w,

@@ -783,10 +783,10 @@ mod tests {
 
     fn identity_error(m: &[[f64; 3]; 3]) -> f64 {
         let mut err = 0.0_f64;
-        for i in 0..3 {
-            for j in 0..3 {
+        for (i, row) in m.iter().enumerate() {
+            for (j, value) in row.iter().enumerate() {
                 let expected = if i == j { 1.0 } else { 0.0 };
-                err = err.max((m[i][j] - expected).abs());
+                err = err.max((value - expected).abs());
             }
         }
         err
