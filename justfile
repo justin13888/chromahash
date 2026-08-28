@@ -96,7 +96,7 @@ build-compare:
 # metrics. Pulls in ssimulacra2/butteraugli, which build vendored C++ (needs a C/C++
 # toolchain). Without it the report still builds, but metrics show as N/A.
 install-iqa:
-    cargo install iqa-cli --locked --version 0.2.0
+    cargo install iqa-cli --locked --version 1.2.1
 
 # Run the visual comparison. Emits output/report.html, output/report.json, and
 # standalone images under output/images/ (the HTML and JSON both reference them).

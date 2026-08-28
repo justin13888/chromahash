@@ -83,11 +83,11 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/bin/iqa-cli
-          key: iqa-cli-0.2.0-${{ runner.os }}
+          key: iqa-cli-1.2.1-${{ runner.os }}
 
       - name: Install iqa-cli
         if: steps.cache-iqa.outputs.cache-hit != 'true'
-        run: cargo install iqa-cli --locked --version 0.2.0
+        run: cargo install iqa-cli --locked --version 1.2.1
 
       - name: Build Rust harness
         run: cargo build --manifest-path rust/Cargo.toml --example encode_stdin
