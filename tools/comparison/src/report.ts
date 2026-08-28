@@ -416,10 +416,15 @@ ${catEntries
   body.light .section-note { color: #666; }
   .image-row { display: flex; gap: 8px; align-items: flex-start; flex-wrap: wrap; margin: 8px 0; padding: 8px; background: #222244; border-radius: 4px; }
   body.light .image-row { background: #fff; border: 1px solid #ddd; }
-  .image-cell { text-align: center; min-width: 128px; }
-  .image-cell img { height: 150px; width: auto; image-rendering: pixelated; border: 1px solid #555; }
+  .image-cell { text-align: center; min-width: 128px; max-width: 300px; }
+  /* Contain, never stretch: a preview fits inside 300x150 with its aspect
+     ratio intact and can never exceed its cell. width/height stay auto so the
+     two max-* bounds preserve the ratio -- the dim-* fixtures are extreme
+     enough (32x1) that a fixed height alone rendered them thousands of px
+     wide and scrolled the whole page sideways. */
+  .image-cell img { max-width: 100%; max-height: 150px; width: auto; height: auto; image-rendering: pixelated; border: 1px solid #555; }
   body.blur .image-cell img { image-rendering: auto; }
-  .original-wrap { position: relative; display: inline-block; }
+  .original-wrap { position: relative; display: inline-block; max-width: 100%; }
   .original-wrap .img-lores { position: absolute; top: 0; left: 0; opacity: 0; transition: opacity 0.15s; }
   .original-wrap:hover .img-lores { opacity: 1; }
   .original-wrap .img-hires { image-rendering: auto; }
