@@ -31,6 +31,30 @@ export const TIER_BYTES: ReadonlyMap<number, number> = new Map([
 /** The 32-byte default tier's code (spec §2.5). Never write the literal 0. */
 export const DEFAULT_TIER = 1;
 
+/** Every shipped tier code, smallest first — the order reports present them in. */
+export const ALL_TIERS: readonly number[] = [0, 1, 2, 3, 4];
+
+/**
+ * Smallest budget each codec can actually hit at these dimensions, measured on
+ * the corpus. Below its own floor a codec has no equal-budget row to give: a
+ * byte-targeted variant simply finds nothing that fits and scores N/A, so the
+ * anchor is skipped and the codec's floor row carries the information instead.
+ */
+export const CODEC_FLOOR_BYTES: ReadonlyMap<string, number> = new Map([
+  ["webp", 48],
+  ["avif", 470],
+]);
+
+/**
+ * Display label for a ChromaHash tier column. Tier *code*, not byte budget:
+ * the codes are ordered by quality, so `t0`..`t4` reads left-to-right as the
+ * quality ladder. The byte count still appears as data — in each preview's
+ * caption and the stats tables' avgSize column.
+ */
+export function chromaHashLabel(tier: number): string {
+  return `ChromaHash t${tier}`;
+}
+
 /**
  * Canonical equal-byte anchors for the R-D comparison: the ChromaHash
  * quality-tier sizes in bytes. Codec baselines target these budgets so every

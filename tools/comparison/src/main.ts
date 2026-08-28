@@ -45,7 +45,10 @@ import { ensureNaturalImages } from "./natural-images.ts";
 import { ensureHoldoutImages } from "./holdout-images.ts";
 import { CodecThumbAdapter } from "./adapters/codec-thumb.ts";
 import {
+  ALL_TIERS,
   buildRdLineup,
+  chromaHashLabel,
+  CODEC_FLOOR_BYTES,
   DEFAULT_TIER,
   type RdVariant,
   TIER_BYTES,
@@ -365,8 +368,14 @@ async function main(): Promise<void> {
     activeFormatNames = adapters.map((a) => a.name);
     console.log(`Version comparison: ${activeFormatNames.join(", ")}`);
   } else {
+    // Every shipped tier, smallest first. A single column could only ever
+    // answer "how does ChromaHash compare at one budget"; the format's whole
+    // proposition is the range, and at 32 B against ThumbHash's ~21 the single
+    // column was not even the size-matched comparison.
     adapters = [
-      new ChromaHashAdapter({ tier: chromaTier }),
+      ...ALL_TIERS.map(
+        (tier) => new ChromaHashAdapter({ name: chromaHashLabel(tier), tier }),
+      ),
       new ThumbHashAdapter(),
       new BlurHashAdapter(),
       new LqipModernAdapter(),
@@ -375,25 +384,32 @@ async function main(): Promise<void> {
     // Size-matched real codecs. The interesting comparison for this format is
     // not only against other LQIPs but against what a general codec does with
     // the same number of bytes, and that was previously visible only in `--rd`.
-    // They target the active tier's byte anchor, so the columns are equal-budget.
     if (!(values["skip-codecs"] ?? false)) {
-      // Keyed by tier code, not positional: RD_ANCHORS[tier] silently
-      // returned another tier's budget (and `undefined` for the compact tier).
-      const anchor = TIER_BYTES.get(chromaTier) ?? 32;
-      // No general codec can reach the tier-0 budget — AVIF's floor is ~470 B
-      // against 32 — so there the honest row is the codec's smallest possible
-      // output, labelled as such. From tier 1 up the budget is reachable and
-      // the row is a genuine equal-budget comparison.
-      const codecsNeedFloor = anchor < 128;
-      adapters.push(
-        new CodecThumbAdapter("webp", anchor, codecsNeedFloor),
-        new CodecThumbAdapter("avif", anchor, codecsNeedFloor),
-      );
+      // No general codec reaches the two smallest tiers — AVIF's floor is
+      // ~470 B against 21 and 32 — so there the honest row is the codec's
+      // smallest possible output, labelled as such. That floor encode does not
+      // depend on the target, so both tiers share ONE pair rather than getting
+      // a byte-identical pair each (which would also collide on the name
+      // "WebP (min)", and duplicate names silently corrupt computeFormatStats).
+      // From the first reachable budget up, each tier gets a genuine
+      // equal-budget pair.
+      const anchors = ALL_TIERS.map((t) => TIER_BYTES.get(t) ?? 0);
+      const smallest = anchors[0] ?? 32;
+      for (const codec of ["webp", "avif"] as const) {
+        adapters.push(new CodecThumbAdapter(codec, smallest, true));
+        const floor = CODEC_FLOOR_BYTES.get(codec) ?? 128;
+        for (const anchor of anchors.filter((bytes) => bytes >= floor)) {
+          adapters.push(new CodecThumbAdapter(codec, anchor, false));
+        }
+      }
     }
     if (formatFilter) {
-      adapters = adapters.filter((a) =>
-        formatFilter.includes(a.name.toLowerCase()),
-      );
+      // Prefix match so `--formats chromahash` still selects the whole tier
+      // ladder now that the adapters are named "ChromaHash t0".."t4".
+      adapters = adapters.filter((a) => {
+        const name = a.name.toLowerCase();
+        return formatFilter.some((f) => name === f || name.startsWith(`${f} `));
+      });
       if (adapters.length === 0) {
         console.error(`--formats matched no adapters: ${values.formats}`);
         process.exit(1);
@@ -747,11 +763,11 @@ async function main(): Promise<void> {
   ) => {
     console.log(`\n=== Format Summary (${label}) ===`);
     console.log(
-      `  ${"Format".padEnd(14)} ${"Size(B)".padStart(8)} ${"ΔE00".padStart(8)} ${"MedΔE00".padStart(8)} ${"DSSIM".padStart(8)} ${"MS-SSIM".padStart(8)} ${"SSIM2".padStart(8)} ${"Butter".padStart(8)} ${"PSNR(dB)".padStart(9)}`,
+      `  ${"Format".padEnd(16)} ${"Size(B)".padStart(8)} ${"ΔE00".padStart(8)} ${"MedΔE00".padStart(8)} ${"DSSIM".padStart(8)} ${"MS-SSIM".padStart(8)} ${"SSIM2".padStart(8)} ${"Butter".padStart(8)} ${"PSNR(dB)".padStart(9)}`,
     );
     for (const s of stats) {
       console.log(
-        `  ${s.name.padEnd(14)} ${s.avgSize.toFixed(0).padStart(8)} ${cell(s.avgCiede, 2, 8)} ${cell(s.medianCiede, 2, 8)} ${cell(s.avgDssim, 4, 8)} ${cell(s.avgMsSsim, 4, 8)} ${cell(s.avgSsimulacra2, 1, 8)} ${cell(s.avgButteraugli, 2, 8)} ${cell(s.avgPsnr, 1, 9)}`,
+        `  ${s.name.padEnd(16)} ${s.avgSize.toFixed(0).padStart(8)} ${cell(s.avgCiede, 2, 8)} ${cell(s.medianCiede, 2, 8)} ${cell(s.avgDssim, 4, 8)} ${cell(s.avgMsSsim, 4, 8)} ${cell(s.avgSsimulacra2, 1, 8)} ${cell(s.avgButteraugli, 2, 8)} ${cell(s.avgPsnr, 1, 9)}`,
       );
     }
   };

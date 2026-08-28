@@ -230,8 +230,19 @@ export const PHOTO_CATEGORIES: ImageCategory[] = [
   "Realistic",
 ];
 
-/** Canonical LQIP format order, shared by the HTML report and the JSON output. */
+/**
+ * Canonical LQIP format order, shared by the HTML report and the JSON output.
+ *
+ * Every ChromaHash tier is listed: `main.ts` orders columns by this array and
+ * appends anything absent from it, so a missing tier would silently sort after
+ * the competing formats in every table.
+ */
 export const FORMAT_NAMES = [
+  "ChromaHash t0",
+  "ChromaHash t1",
+  "ChromaHash t2",
+  "ChromaHash t3",
+  "ChromaHash t4",
   "ChromaHash",
   "ThumbHash",
   "BlurHash",
@@ -547,7 +558,7 @@ ${categories
     return `
 <div class="section-title">${category}</div>${
       category === "Gamut"
-        ? `\n<p class="section-note">ΔE00 is scored in sRGB against the source's color-managed sRGB appearance, so the cross-format comparison stays apples-to-apples; the gamut-aware ChromaHash matches it while formats that ignore the source gamut look off (higher ΔE00). The <strong>Display P3</strong> row's Original and ChromaHash previews are decoded to P3 and tagged with the P3 ICC profile: on a wide-gamut (P3) display they show the true saturated color and match each other, while the sRGB-only formats appear less saturated — ChromaHash renders correctly to the display's gamut.</p>`
+        ? `\n<p class="section-note">ΔE00 is scored in sRGB against the source's color-managed sRGB appearance, so the cross-format comparison stays apples-to-apples; the gamut-aware ChromaHash tiers match it while formats that ignore the source gamut look off (higher ΔE00). The <strong>Display P3</strong> row's Original and every ChromaHash preview are decoded to P3 and tagged with the P3 ICC profile: on a wide-gamut (P3) display they show the true saturated color and match each other, while the sRGB-only formats appear less saturated — ChromaHash renders correctly to the display's gamut.</p>`
         : ""
     }
 ${catEntries
