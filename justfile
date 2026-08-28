@@ -62,7 +62,7 @@ format-check-thumbhash:
     cargo fmt --manifest-path tools/thumbhash-rs/Cargo.toml --check
 
 lint-thumbhash:
-    cargo clippy --manifest-path tools/thumbhash-rs/Cargo.toml -- -D warnings
+    cargo clippy --manifest-path tools/thumbhash-rs/Cargo.toml --all-targets -- -D warnings
 
 lint-fix-thumbhash:
     cargo clippy --manifest-path tools/thumbhash-rs/Cargo.toml --fix --allow-staged --allow-dirty
@@ -81,7 +81,7 @@ format-check-gamutref:
     cargo fmt --manifest-path tools/gamut-ref-stdin/Cargo.toml --check
 
 lint-gamutref:
-    cargo clippy --manifest-path tools/gamut-ref-stdin/Cargo.toml -- -D warnings
+    cargo clippy --manifest-path tools/gamut-ref-stdin/Cargo.toml --all-targets -- -D warnings
 
 lint-fix-gamutref:
     cargo clippy --manifest-path tools/gamut-ref-stdin/Cargo.toml --fix --allow-staged --allow-dirty
@@ -224,8 +224,11 @@ format-fix-rust: format-rust
 format-check-rust:
     cargo fmt --manifest-path rust/Cargo.toml --check
 
+# --all-targets: plain `cargo clippy` checks the lib and bins only, so test and
+# example code is never linted. That is how an MSRV violation in an example and
+# a lint error in a #[cfg(test)] block both survived in-tree.
 lint-rust:
-    cargo clippy --manifest-path rust/Cargo.toml -- -D warnings
+    cargo clippy --manifest-path rust/Cargo.toml --all-targets --features full -- -D warnings
 
 lint-fix-rust:
     cargo clippy --manifest-path rust/Cargo.toml --fix --allow-staged --allow-dirty
@@ -313,7 +316,7 @@ format-check-c:
     cargo fmt --manifest-path bindings/c/Cargo.toml --check
 
 lint-c:
-    cargo clippy --manifest-path bindings/c/Cargo.toml -- -D warnings
+    cargo clippy --manifest-path bindings/c/Cargo.toml --all-targets -- -D warnings
 
 lint-fix-c:
     cargo clippy --manifest-path bindings/c/Cargo.toml --fix --allow-staged --allow-dirty
@@ -355,7 +358,7 @@ format-check-wasm:
     cargo fmt --manifest-path bindings/wasm/Cargo.toml --check
 
 lint-wasm:
-    cargo clippy --manifest-path bindings/wasm/Cargo.toml --target wasm32-unknown-unknown -- -D warnings
+    cargo clippy --manifest-path bindings/wasm/Cargo.toml --target wasm32-unknown-unknown --all-targets -- -D warnings
 
 lint-fix-wasm:
     cargo clippy --manifest-path bindings/wasm/Cargo.toml --target wasm32-unknown-unknown --fix --allow-staged --allow-dirty
@@ -384,7 +387,7 @@ format-check-android:
     cargo fmt --manifest-path bindings/uniffi/Cargo.toml --check
 
 lint-android:
-    cargo clippy --manifest-path bindings/uniffi/Cargo.toml -- -D warnings
+    cargo clippy --manifest-path bindings/uniffi/Cargo.toml --all-targets -- -D warnings
 
 lint-fix-android:
     cargo clippy --manifest-path bindings/uniffi/Cargo.toml --fix --allow-staged --allow-dirty

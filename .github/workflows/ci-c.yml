@@ -37,7 +37,7 @@ jobs:
         run: cargo fmt --check
 
       - name: Lint
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --all-targets -- -D warnings
 
       - name: Test (spec vectors through the C ABI)
         run: cargo test

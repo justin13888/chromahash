@@ -34,7 +34,7 @@ jobs:
         run: cargo fmt --check
 
       - name: Lint
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --all-targets --features full -- -D warnings
 
       # `--features full` adds `simd-diff-tests`, so the AVX2 + SSE2 backends are
       # differentially validated here on the x86_64 runner (GitHub's runners have

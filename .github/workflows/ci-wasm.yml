@@ -41,7 +41,7 @@ jobs:
         run: cargo fmt --check
 
       - name: Lint
-        run: cargo clippy --target wasm32-unknown-unknown -- -D warnings
+        run: cargo clippy --target wasm32-unknown-unknown --all-targets -- -D warnings
 
       - name: Test (spec vectors through wasm, in Node)
         run: wasm-pack test --node .
