@@ -6,10 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ChromaHash is a **Draft** format. While pre-1.0, the bitstream is not guaranteed to be
-stable between minor versions. v0.2, v0.3, and v0.4 all share header bit 47 = 1; a decoder
-from an older minor version applied to a newer hash will silently produce garbled output.
-Applications that need to distinguish versions MUST track the format version via
-producer-side metadata. See `spec/README.md` §2.5 for details.
+stable between minor versions. From 0.7.0 the wire format carries a 3-bit `version` field
+in byte 0 and a decoder rejects a generation it does not implement; before it, v0.2, v0.3
+and v0.4 all shared header bit 47 = 1, so an older decoder applied to a newer hash
+silently produced garbled output. Applications spanning the 0.6/0.7 boundary MUST track
+the format version via producer-side metadata. See `spec/README.md` §2.5 for details.
 
 <!-- git-cliff-unreleased-start -->
 ## [Unreleased]

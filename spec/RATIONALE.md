@@ -38,16 +38,16 @@ lossy image codecs, the AVIF/JPEG XL toolbox was audited explicitly
 
 ## Architecture
 
-### 32 bytes at tier 0
-A tier-0 hash is exactly 32 bytes — the v0.6 footprint — so the format is an
+### 32 bytes at the default tier
+A default-tier (code 1) hash is exactly 32 bytes — the v0.6 footprint — so the format is an
 equal-budget upgrade path from prior LQIPs (BlurHash ~30–36 B, ThumbHash
 ~21–25 B) and a zero-overhead fixed-width database column in the common case.
-**Rejected:** variable-length tier 0 (ThumbHash-style, 5–25 B): saves ~15 B per
+**Rejected:** a variable-length default (ThumbHash-style, 5–25 B): saves ~15 B per
 image at the cost of length framing everywhere and a materially worse quality
 floor.
 
 #### What holding 32 bytes cost, measured
-Keeping tier 0 at exactly 32 bytes while byte 0 grew into a self-describing
+Keeping the default at exactly 32 bytes while byte 0 grew into a self-describing
 descriptor had to come from somewhere: at the v0.6 bit widths the no-alpha luma
 AC count drops 27 → 26, and alpha mode collapses v0.6's mixed-precision
 `[(7,6),(13,5)]` into a single `[(20,5)]` tier. That is ~3.7% of the luma AC
@@ -65,14 +65,14 @@ Signs are normalized per metric so that **positive means v1 is worse**:
 Small but real: every CI except DSSIM's excludes zero, and the direction is
 consistent (25 of 28 holdout images regress; sign-test p = 0.0001). The
 photographic corpus agrees at +0.62% ΔE00. Run through the sweep runner's guard
-gate (`sweeps/v06-vs-v1.json`), **v1 tier 0 fails the guards against v0.6** —
+gate (`sweeps/v06-vs-v1.json`), **v1's default tier fails the guards against v0.6** —
 the SSIMULACRA2 drop exceeds the 1.0 tolerance.
 
 **Accepted anyway, and this is a positioning claim rather than a quality one.**
 At 32 bytes v1 is not an improvement on v0.6; it is a ~0.5% quality payment for
 the descriptor byte, and what that byte buys is the tier ladder, O(1)
 structural validation, and deterministic variable length. The quality story
-lives one rung up: tier 1 at 108 B is −17.5% ΔE00 against v0.6 on holdout
+lives one rung up: code 2 at 108 B is −17.5% ΔE00 against v0.6 on holdout
 (CI [−2.38, −1.61]), winning on all 28 images — a budget v0.6 has no way to
 spend at all. Reclaiming the 27th luma coefficient (a narrower scale field, or
 the reserved bit) is sized by the 0.45% above and recorded as future work.
@@ -82,21 +82,52 @@ does not by itself argue for a constants revision — it is recorded because the
 "equal-budget upgrade path" framing above is true about *bytes* and would
 otherwise be read as also true about *quality*.
 
-### Quality tiers: count ×4^tier at constant precision
-A 3-bit tier multiplies every AC coefficient *count* by 4^tier and doubles the
-render edge (32→256 px); bytes ≈ 32/108/411/1623. One knob, deterministic
+### Quality tiers: count ×4^level at constant precision
+A 3-bit tier multiplies every AC coefficient *count* by 4^level and doubles the
+render edge (32→256 px); bytes ≈ 21/32/108/411/1623. One knob, deterministic
 length, and the selection order is tier-invariant (priorities scale uniformly
-×4 per tier), so low frequencies mean the same thing at every tier.
+×4 per level), so low frequencies mean the same thing at every tier.
 
 Review challenged this with rate–distortion practice (codecs add *precision*
-with rate, not only bandwidth). **Measured** (`tier-precision-vs-count`, tier-1
-budget, equal bytes): every precision-for-count trade loses — a 10×6b+14×5b L
+with rate, not only bandwidth). **Measured** (`tier-precision-vs-count`, the
+108 B budget, equal bytes): every precision-for-count trade loses — a 10×6b+14×5b L
 split +0.11% ΔE00, fewer-L/wider-chroma +1.05%, mostly-6-bit L +0.50%, and all
 three *fail the SSIMULACRA2 guard* (−135 → −141…−158). At these bitrates more
 coefficients beat finer coefficients; the constant-depth design is the right
 call for v1's tier range.
 
-### Tiers 1–3 vs "just ship a tiny real image"
+### Tier codes ordered by quality
+The 3-bit tier field is a quality ordinal: code 0 is the compact tier (21 B),
+code 1 the 32-byte default, codes 2–4 the higher tiers. A larger code is never a
+smaller hash.
+
+**Rejected:** placing the compact tier at code 4, above the quality tiers,
+because 4 came from the range v1 had reserved. That was the original shape and
+it was chosen for availability, not for semantics — the reserved range was, in
+`EXPERIMENTS.md` §3's words, "the cheapest place to put it". The argument for
+keeping it was compatibility: a v1 decoder written before the compact tier
+existed would reject code 4 rather than mis-decode it. **That argument applies
+to a population of size zero.** Wire generation v1 (`version` = 0) ships in
+0.7.x, which was never tagged and never published to any registry; v0.6 and
+earlier carried a single version bit at bit 47 and no tier field at all. The
+compact tier and the rest of v1 reach users in the same release.
+
+Against that, an unordered code costs a permanent hazard. It forces every
+size-scaling site to shift by a derived render level rather than the code, and
+`README.md` §3.5 had to name that as "the single most likely way to implement
+this tier wrongly". It fired three times inside this repository before release:
+the Python reference rendered the compact tier at 512 px; the C ABI's
+`quality > MAX_TIER` bound rejected the compact tier outright, taking Go and C#
+with it; and a cross-language parity vector built as `MAX_TIER + 1` silently
+stopped testing what it claimed. Ordering the codes costs nothing in reserved
+space — codes 5–7 remain free either way — and makes `tier <= MAX_TIER` correct.
+
+The residual cost is that the default tier's code is 1, not 0, so a literal `0`
+default in a language binding now selects the compact tier. Each binding names
+the constant (`DEFAULT_TIER`) rather than writing the literal, and asserts that
+its default encode is exactly 32 bytes.
+
+### The upper tiers vs "just ship a tiny real image"
 Measured by `just compare-rd` against size-targeted WebP/JPEG(mozjpeg)/AVIF
 thumbnails and a raw-RGB565 control at the tier byte anchors (50 photographic
 images, display-resolution scoring, mean ΔE00 lower-better). Structural
@@ -110,12 +141,12 @@ at 32 B ChromaHash competes only with purpose-built LQIPs.
 | 411 B | **WebP 6.61** | ChromaHash t2 7.13 · RawRGB565 7.41 · lqip-modern r48 7.57 (248 B) · JPEG 8.83 |
 | 1623 B | **AVIF 4.71** | WebP 5.17 · JPEG 5.30 · RawRGB565 5.75 · ChromaHash t3 6.40 |
 
-The predecessor edges out v1's tier 0 at the anchor they share, by the margin
+The predecessor edges out v1's default tier at the anchor they share, by the margin
 quantified above; against every *other* format at 32 B the two are
-interchangeable. Tier 1 wins its anchor outright — at 108 B even raw RGB565 pixels
+interchangeable. Code 2 wins its anchor outright — at 108 B even raw RGB565 pixels
 beat WebP, whose container overhead dominates that budget. WebP overtakes
-tier 2 by ~7% at 411 B, and the real codecs lead tier 3 by 20–36% at 1623 B.
-The honest positioning: **tiers 2–3 are not rate–distortion-competitive with
+code 3 by ~7% at 411 B, and the real codecs lead code 4 by 20–36% at 1623 B.
+The honest positioning: **codes 3–4 are not rate–distortion-competitive with
 real codecs**; their value is operational (no image decoder dependency, O(1)
 validation, deterministic bytes, one code path for all tiers). Recorded as an
 open positioning question below. (Also measured: the CSS-gradient
@@ -123,22 +154,22 @@ placeholder — unpic, 592 B — scores 19.24, worst of every raster-capable
 entry; BlurHash saturates near ΔE00 ≈ 12 regardless of component count.)
 
 ### Independent (non-embedded) tiers
-A tier-1 hash is not a byte-superset of a tier-0 hash: channels are stored
+A code-2 hash is not a byte-superset of a default-tier hash: channels are stored
 sequentially, so a byte prefix is not decodable. Capped decode (§11.3) already
 covers "render a high-tier hash small" — **measured** (`capped-tier1-vs-tier0`,
-photo tune split): a tier-1 hash rendered at the tier-0 natural size scores
-ΔE00 7.61 vs 9.57 for a native tier-0 encode (−20%), essentially identical to
-the tier-1 natural render (7.62). Note this is *not* a truncation preview —
+photo tune split): a code-2 hash rendered at the default natural size scores
+ΔE00 7.61 vs 9.57 for a native default-tier encode (−20%), essentially identical
+to the code-2 natural render (7.62). Note this is *not* a truncation preview —
 capped decode keeps every in-band coefficient of the larger set — so it upper-
 bounds what byte-embedded/progressive tiers could preserve. Embedding requires
 interleaving AC across channels by priority: a structural wire change, v0.8
 roadmap.
 
 ### No entropy coding
-At tier 0, fixed-width fields buy O(1) validation (deterministic length *is*
-the validity check), no decoder tables, and fixed DB width — for ≤256 bits the
-~20–40% entropy savings on near-Laplacian AC is not worth losing those. At
-tiers 2–3 (3–13 kbit) the trade genuinely reverses; entropy-coded AC is a v0.8
+At the default tier, fixed-width fields buy O(1) validation (deterministic length
+*is* the validity check), no decoder tables, and fixed DB width — for ≤256 bits
+the ~20–40% entropy savings on near-Laplacian AC is not worth losing those. At
+codes 3–4 (3–13 kbit) the trade genuinely reverses; entropy-coded AC is a v0.8
 roadmap item, and the R-D gap to WebP/AVIF at those anchors is the budget it
 would need to close.
 
@@ -177,7 +208,7 @@ a format whose output is judged by eyes, not by radiometry.
 No blocks → no blocking artifacts → nothing for a lapped transform to fix
 (**MDCT explicitly N/A** — its purpose is block-boundary cancellation).
 **Rejected:** wavelets (no scale hierarchy to exploit at K=26; reopen at
-tier 3 only if tiers 2–3 survive their positioning question); KLT/learned
+code 4 only if codes 3–4 survive their positioning question); KLT/learned
 bases and Gaussian-splat placeholders (training dependency, no zero-dependency
 deterministic decode story); block DCT (blocking artifacts at exactly the
 scale placeholders are blurred at).
@@ -198,7 +229,7 @@ degrades and fails guards past 1.6. Extending it to the two-parameter family
 `(1 + aniso·sin²2θ)(1 + hv·cos2θ)` adds a horizontal/vertical term at hv=0.15.
 
 **Shipped in v1** (§6.2). On its own the weight is under the 3% retune
-threshold; it entered the spec as part of the tier-0 recipe of
+threshold; it entered the spec as part of the default-tier recipe of
 `EXPERIMENTS.md` §8, which clears it as a whole (−3.50% holdout, all guards
 improving) and is worth −0.34 pp of that. The f64 ordering the sweep used is
 *not* what shipped: the spec orders on an exact Q12 integer key, so the order
@@ -261,8 +292,8 @@ already captures the entire benefit a deadzone offers this signal.
 ### One scale factor per channel (max |AC|)
 Review raised MP3/AAC scalefactor bands — one large low-frequency coefficient
 shouldn't crush the resolution of every small high-frequency one. **Measured**
-(`scalefactor-bands` at tier 0, `scalefactor-bands-t1` at tier 1): the best
-band split reaches −0.20% at tier 0 and −0.52% at tier 1 (split=0.25,
+(`scalefactor-bands` at the default tier, `scalefactor-bands-t1` at code 2): the
+best band split reaches −0.20% at the default and −0.52% at code 2 (split=0.25,
 gain_l=0.6, guards ok). Direction confirmed — the effect grows with
 coefficient count, exactly as the audio analogy predicts — but far below the
 retune threshold. Revisit alongside entropy coding at v0.8, where per-band
@@ -280,22 +311,22 @@ proxy (a vs b at 0.15) shows b is the more sensitive axis (+0.46% vs −0.01%),
 consistent with keeping b's range tight — the 1-bit swap itself remains an
 open (wire-changing) question.
 
-### Bit allocation: tier 0 = L 4 b ×28 / C 3 b ×15+15; tiers 1–3 = L 5 b / C 4 b
+### Bit allocation: code 1 = L 4 b ×28 / C 3 b ×15+15; codes 2–4 = L 5 b / C 4 b
 The v0.6 sweep over layouts A–D (chroma-rebalanced, tiered-precision,
 finer-chroma variants) locked a 5-bit luma / 4-bit chroma split, and the v1
-tier-1 sweep re-confirms it against three equal-byte alternatives — *at tier 1
+108 B sweep re-confirms it against three equal-byte alternatives — *at code 2
 and above*.
 
-At tier 0 it is the wrong answer. The count-vs-precision optimum moves with the
+At the default tier it is the wrong answer. The count-vs-precision optimum moves with the
 budget, and a 32-byte hash has 202 AC bits to spend: sweeping the whole
 equal-byte grid (`EXPERIMENTS.md` §4.2) puts the optimum at 28 luma
 coefficients at 4 bits plus 15 chroma at 3, worth −3.5% mean ΔE00 on the
 never-tuned holdout with every guard improving. So v1 carries a **two-row
-layout table** rather than one base scaled by `4^tier` (§3.2).
+layout table** rather than one base scaled by `4^level` (§3.2).
 
 The optimum is broad — L30/C13 and L32/C12 are within noise of L28/C15 — which
 is itself the finding: what matters is moving *off* 26 @ 5, not the exact stop.
-Alpha mode keeps 5-bit luma at tier 0, because the photographic corpus that
+Alpha mode keeps 5-bit luma at the default tier, because the photographic corpus that
 chose the rebalance contains no alpha and cannot speak to it.
 
 ### DC: 7/7/7 bits + decode-aware ±1 search
@@ -338,8 +369,8 @@ match or reconstruction desynchronizes.
 ### Alpha: composite-over-average + separate channel
 Transparent pixels composite over the alpha-weighted average OKLAB (keeps the
 color channels clean of transparency edges — inherited from ThumbHash), and
-alpha is its own DCT channel (DC 5 b + scale 4 b + 5·4^tier AC). Funded by
-L 26→20 so tier 0 stays 32 bytes. `hasAlpha` = any pixel α<255: exact and
+alpha is its own DCT channel (DC 5 b + scale 4 b + 5·4^level AC). Funded by
+L 26→20 so the default tier stays 32 bytes. `hasAlpha` = any pixel α<255: exact and
 predictable; a threshold would be equally arbitrary and produce
 input-dependent surprises.
 
@@ -361,10 +392,10 @@ encoding.
 | Frequency-weighted quant matrices (JPEG/JXL) | **= the scalefactor-band experiment** (one mechanism, two framings): −0.20% (t0) / −0.52% (t1) — direction real, below threshold. |
 | DC prediction | **N/A:** one global DC. |
 | Directional intra prediction | **N/A:** no blocks. |
-| Entropy coding (ANS/CABAC) | **Rejected tier 0 / roadmap tiers 2–3** (see Architecture). |
+| Entropy coding (ANS/CABAC) | **Rejected at the default tier / roadmap codes 3–4** (see Architecture). |
 | Progressive / embedded refinement | **Roadmap v0.8**; the capped-decode experiment bounds the value (t1@t0-size −20% ΔE00 vs native t0). |
 | XYB color space | **Rejected** in favor of OKLAB (see Signal path). |
-| Wavelets (JPEG2000) | **Rejected at tier 0;** reopen at tier 3 only if tiers 2–3 survive their positioning question. |
+| Wavelets (JPEG2000) | **Rejected at the default tier;** reopen at code 4 only if codes 3–4 survive their positioning question. |
 | Gaussian-splat / learned bases | **Rejected:** training dependency, no zero-dep decode. |
 
 ## Evaluation methodology decisions
@@ -397,24 +428,24 @@ encoding.
 Explicitly unresolved, so nothing evaluated-in-thought silently disappears:
 1. **Chroma-from-luma** — the largest expected v0.8 win; needs a
    residual-coding design and a wire change.
-2. ~~**Alpha-mode tier-0 layout**~~ — **resolved in v0.7** (`EXPERIMENTS.md`
+2. ~~**Alpha-mode default-tier layout**~~ — **resolved in v0.7** (`EXPERIMENTS.md`
    §11.3). It got its own corpus and sweep, and the answer was not the
    arithmetic's `L 22 @ 4, a/b 14 @ 3`. The binding constraint was not the
    luma/chroma split at all: the *alpha channel* had five AC coefficients,
    inherited from v0.6 and never measured, and five cannot describe a
-   silhouette. Tier 0 now carries `L 22 @ 4, a/b 3 @ 3, A 28 @ 3`, worth
+   silhouette. Code 1 now carries `L 22 @ 4, a/b 3 @ 3, A 28 @ 3`, worth
    −16.2% mean ΔE00 on a never-tuned alpha holdout with every guard improving.
-   Still open: tiers 2–3 alpha, inherited from the tier-1 measurement rather
+   Still open: codes 3–4 alpha, inherited from the code-2 measurement rather
    than measured directly.
-3. ~~**Tier 2–3 positioning**~~ — **resolved in v0.7 by repositioning them**
-   (`README.md` §14.1). Size-matched WebP overtakes tier 2 and AVIF/WebP/JPEG
-   beat tier 3; entropy coding would recover ~4% of a 20–40% gap and would
+3. ~~**Code 3–4 positioning**~~ — **resolved in v0.7 by repositioning them**
+   (`README.md` §14.1). Size-matched WebP overtakes code 3 and AVIF/WebP/JPEG
+   beat code 4; entropy coding would recover ~4% of a 20–40% gap and would
    cost the O(1) length check that is the format's validity check. The spec
-   now states that tiers 2–3 are kept for their operational properties — no
+   now states that codes 3–4 are kept for their operational properties — no
    codec dependency, no decoder CVE surface, byte-exact reproducibility, one
    code path from 21 B to 1.6 kB — and makes no rate–distortion claim for
    them.
-4. **Entropy-coded AC at tiers 2–3** — sized by that same R-D gap.
+4. **Entropy-coded AC at codes 3–4** — sized by that same R-D gap.
 5. **Embedded/progressive tiers** — interleave AC by priority so a tier-t hash
    is a prefix of tier-t+1; capped decode bounds the value at −20% ΔE00 for
    t1-at-t0-size.
@@ -424,7 +455,7 @@ Explicitly unresolved, so nothing evaluated-in-thought silently disappears:
    range-asymmetry proxy suggests the current allocation is right.
 8. **Linear-light vs OKLAB DC averaging** — needs a Rust-side averaging knob;
    perceptual-average argument currently carries the decision.
-9. **Wavelet/alternative bases at tier 3** — only if tiers 2–3 survive.
+9. **Wavelet/alternative bases at code 4** — only if codes 3–4 survive.
 10. **Per-image adaptive selection with signaling** — only alongside entropy
     coding.
 11. **Perceptual validation** — every conclusion here is metric-based; a small
@@ -433,7 +464,7 @@ Explicitly unresolved, so nothing evaluated-in-thought silently disappears:
     records a candidate that was statistically significant on one tune corpus,
     independently corroborated on a second, and still failed out of sample.
     Metrics agreeing with each other is not the same as metrics being right.
-12. **Reclaiming the 27th luma coefficient** — tier 0 pays ~0.45% holdout ΔE00
+12. **Reclaiming the 27th luma coefficient** — the default tier pays ~0.45% holdout ΔE00
     (and a guard-failing 1.18% SSIMULACRA2) for the descriptor byte. A narrower
     scale field or the reserved bit could fund the coefficient back; the
     measurement above sizes the prize. Below the retune threshold, so it rides

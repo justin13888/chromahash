@@ -161,8 +161,10 @@ tier 1. Tier 2 is marginal, tier 3 is indefensible as a rate–distortion claim
 (keep it, if at all, on the operational argument `RATIONALE.md` already makes).
 The single most valuable missing budget is **21–24 B**: it is ThumbHash's size,
 it is inside the codec-free zone, and the format cannot express it at all
-because tier 0 is fixed at 32 B. Tier codes `4..=7` are reserved and rejected
-today — a compact tier is the cheapest place to put it.
+because the default tier is fixed at 32 B. Tier codes `4..=7` were reserved and
+rejected at the time — a compact tier is the cheapest place to put it. (It
+shipped at code 0 instead; the codes were ordered by quality before release —
+`RATIONALE.md`, "Tier codes ordered by quality".)
 
 The prefix is what makes small budgets expensive: 54 bits is 21% of a 32 B hash
 and **32% of a 21 B hash**.
@@ -437,7 +439,7 @@ decoder must understand.
 
 | # | Idea | Sizing |
 |---|---|---|
-| U10 | **A compact tier below 32 B** (tier codes 4–7 are reserved today). | Measured (§4.3): a 21 B layout beats ThumbHash on all four metrics, on holdout (−6.7% ΔE00). The highest-value structural gap. |
+| U10 | **A compact tier below 32 B** (tier codes 4–7 were reserved at the time). | Measured (§4.3): a 21 B layout beats ThumbHash on all four metrics, on holdout (−6.7% ΔE00). The highest-value structural gap. |
 | U11 | **Entropy-coded AC with a per-index context model.** | Measured (§4.9): −22.3% of the AC payload in sample, 8.7% out of sample (§7.13). Costs the O(1) length check. |
 | U12 | **Decoder-side detail synthesis** — deterministic, hash-seeded high-frequency texture added at render time. | Untested, and the only idea here that attacks the format's actual weakness: it loses SSIMULACRA2/DSSIM to WebP and lqip-modern at every budget above ~84 B while winning ΔE00. Costs zero bytes. Risk: it fabricates detail, which some callers will consider a bug rather than a feature. |
 | U13 | **Per-image signaled selection.** | Measured (§4.10): +9 energy points, but only pays alongside U11. |
@@ -646,7 +648,7 @@ same 32×22 grid. Keep 8 bits.
 ### 7.6 U10 — the compact tier below 32 B
 
 Materialized as a measured layout rather than a new tier code (tier codes 4–7
-remain reserved). With the round-2 recipe at ThumbHash's own 21 B, **holdout**:
+were still reserved at this point). With the round-2 recipe at ThumbHash's own 21 B, **holdout**:
 
 | | ΔE00 | SSIM2 | Butteraugli | DSSIM |
 |---|---|---|---|---|

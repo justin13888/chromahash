@@ -31,12 +31,12 @@ cargo test --manifest-path rust/Cargo.toml -- generate_test_vectors --nocapture 
 ### Integration tests (wire-format v1)
 
 - `integration-encode.json` — Full encode: input RGBA → hash, across quality
-  tiers 0–3 (32/108/411/1623 bytes no-alpha). Includes degenerate dimensions
+  every tier code 0–4 (21/32/108/411/1623 bytes no-alpha). Includes degenerate dimensions
   (`strip_1x100`, `strip_100x1`, `solid_1x1`), gamut-corner solids,
   wide-gamut solids (Display P3, ProPhoto), and the 16:1 aspect clamp
   boundary.
 - `integration-decode.json` — Full decode: hash → output RGBA at the
-  natural size (long edge `32·2^tier` px)
+  natural size (long edge `32·2^renderLevel(tier)` px)
 - `integration-decode-capped.json` — Capped decode: hash + `max_width`/
   `max_height` → output RGBA. Covers sub-natural rendering (the band-limited
   frequency skip of spec §11.3), including the 1×N strips that rendered
