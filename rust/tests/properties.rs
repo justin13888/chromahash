@@ -17,6 +17,20 @@
 //!
 //! Failures shrink to a minimal reproducer, which is the reason for the
 //! dependency over a hand-rolled generator.
+//!
+//! **These runs are not deterministic.** proptest draws a fresh seed each time,
+//! so `just test` and the mutation sweep both sample a different corner of the
+//! input space on every invocation. That is deliberate — a fixed seed turns a
+//! property test into a slow unit test — but it has two consequences worth
+//! knowing. A failure here may not reproduce on a re-run: copy the seed
+//! proptest prints into `properties.proptest-regressions` (it writes the file
+//! itself) and commit it, which pins that case forever. And a mutant these
+//! tests kill in one sweep may survive the next, so a single missed mutant in
+//! this file's blast radius is worth re-running before acting on.
+//!
+//! Nothing here should depend on a rare draw to hold: every bound below is
+//! either exact or set at a measured worst case over the whole input domain,
+//! not at whatever the sample happened to reach.
 
 use chromahash::{COMPACT_TIER, ChromaHash, ChromaHashError, Gamut, MAX_TIER, Tunables};
 use proptest::prelude::*;
@@ -38,12 +52,18 @@ const DECODING_CASES: u32 = 24;
 ///
 /// The DC carries lightness at 7 bits and chroma at 6/5 bits over a *bounded*
 /// chroma range (`MAX_CHROMA_A` = 0.35, `MAX_CHROMA_B` = 0.33), so a colour
-/// sitting near that boundary is reproduced least precisely. Swept over the
-/// RGB cube on a stride-3 grid (~636k solids), the worst deviation is 16, on
-/// saturated green — `[18, 252, 15]`. The bound is set there deliberately: it
-/// is the format's real behaviour, and any drift past it is a regression worth
-/// failing on.
-const AVERAGE_COLOR_TOLERANCE: i32 = 16;
+/// sitting near that boundary is reproduced least precisely.
+///
+/// The worst case is **17**, on saturated green — `[17, 250, 14]`. Exactly two
+/// points in the whole RGB cube exceed 16, which is why a stride-3 sweep (the
+/// first measurement taken here) stepped straight over both and reported 16.
+/// The strategy below draws from the full cube, so 16 was a bound the test
+/// could itself have falsified: rare enough never to be seen in practice, and
+/// wrong all the same.
+///
+/// Set at the real maximum: it is the format's behaviour, and drift past it is
+/// a regression worth failing on.
+const AVERAGE_COLOR_TOLERANCE: i32 = 17;
 /// Alpha is linear, not perceptual — its 5-bit DC stays within 4 across the
 /// whole 0..=255 sweep.
 const ALPHA_TOLERANCE: i32 = 4;
@@ -337,8 +357,8 @@ proptest! {
     ///
     /// A mean-of-the-decode comparison would be the wrong assertion: the DC is
     /// a mean in Oklab, and for a high-contrast ramp the perceptual mean and
-    /// the arithmetic sRGB mean genuinely differ by more than 13/255 — that is
-    /// the color space behaving correctly, not the codec drifting.
+    /// the arithmetic sRGB mean genuinely differ by more than 24/255 — that is
+    /// the colour space behaving correctly, not the codec drifting.
     #[test]
     fn average_color_reproduces_a_solid((w, h) in (1u32..=24, 1u32..=24), rgb in any::<[u8; 3]>()) {
         let rgba: Vec<u8> = std::iter::repeat_n([rgb[0], rgb[1], rgb[2], 255], (w * h) as usize)

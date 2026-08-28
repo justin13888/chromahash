@@ -74,3 +74,19 @@ proptest = { version = "1.11.0", default-features = false, features = ["std"] }
 # value by one bit makes the assertion untestable. The integration vectors are
 # unaffected (they are integer byte arrays).
 serde_json = { version = "1", features = ["float_roundtrip"] }
+
+# Profile for the cargo-mutants sweep (see rust/.cargo/mutants.toml).
+#
+# Optimized, because the sweep re-runs the whole suite once per mutant and the
+# suite is dominated by tier-4 decodes — ~20x faster than a debug build.
+#
+# But with `overflow-checks` back on, because release silently masks arithmetic
+# that debug traps on, and that *changes which mutants are killable*. Measured:
+# the `(bitpos + i) % 8` -> `+ 8` mutants in `bitpack.rs` are caught in debug
+# (the shift panics) and survive in release, where `1u8 << 11` quietly becomes
+# `1u8 << 3`. A sweep that reports those as equivalent is measuring the build
+# profile, not the tests.
+[profile.mutants]
+inherits = "release"
+overflow-checks = true
+debug-assertions = true

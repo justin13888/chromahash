@@ -10,13 +10,18 @@
 # src/decode.rs instead.
 no_default_features = true
 
-# Build the sweep in release. cargo-mutants re-runs the whole suite once per
-# mutant (~2000 of them), and the suite is dominated by tier-4 decodes, which
-# rasterize 256x256 px — ~0.7s each in a debug build and ~20x faster optimized.
-# The extra compile time per mutant is repaid many times over. Mutation testing
-# asks whether a *test* notices a changed line, which the optimizer does not
-# affect.
-profile = "release"
+# Build the sweep with the `mutants` profile: optimized (the sweep re-runs the
+# whole suite once per mutant, ~2000 of them, and the suite is dominated by
+# tier-4 decodes at ~0.7s each in a debug build) but with overflow and debug
+# assertions kept on.
+#
+# Plain `release` is *not* equivalent here. It masks arithmetic that debug traps
+# on, which changes which mutants are killable: `(bitpos + i) % 8` -> `+ 8` in
+# `bitpack.rs` is caught in debug, where the shift panics, and survives in
+# release, where `1u8 << 11` quietly becomes `1u8 << 3`. A sweep on `release`
+# reports those as equivalent mutants when they are nothing of the sort.
+# See `[profile.mutants]` in rust/Cargo.toml.
+profile = "mutants"
 
 # Re-enable `simd` plus the opt-in `simd-diff-tests` (both dropped above with the
 # defaults) so the host-runnable SIMD backends — AVX2/SSE2 on the x86_64 sweep
@@ -44,8 +49,11 @@ exclude_re = [
     "src/dct.rs.*replace < with <= in dct_encode_selected",
     # `if ratio > 1.0` picks the landscape branch. decode_aspect(byte) is 2^k for
     # k = byte/255*8 - 4, which equals 1.0 only at the non-integer byte 127.5, so
-    # ratio is never exactly 1.0 and `>` vs `>=` are equivalent over all 256 bytes.
+    # ratio is never exactly 1.0 and `>` vs `>=` are equivalent over all 256
+    # bytes. `no_aspect_byte_decodes_to_exactly_one` asserts that premise, so
+    # these two exclusions rest on a test rather than on this comment.
     "src/aspect.rs.*replace > with >= in decode_output_size",
+    "src/aspect.rs.*replace > with >= in base_output_size",
     # Drop joins the worker threads; replacing it with a no-op leaks threads but
     # leaves every batch result byte-identical, so no functional test can observe it.
     "src/batch.rs.*replace <impl Drop for BatchEncoder>::drop with \\(\\)",

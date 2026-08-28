@@ -48,6 +48,28 @@ pub fn decode_output_size(byte: u8, tier: u8) -> (u32, u32) {
 
 #[cfg(test)]
 mod tests {
+    /// `decode_aspect(byte)` is `2^(byte/255*8 - 4)`, which equals exactly 1.0
+    /// only at byte 127.5 — not an integer. So no input can make `ratio > 1.0`
+    /// and `ratio >= 1.0` disagree, in `base_output_size` or in
+    /// `decode_output_size`.
+    ///
+    /// This is the evidence for the two `>`/`>=` exclusions in
+    /// `rust/.cargo/mutants.toml`: without it they are just an assertion that
+    /// the mutants are equivalent, which is exactly the kind of unchecked claim
+    /// the exclusion list is supposed to avoid.
+    #[test]
+    fn no_aspect_byte_decodes_to_exactly_one() {
+        for byte in 0u8..=255 {
+            assert_ne!(
+                super::decode_aspect(byte),
+                1.0,
+                "byte {byte} decodes to exactly 1.0, so the > vs >= exclusions no longer hold"
+            );
+        }
+        // And 128 is the nearest: the square case the format calls 1:1.
+        assert!((super::decode_aspect(128) - 1.0).abs() < 0.02);
+    }
+
     use super::*;
 
     #[test]

@@ -781,6 +781,47 @@ mod tests {
         c
     }
 
+    /// `ac_shape` scales *both* `l_tiers` entries by `4^level`. Every shipped
+    /// layout has a zero second entry (`[(28, 4), (0, 4)]` and friends), so
+    /// `0 * s == 0 / s` and the scaling of that entry is unobservable through
+    /// the shipped tiers — a mutation of it survives every test in the crate.
+    ///
+    /// `LAYOUT_C` is the exception: it is the tiered-precision arm the sweep
+    /// explores (`[(8, 6), (14, 5)]`), and it is *only* reachable through
+    /// `Tunables`. Exercising it here is what pins the second entry's scaling,
+    /// so a bug in it would be caught before the sweep ever adopted the layout.
+    #[test]
+    fn both_l_tier_entries_scale_with_the_tier() {
+        let mut t = Tunables::DEFAULT;
+        t.layout_upper = LAYOUT_C;
+        assert_ne!(
+            LAYOUT_C.l_tiers[1].0, 0,
+            "this test needs a layout whose second L tier is non-empty"
+        );
+
+        // Tier 2 scales counts by 4^1; tier 3 by 4^2.
+        for (tier, scale) in [(2u8, 4usize), (3, 16)] {
+            for has_alpha in [false, true] {
+                let shape = ac_shape(&t, has_alpha, tier);
+                let src = if has_alpha {
+                    LAYOUT_C.la_tiers
+                } else {
+                    LAYOUT_C.l_tiers
+                };
+                assert_eq!(
+                    shape.l_tiers[0].0,
+                    src[0].0 * scale,
+                    "tier {tier} alpha={has_alpha}: first L tier"
+                );
+                assert_eq!(
+                    shape.l_tiers[1].0,
+                    src[1].0 * scale,
+                    "tier {tier} alpha={has_alpha}: second L tier"
+                );
+            }
+        }
+    }
+
     fn identity_error(m: &[[f64; 3]; 3]) -> f64 {
         let mut err = 0.0_f64;
         for (i, row) in m.iter().enumerate() {
