@@ -3,6 +3,7 @@
 //! with `include_str!` because the wasm test runner has no filesystem. Mirrors the
 //! C and UniFFI parity gates.
 
+use chromahash::MAX_TIER;
 use chromahash_wasm::{ChromaHash, Gamut};
 use serde_json::Value;
 use wasm_bindgen_test::*;
@@ -99,14 +100,35 @@ fn integration_decode_vectors() {
     }
 }
 
+/// Every tier has its own exact byte length, so a fixed length is not a valid
+/// assertion for any of them. Derive each length from a real encode rather than
+/// hard-coding one — that is what let the pre-renumbering `[0u8; 32]` assertion
+/// survive the tier renumbering, when byte 0 = 0 stopped meaning the 32-byte tier
+/// and started meaning the 21-byte compact one.
 #[wasm_bindgen_test]
-fn from_bytes_rejects_wrong_length() {
-    assert!(
-        ChromaHash::from_bytes(&[0u8; 16]).is_err(),
-        "from_bytes should reject a 16-byte buffer"
-    );
-    assert!(
-        ChromaHash::from_bytes(&[0u8; 32]).is_ok(),
-        "from_bytes should accept a 32-byte buffer"
-    );
+fn from_bytes_accepts_every_tier_and_rejects_wrong_lengths() {
+    let rgba = vec![128u8; 4 * 4 * 4];
+
+    for tier in 0..=MAX_TIER {
+        let encoded = ChromaHash::encode_with_quality(4, 4, &rgba, Gamut::Srgb, tier).as_bytes();
+
+        assert!(
+            ChromaHash::from_bytes(&encoded).is_ok(),
+            "tier {tier}: from_bytes rejected its own {} byte encoding",
+            encoded.len()
+        );
+
+        let short = &encoded[..encoded.len() - 1];
+        assert!(
+            ChromaHash::from_bytes(short).is_err(),
+            "tier {tier}: from_bytes accepted a buffer one byte short"
+        );
+
+        let mut long = encoded.clone();
+        long.push(0);
+        assert!(
+            ChromaHash::from_bytes(&long).is_err(),
+            "tier {tier}: from_bytes accepted a buffer one byte long"
+        );
+    }
 }
