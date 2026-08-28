@@ -50,15 +50,22 @@ exclude_re = [
     "replace \\| with \\^ in render_at_size",
     "replace \\| with \\^ in average_color_with",
 
-    # The decode-aware DC search scans the symmetric offset set {0, -1, 1} and
-    # keeps the first strict improvement. Negating an offset (`l0 + dl` → `l0 - dl`)
-    # scans the same set, and `<` vs `<=` only reorders exact-tie candidates — both
-    # yield identical codes. Dropping the `-1` offset would only change a result if
-    # some channel's optimum sat exactly one step below nominal, which no input in
-    # the spec corpus reaches.
+    # The decode-aware DC search scans the *symmetric* offset set {0, -1, 1}, so
+    # negating an offset (`l0 + dl` → `l0 - dl`) scans the same three candidates
+    # in a different order. `<` is strict, so a reordering changes the winner only
+    # on an exact tie, where both orders keep an equally good code.
+    #
+    # `delete - in select_dc_codes` and `replace < with <= in select_dc_codes`
+    # used to be excluded here on the same reasoning. They are not equivalent —
+    # `select_dc_codes_searches_l_neighbors` kills both — so they are gone.
     "replace \\+ with - in select_dc_codes",
-    "delete - in select_dc_codes",
-    "replace < with <= in select_dc_codes",
+    # `l_hi = (1 << l_dc_bits) - 1` is the L candidate's clamp ceiling. Widening
+    # it to 128 is reachable only when `l0` is already 127, which needs
+    # `l_mean >= 1`; there the target is clipped to white and code 128 decodes to
+    # that same clipped white, so it is an exact tie and the strict `<` keeps 127.
+    # The a/b analogues on the following two lines are *not* equivalent — they are
+    # killed by `select_dc_codes_never_exceeds_its_field_width`.
+    "src/encode.rs.*replace - with (\\+|/) in select_dc_codes",
 
     # Numeric kernels. portable_ln / portable_exp range-reduce in a loop: operator
     # mutations either re-converge to the same value (the series is invariant to
@@ -66,8 +73,8 @@ exclude_re = [
     # comparisons guard the x==0 / boundary cases the early returns already handle.
     # All are pinned by the exact known-value tests in this module; mutation adds
     # no signal. (cbrt_signed is also retained only for those tests.)
-    "in portable_ln",
-    "in portable_exp",
+    "src/math_utils.rs.* in portable_ln",
+    "src/math_utils.rs.* in portable_exp",
     "replace < with <= in portable_cos",
     "replace > with >= in portable_cos",
     "replace < with <= in cbrt_halley",

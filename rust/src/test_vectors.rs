@@ -807,4 +807,194 @@ mod tests {
 
         eprintln!("Test vectors generated in {:?}", spec_dir);
     }
+
+    // ── Read the generated vectors back ───────────────────────────────────────
+    //
+    // Four of the unit vector files — bitpack, cbrt, color, mulaw — were written
+    // by the generator above and then read by nothing: not this crate, not
+    // `spec/validate.py`, not any binding. (`unit-aspect` and `unit-selection`
+    // are consumed by `spec/validate.py`; `unit-validate` by
+    // `tests/spec_vectors.rs`.) A committed file nobody asserts against is not a
+    // test — it is a snapshot that regenerates silently.
+    //
+    // These read them back through the same kernels. That does not make the
+    // vectors an independent oracle — the crate is the reference — but it does
+    // turn "someone regenerated the vectors" from an invisible event into a
+    // failing test, which is exactly the guarantee `tests/spec_vectors.rs`
+    // already gives the integration vectors.
+    //
+    // Gated on `spec-vectors` for the same reason that test target is: the
+    // cargo-mutants sweep builds this crate in isolation, without the sibling
+    // `spec/` directory, so `include_str!` could not resolve there.
+    #[cfg(feature = "spec-vectors")]
+    mod read_back {
+        use super::*;
+        use serde_json::Value;
+
+        macro_rules! vectors {
+            ($name:literal) => {{
+                let raw = include_str!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../spec/test-vectors/",
+                    $name
+                ));
+                let parsed: Value = serde_json::from_str(raw)
+                    .unwrap_or_else(|e| panic!("{} is not valid JSON: {e}", $name));
+                let cases = parsed
+                    .as_array()
+                    .unwrap_or_else(|| panic!("{} should be a JSON array", $name))
+                    .clone();
+                assert!(!cases.is_empty(), "{} is empty", $name);
+                cases
+            }};
+        }
+
+        fn f64_at(v: &Value) -> f64 {
+            v.as_f64().expect("expected a JSON number")
+        }
+
+        /// Bit fields must round-trip at every position and width the format
+        /// uses, including the ones that straddle a byte boundary.
+        #[test]
+        fn unit_bitpack_vectors() {
+            let cases = vectors!("unit-bitpack.json");
+            for case in &cases {
+                let name = case["name"].as_str().unwrap_or("<unnamed>");
+                let pos = case["input"]["bitpos"].as_u64().expect("bitpos") as usize;
+                let count = case["input"]["count"].as_u64().expect("count") as u32;
+                let value = case["input"]["value"].as_u64().expect("value") as u32;
+                let expected = case["expected"]["read_back"].as_u64().expect("read_back") as u32;
+
+                let mut buf = [0u8; 32];
+                write_bits(&mut buf, pos, count, value);
+                assert_eq!(read_bits(&buf, pos, count), expected, "{name}");
+            }
+        }
+
+        /// The Halley cube root is the hot path in the Oklab transform. The
+        /// vectors carry the ULP distance to the reference at generation time;
+        /// reproduce the value exactly and stay within that distance.
+        #[test]
+        fn unit_cbrt_vectors() {
+            let cases = vectors!("unit-cbrt.json");
+            for case in &cases {
+                let name = case["name"].as_str().unwrap_or("<unnamed>");
+                let x = f64_at(&case["input"]);
+                let expected = f64_at(&case["expected"]);
+                let max_ulp = case["max_ulp_error"].as_u64().expect("max_ulp_error");
+
+                let got = cbrt_halley(x);
+                assert_eq!(
+                    got.to_bits(),
+                    expected.to_bits(),
+                    "{name}: cbrt_halley({x})"
+                );
+
+                let reference = cbrt_signed(x);
+                if x != 0.0 && got.is_sign_negative() == reference.is_sign_negative() {
+                    assert!(
+                        got.to_bits().abs_diff(reference.to_bits()) <= max_ulp.max(1),
+                        "{name}: {got} is more than {max_ulp} ULP from {reference}"
+                    );
+                }
+            }
+        }
+
+        /// The Oklab transform and its inverse, per gamut. Bit-exact: these are
+        /// the numbers every other implementation must reproduce.
+        #[test]
+        fn unit_color_vectors() {
+            let cases = vectors!("unit-color.json");
+            for case in &cases {
+                let name = case["name"].as_str().unwrap_or("<unnamed>");
+                let gamut = match case["input"]["gamut"].as_str().expect("gamut") {
+                    "sRGB" => Gamut::Srgb,
+                    "Display P3" => Gamut::DisplayP3,
+                    "Adobe RGB" => Gamut::AdobeRgb,
+                    "BT.2020" => Gamut::Bt2020,
+                    "ProPhoto RGB" => Gamut::ProPhotoRgb,
+                    other => panic!("{name}: unknown gamut {other:?}"),
+                };
+                let triple = |v: &Value| -> [f64; 3] {
+                    let a = v.as_array().expect("expected a 3-element array");
+                    [f64_at(&a[0]), f64_at(&a[1]), f64_at(&a[2])]
+                };
+
+                let lab = if let Some(linear) = case["input"].get("linear_rgb") {
+                    linear_rgb_to_oklab(triple(linear), gamut)
+                } else {
+                    let rgb = triple(&case["input"]["gamma_rgb"]);
+                    gamma_rgb_to_oklab(rgb[0], rgb[1], rgb[2], gamut)
+                };
+                let expected_lab = triple(&case["expected"]["oklab"]);
+                for c in 0..3 {
+                    assert_eq!(
+                        lab[c].to_bits(),
+                        expected_lab[c].to_bits(),
+                        "{name}: oklab[{c}]"
+                    );
+                }
+
+                if let Some(rt) = case["expected"].get("roundtrip_srgb") {
+                    let got = oklab_to_linear_srgb(lab);
+                    let expected_rt = triple(rt);
+                    for c in 0..3 {
+                        assert_eq!(
+                            got[c].to_bits(),
+                            expected_rt[c].to_bits(),
+                            "{name}: roundtrip_srgb[{c}]"
+                        );
+                    }
+                }
+            }
+        }
+
+        /// The µ-law companding quantizer, at both µ values the format uses and
+        /// every bit width — including the never-written top code, which must
+        /// clamp rather than run off the end of the level table.
+        #[test]
+        fn unit_mulaw_vectors() {
+            let cases = vectors!("unit-mulaw.json");
+            for case in &cases {
+                let name = case["name"].as_str().unwrap_or("<unnamed>");
+                let input = &case["input"];
+                let expected = &case["expected"];
+                let bits = input["bits"].as_u64().expect("bits") as u32;
+                let mu = f64_at(&input["mu"]);
+
+                // Top-code cases carry only an index; value cases carry the rest.
+                if let Some(index) = input.get("index") {
+                    let i = index.as_u64().expect("index") as u32;
+                    assert_eq!(
+                        mu_law_dequantize(i, bits, mu).to_bits(),
+                        f64_at(&expected["dequantized"]).to_bits(),
+                        "{name}: dequantize"
+                    );
+                    continue;
+                }
+
+                let v = f64_at(&input["value"]);
+                assert_eq!(
+                    mu_compress(v, mu).to_bits(),
+                    f64_at(&expected["compressed"]).to_bits(),
+                    "{name}: compress"
+                );
+                assert_eq!(
+                    mu_expand(mu_compress(v, mu), mu).to_bits(),
+                    f64_at(&expected["expanded"]).to_bits(),
+                    "{name}: expand"
+                );
+                assert_eq!(
+                    mu_law_quantize(v, bits, mu) as u64,
+                    expected["quantized"].as_u64().expect("quantized"),
+                    "{name}: quantize"
+                );
+                assert_eq!(
+                    mu_law_dequantize(mu_law_quantize(v, bits, mu), bits, mu).to_bits(),
+                    f64_at(&expected["dequantized"]).to_bits(),
+                    "{name}: dequantize"
+                );
+            }
+        }
+    }
 }

@@ -1439,6 +1439,94 @@ mod tests {
     }
 
     #[test]
+    fn cfl_residual_reaches_the_quantizer() {
+        // Chroma-from-luma is a sweep-only tuning arm (`Tunables::DEFAULT
+        // .cfl_bits == 0`), so nothing in the shipped format exercises it and
+        // the whole branch was untested — the two `AcQuantJob { values: &a_res,
+        // .. }` overrides could be deleted with every test still green.
+        //
+        // Encode a chroma-correlated image both ways. With CfL on, the chroma
+        // channels quantize their *residual against luma*, so the bitstream
+        // must differ from the same image without it; and the round trip must
+        // stay coherent, since decode.rs reads the two gain codes back.
+        let mut t = Tunables::DEFAULT;
+        t.cfl_bits = 4;
+        assert_eq!(
+            Tunables::DEFAULT.cfl_bits,
+            0,
+            "if CfL ever ships, this test's premise changes"
+        );
+
+        // A ramp whose chroma tracks its luma — exactly the correlation CfL
+        // exists to exploit, so the residual is not the original signal.
+        let (w, h) = (8u32, 8u32);
+        let mut rgba = vec![0u8; (w * h * 4) as usize];
+        for y in 0..h {
+            for x in 0..w {
+                let i = ((y * w + x) * 4) as usize;
+                let v = ((x + y) * 255 / (w + h - 2)) as u8;
+                rgba[i] = v;
+                rgba[i + 1] = v / 2;
+                rgba[i + 2] = 255 - v;
+                rgba[i + 3] = 255;
+            }
+        }
+
+        let with_cfl = encode_with(w, h, &rgba, Gamut::Srgb, &t, DEFAULT_TIER);
+        let without = encode_with(w, h, &rgba, Gamut::Srgb, &Tunables::DEFAULT, DEFAULT_TIER);
+        assert_ne!(with_cfl, without, "cfl_bits > 0 must change the bitstream");
+
+        // Pinned bytes, not just "different": signalling the two gain codes
+        // already makes the bitstream differ, so an inequality alone would still
+        // pass if the chroma channels quantized the *original* AC instead of the
+        // residual. Only the exact payload distinguishes those two.
+        #[rustfmt::skip]
+        let expected: [u8; 33] = [
+            8, 128, 64, 231, 172, 56, 22, 63, 128, 174, 26, 162, 29, 222, 225, 221, 221,
+            221, 221, 221, 221, 93, 18, 68, 146, 166, 81, 3, 36, 137, 212, 182, 109,
+        ];
+        assert_eq!(&with_cfl[..], &expected[..], "CfL bitstream");
+
+        // And the decoder agrees with the encoder about what those bits mean.
+        let (dw, dh, pixels) = crate::decode::decode_with(&with_cfl, &t);
+        assert_eq!(pixels.len(), (dw * dh * 4) as usize);
+    }
+
+    #[test]
+    fn select_dc_codes_never_exceeds_its_field_width() {
+        // The search clamps each candidate to `(1 << bits) - 1`. A ceiling one
+        // too high would let it return a code that does not fit the field, and
+        // `write_bits` would silently truncate it — turning a maximal channel
+        // into a zero one. Sweep the working range, including the corners that
+        // actually land on the ceiling (21 of a stride-5 sweep of the RGB cube
+        // do), and assert every code fits.
+        let t = &Tunables::DEFAULT;
+        let l_hi = (1u32 << t.l_dc_bits) - 1;
+        let a_hi = (1u32 << t.a_dc_bits) - 1;
+        let b_hi = (1u32 << t.b_dc_bits) - 1;
+
+        let mut saw_ceiling = false;
+        for li in 0..=20 {
+            let l = li as f64 / 20.0;
+            for ai in 0..=20 {
+                let a = (ai as f64 / 20.0 - 0.5) * 2.0 * t.max_chroma_a;
+                for bi in 0..=20 {
+                    let b = (bi as f64 / 20.0 - 0.5) * 2.0 * t.max_chroma_b;
+                    let (lq, aq, bq) = select_dc_codes(l, a, b, t);
+                    assert!(lq <= l_hi, "L code {lq} exceeds {l_hi} at ({l}, {a}, {b})");
+                    assert!(aq <= a_hi, "a code {aq} exceeds {a_hi} at ({l}, {a}, {b})");
+                    assert!(bq <= b_hi, "b code {bq} exceeds {b_hi} at ({l}, {a}, {b})");
+                    saw_ceiling |= lq == l_hi || aq == a_hi || bq == b_hi;
+                }
+            }
+        }
+        assert!(
+            saw_ceiling,
+            "the sweep must actually reach a ceiling, or it proves nothing"
+        );
+    }
+
+    #[test]
     fn encode_golden_solids() {
         // Saturated gamut corners exercise the decode-aware DC code search; the
         // neutral/extreme tones pin the DC and scale quantizers and the header
