@@ -56,6 +56,27 @@ func TestBatchEncodeHonorsQuality(t *testing.T) {
 	}
 }
 
+// Go cannot default a struct field, so an ImageInput built without Quality
+// encodes at CompactTier — unlike every other binding, where an omitted tier
+// is DefaultTier. That asymmetry is forced by the language, not chosen, and
+// it is the trap that made BenchmarkBatchEncode measure 21-byte hashes against
+// a 32-byte serial baseline. Pin it so it is a documented property rather than
+// a surprise.
+func TestZeroValueQualityIsTheCompactTier(t *testing.T) {
+	rgba := solidImage(8, 8, 200, 100, 50, 255)
+	be := NewBatchEncoder()
+	defer be.Close()
+
+	got := be.EncodeBatch([]ImageInput{{W: 8, H: 8, Rgba: rgba, Gamut: GamutSRGB}})
+	if len(got[0].Hash) != tierByteLengths[CompactTier] {
+		t.Errorf("zero-value Quality produced %d bytes, want %d (CompactTier)",
+			len(got[0].Hash), tierByteLengths[CompactTier])
+	}
+	if !bytes.Equal(got[0].Hash, EncodeWithQuality(8, 8, rgba, GamutSRGB, CompactTier).Hash) {
+		t.Error("zero-value Quality did not match an explicit CompactTier encode")
+	}
+}
+
 func TestBatchEncodeRejectsReservedTier(t *testing.T) {
 	defer func() {
 		if r := recover(); r == nil {

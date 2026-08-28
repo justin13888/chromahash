@@ -298,9 +298,22 @@ pub struct ImageInput {
     /// default tier, matching [`ChromaHash::encode`] — note that the tier
     /// codes start at 0 for the *compact* tier, so an explicit 0 is the
     /// 21-byte hash.
+    ///
+    /// The literal is forced: `#[uniffi(default = …)]` takes a literal, not a
+    /// path, so it cannot name [`DEFAULT_TIER`]. The const assertion below ties
+    /// the two together at compile time instead.
     #[uniffi(default = 1)]
     pub quality: u8,
 }
+
+// `#[uniffi(default = 1)]` on `ImageInput::quality` above cannot name a const,
+// so this is what stops it drifting from the format: renumbering the tiers
+// without updating that literal fails the build rather than silently changing
+// what an omitted tier means.
+const _: () = assert!(
+    DEFAULT_TIER == 1,
+    "ImageInput::quality's #[uniffi(default = 1)] no longer matches DEFAULT_TIER"
+);
 
 /// A stateful batch encoder backed by a persistent worker pool. Output is
 /// byte-identical to calling [`ChromaHash::encode`] on each image individually.

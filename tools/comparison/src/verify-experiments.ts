@@ -273,7 +273,37 @@ interface ColumnBinding extends CommonBinding {
   series: ColumnSeries[];
 }
 
-type Binding = RowBinding | ColumnBinding;
+/**
+ * A table whose Δ column is derived from two other columns *of the same row*.
+ *
+ * §4.1 is the case that motivated it: three rows, each "small raster" vs
+ * "native tier raster" with a Δ between them, and the middle row's Δ was an
+ * order of magnitude off its own two inputs — through two hand checks, because
+ * nothing computed it. The row labels here name coefficient counts rather than
+ * sweep arms, so there is no clean row binding; checking the arithmetic the
+ * document does on its own printed values catches this class regardless.
+ */
+interface RatioBinding extends CommonBinding {
+  kind: "row-ratio";
+  /** Header of the derived column. */
+  delta: string;
+  /** Headers of the two columns it is derived from: (cand - base) / base. */
+  cand: string;
+  base: string;
+  /** Sweep the arms live in. */
+  sweep: string;
+  /**
+   * Doc row label → the two sweep arms its two columns report.
+   *
+   * The Δ must come from the arms' full precision, not from the document's
+   * rounded cells: §4.1's three-decimal inputs (7.089 vs 7.093) give −0.056%,
+   * while the values behind them (7.089273 vs 7.092663) give −0.048%. When two
+   * numbers nearly cancel, the printed pair cannot reconstruct their ratio.
+   */
+  arms: Record<string, { cand: string; base: string }>;
+}
+
+type Binding = RowBinding | ColumnBinding | RatioBinding;
 
 // ─── Checking ───────────────────────────────────────────────────────────────
 
@@ -498,6 +528,85 @@ function checkRowTable(
   return null;
 }
 
+/**
+ * Check a table whose two value columns are two arms of one sweep and whose Δ
+ * column is the ratio between them.
+ */
+function checkRatioTable(
+  b: RatioBinding,
+  table: DocTable,
+  failures: Failure[],
+  stats: { cells: number },
+): string | null {
+  const col = (name: string): number => {
+    const i = table.header.findIndex((h) => h.trim() === name);
+    if (i < 0) throw new Error(`no column ${JSON.stringify(name)}`);
+    return i;
+  };
+
+  let deltaCol: number;
+  let candCol: number;
+  let baseCol: number;
+  try {
+    deltaCol = col(b.delta);
+    candCol = col(b.cand);
+    baseCol = col(b.base);
+  } catch (e) {
+    return (e as Error).message;
+  }
+
+  const sweep = loadSweep(b.sweep);
+  if (!sweep) return `no output/sweeps/${b.sweep}.json — run the sweep`;
+
+  for (const [rowIndex, row] of table.rows.entries()) {
+    const label = (row[0] ?? "").trim();
+    const arms = b.arms[label];
+    if (!arms) return `no arms mapped for row ${JSON.stringify(label)}`;
+
+    const cand = findRow(sweep, arms.cand);
+    const base = findRow(sweep, arms.base);
+    if (!cand) return `no sweep arm ${JSON.stringify(arms.cand)}`;
+    if (!base) return `no sweep arm ${JSON.stringify(arms.base)}`;
+
+    if (cand.meanCiede === null || base.meanCiede === null) {
+      return `arm ${JSON.stringify(arms.cand)} or ${JSON.stringify(arms.base)} has no ΔE00`;
+    }
+    const candCiede = cand.meanCiede;
+    const baseCiede = base.meanCiede;
+
+    const ctx = (column: string, colIndex: number) => ({
+      section: b.section,
+      row: label,
+      column,
+      fix: { line: table.line, rowIndex, colIndex },
+    });
+
+    // The two value columns, then the Δ derived from their full precision.
+    compare(
+      ctx(b.cand, candCol),
+      row[candCol] ?? "",
+      candCiede,
+      failures,
+      stats,
+    );
+    compare(
+      ctx(b.base, baseCol),
+      row[baseCol] ?? "",
+      baseCiede,
+      failures,
+      stats,
+    );
+    compare(
+      ctx(b.delta, deltaCol),
+      row[deltaCol] ?? "",
+      ((candCiede - baseCiede) / baseCiede) * 100,
+      failures,
+      stats,
+    );
+  }
+  return null;
+}
+
 function checkColumnTable(
   b: ColumnBinding,
   table: DocTable,
@@ -634,6 +743,34 @@ const byFormatAndBytes: Resolver = (rows, docCells) => {
 };
 
 const BINDINGS: Binding[] = [
+  // §4.1 — the raster-vs-coefficients table. Its Δ is derived from the two
+  // columns beside it, and was an order of magnitude wrong through two hand
+  // checks. The row labels name coefficient counts, not sweep arms, so there is
+  // no clean row binding; checking the document's own arithmetic catches it.
+  {
+    kind: "row-ratio",
+    section: "4.1",
+    table: 0,
+    sweep: "render-raster",
+    delta: "Δ",
+    cand: "small raster",
+    base: "native tier raster",
+    arms: {
+      "104 L / 36 C (108 B)": {
+        cand: "t1 counts @tier0 (32px)",
+        base: "t1 shipped (108 B, 64px)",
+      },
+      "416 L / 144 C (411 B)": {
+        cand: "t2 counts @tier0 (32px)",
+        base: "t2 shipped (411 B, 128px)",
+      },
+      "1664 L / 576 C (1623 B)": {
+        cand: "t3 counts @tier1 (64px)",
+        base: "t3 shipped (1623 B, 256px)",
+      },
+    },
+  },
+
   // §1 — the rate–distortion ladder, one column per byte budget.
   {
     kind: "columns",
@@ -1166,6 +1303,10 @@ const BINDINGS: Binding[] = [
     aliases: {
       "shipped A5@4 L20@5 C9@4": "SHIPPED A5@4 L20@5 C9@4",
       "**A28@3 L22@4 C3@3** (the tier-0 choice)": "A28@3 L22@4 C3@3",
+      // The config labelled this arm L26@4 while running `la1=28:4`. The label
+      // is fixed in sweeps/alpha-tier1.json; the committed *output* still
+      // carries the old one until the sweep is re-run, so map across it.
+      "A20@3 L28@4 C3@3": "A20@3 L26@4 C3@3",
     },
   },
 
@@ -1209,8 +1350,7 @@ const UNBOUND_NOTES: Record<string, string> = {
   "2#0":
     "superseded by §11.14 — the record of a round whose run is gone; its ChromaHash rows used a synthesized layout that no longer exists, and its competitor rows predate the cached rd-budget run",
   "8.6#0": "superseded by §11.14, same reason as §2",
-  "4.1#0":
-    "each row compares two sweep arms across a raster change, not one arm against an incumbent; verified by hand against render-raster.json",
+
   "4.2#0": "an allocation grid quoted at two budgets from one sweep",
   "4.2#1":
     "a precision-by-budget matrix: columns are budgets, rows are precisions, and every cell names a different arm",
@@ -1270,7 +1410,9 @@ for (const binding of BINDINGS) {
   const problem =
     binding.kind === "rows"
       ? checkRowTable(binding, table, failures, stats)
-      : checkColumnTable(binding, table, failures, stats);
+      : binding.kind === "row-ratio"
+        ? checkRatioTable(binding, table, failures, stats)
+        : checkColumnTable(binding, table, failures, stats);
   if (problem) {
     skipped.push(`§${binding.section} table ${binding.table ?? 0}: ${problem}`);
     continue;

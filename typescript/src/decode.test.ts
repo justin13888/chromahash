@@ -22,7 +22,14 @@ const wasmPath = resolve(currentDir, "../wasm/chromahash_wasm_bg.wasm");
 await init(readFileSync(wasmPath));
 
 function loadVectors<T>(name: string): T {
-  return JSON.parse(readFileSync(resolve(specDir, name), "utf-8")) as T;
+  // A missing or empty vector file is a broken gate, not a reason to pass:
+  // `JSON.parse` of `[]` would let every `for` below run zero assertions and
+  // report green. That is the defect this suite exists to prevent elsewhere.
+  const parsed = JSON.parse(readFileSync(resolve(specDir, name), "utf-8"));
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    throw new Error(`spec vector file is missing or empty: ${name}`);
+  }
+  return parsed as T;
 }
 
 // ---------------------------------------------------------------------------

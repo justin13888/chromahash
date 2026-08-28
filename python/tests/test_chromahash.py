@@ -149,9 +149,20 @@ def test_from_bytes_rejects_wrong_length(tier: int):
         ChromaHash.from_bytes(b"")
 
 
-def test_from_bytes_rejects_a_reserved_tier_code():
+@pytest.mark.parametrize(
+    ("what", "mutate"),
+    [
+        # The reserved bit is how v1 reserves room for a future extension: a
+        # decoder that ignored it would accept a later format's hash and render
+        # garbage.
+        ("reserved bit set", lambda b: b | 0b1000_0000),
+        ("reserved tier code", lambda b: (b & ~0b0011_1000) | ((MAX_TIER + 1) << 3)),
+        ("unsupported version", lambda b: b | 0b0000_0001),
+    ],
+)
+def test_from_bytes_rejects_a_malformed_header(what, mutate):
     encoded = bytearray(ChromaHash.encode(4, 4, solid_image(4, 4, 1, 2, 3, 255)).as_bytes())
-    encoded[0] = (MAX_TIER + 1) << 3
+    encoded[0] = mutate(encoded[0]) & 0xFF
     with pytest.raises(ChromaHashError.InvalidData):
         ChromaHash.from_bytes(bytes(encoded))
 
@@ -201,8 +212,12 @@ def test_batch_encode_defaults_to_the_default_tier():
 
 
 def test_batch_encode_rejects_a_reserved_tier():
+    """The batch path raises the same typed errors as `encode_with_quality`,
+    not a bare ValueError — one taxonomy for the caller, matching every other
+    binding.
+    """
     rgba = solid_image(4, 4, 128, 64, 32, 255)
-    with pytest.raises(ValueError, match="item 1"):
+    with pytest.raises(ChromaHashError.InvalidTier, match="item 1"):
         BatchEncoder().encode_batch(
             [
                 ImageInput(4, 4, rgba, Gamut.SRGB),
@@ -212,8 +227,19 @@ def test_batch_encode_rejects_a_reserved_tier():
 
 
 def test_tier_constants_come_from_the_core():
-    """They are read across the FFI, not restated here — so this asserts the
-    ordering the format guarantees rather than re-hardcoding the codes.
+    """They are read across the FFI, not restated here, so comparing them to
+    themselves would assert nothing. What is checkable is the contract: the
+    ordering the format guarantees, and the byte length each code selects.
     """
     assert COMPACT_TIER < DEFAULT_TIER < MAX_TIER
     assert FORMAT_VERSION == 0
+
+    rgba = solid_image(4, 4, 128, 128, 128, 255)
+    assert (
+        len(ChromaHash.encode_with_quality(4, 4, rgba, Gamut.SRGB, COMPACT_TIER).as_bytes()) == 21
+    )
+    assert (
+        len(ChromaHash.encode_with_quality(4, 4, rgba, Gamut.SRGB, DEFAULT_TIER).as_bytes()) == 32
+    )
+    with pytest.raises(ChromaHashError.InvalidTier):
+        ChromaHash.encode_with_quality(4, 4, rgba, Gamut.SRGB, MAX_TIER + 1)

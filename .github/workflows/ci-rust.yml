@@ -81,15 +81,23 @@ jobs:
         with:
           toolchain: ${{ steps.msrv.outputs.version }}
 
-      # Build only: the dev-dependencies (proptest, serde_json) carry their own,
-      # higher, minimums, so `cargo test` on the MSRV toolchain would fail on
-      # something that never reaches a library consumer. `--all-targets` without
-      # dev-deps is not expressible, so the gate is what a consumer actually
-      # compiles: the library, with and without default features.
+      # `rust/rust-toolchain.toml` pins `channel = "stable"`, and a toolchain
+      # file beats the rustup default that the action sets — so a plain `cargo
+      # build` in this directory silently runs on stable and the job proves
+      # nothing. `cargo +<version>` overrides the file explicitly.
+      #
+      # Examples and tests are included: an MSRV violation in an example is
+      # exactly what went unnoticed before (`is_multiple_of`, stable from 1.87),
+      # and both dev-dependencies do compile on 1.85.
       - name: Build on the declared MSRV
+        env:
+          MSRV: ${{ steps.msrv.outputs.version }}
         run: |
-          cargo build
-          cargo build --no-default-features
+          # Fail loudly if the pin ever stops taking effect.
+          cargo "+$MSRV" --version
+          cargo "+$MSRV" build --all-targets
+          cargo "+$MSRV" build --no-default-features
+          cargo "+$MSRV" test --no-run
 
   # Each SIMD backend only compiles for its own target, so "test every backend"
   # means running the differential suite on (or under emulation of) every target.

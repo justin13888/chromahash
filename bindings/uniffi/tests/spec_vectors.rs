@@ -156,6 +156,58 @@ fn batch_encode_honors_quality() {
     );
 }
 
+/// The reserved bit is how v1 reserves room for a future extension: a decoder
+/// that ignored it would accept a hash written by a later format and render
+/// garbage. Neither it nor a reserved tier code was exercised here.
+#[test]
+fn from_bytes_rejects_a_malformed_header() {
+    let rgba = vec![128u8; 4 * 4 * 4];
+    let valid = ChromaHash::encode(4, 4, rgba, Gamut::Srgb)
+        .expect("encode")
+        .as_bytes();
+
+    for (what, mutate) in [
+        ("reserved bit set", 0usize),
+        ("reserved tier code", 1),
+        ("unsupported version", 2),
+    ] {
+        let mut bytes = valid.clone();
+        bytes[0] = match mutate {
+            0 => bytes[0] | 0b1000_0000,
+            1 => (bytes[0] & !0b0011_1000) | ((MAX_TIER + 1) << 3),
+            _ => bytes[0] | 0b0000_0001,
+        };
+        assert!(
+            matches!(
+                ChromaHash::from_bytes(bytes),
+                Err(ChromaHashError::InvalidData { .. })
+            ),
+            "{what}"
+        );
+    }
+}
+
+/// The decoded raster is a function of the tier, so assert the values rather
+/// than a range wide enough to pass at every one of them.
+#[test]
+fn decoded_dimensions_follow_the_tier_raster() {
+    let rgba: Vec<u8> = std::iter::repeat_n([128u8, 128, 128, 255], 4 * 4)
+        .flatten()
+        .collect();
+    let edges = [32i32, 32, 64, 128, 256];
+    for tier in COMPACT_TIER..=MAX_TIER {
+        let hash = ChromaHash::encode_with_quality(4, 4, rgba.clone(), Gamut::Srgb, tier)
+            .expect("a valid tier must encode");
+        let result = hash.decode();
+        assert_eq!(result.width, edges[tier as usize], "tier {tier} width");
+        assert_eq!(result.height, edges[tier as usize], "tier {tier} height");
+        assert_eq!(
+            result.rgba.len(),
+            (result.width * result.height * 4) as usize
+        );
+    }
+}
+
 /// The core panics on invalid input; a panic across FFI is undefined behaviour,
 /// so the binding must have turned each one into a typed error first.
 #[test]

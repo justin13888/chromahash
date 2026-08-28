@@ -226,6 +226,32 @@ class ChromaHashTest {
     }
 
     /**
+     * The reserved bit is how v1 reserves room for a future extension: a decoder
+     * that ignored it would accept a hash written by a later format and render
+     * garbage. Neither it nor a reserved tier code was exercised here.
+     */
+    @Test
+    fun `fromBytes rejects a malformed header`() {
+        val valid = ChromaHash.encode(4u, 4u, solid4x4(), Gamut.SRGB).use { it.asBytes() }
+
+        val cases =
+            mapOf(
+                "reserved bit set" to (valid[0].toInt() or 0b1000_0000),
+                "reserved tier code" to
+                    ((valid[0].toInt() and 0b0011_1000.inv()) or ((MAX_TIER + 1) shl 3)),
+                "unsupported version" to (valid[0].toInt() or 0b0000_0001),
+            )
+
+        for ((what, b0) in cases) {
+            val bytes = valid.copyOf()
+            bytes[0] = b0.toByte()
+            assertFailsWith<ChromaHashException.InvalidData>(what) {
+                ChromaHash.fromBytes(bytes)
+            }
+        }
+    }
+
+    /**
      * The core panics on invalid input, and a panic across the FFI boundary is
      * undefined behaviour — so the binding validates first and throws a typed
      * error, matching the C ABI's status codes.
@@ -304,10 +330,31 @@ class ChromaHashTest {
      */
     @Test
     fun `tier constants come from the core`() {
+        // Not `assertEquals(MAX_TIER, maxTier())` — MAX_TIER *is* maxTier(), so
+        // that asserts nothing. What is checkable is the contract the format
+        // guarantees about the codes, and the byte lengths they select.
         assertEquals(0, compactTier().toInt())
-        assertEquals(MAX_TIER, maxTier().toInt())
-        assertTrue(compactTier() < defaultTier() && defaultTier() < maxTier())
         assertEquals(0, formatVersion().toInt())
+        assertTrue(compactTier() < defaultTier() && defaultTier() < maxTier())
+
+        val rgba = solid4x4()
+        assertEquals(
+            21,
+            ChromaHash.encodeWithQuality(4u, 4u, rgba, Gamut.SRGB, compactTier()).use {
+                it.asBytes().size
+            },
+            "compactTier() must select the 21-byte tier",
+        )
+        assertEquals(
+            32,
+            ChromaHash.encodeWithQuality(4u, 4u, rgba, Gamut.SRGB, defaultTier()).use {
+                it.asBytes().size
+            },
+            "defaultTier() must select the 32-byte tier",
+        )
+        assertFailsWith<ChromaHashException.InvalidTier> {
+            ChromaHash.encodeWithQuality(4u, 4u, rgba, Gamut.SRGB, (maxTier() + 1u).toUByte())
+        }
     }
 
     private companion object {

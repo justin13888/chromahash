@@ -27,7 +27,35 @@ const wasmPath = resolve(currentDir, "../wasm/chromahash_wasm_bg.wasm");
 await init(readFileSync(wasmPath));
 
 function loadVectors<T>(name: string): T {
-  return JSON.parse(readFileSync(resolve(specDir, name), "utf-8")) as T;
+  // A missing or empty vector file is a broken gate, not a reason to pass:
+  // `JSON.parse` of `[]` would let every `for` below run zero assertions and
+  // report green. That is the defect this suite exists to prevent elsewhere.
+  const parsed = JSON.parse(readFileSync(resolve(specDir, name), "utf-8"));
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    throw new Error(`spec vector file is missing or empty: ${name}`);
+  }
+  return parsed as T;
+}
+
+/**
+ * The spec vectors name their gamut as a string, and the loader above casts it
+ * to `Gamut` without checking. A vector naming a gamut this package does not
+ * know would reach `GAMUT_TO_WASM` as an unmapped key and cross the FFI as
+ * `undefined` — reported as a hash mismatch rather than as the real cause, the
+ * same silent-fallback failure the other bindings guard against.
+ */
+const KNOWN_GAMUTS: readonly Gamut[] = [
+  "sRGB",
+  "Display P3",
+  "Adobe RGB",
+  "BT.2020",
+  "ProPhoto RGB",
+];
+
+function checkedGamut(name: string): Gamut {
+  const found = KNOWN_GAMUTS.find((g) => g === name);
+  if (!found) throw new Error(`unknown gamut in spec vector: ${name}`);
+  return found;
 }
 
 // ---------------------------------------------------------------------------
@@ -56,7 +84,7 @@ describe("integration encode", () => {
         vec.input.width,
         vec.input.height,
         rgba,
-        vec.input.gamut,
+        checkedGamut(vec.input.gamut),
         vec.input.tier,
       );
       assert.deepStrictEqual(
@@ -72,7 +100,7 @@ describe("integration encode", () => {
         vec.input.width,
         vec.input.height,
         rgba,
-        vec.input.gamut,
+        checkedGamut(vec.input.gamut),
       );
       const avg = ch.averageColor();
       assert.equal(avg.r, vec.expected.average_color[0], "R mismatch");
@@ -232,6 +260,43 @@ describe("isVersionSupported", () => {
 // from the module it exists to avoid. This is the tie that keeps the two
 // honest: the format owns these codes, and the core exports them.
 // ---------------------------------------------------------------------------
+
+describe("malformed headers", () => {
+  // The reserved bit is how v1 reserves room for a future extension: a decoder
+  // that ignored it would accept a hash written by a later format and render
+  // garbage.
+  const cases: [string, (b0: number) => number][] = [
+    ["reserved bit set", (b0) => b0 | 0b1000_0000],
+    ["reserved tier code", (b0) => (b0 & ~0b0011_1000) | ((MAX_TIER + 1) << 3)],
+    ["unsupported version", (b0) => b0 | 0b0000_0001],
+  ];
+
+  for (const [what, mutate] of cases) {
+    it(`rejects a header with a ${what}`, () => {
+      const rgba = new Uint8Array(4 * 4 * 4).fill(255);
+      const bytes = ChromaHash.encode(4, 4, rgba, "sRGB").hash.slice();
+      bytes[0] = mutate(bytes[0] ?? 0) & 0xff;
+      assert.throws(() => ChromaHash.fromBytes(bytes));
+    });
+  }
+
+  // The raster is a function of the tier, so assert the values rather than a
+  // range wide enough to pass at every one of them.
+  it("decodes each tier at its own raster", () => {
+    const rgba = new Uint8Array(4 * 4 * 4).fill(255);
+    const edges = [32, 32, 64, 128, 256];
+    for (let tier = COMPACT_TIER; tier <= MAX_TIER; tier++) {
+      const {
+        w,
+        h,
+        rgba: pixels,
+      } = ChromaHash.encodeWithQuality(4, 4, rgba, "sRGB", tier).decode();
+      assert.strictEqual(w, edges[tier], `tier ${tier} width`);
+      assert.strictEqual(h, edges[tier], `tier ${tier} height`);
+      assert.strictEqual(pixels.length, w * h * 4);
+    }
+  });
+});
 
 describe("wire constants", () => {
   it("agree between the pure-TS decoder and the WASM core", () => {

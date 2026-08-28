@@ -9,6 +9,11 @@ name: CI (Tools)
 # These are not published, but the comparison harness and every benchmark number
 # in the docs depend on them building and behaving; before this they could break
 # and only be discovered by hand, locally.
+#
+# The two Rust tools carry no `#[test]` of their own — they are single-purpose
+# stdin/stdout filters whose behaviour is asserted where they are used, by the
+# comparison harness. `cargo test` here is therefore a compile gate, and the
+# real coverage is `cargo build` plus clippy.
 on:
   push:
     branches: [master]
@@ -82,9 +87,9 @@ jobs:
       - name: Lint
         run: uvx ruff check tools/benchmark
 
-      # The driver imports matplotlib and reads its own pyproject; compiling it
-      # catches a syntax or import-time error without running the (slow, native-
-      # library-dependent) benchmark itself.
+      # Syntax only — `compileall` does not execute imports. Running the driver
+      # for real needs every language's native library staged, which is what
+      # `just benchmark` does locally; that is out of scope for a lint job.
       - name: Byte-compile
         run: python3 -m compileall -q tools/benchmark/benchmark.py
 

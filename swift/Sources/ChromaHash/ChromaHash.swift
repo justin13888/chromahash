@@ -84,7 +84,7 @@ public struct ChromaHash: Sendable, Equatable {
   ) throws -> ChromaHash {
     guard let w = UInt32(exactly: width), let h = UInt32(exactly: height) else {
       throw ChromaHashError.InvalidDimensions(
-        reason: "width and height must be 1...\(UInt32.max) (got \(width)x\(height))")
+        reason: "width and height must fit in a UInt32 (got \(width)x\(height))")
     }
     let obj = try ChromaHashBindings.ChromaHash.encodeWithQuality(
       w: w, h: h, rgba: Data(rgba), gamut: gamut.binding, quality: quality)
@@ -104,8 +104,12 @@ public struct ChromaHash: Sendable, Equatable {
   public func decodeCapped(maxWidth: Int, maxHeight: Int, to output: Gamut = .sRGB) -> (
     width: Int, height: Int, rgba: [UInt8]
   ) {
+    // Clamp rather than convert: `UInt32(maxWidth)` traps on a negative or
+    // oversized cap, and a trap is exactly what the rest of this type was
+    // changed to avoid.
     let result = binding().decodeCappedTo(
-      maxW: UInt32(maxWidth), maxH: UInt32(maxHeight), output: output.binding)
+      maxW: UInt32(clamping: maxWidth), maxH: UInt32(clamping: maxHeight),
+      output: output.binding)
     return (Int(result.width), Int(result.height), [UInt8](result.rgba))
   }
 

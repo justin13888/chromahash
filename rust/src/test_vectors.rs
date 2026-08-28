@@ -855,6 +855,12 @@ mod tests {
 
         /// Bit fields must round-trip at every position and width the format
         /// uses, including the ones that straddle a byte boundary.
+        ///
+        /// Every vector has `read_back == value`, so replaying them alone would
+        /// only assert `read(write(x)) == x` — true of any self-consistent pair
+        /// of functions, including one that packed bits in the wrong order.
+        /// The *placement* is asserted separately below, against the byte
+        /// layout the format defines.
         #[test]
         fn unit_bitpack_vectors() {
             let cases = vectors!("unit-bitpack.json");
@@ -868,6 +874,20 @@ mod tests {
                 let mut buf = [0u8; 32];
                 write_bits(&mut buf, pos, count, value);
                 assert_eq!(read_bits(&buf, pos, count), expected, "{name}");
+
+                // The written bits must land where the *spec* says, not merely
+                // where `read_bits` looks for them. §12.6 is explicit: bit `i`
+                // of the value goes to bit `(bitpos + i) % 8` of byte
+                // `(bitpos + i) / 8` — LSB-first within each byte. This is
+                // transcribed from the spec pseudocode, deliberately not from
+                // `bitpack.rs`, so it is a second opinion rather than an echo.
+                let mut expected_buf = [0u8; 32];
+                for i in 0..count as usize {
+                    if (value >> i) & 1 == 1 {
+                        expected_buf[(pos + i) / 8] |= 1 << ((pos + i) % 8);
+                    }
+                }
+                assert_eq!(buf, expected_buf, "{name}: byte layout");
             }
         }
 

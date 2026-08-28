@@ -71,9 +71,17 @@ exclude_re = [
     # it to 128 is reachable only when `l0` is already 127, which needs
     # `l_mean >= 1`; there the target is clipped to white and code 128 decodes to
     # that same clipped white, so it is an exact tie and the strict `<` keeps 127.
-    # The a/b analogues on the following two lines are *not* equivalent — they are
-    # killed by `select_dc_codes_never_exceeds_its_field_width`.
-    "src/encode.rs.*replace - with (\\+|/) in select_dc_codes",
+    #
+    # Anchored to the L line. The a/b analogues two lines below are *not*
+    # equivalent — `select_dc_codes_never_exceeds_its_field_width` kills both —
+    # and an unanchored version of this pattern excluded them too, silently
+    # widening a one-mutant exemption to three. That is the exact failure mode
+    # this list exists to prevent, so keep every entry as narrow as it can be.
+    #
+    # The line number makes this brittle, but it fails in the safe direction: if
+    # encode.rs shifts, the anchor stops matching and the sweep reports one extra
+    # missed mutant rather than quietly exempting a new one.
+    "src/encode.rs:63:39.*replace - with (\\+|/) in select_dc_codes",
 
     # Numeric kernels. portable_ln / portable_exp range-reduce in a loop: operator
     # mutations either re-converge to the same value (the series is invariant to

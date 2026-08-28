@@ -46,7 +46,7 @@
       "tune": "la1=22:4 ca=5:3 alpha_ac_count=24 alpha_ac_bits=3"
     },
     {
-      "label": "A20@3 L26@4 C3@3",
+      "label": "A20@3 L28@4 C3@3",
       "tier": 2,
       "tune": "la1=28:4 ca=3:3 alpha_ac_count=20 alpha_ac_bits=3"
     }

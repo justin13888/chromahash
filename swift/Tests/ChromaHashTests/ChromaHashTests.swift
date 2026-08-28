@@ -33,13 +33,19 @@ func loadVectors(_ name: String) -> [[String: Any]] {
   return json
 }
 
+/// A silent fallback to sRGB would report a *hash mismatch* for an unrecognised
+/// gamut instead of naming the real cause — and would hide a spec vector whose
+/// gamut this suite does not handle at all.
 func gamutFromName(_ name: String) -> Gamut {
   switch name {
+  case "sRGB": return .sRGB
   case "Display P3": return .displayP3
   case "Adobe RGB": return .adobeRGB
   case "BT.2020": return .bt2020
   case "ProPhoto RGB": return .proPhotoRGB
-  default: return .sRGB
+  default:
+    Issue.record("unknown gamut in spec vector: \(name)")
+    return .sRGB
   }
 }
 
@@ -189,11 +195,23 @@ func gamutFromName(_ name: String) -> Gamut {
   #expect(throws: ChromaHashError.self) { try ChromaHash.fromBytes([]) }
 }
 
-@Test func fromBytesRejectsAReservedTierCode() throws {
+/// The reserved bit is how v1 reserves room for a future extension: a decoder
+/// that ignored it would accept a hash written by a later format and render
+/// garbage.
+@Test func fromBytesRejectsAMalformedHeader() throws {
   let rgba: [UInt8] = Array(repeating: [128, 64, 32, 255], count: 16).flatMap { $0 }
-  var bytes = try ChromaHash.encode(width: 4, height: 4, rgba: rgba, gamut: .sRGB).hash
-  bytes[0] = (ChromaHash.maxTier + 1) << 3
-  #expect(throws: ChromaHashError.self) { try ChromaHash.fromBytes(bytes) }
+  let valid = try ChromaHash.encode(width: 4, height: 4, rgba: rgba, gamut: .sRGB).hash
+
+  let mutations: [(String, UInt8)] = [
+    ("reserved bit set", valid[0] | 0b1000_0000),
+    ("reserved tier code", (valid[0] & ~0b0011_1000) | ((ChromaHash.maxTier + 1) << 3)),
+    ("unsupported version", valid[0] | 0b0000_0001),
+  ]
+  for (what, b0) in mutations {
+    var bytes = valid
+    bytes[0] = b0
+    #expect(throws: ChromaHashError.self, "\(what)") { try ChromaHash.fromBytes(bytes) }
+  }
 }
 
 @Test func encodeRejectsInvalidInput() {

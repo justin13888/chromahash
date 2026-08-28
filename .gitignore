@@ -45,3 +45,7 @@ Temporary Items
 .idea/
 *.iml
 .todos/
+
+# Python bytecode caches (tools/benchmark, spec/).
+__pycache__/
+*.py[cod]

@@ -73,11 +73,14 @@ static class Helpers
     public static Gamut GamutFromString(string s) =>
         s switch
         {
+            "sRGB" => Gamut.Srgb,
             "Display P3" => Gamut.DisplayP3,
             "Adobe RGB" => Gamut.AdobeRgb,
             "BT.2020" => Gamut.Bt2020,
             "ProPhoto RGB" => Gamut.ProPhotoRgb,
-            _ => Gamut.Srgb,
+            // Not a fallback to sRGB: that would report a hash mismatch for an
+            // unrecognised gamut instead of naming the real cause.
+            _ => throw new ArgumentException($"unknown gamut in spec vector: {s}"),
         };
 }
 
@@ -148,6 +151,28 @@ public class ChromaHashTests
         Assert.Throws<ArgumentException>(() => CH.FromBytes(valid[..^1]));
         Assert.Throws<ArgumentException>(() => CH.FromBytes([.. valid, (byte)0]));
         Assert.Throws<ArgumentException>(() => CH.FromBytes([]));
+    }
+
+    /// <summary>
+    /// The reserved bit is how v1 reserves room for a future extension: a
+    /// decoder that ignored it would accept a hash written by a later format
+    /// and render garbage.
+    /// </summary>
+    [Theory]
+    [InlineData("reserved bit set", 0b1000_0000, 0)]
+    [InlineData("reserved tier code", 0, (CH.MaxTier + 1) << 3)]
+    [InlineData("unsupported version", 0b0000_0001, 0)]
+    public void FromBytesRejectsAMalformedHeader(string what, int orMask, int tierBits)
+    {
+        byte[] bytes = CH.Encode(4, 4, Helpers.SolidImage(4, 4, 1, 2, 3, 255), Gamut.Srgb).AsBytes();
+        int b0 = bytes[0] | orMask;
+        if (tierBits != 0)
+            b0 = (b0 & ~0b0011_1000) | tierBits;
+        bytes[0] = (byte)b0;
+
+        var ex = Assert.Throws<ArgumentException>(() => CH.FromBytes(bytes));
+        Assert.NotNull(ex);
+        Assert.NotEmpty(what);
     }
 
     [Theory]

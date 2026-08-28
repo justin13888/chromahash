@@ -140,6 +140,68 @@ fn from_bytes_accepts_every_tier_and_rejects_wrong_lengths() {
     }
 }
 
+/// The reserved bit is how v1 reserves room for a future extension: a decoder
+/// that ignored it would accept a hash written by a later format and render
+/// garbage. Neither it nor a reserved tier code was exercised here.
+#[wasm_bindgen_test]
+fn from_bytes_rejects_a_malformed_header() {
+    let rgba = [128u8; 4 * 4 * 4];
+    let valid = ChromaHash::encode(4, 4, &rgba, Gamut::Srgb)
+        .expect("encode")
+        .as_bytes();
+
+    let mut reserved_bit = valid.clone();
+    reserved_bit[0] |= 0b1000_0000;
+    assert!(
+        ChromaHash::from_bytes(&reserved_bit).is_err(),
+        "reserved bit set"
+    );
+
+    let mut reserved_tier = valid.clone();
+    reserved_tier[0] = (reserved_tier[0] & !0b0011_1000) | ((MAX_TIER + 1) << 3);
+    assert!(
+        ChromaHash::from_bytes(&reserved_tier).is_err(),
+        "reserved tier code"
+    );
+
+    let mut bad_version = valid.clone();
+    bad_version[0] |= 0b0000_0001;
+    assert!(
+        ChromaHash::from_bytes(&bad_version).is_err(),
+        "unsupported version"
+    );
+}
+
+/// The byte length is a function of the tier alone, so assert all five rather
+/// than only the default; and the decoded raster is per-tier too, so a range
+/// check wide enough to pass at every tier cannot tell them apart.
+#[wasm_bindgen_test]
+fn each_tier_has_its_documented_length_and_raster() {
+    // Opaque: alpha < 255 selects the alpha layouts, whose lengths differ.
+    let rgba: Vec<u8> = std::iter::repeat_n([128u8, 128, 128, 255], 4 * 4)
+        .flatten()
+        .collect();
+    let lengths = [21usize, 32, 108, 411, 1623];
+    let edges = [32u32, 32, 64, 128, 256];
+
+    for tier in 0..=MAX_TIER {
+        let hash = ChromaHash::encode_with_quality(4, 4, &rgba, Gamut::Srgb, tier)
+            .expect("a valid tier must encode");
+        assert_eq!(
+            hash.as_bytes().len(),
+            lengths[tier as usize],
+            "tier {tier} byte length"
+        );
+        let decoded = hash.decode();
+        assert_eq!(decoded.width, edges[tier as usize], "tier {tier} width");
+        assert_eq!(decoded.height, edges[tier as usize], "tier {tier} height");
+        assert_eq!(
+            decoded.rgba().len(),
+            (decoded.width * decoded.height * 4) as usize
+        );
+    }
+}
+
 /// A Rust panic in WebAssembly aborts the module instance, so every later call
 /// on it fails too — far worse than a thrown error. Each of these panics in the
 /// core, so the binding must reject them before they reach it.

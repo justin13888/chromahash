@@ -352,6 +352,78 @@ fn batch_encode_rejects_a_reserved_tier() {
     unsafe { chromahash_batch_encoder_free(encoder) };
 }
 
+/// The byte length is a function of the tier alone, so assert all five rather
+/// than only the default — a `len == 32` check is true of exactly one tier and
+/// says nothing about the other four. Same for the decoded raster, where a
+/// range check wide enough to pass at every tier cannot tell them apart.
+/// The reserved bit is how v1 reserves room for a future extension: a decoder
+/// that ignored it would accept a hash written by a later format and render
+/// garbage. Neither it nor a reserved tier code was exercised through this ABI.
+#[test]
+fn from_bytes_rejects_a_malformed_header() {
+    let rgba = [128u8; 4 * 4 * 4];
+    let valid = {
+        let h = encode(4, 4, &rgba, ChromaHashGamut::Srgb, chromahash::DEFAULT_TIER);
+        let bytes = hash_bytes(h).to_vec();
+        unsafe { chromahash_free(h) };
+        bytes
+    };
+
+    let reject = |bytes: &[u8], what: &str| {
+        let mut handle: *mut ChromaHash = ptr::null_mut();
+        let status = unsafe { chromahash_from_bytes(bytes.as_ptr(), bytes.len(), &mut handle) };
+        assert_eq!(status, ChromaHashStatus::InvalidData, "{what}");
+        assert!(handle.is_null(), "{what}: a handle was allocated");
+    };
+
+    let mut reserved_bit = valid.clone();
+    reserved_bit[0] |= 0b1000_0000;
+    reject(&reserved_bit, "reserved bit set");
+
+    let mut reserved_tier = valid.clone();
+    reserved_tier[0] = (reserved_tier[0] & !0b0011_1000) | ((chromahash::MAX_TIER + 1) << 3);
+    reject(&reserved_tier, "reserved tier code");
+
+    let mut bad_version = valid.clone();
+    bad_version[0] |= 0b0000_0001;
+    reject(&bad_version, "unsupported version");
+}
+
+#[test]
+fn each_tier_has_its_documented_length_and_raster() {
+    // Opaque: alpha < 255 selects the alpha layouts, whose lengths differ.
+    let rgba: Vec<u8> = std::iter::repeat_n([128u8, 128, 128, 255], 4 * 4)
+        .flatten()
+        .collect();
+    let lengths = [21usize, 32, 108, 411, 1623];
+    let edges = [32u32, 32, 64, 128, 256];
+
+    for tier in 0..=chromahash::MAX_TIER {
+        let hash = encode(4, 4, &rgba, ChromaHashGamut::Srgb, tier);
+        assert_eq!(
+            hash_bytes(hash).len(),
+            lengths[tier as usize],
+            "tier {tier} byte length"
+        );
+
+        let mut image = ChromaHashImage {
+            width: 0,
+            height: 0,
+            rgba: ptr::null_mut(),
+            rgba_len: 0,
+        };
+        assert_eq!(
+            unsafe { chromahash_decode(hash, &mut image) },
+            ChromaHashStatus::Ok
+        );
+        assert_eq!(image.width, edges[tier as usize], "tier {tier} width");
+        assert_eq!(image.height, edges[tier as usize], "tier {tier} height");
+        assert_eq!(image.rgba_len, (image.width * image.height * 4) as usize);
+        unsafe { chromahash_image_free(&mut image) };
+        unsafe { chromahash_free(hash) };
+    }
+}
+
 #[test]
 fn exported_tier_constants_match_the_core() {
     // The C# and Go bindings link these symbols instead of restating the codes.

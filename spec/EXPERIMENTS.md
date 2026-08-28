@@ -204,7 +204,7 @@ byte count *and* coefficient count fixed, vary only the raster
 | Coefficients (bytes) | small raster | native tier raster | Δ |
 |---|---|---|---|
 | 104 L / 36 C (108 B) | 8.568 @32 px | 8.571 @64 px | −0.04% |
-| 416 L / 144 C (411 B) | 7.089 @32 px | 7.093 @128 px | −0.005% |
+| 416 L / 144 C (411 B) | 7.089 @32 px | 7.093 @128 px | −0.05% |
 | 1664 L / 576 C (1623 B) | 6.237 @64 px | 6.258 @256 px | −0.34% |
 
 Within noise, and if anything the *smaller* raster scores better. All of the
@@ -525,6 +525,7 @@ just sweep alpha-fields                         # §11.3
 just sweep alpha-ac-count                       # §11.3
 just sweep alpha-ceiling                        # §11.3
 just sweep alpha-encoder                        # §11.3
+just sweep alpha-balance                        # §11.3  C3-vs-C5 chroma count
 just sweep graphics-layout                      # §11.4
 just sweep graphics-encoder                     # §11.4
 just sweep selection-weights                    # §11.5
@@ -534,6 +535,7 @@ just sweep quant-ranges                         # §11.8
 just sweep scalefactor-bands                    # §11.9
 just sweep compact-tier                         # §11.10
 just sweep compact-tier-graphics                # §11.10
+just sweep compact-tier-alpha                   # §11.12 compact tier, alpha corpus
 just sweep alpha-tier1                          # §11.11
 just sweep v07-holdout-photo --split holdout    # §11.12
 just sweep v07-holdout-alpha --split holdout    # §11.12
@@ -544,6 +546,14 @@ just sweep adopted-defaults --split holdout     # §10.3
 just verify-experiments
 just verify-experiments --list-unbound
 ```
+Five configs in `tools/comparison/sweeps/` are **not** written up above, and are
+listed here so their absence is not mistaken for a result being withheld:
+`low-budget-allocation` and `v06-vs-v1` were run (their output is in
+`output/sweeps/`) and were superseded before this file's round-3 numbers were
+taken; `capped-tier1-vs-tier0`, `scalefactor-bands-t1` and
+`tier-precision-vs-count` were written but never run. None of them informed an
+adopted constant. `just verify-experiments` checks the tables that *are* here
+against the outputs that produced them.
 
 `aniso-selection` and `aniso-extended`, named in §11.5, were deleted when
 `selection-weights` replaced them; their outputs survive only in the gitignored
@@ -1073,7 +1083,7 @@ scoring config, same metric cache — the two runners share all of it).
 | 32 | ChromaHash **optimized** | **11.150** | **−285.8** | **28.49** | **0.2550** |
 | 47.5 | RawRGB565 | 11.388 | −317.6 | 31.19 | 0.2555 |
 | 47.8 | WebP | 15.570 | −406.0 | 37.87 | 0.2852 |
-| 48 | ChromaHash **optimized** | **10.464** | **−231.8** | **25.37** | **0.2535** |
+| 48 | ChromaHash **optimized** | **10.464** | **−231.2** | **25.32** | **0.2538** |
 | 82.3 | lqip-modern r16 | 11.230 | **−183.3** | **23.86** | 0.2525 |
 | 80 | ChromaHash **optimized** | **9.744** | −192.4 | 23.98 | **0.2515** |
 | 107.3 | WebP | 10.255 | −167.5 | 22.91 | 0.2498 |
@@ -1090,8 +1100,9 @@ Two things move:
   reclaims the one guard the format was losing to a real codec at its own best
   budget. It does *not* generalize to lqip-modern: at 82 B lqip r16 still takes
   SSIMULACRA2 and Butteraugli (−183.3 / 23.86 against −192.4 / 23.98), and takes
-  them by more from ~128 B. On the tune split WebP@108 keeps SSIMULACRA2 by a
-  hair (−155.1 vs −159.7), so this particular reclaim is holdout-only and thin.
+  them by more from ~128 B. The reclaim holds on the tune split too, by a
+  similar hair: WebP@107 B scores −155.1 against the optimized recipe's −153.1
+  (`rd-budget --split tune`, `budget-ladder-optimized`).
 * **The 21-byte compact tier beats ThumbHash on all four metrics**, which is the
   positioning claim the format could not previously make anywhere.
 
@@ -1147,10 +1158,10 @@ intact.
 | `natural-succulents` | 940 | holdout | Fine texture, **portrait orientation** |
 
 The additions widen the difficulty spread in both directions rather than simply
-making the corpus harder: at the shipped tier 0 they span ΔE00 4.97
-(`natural-typewriter`, the easiest image in the corpus) to 25.98
+making the corpus harder: at the shipped tier 0 they span ΔE00 2.11
+(`chroma-yellow-wall`, the easiest image in the corpus) to 25.86
 (`chroma-stripes`, the hardest by a wide margin), against a corpus mean of
-10.43. Because one image now sits ~2.5× the mean, the **median** column of every
+10.18. Because one image now sits ~2.5× the mean, the **median** column of every
 sweep is worth reading alongside the mean; the decisions in §8 hold on both.
 
 Two measurement consequences of the grayscale images, both fixed rather than
@@ -1627,7 +1638,10 @@ stays at exactly 32 bytes:
 | A 3 @ 4 (−2 coefficients) | 17.005 | +8.39% | 0.3030 | FAIL |
 | A 0 (no alpha AC at all) | 19.428 | **+23.84%** | 0.3812 | FAIL |
 
-The field *widths* are noise: ±0.12% for a bit either way on the DC and scale
+The field *widths* are asymmetric. Taking a bit *off* is noise — ±0.12% on the
+DC and scale — but adding one costs an alpha coefficient and is not: `dc 6b`
+scores +4.28% and `scale 5b` +4.06%, both failing guards. Narrowing is free;
+widening is not, on the DC and scale
 codes. The **count** is not. Five AC coefficients cannot describe a silhouette,
 and a silhouette is what a cut-out placeholder mostly is. Removing them costs
 24%; adding seven buys 7.8%, more than the entire §8 adoption bought at tier 0.
@@ -1705,12 +1719,12 @@ tier that is worse at the thing that matters most for a cut-out. The tier-1
 base budget is the same 192 bits as tier 0's alpha budget, so
 `sweeps/alpha-tier1.json` is the same allocations evaluated at 4× resolution.
 
-Two arms in that file are **off-budget** and are excluded from the comparison
-below: `A20@4 L20@5 C1@4` at 106 B and `A20@3 L26@4 C3@3` at 99 B, against the
-103–104 B the rest occupy. The first posts the best raw ΔE00 in the file
-(10.768) and the best guards, which is what 2–3 extra bytes buys; it is not an
-equal-budget result and is not treated as one. This is the drift `expectBytes`
-now catches.
+One arm in that file is **off-budget** and is excluded from the comparison
+below: `A20@4 L20@5 C1@4` at 106 B, against the 103–104 B the rest occupy. It
+posts the best raw ΔE00 in the file (10.768) and the best SSIMULACRA2 and
+Butteraugli, which is what 2–3 extra bytes buys; it is not an equal-budget
+result and is not treated as one. (It does *not* take DSSIM — `A16@4 L14@4 C9@4`
+does, 0.22150 against 0.22193.) This is the drift `expectBytes` now catches.
 
 | allocation | tier-1 ΔE00 | Δ% | SSIM2 | Butter | αMAE |
 |---|---|---|---|---|---|
@@ -1718,6 +1732,7 @@ now catches.
 | A24@3 L22@4 C5@3 | 10.852 | −12.00% | −234.5 | 33.85 | 0.1216 |
 | **A28@3 L22@4 C3@3** (the tier-0 choice) | **10.859** | **−11.95%** | −233.5 | 33.93 | 0.1185 |
 | A32@3 L19@4 C3@3 | 10.872 | −11.84% | −240.7 | 34.71 | 0.1164 |
+| A20@3 L28@4 C3@3 | 10.899 | −11.63% | −224.5 | 34.01 | 0.1240 |
 | A16@4 L14@4 C9@4 | 10.987 | −10.91% | −266.4 | 34.07 | 0.1213 |
 | A40@3 L13@4 C3@3 | 11.153 | −9.56% | −270.3 | 36.57 | 0.1147 |
 
@@ -1746,7 +1761,7 @@ Holdout ranks the compact plateau differently from tune — `L26@3 C6@3` leads i
 at 11.971 against the adopted layout's 12.047 — which is the same tune/holdout
 disagreement §8.1 originally flagged for this tier. The pick was frozen before
 the holdout was opened and is not revisited on it; the spread across the four
-candidates is 0.9%, and all four beat the shipped shape by 2.4–3.2%.
+candidates is 0.9%, and all four beat the shipped shape by 2.3–3.2%.
 
 `sel_hv = 0.30` was significant on tune, and pointed the same way on the
 graphics corpus (§11.4 — −0.39% there, though its CI includes zero), and it
@@ -1797,7 +1812,7 @@ Deliberately unchanged, each with the number that left it alone:
 | `aniso_oblique = 1.2` | Isotropic is statistically indistinguishable on tune and worse on holdout (§11.5, §11.12) |
 | µ-law µ_L = 5 / µ_C = 8 | Every alternative family is worse, including corpus-trained codebooks (§11.6) |
 | No deadzone | +0.36% once the knob could move the output (§11.7) |
-| Quantization ranges | Every arm within ±0.12% (§11.8) |
+| Quantization ranges | Every arm within ±0.13% (§11.8) |
 | No scalefactor bands | −0.30%, below threshold and unable to pay its signalling (§11.9) |
 | Tier-0 opaque layout | Holds on non-photographic content; no candidate significantly better (§11.4) |
 | `alpha_ac_fit = false` | −0.21% on tune, +0.09% on holdout (§11.12) |
@@ -1845,7 +1860,8 @@ neighbourhood.
 | 107.2 | WebP | 10.255 | −167.5 | 22.91 | **0.2498** |
 | **108** | **ChromaHash tier 2** | **9.281** | **−159.4** | **22.51** | 0.2505 |
 | 128.6 | lqip-modern r24 | 10.223 | −124.4 | 21.22 | 0.2487 |
-| 188.3 | **WebP** | **8.763** | **−93.7** | **18.33** | **0.2410** |
+| 188.3 | WebP | 8.763 | **−93.7** | **18.33** | **0.2410** |
+| 193 | ChromaHash *(resized)* | **8.435** | −110.6 | 20.33 | 0.2476 |
 | 262.3 | lqip-modern r48 | 8.132 | −66.7 | 15.64 | 0.2351 |
 | 405.7 | **WebP** | **7.289** | **−62.2** | **14.01** | **0.2285** |
 | 411 | ChromaHash tier 3 | 7.604 | −76.3 | 17.76 | 0.2441 |
@@ -1862,9 +1878,12 @@ Four things this settles.
 3. **Code 2 (108 B) is the format's strongest point.** It beats size-matched
    WebP on ΔE00 by 9.5% *and* takes SSIMULACRA2 and Butteraugli, losing only
    DSSIM by 0.0007. It also beats lqip-modern at 129 B while being 20 B smaller.
-4. **WebP wins from ~190 B up, on every axis.** The ΔE00 crossover is between
-   108 and 188 B, and by 411 B WebP leads all four. §14.1 of the spec states
-   this rather than arguing around it.
+4. **WebP takes the structural guards from ~190 B up, but not ΔE00 until
+   later.** At ~190 B WebP leads SSIMULACRA2, Butteraugli and DSSIM while
+   ChromaHash still leads ΔE00 (8.435 vs 8.763); the ΔE00 crossover is between
+   193 and 411 B, where WebP leads all four. The same ordering holds on tune
+   (7.737 vs 7.868 at ~190 B). §14.1 of the spec states this rather than
+   arguing around it.
 
 The structural weakness §2 identified is narrowed but not gone: lqip-modern
 still takes SSIMULACRA2 and Butteraugli at ~82 B, where ChromaHash wins ΔE00 by

@@ -14,8 +14,10 @@ just test
 
 This runs every language's test suite: the Rust core, the C / WASM / UniFFI
 binding crates, and the TypeScript, JVM (Java/Kotlin), Swift, Go, Python and C#
-packages over them — nine implementations plus the two helper crates under
-`tools/`. If it passes, every language agrees on all golden test vectors.
+packages over them — ten test surfaces in all, plus the two helper crates under
+`tools/`. (The README counts *nine* implementations: the three binding crates
+are one FFI layer with three shapes, and WASM is not a package anyone consumes
+directly.) If it passes, every language agrees on all golden test vectors.
 
 On a non-macOS host `test-swift` skips (SwiftPM consumes an xcframework, which
 only `xcodebuild` can assemble) and says so rather than passing silently;
@@ -134,8 +136,8 @@ All cross-implementation conformance testing is driven by shared JSON test vecto
 | `unit-bitpack.json` | `write_bits`/`read_bits` round-trip, including widths that straddle a byte boundary | 15 | Rust core |
 | `unit-cbrt.json` | The Halley cube root against the reference, with the ULP distance recorded per case | 23 | Rust core |
 | `unit-aspect.json` | Aspect encode/decode and the decoded output size, over all 256 aspect bytes' distinct results | 45 | `spec/validate.py` |
-| `unit-selection.json` | Top-K isotropic coefficient selection: every distinct (W, H, K) at tier 0 | 488 | `spec/validate.py` |
-| `unit-validate.json` | `from_bytes` accept/reject: bad version, reserved tier, reserved bit, wrong length | 12 | Rust core, C |
+| `unit-selection.json` | Top-K coefficient selection: every distinct (W, H, K) at tier 1, half isotropic and half with the shipped `aniso`/`hv` weights | 488 | `spec/validate.py` |
+| `unit-validate.json` | `from_bytes` accept/reject: bad version, reserved tier, reserved bit, wrong length | 12 | `rust/tests/spec_vectors.rs` |
 | `integration-encode.json` | Image → hash, byte-exact, plus average colour | 48 | all nine |
 | `integration-decode.json` | Hash → image, pixel-exact | 7 | all nine |
 | `integration-decode-capped.json` | Capped decode at various caps, pixel-exact | 9 | all nine |
@@ -213,7 +215,7 @@ tolerance to make a test pass defeats it; if one of these fails, the number move
 ### Tolerances
 
 - **Integer outputs** (quantized values, byte arrays, pixel values): exact match, zero tolerance.
-- **Floating-point intermediates** in test vectors: rounded to 15 significant digits. Implementations should match within `1e-10` for color conversions and `1e-12` for mu-law round-trips.
+- **Floating-point intermediates** in test vectors: written at Rust's shortest round-tripping precision (16–17 significant digits), not truncated — which is why the core enables serde_json's `float_roundtrip` (see above). The Rust read-back asserts them *bit-exactly*; a binding that starts asserting on floats should match within `1e-10` for colour conversions and `1e-12` for µ-law round-trips.
 - **Rounding mode**: all implementations MUST use round-half-away-from-zero, not banker's rounding (spec section 2.2). This is the most common source of cross-implementation divergence.
 
 ---
@@ -232,15 +234,18 @@ Dimensions affect the aspect ratio encoding byte, the DCT basis function evaluat
 | Square small | 4 | 4 | Baseline for solid/gradient cases |
 | Square medium | 8 | 8 | Higher-resolution AC detail |
 | Square large | 16 | 16 | More pixels, richer AC spectrum |
-| Square max | 100 | 100 | Enforces w/h ≤ 100 boundary |
-| Landscape | 8 | 4 | aspect byte < 128 |
-| Portrait | 4 | 8 | aspect byte > 128 |
-| Extreme landscape | 100 | 1 | aspect byte = 255 (4:1 cap) |
-| Extreme portrait | 1 | 100 | aspect byte = 0 (1:4 cap) |
+| Square max | 100 | 100 | A large square; there is no dimension cap in the format |
+| Landscape | 8 | 4 | aspect byte > 128 (8×4 → 159) |
+| Portrait | 4 | 8 | aspect byte < 128 (4×8 → 96) |
+| Extreme landscape | 100 | 1 | aspect byte = 255 (16:1 cap) |
+| Extreme portrait | 1 | 100 | aspect byte = 0 (1:16 cap) |
 | Photographic 3:2 | 9 | 6 | Common camera ratio |
 | Photographic 16:9 | 16 | 9 | Widescreen ratio |
 
-The aspect byte clamps at the representable extremes (ratio 4:1 → byte 255, ratio 1:4 → byte 0). Test images at the exact clamp boundary.
+The byte is `round((log2(w/h) + 4) / 8 × 255)`, so it *rises* with width: 128 is
+square, above is landscape, below is portrait. It clamps at the representable
+extremes (ratio 16:1 → byte 255, ratio 1:16 → byte 0). Test images at the exact
+clamp boundary.
 
 ### Axis 2: Gamut
 
@@ -251,14 +256,19 @@ Each gamut uses a distinct M1 matrix and, for Adobe RGB and ProPhoto RGB, a diff
 | sRGB | Piecewise (IEC 61966-2-1) | Baseline |
 | Display P3 | Same as sRGB | Different primaries only |
 | Adobe RGB | Power 2.2 | Different EOTF from sRGB |
-| BT.2020 | Same as sRGB | Wider primaries |
+| BT.2020 | PQ (SMPTE ST 2084) → Reinhard | Wider primaries *and* a different EOTF |
 | ProPhoto RGB | Power 1.8 + Bradford D50→D65 | Most extreme gamut |
 
 At minimum, each gamut needs one solid-color encode case with a known OKLAB output. A saturated color (e.g. 100% red) is most useful because it diverges maximally between gamuts.
 
 ### Axis 3: Alpha Channel
 
-The presence of any pixel with α < 255 flips `hasAlpha = 1`, which changes the entire AC block layout: the L channel drops from a 7×7 grid (27 coefficients × 5 bits) to a 6×6 grid (20 coefficients, first 7 at 6 bits then 13 at 5 bits), and an alpha channel is added (DC: 5 bits, scale: 4 bits, 5 AC coefficients × 4 bits).
+The presence of any pixel with α < 255 flips `hasAlpha = 1`, which switches the
+whole AC allocation to the layout's alpha row. Selection is top-K, not a fixed
+grid: at the default tier the opaque row is 28 luma coefficients at 4 bits plus
+15 chroma at 3, and the alpha row is 22 luma at 4 plus 3 chroma at 3, freeing
+budget for 28 alpha coefficients at 3 bits alongside an alpha DC (5 bits) and
+scale (4 bits). See `LAYOUT_T0` in `rust/src/constants.rs`.
 
 | Case | Description | hasAlpha |
 |------|-------------|----------|
@@ -293,8 +303,8 @@ These cases target the clamping and rounding logic rather than general image var
 **DC values near extremes:**
 - Pure white → L_dc near 1.0, a_dc ≈ 0, b_dc ≈ 0 (encodes to byte 127, 64, 64)
 - Pure black → L_dc = 0.0 (encodes to byte 0)
-- Maximally saturated color that pushes |a_dc| or |b_dc| toward MAX_CHROMA (0.5) — tests clamping in the a/b DC encoder
-- A color whose OKLAB a or b exceeds 0.5 (out-of-gamut for narrow-display input in wide-gamut mode) — must clamp, not overflow
+- Maximally saturated color that pushes |a_dc| or |b_dc| toward `MAX_CHROMA_A` (0.35) or `MAX_CHROMA_B` (0.33) — tests clamping in the a/b DC encoder
+- A color whose OKLAB a or b exceeds those bounds (out-of-gamut for narrow-display input in wide-gamut mode) — must clamp, not overflow
 
 **Scale factor = 0:**
 When all pixels are identical, scale = 0. The AC encoder must still write valid bits (the μ-law midpoint value) rather than dividing by zero or writing garbage.
@@ -303,7 +313,7 @@ When all pixels are identical, scale = 0. The AC encoder must still write valid 
 - v = 0.0 → midpoint of quantized range
 - v = 1.0 and v = -1.0 → quantized to max/min
 - Values landing exactly on 0.5 quantization steps → verify round-half-away-from-zero, not banker's rounding
-- Test all three bit widths used: 4 bits (chroma AC, alpha AC), 5 bits (L AC no-alpha), 6 bits (L AC alpha low-freq)
+- Test the widths the shipped layouts use: 4 bits (luma AC) and 3 bits (chroma AC, alpha AC). `unit-mulaw.json` also covers 5 and 6, which no shipped tier selects but the sweep tunables can
 
 **Aspect ratio boundary (unit test):**
 - w/h = 1.0 → byte should be 128
@@ -322,7 +332,7 @@ The output is a tightly packed bitstream with no byte alignment between fields (
 | hasAlpha | 6 | No |
 | reserved | 7 | No |
 | aspect | 8–15 | No |
-| L_dc | 16–22 | Yes (crosses byte 2→3) |
+| L_dc | 16–22 | No (wholly inside byte 2) |
 | a_dc | 23–29 | Yes (crosses byte 2→3) |
 | b_dc | 30–36 | Yes (crosses byte 3→4) |
 | L_scale | 37–42 | Yes (crosses byte 4→5) |
@@ -375,7 +385,7 @@ Still open in `spec/test-vectors/`:
   Covered by property tests in the core, not by a vector every language replays.
 - **Uniform partial alpha (all pixels α = 128)**, distinct from the checkerboard
   case in that the alpha AC is flat rather than high-frequency.
-- **A colour whose OKLAB a or b exceeds `MAX_CHROMA`**, to pin the DC clamp
+- **A colour whose OKLAB a or b exceeds `MAX_CHROMA_A`/`MAX_CHROMA_B`**, to pin the DC clamp
   across languages. `select_dc_codes_never_exceeds_its_field_width` covers it in
   the core.
 
@@ -454,7 +464,7 @@ edit ran nothing but the commit linter.
 | `ci-csharp.yml` | `csharp/**`, `bindings/c/**`, `rust/**`, `spec/test-vectors/**` | fmt check, build (lint), test |
 | `ci-android.yml` | `bindings/uniffi/**`, `rust/**`, `spec/test-vectors/**` | spec-vector test; AAR cross-compile + assemble |
 | `ci-repo.yml` | *no path filter* | `spec/validate.py`, the core's `--features full` test, and the manifest-version check — the repo-wide gates that must run on every change |
-| `ci-tools.yml` | `tools/{thumbhash-rs,gamut-ref-stdin,benchmark,ci}/**` | fmt, lint, build and test the three helper tools; manifest versions |
+| `ci-tools.yml` | `tools/{thumbhash-rs,gamut-ref-stdin,benchmark,ci}/**` | fmt, lint and build the three helper tools; manifest versions. The two Rust tools have no `#[test]` of their own — the `cargo test` step is a compile gate, and their correctness is asserted where they are *used*, by the comparison harness's own checks |
 | `ci-comparison.yml` | `tools/comparison/**`, `typescript/**`, `rust/**` | build the harness and run the R–D quality gate. `rust/**` is there because the gate exists to catch *encoder* regressions |
 | `ci-mutants.yml` | `rust/**` (PRs) | mutation-test the changed core lines (`--in-diff`), with an empty-diff guard; full sweep weekly and on demand |
 | `ci-commits.yml` | *all* | conventional-commit format (convco) |
@@ -469,19 +479,28 @@ passing silently) and `test-simd-emulated` (needs `qemu-user` and `wasmtime`).
 ## Binding test requirements
 
 Every non-Rust package is a thin wrapper with no algorithm of its own, so its
-suite is deliberately small. But "small" is not "absent": each of these has
-caught a real defect, and each must be present in **every** binding.
+suite is deliberately small. But "small" is not "absent": each requirement below
+caught a real defect in at least one binding, and each must be present in every
+one of them.
+
+This list is a *contract*, so it is worth saying how it is enforced: it is not.
+Nothing mechanically checks that a binding carries these tests — adding a
+binding, or a tenth requirement, means adding them by hand. When this section
+was first written it described what the suites *ought* to have had; six of the
+nine rows were false for at least one binding at the time. They were then made
+true, one binding at a time. If you extend this table, do the same, and check
+the claim before writing it down.
 
 | Requirement | Why |
 |---|---|
 | **Replay all three integration vector files** | The cross-language contract. Encode, decode, and capped decode. |
 | **A missing or empty vector file must fail** | A loader that returns `null` or an empty list on a missing file turns the entire correctness gate green with zero assertions. That is exactly what the JVM suite did until a rename would have gone unnoticed. |
-| **An unknown gamut must throw** | A silent fallback to sRGB reports a *hash mismatch* instead of the real cause. Go's fallback was load-bearing: removing it revealed there was no `case "sRGB"` at all. |
+| **An unknown gamut must fail loudly** | A silent fallback to sRGB reports a *hash mismatch* instead of the real cause. Go's fallback was load-bearing: removing it revealed there was no `case "sRGB"` at all. TypeScript has no mapping function — it casts the vector's string straight to `Gamut` — so its guard is a validating `checkedGamut()` at the loader instead. |
 | **Per-tier byte lengths (21/32/108/411/1623)** | A `length == 32` assertion is true of exactly one tier and says nothing about the other four. |
 | **Per-tier decoded raster (32/32/64/128/256)** | A range check wide enough to pass at every tier cannot tell them apart. |
 | **`from_bytes` rejects a wrong length, a reserved tier code, and a set reserved bit** | The documented contract is that a hash which constructs is guaranteed to decode. A lazy `from_bytes` moves the failure far from the boundary that accepted it. |
 | **`encode` rejects invalid dimensions, a mismatched rgba length, and a reserved tier** | The core panics on all three. A panic across FFI is undefined behaviour; in WebAssembly it aborts the module instance, so every later call fails too. |
-| **Batch encoding honours each item's tier, and an omitted tier is the *default* tier** | The tier codes are ordered by quality, so a zero default silently produces the 21-byte compact hash. Comparing batch against serial would pass if both used one tier — the byte lengths are what distinguish them. |
+| **Batch encoding honours each item's tier, and an omitted tier is the *default* tier** | The tier codes are ordered by quality, so a zero default silently produces the 21-byte compact hash. Comparing batch against serial would pass if both used one tier — the byte lengths are what distinguish them. **Go is the exception**: a struct field cannot be "unset", so `ImageInput{...}` without `Quality` *is* the compact tier. That is pinned by `TestZeroValueQualityIsTheCompactTier` rather than papered over — it is the trap that made the Go batch benchmark measure 21-byte hashes against a 32-byte serial baseline. |
 | **Locally declared tier constants agree with the FFI's** | Go and C# must declare their own (they need constant expressions); a test ties them to the exported symbols so a renumber cannot leave one behind. |
 
 TypeScript additionally ships a **pure-TypeScript decoder** (`src/header.ts`,

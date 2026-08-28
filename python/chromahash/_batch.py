@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from ._constants import Gamut
+from ._uniffi import ChromaHashError
 from ._uniffi import default_tier as _default_tier
 
 if TYPE_CHECKING:
@@ -39,21 +40,28 @@ class BatchEncoder:
     def encode_batch(self, items: list[ImageInput]) -> list[ChromaHash]:
         """Encode every item, returning hashes in the same order as ``items``.
 
-        All items are validated up front (raising ``ValueError`` identifying the
-        offending index) before any encoding, matching
-        ``ChromaHash.encode_with_quality``.
+        All items are validated up front, before any encoding, so an invalid
+        item raises identifying its index rather than failing partway through.
+        The error types are the same ``ChromaHashError`` variants
+        ``ChromaHash.encode_with_quality`` raises, so a caller handles one
+        taxonomy rather than two.
         """
         from . import MAX_TIER, ChromaHash
 
         for i, it in enumerate(items):
-            if it.w < 1:
-                raise ValueError(f"item {i}: width must be >= 1")
-            if it.h < 1:
-                raise ValueError(f"item {i}: height must be >= 1")
+            if it.w < 1 or it.h < 1:
+                raise ChromaHashError.InvalidDimensions(
+                    f"item {i}: width and height must be >= 1 (got {it.w}x{it.h})"
+                )
             if len(it.rgba) != it.w * it.h * 4:
-                raise ValueError(f"item {i}: rgba length mismatch")
+                raise ChromaHashError.InvalidLength(
+                    f"item {i}: rgba length must equal width * height * 4 "
+                    f"(expected {it.w * it.h * 4}, got {len(it.rgba)})"
+                )
             if not 0 <= it.quality <= MAX_TIER:
-                raise ValueError(f"item {i}: quality tier must be 0..={MAX_TIER}")
+                raise ChromaHashError.InvalidTier(
+                    f"item {i}: quality tier must be 0..={MAX_TIER} (got {it.quality})"
+                )
         return [
             ChromaHash.encode_with_quality(it.w, it.h, it.rgba, it.gamut, it.quality)
             for it in items
