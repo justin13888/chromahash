@@ -3,8 +3,8 @@
 > Modern, high-quality image placeholder representation for professional formats (LQIP)
 
 `chromahash` encodes an image into a compact Low Quality Image Placeholder
-(LQIP) — **32 bytes** at the default quality tier, with opt-in tiers up to
-~1.6 kB for higher-fidelity previews — and decodes it back into a low-fidelity
+(LQIP) — **32 bytes** at the default quality tier, with opt-in tiers from 21 B
+up to ~1.6 kB — and decodes it back into a low-fidelity
 preview. Color is encoded in the perceptually-uniform
 [OKLAB](https://bottosson.github.io/posts/oklab/) space with wide-gamut input
 support (sRGB, Display P3, Adobe RGB, BT.2020, ProPhoto RGB), an adaptive DCT

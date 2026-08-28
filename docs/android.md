@@ -22,7 +22,7 @@ Kotlin/Java over JNI gives Android the fast decoder while keeping a Kotlin-shape
 
 The binding uses **[UniFFI](https://mozilla.github.io/uniffi-rs/)** (Mozilla) for the binding layer.
 It auto-generates idiomatic Kotlin from the Rust crate — minimal boilerplate, proven in Firefox for
-Android. Because decode is a one-shot call returning a small buffer (≤ 32×32 RGBA), per-call FFI
+Android. Because decode is a one-shot call returning a small buffer (≤ 32×32 RGBA at the default tier), per-call FFI
 overhead is irrelevant. A lower-level `jni`-crate alternative is covered in
 [§11](#11-alternative-hand-written-jni-rs).
 
@@ -61,7 +61,7 @@ Two deliberate differences from a naïve 1:1 mapping, both at the FFI boundary:
 
 - **`fromBytes` is fallible.** It returns `Result<Arc<Self>, ChromaHashError>` in Rust →
   `@Throws(ChromaHashException::class)` in Kotlin, throwing `InvalidLength` if the input is not
-  exactly 32 bytes. A panic across the FFI boundary is unsafe, so the binding validates instead.
+  the length its descriptor byte implies. A panic across the FFI boundary is unsafe, so the binding validates instead.
 - **Record integers are signed.** `DecodeResult.width/height` and `RgbaColor.r/g/b/a` are declared
   `i32` (→ Kotlin `Int`), matching the pure-Kotlin API and Android's `Bitmap`/ARGB call sites. Only
   *size parameters* (`encode`'s `w`/`h`, `decodeCapped`'s `maxW`/`maxH`) remain `u32` → Kotlin
@@ -112,9 +112,9 @@ import android.graphics.Bitmap
 import io.chromahash.ffi.ChromaHash
 import java.nio.ByteBuffer
 
-/** Decode a 32-byte ChromaHash into a Bitmap for use as a placeholder. */
+/** Decode a ChromaHash into a Bitmap for use as a placeholder. */
 fun decodeToBitmap(hashBytes: ByteArray): Bitmap {
-    val hash = ChromaHash.fromBytes(hashBytes)        // throws on non-32-byte input
+    val hash = ChromaHash.fromBytes(hashBytes)        // throws on a malformed hash
     val result = hash.decode()
     val bitmap = Bitmap.createBitmap(result.width, result.height, Bitmap.Config.ARGB_8888)
     bitmap.copyPixelsFromBuffer(ByteBuffer.wrap(result.rgba))
@@ -162,7 +162,7 @@ runs the spec test vectors in [`spec/test-vectors/`](../spec/test-vectors/) thro
 wrappers** and asserts exact output — no NDK/SDK required, so it runs in `just test` (lefthook
 pre-push) and the `ci-android` `check` job:
 
-- `integration-encode.json` — encode pixels, compare the 32-byte hash (+ average color).
+- `integration-encode.json` — encode pixels at each tier, compare the hash (+ average color).
 - `integration-decode.json` — decode a hash, compare RGBA byte-for-byte.
 
 The contract is defined in the spec: binary format in [§3](../spec/README.md#3-binary-format),

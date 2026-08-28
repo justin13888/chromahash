@@ -125,8 +125,8 @@ Each implementation should have tests at three layers:
 - Aspect ratio: exact byte values and decoded dimensions
 
 **3. Integration tests against golden vectors** — loaded from `spec/test-vectors/integration-*.json`:
-- Encode: given (width, height, RGBA pixels, gamut), the 32-byte hash must match exactly
-- Decode: given a 32-byte hash, the output (width, height, RGBA pixels) must match exactly
+- Encode: given (width, height, RGBA pixels, gamut, tier), the hash bytes must match exactly
+- Decode: given a hash, the output (width, height, RGBA pixels) must match exactly
 - Average color: the header-only DC color extraction must match
 
 ### Tolerances
@@ -232,7 +232,7 @@ When all pixels are identical, scale = 0. The AC encoder must still write valid 
 
 ### Axis 6: Bit Packing
 
-The 32-byte output is a tightly packed bitstream with no byte alignment between fields. Several fields straddle byte boundaries.
+The output is a tightly packed bitstream with no byte alignment between fields (32 bytes at the default tier; the length is determined by the tier and alpha flag). Several fields straddle byte boundaries.
 
 | Field | Bits | Byte boundary crossed? |
 |-------|------|----------------------|
@@ -250,11 +250,11 @@ Unit tests for `writeBits`/`readBits` must cover writes that begin and end in di
 
 ### Axis 7: Round-trip Consistency
 
-Encode→decode round-trips do not recover the exact original pixels (lossy format), but they must be deterministic: encoding the same input twice must produce the identical 32-byte hash, and decoding that hash must produce the identical pixel array.
+Encode→decode round-trips do not recover the exact original pixels (lossy format), but they must be deterministic: encoding the same input twice must produce the identical hash bytes, and decoding that hash must produce the identical pixel array.
 
 | Check | What to verify |
 |-------|---------------|
-| Encode determinism | Same input → same 32 bytes, across multiple calls |
+| Encode determinism | Same input → same bytes, across multiple calls |
 | Decode determinism | Same hash → same pixel array, across multiple calls |
 | Cross-implementation | Rust hash == C == TypeScript == JVM == Swift == Go == Python == C# hash for the same input |
 | Decode output dimensions | Decoder output w/h are derived from aspect byte, not stored exactly — verify they match the spec formula |

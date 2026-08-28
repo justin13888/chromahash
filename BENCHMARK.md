@@ -2,6 +2,12 @@
 
 Output generated with `just benchmark` on Apple M3 Pro.
 
+> **These numbers are the default tier (code 1, 32 bytes) only.** `just benchmark`
+> now sweeps every tier and emits a table per tier, but the run below predates
+> that and has not been re-measured — regenerate with `just benchmark` on the
+> reference machine and paste `tools/benchmark/output/benchmark-summary.md` over
+> the section below.
+
 ## Benchmark Summary — 100×100 RGB gradient, bulk count = 1000
 
 | Implementation | encode single | decode single | encode bulk (total) | encode bulk (per-op) | decode bulk (total) | decode bulk (per-op) |
