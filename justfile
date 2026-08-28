@@ -766,6 +766,19 @@ release version:
     echo "  2. Bump the version to {{version}} across all implementations and tools."
     echo "  3. Commit, then: git tag -a v{{version}} -m 'v{{version}}' && git push --tags"
 
+# Every publishable manifest must carry the core crate's version. Each
+# release-*.yml checks the pushed tag against its own manifest and fails only
+# that pipeline, so a stale manifest leaves one registry a version behind
+# without announcing it. Run before tagging (RELEASING.md step 2).
+check-versions:
+    ./tools/ci/check-versions.sh
+
+# Independently re-derive the spec constants and check them against
+# spec/constants.py. Documented in TESTING.md since the beginning but wired to
+# nothing — no recipe and no workflow ran it until ci-repo.yml.
+validate-spec:
+    mise exec -- python3 spec/validate.py
+
 # ─── Quality gate ───────────────────────────────────────────────────────────
 
 # Tier-0 R-D regression gate: encode a fixed handful of content-pinned corpus
