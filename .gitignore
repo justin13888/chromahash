@@ -7,6 +7,13 @@
 signing-key.asc
 signing-password.txt
 
+# SwiftPM writes its build outputs beside the manifest, and Package.swift must
+# live at the repo root for SwiftPM and the Swift Package Index to resolve the
+# package (see the note in Package.swift). Anchored so the per-directory
+# .gitignore files still own everything below the root.
+/.build/
+/.swiftpm/
+
 # === Linux ===
 *~
 .fuse_hidden*
