@@ -1,6 +1,6 @@
 use chromahash::{
-    BatchEncoder, ChromaHash, Companding, Gamut, ImageInput, MAX_TIER, QuantTable, Tunables,
-    encode_debug_coefficients,
+    BatchEncoder, COMPACT_TIER, ChromaHash, Companding, DEFAULT_TIER, Gamut, ImageInput, MAX_TIER,
+    QuantTable, Tunables, encode_debug_coefficients,
 };
 use std::io::{self, Read, Write};
 use std::sync::Arc;
@@ -16,15 +16,17 @@ fn usage() -> ! {
     eprintln!("  encode_stdin bench-decode <iters> [max_width max_height]");
     eprintln!("  encode_stdin dump-coeffs <width> <height> <gamut>");
     eprintln!();
-    eprintln!("Quality: set CHROMAHASH_TIER=0..=3 to pick the quality multiplier");
-    eprintln!("(0 = 32-byte default; each tier doubles the render resolution).");
+    eprintln!("Quality: set CHROMAHASH_TIER=0..={MAX_TIER} to pick the quality tier.");
+    eprintln!("Codes are ordered by quality: {COMPACT_TIER} is the 21-byte compact tier,");
+    eprintln!("{DEFAULT_TIER} the 32-byte default, and each step above it doubles the");
+    eprintln!("render resolution. Defaults to {DEFAULT_TIER}.");
     eprintln!("Sweep interface: set CHROMAHASH_TUNE to space-separated key=value");
     eprintln!("pairs to override v1 format constants, e.g.");
     eprintln!("  CHROMAHASH_TUNE=\"layout=B w_min_l=1.0 mu_c=8\"");
     std::process::exit(1);
 }
 
-/// Quality tier from `CHROMAHASH_TIER` (default 0). Kept separate from the
+/// Quality tier from `CHROMAHASH_TIER` (default [`DEFAULT_TIER`]). Kept separate from the
 /// `CHROMAHASH_TUNE` parser so positional CLI args stay stable for the harness.
 fn tier_from_env() -> u8 {
     match std::env::var("CHROMAHASH_TIER") {
@@ -42,7 +44,7 @@ fn tier_from_env() -> u8 {
             }
             tier
         }
-        Err(_) => 0,
+        Err(_) => DEFAULT_TIER,
     }
 }
 
