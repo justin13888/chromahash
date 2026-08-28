@@ -2,7 +2,7 @@
 
 > Modern, high-quality image placeholder representation for professional formats (LQIP)
 
-chromahash is a multi-language library implementing a compact, high-fidelity Low Quality Image Placeholder (LQIP) format. All seven implementations are spec-compatible — identical input produces identical output across languages.
+chromahash is a multi-language library implementing a compact, high-fidelity Low Quality Image Placeholder (LQIP) format. All nine implementations are spec-compatible — identical input produces identical output across languages.
 
 ## Packages
 
@@ -12,13 +12,21 @@ chromahash is a multi-language library implementing a compact, high-fidelity Low
 | TypeScript | `@chromahash/typescript` | [npm](https://www.npmjs.com/package/@chromahash/typescript) |
 | Python | `chromahash` | [PyPI](https://pypi.org/project/chromahash/) |
 | C# | `ChromaHash` | [NuGet](https://www.nuget.org/packages/ChromaHash) |
-| Java / Kotlin (JVM) | `io.github.visualcommons:chromahash-jvm` | [Maven Central](https://central.sonatype.com/artifact/io.github.visualcommons/chromahash-jvm) |
-| Android | `io.github.visualcommons:chromahash-android` | [Maven Central](https://central.sonatype.com/artifact/io.github.visualcommons/chromahash-android) |
+| Java / Kotlin (JVM) | `io.github.visualcommons:chromahash-jvm` | [Maven Central](https://central.sonatype.com/artifact/io.github.visualcommons/chromahash-jvm) † |
+| Android | `io.github.visualcommons:chromahash-android` | [Maven Central](https://central.sonatype.com/artifact/io.github.visualcommons/chromahash-android) † |
 | Go | `github.com/visualcommons/chromahash/go` | [pkg.go.dev](https://pkg.go.dev/github.com/visualcommons/chromahash/go) |
 | Swift | SwiftPM (`https://github.com/visualcommons/chromahash`) | [Swift Package Index](https://swiftpackageindex.com/visualcommons/chromahash) |
 | C | `chromahash-c` | [source](bindings/c) (C ABI — the FFI foundation, no registry) |
 
 > Every package is published to its registry automatically on each tagged release — see [`RELEASING.md`](RELEASING.md).
+>
+> The table lists where each package *publishes*, which is not the same as what
+> is live today. As of 0.6.0: crates.io, PyPI, NuGet and the Go proxy are live;
+> npm has not published yet (the `@chromahash` scope needs claiming); and † the
+> JVM/Android artifacts are still on Maven Central under the pre-rename
+> `io.github.justin13888` coordinates — `io.github.visualcommons` needs Sonatype
+> namespace verification before the next tag. Both are one-time account actions,
+> tracked in [`RELEASING.md`](RELEASING.md#one-time-registry-bootstrap).
 
 ## Why ChromaHash?
 

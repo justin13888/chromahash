@@ -18,7 +18,7 @@
 //! Failures shrink to a minimal reproducer, which is the reason for the
 //! dependency over a hand-rolled generator.
 
-use chromahash::{COMPACT_TIER, ChromaHash, ChromaHashError, Gamut, MAX_TIER};
+use chromahash::{COMPACT_TIER, ChromaHash, ChromaHashError, Gamut, MAX_TIER, Tunables};
 use proptest::prelude::*;
 
 /// Case budget for the properties that decode. A tier-4 decode rasterizes
@@ -258,6 +258,34 @@ proptest! {
         if max_w >= nw && max_h >= nh {
             prop_assert_eq!((cw, ch), (nw, nh));
         }
+    }
+
+    /// `from_bytes_tuned` is the sweep harness's own validator: it takes the
+    /// `Tunables` the runner encoded with, because a sweep that resizes the AC
+    /// layout produces a legitimately different length. At `Tunables::DEFAULT`
+    /// it must agree with `from_bytes` exactly — same accept set, same error.
+    ///
+    /// Nothing exercised it before, so a sweep could have been validating
+    /// against a broken check and silently discarding good candidates.
+    #[test]
+    fn from_bytes_tuned_agrees_with_from_bytes_at_the_default(
+        (w, h, rgba) in image(false),
+        tier in COMPACT_TIER..=MAX_TIER,
+        index in 0usize..1623,
+        patch in any::<u8>(),
+        truncate in 0usize..=8,
+    ) {
+        let mut bytes = ChromaHash::encode_with_quality(w, h, &rgba, Gamut::Srgb, tier)
+            .as_bytes()
+            .to_vec();
+        let i = index % bytes.len();
+        bytes[i] = patch;
+        bytes.truncate(bytes.len().saturating_sub(truncate).max(1));
+
+        let plain = ChromaHash::from_bytes(&bytes).map(|h| h.as_bytes().to_vec());
+        let tuned = ChromaHash::from_bytes_tuned(&bytes, &Tunables::DEFAULT)
+            .map(|h| h.as_bytes().to_vec());
+        prop_assert_eq!(plain, tuned);
     }
 
     /// Encoding and decoding are pure: the same input always gives the same

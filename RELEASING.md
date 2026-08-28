@@ -105,21 +105,52 @@ workflow first verifies the pushed tag matches its package manifest.
 
 ### One-time registry bootstrap
 
-JVM/Android reuse the already-bootstrapped Sonatype namespace + GPG signing
-secrets (`MAVEN_CENTRAL_USERNAME/PASSWORD`, `SIGNING_KEY/PASSWORD`; see the
-`just android-*` recipes). The others use OIDC **trusted publishing** — no stored
-tokens — but each needs a one-time policy configured on the registry before its
-first run succeeds:
+Most publishing uses OIDC **trusted publishing** — no stored tokens — but each
+registry needs a one-time policy before its first run succeeds. State below as
+probed on 2026-08-28; ✅ means a release has actually landed there.
 
-- **crates.io** — already bootstrapped.
-- **npm** — add a trusted publisher for `@chromahash/typescript` pointing at repo
-  `visualcommons/chromahash`, workflow `release-npm.yml`. A scoped package may need a
-  single manual `npm publish --access public` to claim the name first.
-- **PyPI** — add a *pending publisher* for project `chromahash` → repo + workflow
-  `release-pypi.yml`.
-- **NuGet** — add a trusted-publishing policy for `ChromaHash` → repo + workflow
-  `release-nuget.yml`, and set the `NUGET_USER` secret to the owning account. May
-  need a manual first push to claim the id.
+| Registry | Published | Bootstrap still needed |
+|---|---|---|
+| crates.io | ✅ 0.6.0 | — |
+| PyPI | ✅ 0.6.0 | — |
+| NuGet | ✅ 0.6.0 | — |
+| Go proxy | ✅ v0.6.0 | — |
+| Maven Central | ✅ 0.6.0, but under `io.github.justin13888` | **`io.github.visualcommons` namespace verification** |
+| npm | ❌ 404 | **`@chromahash` scope + trusted publisher** |
+| Swift Package Index | — (tag-based) | submit the repo once |
+
+**Two blockers before `v0.7.0` publishes everywhere.** Both need the maintainer's
+registry accounts; neither can be done from the repo:
+
+1. **npm.** `@chromahash/typescript` has never published — run 28472417808 failed
+   with `E404 … PUT`, i.e. the `@chromahash` scope does not exist on npmjs.com.
+   Create the scope, then add a trusted publisher for
+   `@chromahash/typescript` → repo `visualcommons/chromahash`, workflow
+   `release-npm.yml`. A scoped package may need one manual
+   `npm publish --access public` to claim the name first.
+2. **Sonatype.** The `justin13888` → `visualcommons` migration changed the Maven
+   `groupId` to `io.github.visualcommons`, which is **not yet a verified
+   namespace** — `repo1.maven.org/maven2/io/github/visualcommons/…` 404s today,
+   while the 0.6.0 artifacts sit under `io.github.justin13888`. Verify the new
+   namespace at central.sonatype.com before tagging, or both JVM publishes fail.
+   Note this also orphans the published `io.github.justin13888` 0.6.0 artifacts:
+   consumers must change their coordinates, which is a release-note item.
+
+The rest:
+
+- **PyPI** — *pending publisher* for project `chromahash` → repo + workflow
+  `release-pypi.yml`. Already live.
+- **NuGet** — trusted-publishing policy for `ChromaHash` → repo + workflow
+  `release-nuget.yml`, with the `NUGET_USER` secret set to the owning account.
+  Already live.
+- **JVM/Android** — GPG signing plus `MAVEN_CENTRAL_USERNAME`/`PASSWORD`
+  (see the `just android-*` recipes), on top of the namespace above.
 - **Swift Package Index** — submit the repo once at
   `swiftpackageindex.com/add-a-package`. Also ensure no tag-protection rule blocks
   the workflow's `GITHUB_TOKEN` from moving the `vX.Y.Z` tag.
+
+`just check-versions` (and the `versions` job in `ci-repo.yml` / `ci-tools.yml`)
+asserts every publishable manifest carries the core crate's version. Each
+`release-*.yml` verifies the pushed tag against *its own* manifest, so without
+that check a single stale file fails one pipeline quietly and leaves one registry
+a version behind while the others publish.

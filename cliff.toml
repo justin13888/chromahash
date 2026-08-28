@@ -15,12 +15,24 @@ header = ""
 # Keep a Changelog body. `version` is set only when --tag is passed (release cut);
 # otherwise we render the `## [Unreleased]` heading. Sections are grouped by the
 # commit-parser `group`, whose `<!-- N -->` ordering marker is stripped for display.
+#
+# Commits carrying a `BREAKING CHANGE:` footer (or a `!` after the type) are also
+# listed first, under their own heading. Without this the v0.7 changelog would
+# have described a wire-format rewrite that changes signatures in five languages
+# without ever using the word "breaking".
 body = """
 {% if version -%}
 ## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}
 {% else -%}
 ## [Unreleased]
 {% endif -%}
+{%- set breaking = commits | filter(attribute="breaking", value=true) -%}
+{% if breaking | length > 0 %}
+### ⚠ Breaking changes
+{% for commit in breaking %}
+- {% if commit.scope %}**{{ commit.scope }}**: {% endif %}{{ commit.breaking_description | replace(from="\n", to=" ") | trim | upper_first }}
+{%- endfor %}
+{% endif %}
 {% for group, commits in commits | group_by(attribute="group") %}
 ### {{ group | striptags | trim | upper_first }}
 {% for commit in commits %}

@@ -12,7 +12,14 @@ See [README.md](README.md) for setup and prerequisites (mise, lefthook, per-lang
 just test
 ```
 
-This runs every language's test suite sequentially: the Rust core, the C/WASM/UniFFI bindings, and the TypeScript, JVM (Java/Kotlin), Swift, Go, Python, and C# bindings over them. If this passes, every language agrees on all golden test vectors.
+This runs every language's test suite: the Rust core, the C / WASM / UniFFI
+binding crates, and the TypeScript, JVM (Java/Kotlin), Swift, Go, Python and C#
+packages over them — nine implementations plus the two helper crates under
+`tools/`. If it passes, every language agrees on all golden test vectors.
+
+On a non-macOS host `test-swift` skips (SwiftPM consumes an xcframework, which
+only `xcodebuild` can assemble) and says so rather than passing silently;
+`ci-swift.yml` on `macos-latest` is the enforcing gate for it.
 
 ---
 
@@ -23,18 +30,28 @@ Run these in order. Each step must pass before proceeding.
 ### Step 1: Validate spec constants
 
 ```bash
-cd spec && python3 validate.py && cd ..
+just validate-spec
 ```
 
-Independently derives all M1 matrices from gamut chromaticity coordinates and verifies them against `constants.py`. Checks matrix inverse relationships, white point mapping, OKLAB bounds, mu-law round-trips, and aspect ratio encoding. Exit code 0 = pass.
+`spec/validate.py` is an **independent** Python reference, not a wrapper over the
+Rust crate: it re-derives every M1 matrix from the gamut chromaticity coordinates
+and checks them against `constants.py`, then checks matrix inverses, white-point
+mapping, OKLAB bounds, µ-law round-trips, the tier tables and byte lengths, and
+the aspect encoding. It also replays `unit-aspect.json` (45 cases) and
+`unit-selection.json` (488 cases) against its own implementation, which is the
+one place the golden vectors are checked by something that did not produce them.
+174 assertions; exit code 0 = pass.
 
-### Step 2: Verify scan orders
+### Step 2: Check the manifest versions agree
 
 ```bash
-cd spec && python3 scan_order.py && cd ..
+just check-versions
 ```
 
-Confirms triangular coefficient scan orders produce the expected AC counts (3x3=5, 4x4=9, 6x6=20, 7x7=27).
+Every publishable manifest must carry the core crate's version. Each
+`release-*.yml` verifies the pushed tag against *its own* manifest, so one stale
+file does not fail loudly — it fails that single pipeline, leaving one registry a
+version behind while the others publish.
 
 ### Step 3: Format check
 
@@ -58,7 +75,7 @@ Runs linters across all implementations. If this fails, run `just lint-fix` for 
 just build
 ```
 
-Compiles all seven implementations. Catches type errors, missing imports, and compilation issues that tests alone might not surface (e.g., TypeScript type checking).
+Compiles every implementation and helper crate. Catches type errors, missing imports, and compilation issues that tests alone might not surface (e.g., TypeScript type checking).
 
 ### Step 6: Test all implementations
 
@@ -77,14 +94,29 @@ cd rust && cargo test -- --ignored generate_test_vectors --nocapture && cd ..
 just test
 ```
 
-This regenerates all JSON test vectors from the Rust implementation, then re-runs every language's tests against the new vectors. All seven must still pass.
+This regenerates all JSON test vectors from the Rust implementation, then re-runs every language's tests against the new vectors. All nine must still pass.
+
+Regenerating is a deliberate, reviewed act: the vectors are the cross-language
+contract, so a diff to them is a format change, not a test update. `just test`
+fails if the committed vectors and the reference disagree — that is what
+`rust/tests/spec_vectors.rs` and the read-back tests in `rust/src/test_vectors.rs`
+are for.
 
 ---
 
 ## One-Liner for Full Verification
 
 ```bash
-(cd spec && python3 validate.py && python3 scan_order.py) && just format-check && just lint && just build && just test
+just validate-spec && just check-versions && just format-check && just lint && just build && just test
+```
+
+Then the slower gates, which are not part of a routine change:
+
+```bash
+just test-simd-diff     # every SIMD backend this host can execute
+just rd-gate            # encoder quality regression gate
+just verify-experiments # every number in spec/EXPERIMENTS.md vs the sweep output
+just mutants-rust       # full mutation sweep of the core (slow)
 ```
 
 ---
@@ -95,39 +127,88 @@ This regenerates all JSON test vectors from the Rust implementation, then re-run
 
 All cross-implementation conformance testing is driven by shared JSON test vectors in `spec/test-vectors/`. The Rust implementation is the reference that generates these vectors. Every other implementation loads and validates against them.
 
-| File | What it tests | Cases |
-|------|---------------|-------|
-| `unit-color.json` | RGB to OKLAB conversion and sRGB round-trip | 10 cases across sRGB, Display P3, Adobe RGB |
-| `unit-mulaw.json` | mu-law compress, expand, quantize, dequantize | 27 cases (9 values x 3 bit widths) |
-| `unit-dct.json` | Triangular scan order for each grid size | 4 grids: 3x3, 4x4, 6x6, 7x7 |
-| `unit-aspect.json` | Aspect ratio encode/decode and output dimensions | 9 ratios including extremes |
-| `integration-encode.json` | Full image-to-hash encoding | 12 images: solid colors, gradients, alpha, multi-gamut |
-| `integration-decode.json` | Full hash-to-image decoding | 4 hashes with complete pixel-level expected output |
+| File | What it tests | Cases | Read by |
+|------|---------------|-------|---------|
+| `unit-color.json` | Linear/gamma RGB → OKLAB and the sRGB round-trip | 10 | Rust core |
+| `unit-mulaw.json` | µ-law compress/expand/quantize/dequantize, both µ values × 4/5/6 bits, plus the never-written top code | 84 | Rust core |
+| `unit-bitpack.json` | `write_bits`/`read_bits` round-trip, including widths that straddle a byte boundary | 15 | Rust core |
+| `unit-cbrt.json` | The Halley cube root against the reference, with the ULP distance recorded per case | 23 | Rust core |
+| `unit-aspect.json` | Aspect encode/decode and the decoded output size, over all 256 aspect bytes' distinct results | 45 | `spec/validate.py` |
+| `unit-selection.json` | Top-K isotropic coefficient selection: every distinct (W, H, K) at tier 0 | 488 | `spec/validate.py` |
+| `unit-validate.json` | `from_bytes` accept/reject: bad version, reserved tier, reserved bit, wrong length | 12 | Rust core, C |
+| `integration-encode.json` | Image → hash, byte-exact, plus average colour | 48 | all nine |
+| `integration-decode.json` | Hash → image, pixel-exact | 7 | all nine |
+| `integration-decode-capped.json` | Capped decode at various caps, pixel-exact | 9 | all nine |
+
+`integration-encode.json` spans all five tiers, sRGB / Display P3 / ProPhoto RGB,
+1×1 up to 320×20, both aspect clamp extremes (1×100, 100×1), and five alpha
+cases. The `unit-*` files are generated by `rust/src/test_vectors.rs`; a file
+nobody reads back is not a test, so every one above names its consumer.
 
 ### Test Layers
 
-Each implementation should have tests at three layers:
+The Rust core is the reference implementation and carries the algorithm tests.
+Every other language is a thin binding over it (through `bindings/{c,uniffi,wasm}`)
+and carries the parity gate plus a small behavioural suite — not a
+re-implementation of the Rust suite. What each binding must have is listed under
+[Binding test requirements](#binding-test-requirements).
 
-**1. Unit tests** — individual functions in isolation:
-- `roundHalfAwayFromZero` (spec section 2.2)
-- `cbrtSigned` for negative values (spec section 2.4)
-- `writeBits` / `readBits` round-trip (spec section 12.7)
-- `muLawQuantize` / `muLawDequantize` round-trip (spec section 7.3)
-- `triangularScanOrder` coefficient counts (spec section 6.2)
-- `encodeAspect` / `decodeAspect` known ratios (spec section 8)
-- `linearRgbToOklab` / `oklabToLinearSrgb` white/black/primary colors (spec section 4.3)
-- Transfer functions: sRGB, Adobe RGB, ProPhoto, BT.2020 PQ boundaries (spec section 5.4)
+The core has tests at four layers:
 
-**2. Unit tests against golden vectors** — loaded from `spec/test-vectors/unit-*.json`:
-- Color conversion: exact OKLAB values for known inputs
-- mu-law: exact compressed/expanded/quantized/dequantized values
-- DCT scan order: exact (cx, cy) sequences
-- Aspect ratio: exact byte values and decoded dimensions
+**1. Unit tests** — individual functions in isolation, in each module's
+`#[cfg(test)]` block:
+- `round_half_away_from_zero`
+- `cbrt_signed` / `cbrt_halley` for negative values
+- `write_bits` / `read_bits` round-trip
+- `mu_law_quantize` / `mu_law_dequantize` round-trip
+- top-K isotropic coefficient selection: counts and ordering
+- `encode_aspect` / `decode_aspect` at known ratios and both clamp extremes
+- `linear_rgb_to_oklab` / `oklab_to_linear_srgb` on white, black, and the primaries
+- transfer functions: sRGB, Adobe RGB, ProPhoto, BT.2020 PQ boundaries
+- `select_dc_codes`: that it reaches the ±1 neighbours, and never returns a code
+  wider than its field
+
+**2. Unit tests against golden vectors** — loaded from `spec/test-vectors/unit-*.json`
+(the read-back tests in `rust/src/test_vectors.rs`, alongside the generator):
+- colour conversion: exact OKLAB values, bit-for-bit
+- µ-law: exact compressed / expanded / quantized / dequantized values
+- bit packing: exact round-trip at boundary-straddling positions
+- cube root: exact value, and the recorded ULP distance to the reference
+- `from_bytes` accept/reject, via `rust/tests/spec_vectors.rs`
+
+> These compare `f64` bit patterns, so the JSON parser has to be exact.
+> serde_json's default float parser lands 1 ULP from Rust's own
+> `str::parse::<f64>()` on values that appear verbatim in `unit-color.json`; the
+> core enables its `float_roundtrip` feature for that reason. A binding that
+> starts asserting on floats needs the same care.
 
 **3. Integration tests against golden vectors** — loaded from `spec/test-vectors/integration-*.json`:
 - Encode: given (width, height, RGBA pixels, gamut, tier), the hash bytes must match exactly
 - Decode: given a hash, the output (width, height, RGBA pixels) must match exactly
 - Average color: the header-only DC color extraction must match
+
+**4. Property tests** — `rust/tests/properties.rs`, randomized via proptest.
+
+The golden vectors are *regenerated from the crate under test*, so they catch a
+change to the bitstream but never a bug that was already there when they were
+written. These assert what the format guarantees, over inputs nobody enumerated:
+
+- the byte length is a function of `(tier, has_alpha)` alone — not of the
+  dimensions, the gamut, or the pixels;
+- `from_bytes` accepts exactly what `encode_with_quality` produces;
+- **anything `from_bytes` accepts, `decode` handles** — the documented contract
+  that "a hash that validates is guaranteed to decode". Reached by perturbing one
+  byte of a real hash, so the accept path sees payloads the encoder never emits;
+- wrong lengths, reserved tier codes and a set reserved bit are always rejected;
+- encode and decode are deterministic;
+- `decode_capped` never exceeds its cap and never returns an empty image;
+- `average_color` reproduces a solid input's own colour to within the DC's
+  quantization.
+
+Tolerances here are **measured, not guessed**. `average_color`'s bound of 16/255
+is the worst deviation over a stride-3 sweep of the RGB cube (~636k solids), on
+saturated green, where the bounded chroma range is least precise. Widening a
+tolerance to make a test pass defeats it; if one of these fails, the number moved.
 
 ### Tolerances
 
@@ -236,17 +317,35 @@ The output is a tightly packed bitstream with no byte alignment between fields (
 
 | Field | Bits | Byte boundary crossed? |
 |-------|------|----------------------|
-| L_dc | 0–6 | No |
-| a_dc | 7–13 | Yes (crosses byte 0→1) |
-| b_dc | 14–20 | Yes (crosses byte 1→2) |
-| L_scale | 21–26 | Yes (crosses byte 2→3) |
-| a_scale | 27–32 | Yes (crosses byte 3→4) |
-| b_scale | 33–37 | No |
-| aspect | 38–45 | Yes (crosses byte 4→5) |
-| hasAlpha | 46 | No |
-| reserved | 47 | No |
+| version | 0–2 | No |
+| tier | 3–5 | No |
+| hasAlpha | 6 | No |
+| reserved | 7 | No |
+| aspect | 8–15 | No |
+| L_dc | 16–22 | Yes (crosses byte 2→3) |
+| a_dc | 23–29 | Yes (crosses byte 2→3) |
+| b_dc | 30–36 | Yes (crosses byte 3→4) |
+| L_scale | 37–42 | Yes (crosses byte 4→5) |
+| a_scale | 43–48 | Yes (crosses byte 5→6) |
+| b_scale | 49–53 | No |
+| alpha_dc | 54–58 | *alpha mode only* |
+| alpha_scale | 59–62 | *alpha mode only* |
 
-Unit tests for `writeBits`/`readBits` must cover writes that begin and end in different bytes. The reserved bit (bit 47) must be 0 in all encoder outputs and must be ignored (not rejected) by decoders.
+Bytes 0 and 1 are the **descriptor**: the self-describing header that fixes the
+hash's total length. Byte 0's low three bits are the format generation, the next
+three the quality tier, then the alpha flag and one reserved bit. `PREFIX_BITS`
+is 54 (16 descriptor + 38 DC/scale); the AC payload follows, and its size is what
+distinguishes the tiers.
+
+Unit tests for `write_bits`/`read_bits` must cover writes that begin and end in
+different bytes — `unit-bitpack.json` does, at positions 0, 3, 6, 7, 47, 48, 53,
+183 and 219.
+
+**The reserved bit is rejected, not ignored.** In v1 the header determines the
+byte length exactly, so `from_bytes` validates the version, the tier, the
+reserved bit and the length, and returns an error rather than decoding a
+malformed input. A hash that validates is guaranteed to decode; that is the
+contract every binding surfaces, and `unit-validate.json` pins it.
 
 ### Axis 7: Round-trip Consistency
 
@@ -256,21 +355,32 @@ Encode→decode round-trips do not recover the exact original pixels (lossy form
 |-------|---------------|
 | Encode determinism | Same input → same bytes, across multiple calls |
 | Decode determinism | Same hash → same pixel array, across multiple calls |
-| Cross-implementation | Rust hash == C == TypeScript == JVM == Swift == Go == Python == C# hash for the same input |
+| Cross-implementation | Rust == C == WASM == UniFFI == TypeScript == JVM == Swift == Go == Python == C# for the same input |
 | Decode output dimensions | Decoder output w/h are derived from aspect byte, not stored exactly — verify they match the spec formula |
 
 ### Current Coverage Gaps
 
-The following cases are not yet represented in `spec/test-vectors/` and should be added:
+Closed since this list was first written: ProPhoto RGB encode cases, both aspect
+clamp boundaries (100×1 and 1×100), 6-bit µ-law cases, dimensions well past
+100 px (up to 320×20), and all five tiers on the solid / gradient / alpha
+families.
 
-- Adobe RGB, BT.2020, and ProPhoto RGB gamut encode cases (only sRGB and Display P3 currently exist)
-- 100×100 maximum-dimension image
-- Fully transparent image (all α = 0)
-- Uniform partial alpha (all pixels α = 128)
-- Solid color with alpha mode triggered (hasAlpha=1 from a single transparent pixel)
-- A color whose OKLAB a or b exceeds MAX_CHROMA (0.5) to exercise clamping
-- Aspect ratio at exact clamp boundaries (100×1, 1×100)
-- μ-law unit cases for 6-bit quantization (used only in alpha mode's low-frequency L AC)
+Still open in `spec/test-vectors/`:
+
+- **Adobe RGB and BT.2020 encode cases.** Both are exercised by the Rust core's
+  in-file golden solids, but not by the shared vectors — so a binding that got
+  its gamut mapping wrong for those two would pass the parity gate.
+- **Fully transparent image (all α = 0).** The alpha-weighted average has a
+  zero-weight sum here and must default to black rather than divide by zero.
+  Covered by property tests in the core, not by a vector every language replays.
+- **Uniform partial alpha (all pixels α = 128)**, distinct from the checkerboard
+  case in that the alpha AC is flat rather than high-frequency.
+- **A colour whose OKLAB a or b exceeds `MAX_CHROMA`**, to pin the DC clamp
+  across languages. `select_dc_codes_never_exceeds_its_field_width` covers it in
+  the core.
+
+Each of these is a *binding-parity* gap rather than a correctness gap: the
+behaviour is pinned in the reference, but the shared contract does not carry it.
 
 ---
 
@@ -279,19 +389,20 @@ The following cases are not yet represented in `spec/test-vectors/` and should b
 ### Changed a constant or matrix in `spec/constants.py`
 
 1. `python3 spec/validate.py` — verify derivation still holds
-2. Update the constant in ALL seven implementations
+2. Update the constant in the Rust core (the other languages read it through the FFI)
 3. Regenerate test vectors from Rust: `cd rust && cargo test -- --ignored generate_test_vectors --nocapture`
-4. `just test` — all seven must pass
+4. `just test` — every language must pass
 
 ### Changed encoding logic
 
-1. Update in ALL seven implementations (they must stay in sync)
+1. Change it in the Rust core only — every other language is a binding over it
 2. Regenerate test vectors from Rust (it is the reference)
-3. `just test` — all seven must pass against new vectors
+3. `just test` — every language must pass against the new vectors
+4. `just rd-gate` — the encoder quality gate; if it moves, say which change moved it
 
 ### Changed decoding logic
 
-1. Update in ALL seven implementations
+1. Change it in the Rust core only
 2. Regenerate decode test vectors from Rust
 3. `just test`
 
@@ -303,7 +414,7 @@ The following cases are not yet represented in `spec/test-vectors/` and should b
 ### Changed the spec (`spec/README.md`)
 
 1. Verify the spec text matches `constants.py`: `python3 spec/validate.py`
-2. If the spec describes new behavior, ensure all seven implementations and test vectors reflect it
+2. If the spec describes new behaviour, ensure the reference and the test vectors reflect it
 3. `just test`
 
 ---
@@ -325,23 +436,58 @@ The `mutants-rust-diff` pre-push step is gated on `rust/src/**/*.rs` edits, so n
 
 ## CI (GitHub Actions)
 
-Each language has an independent CI workflow triggered only when its directory changes:
+Each language has an independent CI workflow triggered when its directory — or
+anything it depends on — changes. **`spec/test-vectors/**` is in every language
+workflow's path filter**: ten suites read those files, so without it a vector
+edit ran nothing but the commit linter.
 
 | Workflow | Trigger path | Steps |
 |----------|-------------|-------|
-| `ci-rust.yml` | `rust/**` | fmt check, clippy, test (`--features full`, incl. x86_64 SIMD diff); `simd-diff` matrix runs the per-backend differential tests per target (native Arm NEON, QEMU SSE2-only, wasmtime simd128) |
-| `ci-c.yml` | `bindings/c/**`, `rust/**` | fmt check, clippy, header drift, test, C example |
-| `ci-wasm.yml` | `bindings/wasm/**`, `rust/**` | fmt check, clippy, test (wasm in Node) |
-| `ci-typescript.yml` | `typescript/**`, `bindings/wasm/**`, `rust/**` | build WASM, fmt check, lint, build, test |
-| `ci-jvm.yml` | `bindings/uniffi/**`, `rust/**` | ktlint check, test (spec vectors through the binding) |
-| `ci-swift.yml` | `swift/**`, `bindings/uniffi/**`, `rust/**` | build, test |
-| `ci-go.yml` | `go/**`, `bindings/c/**`, `rust/**` | fmt check, vet, test |
-| `ci-python.yml` | `python/**`, `bindings/uniffi/**`, `rust/**` | fmt check, lint, test |
-| `ci-csharp.yml` | `csharp/**`, `bindings/c/**`, `rust/**` | fmt check, build (lint), test |
-| `ci-android.yml` | `bindings/uniffi/**` | spec-vector test; AAR cross-compile + assemble |
-| `ci-mutants.yml` | `rust/**` (PRs) | mutation-test the changed core lines (`--in-diff`); manual full sweep via workflow_dispatch |
+| `ci-rust.yml` | `rust/**`, `spec/test-vectors/**` | fmt check, clippy (`--all-targets --features full`), test, `--no-default-features` build + test, MSRV build on the declared `rust-version`; `simd-diff` matrix runs the per-backend differential tests per target (native Arm NEON, QEMU SSE2-only, wasmtime simd128) |
+| `ci-c.yml` | `bindings/c/**`, `rust/**`, `spec/test-vectors/**` | fmt check, clippy `--all-targets`, header drift, test, C example |
+| `ci-wasm.yml` | `bindings/wasm/**`, `rust/**`, `spec/test-vectors/**` | fmt check, clippy `--all-targets`, test (wasm in Node) |
+| `ci-typescript.yml` | `typescript/**`, `bindings/wasm/**`, `rust/**`, `spec/test-vectors/**` | build WASM, fmt check, lint, build, test |
+| `ci-jvm.yml` | `bindings/uniffi/**`, `rust/**`, `spec/test-vectors/**` | ktlint check, test (spec vectors through the binding) |
+| `ci-swift.yml` | `swift/**`, `bindings/uniffi/**`, `rust/**`, `spec/test-vectors/**` | build, test (macOS — the xcframework needs xcodebuild) |
+| `ci-go.yml` | `go/**`, `bindings/c/**`, `rust/**`, `spec/test-vectors/**` | fmt check, vet, test |
+| `ci-python.yml` | `python/**`, `bindings/uniffi/**`, `rust/**`, `spec/test-vectors/**` | fmt check, lint, test |
+| `ci-csharp.yml` | `csharp/**`, `bindings/c/**`, `rust/**`, `spec/test-vectors/**` | fmt check, build (lint), test |
+| `ci-android.yml` | `bindings/uniffi/**`, `rust/**`, `spec/test-vectors/**` | spec-vector test; AAR cross-compile + assemble |
+| `ci-repo.yml` | *no path filter* | `spec/validate.py`, the core's `--features full` test, and the manifest-version check — the repo-wide gates that must run on every change |
+| `ci-tools.yml` | `tools/{thumbhash-rs,gamut-ref-stdin,benchmark,ci}/**` | fmt, lint, build and test the three helper tools; manifest versions |
+| `ci-comparison.yml` | `tools/comparison/**`, `typescript/**`, `rust/**` | build the harness and run the R–D quality gate. `rust/**` is there because the gate exists to catch *encoder* regressions |
+| `ci-mutants.yml` | `rust/**` (PRs) | mutation-test the changed core lines (`--in-diff`), with an empty-diff guard; full sweep weekly and on demand |
+| `ci-commits.yml` | *all* | conventional-commit format (convco) |
 
-CI mirrors the local `just` commands. If local checks pass, CI should pass.
+CI mirrors the local `just` commands. If local checks pass, CI should pass — with
+two exceptions that cannot run on a Linux workstation: the Swift suite (needs
+macOS for the xcframework, so `just test-swift` skips with a message rather than
+passing silently) and `test-simd-emulated` (needs `qemu-user` and `wasmtime`).
+
+---
+
+## Binding test requirements
+
+Every non-Rust package is a thin wrapper with no algorithm of its own, so its
+suite is deliberately small. But "small" is not "absent": each of these has
+caught a real defect, and each must be present in **every** binding.
+
+| Requirement | Why |
+|---|---|
+| **Replay all three integration vector files** | The cross-language contract. Encode, decode, and capped decode. |
+| **A missing or empty vector file must fail** | A loader that returns `null` or an empty list on a missing file turns the entire correctness gate green with zero assertions. That is exactly what the JVM suite did until a rename would have gone unnoticed. |
+| **An unknown gamut must throw** | A silent fallback to sRGB reports a *hash mismatch* instead of the real cause. Go's fallback was load-bearing: removing it revealed there was no `case "sRGB"` at all. |
+| **Per-tier byte lengths (21/32/108/411/1623)** | A `length == 32` assertion is true of exactly one tier and says nothing about the other four. |
+| **Per-tier decoded raster (32/32/64/128/256)** | A range check wide enough to pass at every tier cannot tell them apart. |
+| **`from_bytes` rejects a wrong length, a reserved tier code, and a set reserved bit** | The documented contract is that a hash which constructs is guaranteed to decode. A lazy `from_bytes` moves the failure far from the boundary that accepted it. |
+| **`encode` rejects invalid dimensions, a mismatched rgba length, and a reserved tier** | The core panics on all three. A panic across FFI is undefined behaviour; in WebAssembly it aborts the module instance, so every later call fails too. |
+| **Batch encoding honours each item's tier, and an omitted tier is the *default* tier** | The tier codes are ordered by quality, so a zero default silently produces the 21-byte compact hash. Comparing batch against serial would pass if both used one tier — the byte lengths are what distinguish them. |
+| **Locally declared tier constants agree with the FFI's** | Go and C# must declare their own (they need constant expressions); a test ties them to the exported symbols so a renumber cannot leave one behind. |
+
+TypeScript additionally ships a **pure-TypeScript decoder** (`src/header.ts`,
+`src/decode.ts`) for render-only consumers who skip the WASM init. That is a
+genuine second implementation, so it declares the wire constants independently —
+and a test asserts they equal the ones the WASM core exports.
 
 ---
 
@@ -403,7 +549,7 @@ Scope is the core only (per issue #41); the FFI bindings are thin wrappers and
 are exercised by their own spec-vector tests.
 
 ```bash
-just mutants-rust                     # full sweep of rust/src (~1200 mutants, minutes)
+just mutants-rust                     # full sweep of rust/src (~2000 mutants, ~hours)
 just mutants-rust-diff                # only the lines changed vs origin/master (fast)
 just mutants-rust --file src/dct.rs   # extra args pass straight to cargo-mutants
 ```
@@ -425,8 +571,18 @@ adding a test over an exclusion.
 
 **Where it runs.** The `mutants-rust-diff` lefthook pre-push step gates pushes
 that touch `rust/src` on the changed lines being covered; `ci-mutants.yml` runs
-the same incremental check on pull requests. The full sweep is manual
-(`just mutants-rust`, or the `ci-mutants` workflow_dispatch) because it is slow.
+the same incremental check on pull requests. The full sweep is too slow for a PR
+gate, so it runs weekly on a schedule (and on demand via workflow_dispatch): a
+gap the incremental gate cannot see is one in code nobody is touching, worth
+catching eventually but not worth blocking every PR on.
+
+**Why not a coverage percentage.** This repo has no coverage-percentage
+threshold anywhere, deliberately. Line coverage counts lines the tests *execute*;
+mutation testing counts lines the tests *pin*. A threshold rewards adding calls
+without assertions — and most of this repo is bindings, where a coverage number
+would measure the FFI marshalling rather than the format. The gates that matter
+here are the shared vectors, the property invariants, the structural requirements
+in [Binding test requirements](#binding-test-requirements), and this sweep.
 
 ---
 
@@ -450,5 +606,8 @@ the same incremental check on pull requests. The full sweep is manual
 
 ### Test vector regeneration produces different hashes
 
-- Expected if you changed encoding logic. Update all implementations to match.
-- Unexpected if you only changed one language. The Rust reference may have a bug — compare against spec pseudocode.
+- Expected if you changed encoding logic in the core. Review the diff, and say in
+  the commit message which change moved it.
+- Unexpected otherwise. The reference may have a bug — compare against the spec
+  pseudocode, and check `spec/validate.py`, which derives the constants
+  independently.
