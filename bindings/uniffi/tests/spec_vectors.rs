@@ -18,6 +18,10 @@ const DECODE_VECTORS: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../spec/test-vectors/integration-decode.json"
 ));
+const DECODE_CAPPED_VECTORS: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../spec/test-vectors/integration-decode-capped.json"
+));
 
 /// Map a spec-vector gamut string to the binding's `Gamut` enum.
 fn gamut_from_str(s: &str) -> Gamut {
@@ -271,4 +275,45 @@ fn from_bytes_rejects_wrong_length() {
         ChromaHash::from_bytes(vec![0u8; 32]).is_err(),
         "a compact-tier descriptor on 32 bytes must be rejected"
     );
+}
+#[test]
+fn integration_decode_capped_vectors() {
+    // The capped decode has its own scaling path (it picks a render size that
+    // fits the cap, not the tier's natural raster), and neither this binding nor
+    // the UniFFI one replayed these vectors — the two FFI surfaces were the only
+    // ones exercising `decode` but not `decode_capped` against the contract.
+    let cases: Value =
+        serde_json::from_str(DECODE_CAPPED_VECTORS).expect("parse decode-capped vectors");
+    let cases = cases
+        .as_array()
+        .expect("decode-capped vectors should be an array");
+    assert!(!cases.is_empty(), "no decode-capped vectors found");
+
+    for case in cases {
+        let name = case["name"].as_str().unwrap_or("<unnamed>");
+        let input = &case["input"];
+        let max_w = input["max_width"].as_u64().expect("max_width") as u32;
+        let max_h = input["max_height"].as_u64().expect("max_height") as u32;
+        let hash = ChromaHash::from_bytes(bytes(&input["hash"]))
+            .unwrap_or_else(|e| panic!("{name}: from_bytes rejected a spec-vector hash: {e}"));
+        let result = hash.decode_capped(max_w, max_h);
+
+        let expected = &case["expected"];
+        assert_eq!(
+            result.width as u64,
+            expected["width"].as_u64().expect("width"),
+            "{name}: width mismatch"
+        );
+        assert_eq!(
+            result.height as u64,
+            expected["height"].as_u64().expect("height"),
+            "{name}: height mismatch"
+        );
+        assert_eq!(
+            result.rgba,
+            bytes(&expected["rgba"]),
+            "{name}: rgba mismatch"
+        );
+        assert!(result.width as u32 <= max_w && result.height as u32 <= max_h);
+    }
 }
