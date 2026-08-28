@@ -588,6 +588,32 @@ reaches) or only affect resource cleanup. These are listed, with justification,
 in `exclude_re` in `rust/.cargo/mutants.toml` — keep that list short and prefer
 adding a test over an exclusion.
 
+Two rules learned the hard way, both from exclusions in that file that turned
+out to be wrong:
+
+- **Anchor the pattern as narrowly as it will go.** An unanchored
+  `replace - with (\+|/) in select_dc_codes` matched all three clamp ceilings
+  when only the L one is equivalent, quietly exempting two killable mutants —
+  while the comment beside it said the opposite. A line-anchored pattern is
+  brittle, but it fails *safe*: if the file shifts, the sweep reports an extra
+  missed mutant rather than exempting a new one.
+- **Assert the premise.** "No input reaches this boundary" is a claim about the
+  format, so it can be a test. `no_aspect_byte_decodes_to_exactly_one` checks
+  all 256 aspect bytes, which is what the two `>`/`>=` exclusions actually rest
+  on. Where the premise cannot be tested, say what was measured and how.
+
+**The build profile changes the answer.** The sweep runs on `[profile.mutants]`
+(optimized, but with `overflow-checks` and `debug-assertions` on), not plain
+`release`. Release masks arithmetic that debug traps on, and that changes which
+mutants are killable, not just how fast they run: `(bitpos + i) % 8` → `+ 8` is
+caught in a checked build, where the shift panics, and survives in release,
+where `1u8 << 11` silently becomes `1u8 << 3`. Reporting that as an equivalent
+mutant would be measuring the profile rather than the tests.
+
+**The property tests are randomized**, so a mutant they kill in one sweep may
+survive the next. A single missed mutant in `tests/properties.rs`'s blast radius
+is worth re-running before acting on; a repeatable one is a real gap.
+
 **Where it runs.** The `mutants-rust-diff` lefthook pre-push step gates pushes
 that touch `rust/src` on the changed lines being covered; `ci-mutants.yml` runs
 the same incremental check on pull requests. The full sweep is too slow for a PR

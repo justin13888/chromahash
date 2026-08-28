@@ -101,6 +101,10 @@ the format version via producer-side metadata. See `spec/README.md` §2.5 for de
 - **c**: Finalize the v1 C-ABI surface — tier constants, batch tiers, eager from_bytes
 - **uniffi**: Validate at the FFI boundary and let a batch item pick its tier
 
+### Changed
+
+- **rust**: Stop publishing wire constants nothing consumes
+
 ### Fixed
 
 - **tools**: Fail without metrics and measure timing fairly
