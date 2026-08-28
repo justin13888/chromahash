@@ -33,9 +33,7 @@ def tier_from_env() -> int:
     except ValueError:
         tier = -1
     if not 0 <= tier <= MAX_TIER:
-        sys.stderr.write(
-            f"CHROMAHASH_TIER: {raw!r} is not a valid tier code (0..={MAX_TIER})\n"
-        )
+        sys.stderr.write(f"CHROMAHASH_TIER: {raw!r} is not a valid tier code (0..={MAX_TIER})\n")
         sys.exit(1)
     return tier
 
