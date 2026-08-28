@@ -123,6 +123,72 @@ export function computeFormatStats(
   });
 }
 
+/**
+ * Long edge, in CSS px, of the normalization box every preview is scaled into.
+ * Matches the report's historical max-height cap, so page length is unchanged.
+ */
+const PREVIEW_BOX_LONG_EDGE = 150;
+/**
+ * Floor on a rendered edge. The `dim-*` fixtures reach 1x100 and 100x1, which
+ * contain-fit to a ~1.5px sliver -- present, but impossible to actually look
+ * at. Clamping the short edge up stretches that one axis; the true decode
+ * dimensions stay printed in every cell's label, so the distortion is
+ * disclosed rather than hidden.
+ */
+const PREVIEW_MIN_EDGE = 8;
+
+/** A rendered size in CSS pixels. */
+interface Box {
+  w: number;
+  h: number;
+}
+
+/**
+ * The per-row normalization box: the original's aspect ratio with its long edge
+ * at {@link PREVIEW_BOX_LONG_EDGE}, short edge floored at {@link PREVIEW_MIN_EDGE}.
+ * Every cell in the row -- original, each format, each language harness -- is
+ * laid out in a box of exactly this size, so formats are compared at one scale
+ * instead of at whatever resolution each happens to decode to.
+ */
+function rowBox(width: number, height: number): Box {
+  if (!(width > 0) || !(height > 0)) {
+    return { w: PREVIEW_BOX_LONG_EDGE, h: PREVIEW_BOX_LONG_EDGE };
+  }
+  const scale = PREVIEW_BOX_LONG_EDGE / Math.max(width, height);
+  return {
+    w: Math.max(PREVIEW_MIN_EDGE, Math.round(width * scale)),
+    h: Math.max(PREVIEW_MIN_EDGE, Math.round(height * scale)),
+  };
+}
+
+/**
+ * Contain-fit a decode of `width`x`height` inside the row box, flooring each
+ * rendered edge at {@link PREVIEW_MIN_EDGE}. Contain (never cover, never
+ * stretch) is what keeps a format that decodes to a different aspect than the
+ * source visibly letterboxed instead of silently distorted -- e.g. a square 4x4
+ * WebP against a 827x852 original. Upscaling is the point: a 4x4 decode is
+ * magnified ~37x so it is actually visible, and `image-rendering: pixelated`
+ * keeps that honest by showing its 16 flat samples as 16 flat blocks.
+ */
+function fitInBox(width: number, height: number, box: Box): Box {
+  if (!(width > 0) || !(height > 0)) return box;
+  const scale = Math.min(box.w / width, box.h / height);
+  return {
+    w: Math.max(PREVIEW_MIN_EDGE, Math.round(width * scale)),
+    h: Math.max(PREVIEW_MIN_EDGE, Math.round(height * scale)),
+  };
+}
+
+/** Inline `style` sizing a media element to a fitted box. */
+function sizeStyle(box: Box): string {
+  return `width:${box.w}px;height:${box.h}px`;
+}
+
+/** Custom properties that fix a cell's media area to the row box. */
+function boxVars(box: Box): string {
+  return `--box-w:${box.w}px;--box-h:${box.h}px`;
+}
+
 /** Format a nullable metric to fixed precision, or "N/A". */
 function fmt(v: number | null, digits: number): string {
   return v !== null ? v.toFixed(digits) : "N/A";
@@ -372,27 +438,31 @@ ${categories
     return `
 <div class="section-title">${category}</div>
 ${catEntries
-  .map(
-    (entry) => `
+  .map((entry) => {
+    // Same per-row normalization box as the cross-format grid, so the two tabs
+    // present previews at one consistent scale.
+    const box = rowBox(entry.originalWidth, entry.originalHeight);
+    return `
 <div class="image-row">
   <div class="image-name">${entry.name}</div>
   <div class="image-cell">
-    <div class="original-wrap">
+    <div class="image-box original-wrap" style="${boxVars(box)}">
       <img class="img-hires" src="${entry.originalDataUri}" alt="Original">
       <img class="img-lores" src="${entry.loResDataUri}" alt="Encoder input">
     </div>
     <div class="label">Original<br>${entry.originalWidth}x${entry.originalHeight}px</div>
   </div>
   ${entry.harnessResults
-    .map(
-      (r) => `<div class="image-cell">
-    ${r.dataUri ? `<img src="${r.dataUri}" alt="${r.language}" class="${r.matches ? "" : "mismatch"}">` : '<div style="width:80px;height:150px;background:#333;display:flex;align-items:center;justify-content:center;color:#f44">Error</div>'}
+    .map((r) => {
+      const fit = fitInBox(r.decodedWidth, r.decodedHeight, box);
+      return `<div class="image-cell">
+    <div class="image-box ${r.matches ? "" : "mismatch"}" style="${boxVars(box)}">${r.dataUri ? `<img src="${r.dataUri}" alt="${r.language}" style="${sizeStyle(fit)}">` : '<div class="decode-error">Error</div>'}</div>
     <div class="label ${r.matches ? "pass" : "fail"}">${r.language}</div>
-  </div>`,
-    )
+  </div>`;
+    })
     .join("\n  ")}
-</div>`,
-  )
+</div>`;
+  })
   .join("\n")}`;
   })
   .join("\n")}
@@ -428,25 +498,42 @@ ${catEntries
   .image-row { display: flex; gap: 8px; align-items: flex-start; flex-wrap: wrap; margin: 8px 0; padding: 8px; background: #222244; border-radius: 4px; }
   body.light .image-row { background: #fff; border: 1px solid #ddd; }
   .image-cell { text-align: center; min-width: 128px; max-width: 300px; }
-  /* Contain, never stretch: a preview fits inside 300x150 with its aspect
-     ratio intact and can never exceed its cell. width/height stay auto so the
-     two max-* bounds preserve the ratio -- the dim-* fixtures are extreme
-     enough (32x1) that a fixed height alone rendered them thousands of px
-     wide and scrolled the whole page sideways. */
-  .image-cell img { max-width: 100%; max-height: 150px; width: auto; height: auto; image-rendering: pixelated; border: 1px solid #555; }
-  body.blur .image-cell img { image-rendering: auto; }
-  .original-wrap { position: relative; display: inline-block; max-width: 100%; }
+  /* Every cell in a row shares one normalization box, sized by the generator
+     from the original's aspect ratio (long edge 150px, short edge floored at
+     8px) and passed down as --box-w/--box-h. Formats decode at wildly
+     different resolutions -- 4x4 for a minimum-size WebP, 97x100 for
+     ChromaHash t3 -- and the old max-width/max-height pair only capped, never
+     scaled up, so each preview rendered at its own native size and the small
+     ones were invisible. content-box overrides the global border-box so the
+     frame sits outside the media area and --box-* is the true rendered size. */
+  .image-box {
+    box-sizing: content-box;
+    width: var(--box-w); height: var(--box-h);
+    display: flex; align-items: center; justify-content: center;
+    margin: 0 auto;
+    border: 1px solid #555;
+  }
+  body.light .image-box { border-color: #ccc; }
+  /* The generator emits each preview's exact contain-fit size, so the element
+     is never stretched by the layout; pixelated keeps a 37x-magnified 4x4
+     decode reading as the 16 samples it actually stored. */
+  .image-box img { display: block; image-rendering: pixelated; }
+  body.blur .image-box img { image-rendering: auto; }
+  .image-box .decode-error { width: 100%; height: 100%; background: #333; display: flex; align-items: center; justify-content: center; color: #f44; font-size: 0.7rem; }
+  .original-wrap { position: relative; }
+  /* Both layers fill the box exactly -- the box is built from this original's
+     own aspect ratio -- so the hover overlay registers pixel-for-pixel. */
+  .original-wrap img { width: 100%; height: 100%; }
   .original-wrap .img-lores { position: absolute; top: 0; left: 0; opacity: 0; transition: opacity 0.15s; }
   .original-wrap:hover .img-lores { opacity: 1; }
   .original-wrap .img-hires { image-rendering: auto; }
-  body.light .image-cell img { border-color: #ccc; }
   .image-cell .label { font-size: 0.75rem; margin-top: 2px; color: #aaa; }
   body.light .image-cell .label { color: #666; }
-  .image-cell .css-preview { width: 150px; height: 150px; border: 1px solid #555; }
+  .image-cell .css-preview { width: 100%; height: 100%; }
   .image-name { font-weight: bold; font-size: 0.85rem; min-width: 120px; display: flex; align-items: center; }
   .pass { color: #4caf50; }
   .fail { color: #f44336; font-weight: bold; }
-  .mismatch { outline: 3px solid #f44336; }
+  .image-box.mismatch { outline: 3px solid #f44336; }
   .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin: 16px 0; }
   .summary-card { padding: 12px; background: #2a2a4a; border-radius: 4px; text-align: center; }
   body.light .summary-card { background: #fff; border: 1px solid #ddd; }
@@ -562,12 +649,16 @@ ${categories
         : ""
     }
 ${catEntries
-  .map(
-    (entry) => `
+  .map((entry) => {
+    // One box per row, from the original's aspect ratio: every format in the
+    // row is then drawn at the same scale, so a 4x4 WebP and a 97x100
+    // ChromaHash t3 are compared as displayed rather than as decoded.
+    const box = rowBox(entry.originalWidth, entry.originalHeight);
+    return `
 <div class="image-row">
   <div class="image-name">${entry.name}</div>
   <div class="image-cell">
-    <div class="original-wrap">
+    <div class="image-box original-wrap" style="${boxVars(box)}">
       <img class="img-hires" src="${entry.originalDataUri}" alt="Original">
       <img class="img-lores" src="${entry.loResDataUri}" alt="Encoder input">
     </div>
@@ -576,9 +667,13 @@ ${catEntries
   ${entry.formatResults
     .map((r) => {
       if (r.dataUri.startsWith("css:")) {
+        // unpic's blurhashToCssGradientString() returns a bare comma-separated
+        // gradient list -- the value of background-image, not a declaration --
+        // so the property name is supplied here. The adapter's byte count
+        // measures that list, which is what a consumer would actually ship.
         const css = r.dataUri.slice(4);
         return `<div class="image-cell">
-      <div class="css-preview" style="${css}"></div>
+      <div class="image-box" style="${boxVars(box)}"><div class="css-preview" style="background-image:${css}"></div></div>
       <div class="label">${r.formatName}<br>${r.decodedWidth}x${r.decodedHeight}px | ${r.encodedSizeBytes}B</div>
     </div>`;
       }
@@ -592,14 +687,15 @@ ${catEntries
           ? ` | ΔE:${r.metrics.ciede2000.toFixed(2)}`
           : "";
       const dssimStr = `<br>S2:${m(r.metrics.ssimulacra2, 0)} Bu:${m(r.metrics.butteraugli, 1)} DS:${m(r.metrics.dssim, 3)}`;
+      const fit = fitInBox(r.decodedWidth, r.decodedHeight, box);
       return `<div class="image-cell">
-      <img src="${r.dataUri}" alt="${r.formatName}">
+      <div class="image-box" style="${boxVars(box)}"><img src="${r.dataUri}" alt="${r.formatName}" style="${sizeStyle(fit)}"></div>
       <div class="label">${r.formatName}<br>${r.decodedWidth}x${r.decodedHeight}px | ${r.encodedSizeBytes}B${ciedeStr}${dssimStr}</div>
     </div>`;
     })
     .join("\n  ")}
-</div>`,
-  )
+</div>`;
+  })
   .join("\n")}`;
   })
   .join("\n")}

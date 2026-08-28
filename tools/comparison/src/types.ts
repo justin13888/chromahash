@@ -108,6 +108,10 @@ export interface HarnessResult {
   matches: boolean;
   /** Decoded preview as a base64 PNG data URI. */
   dataUri: string;
+  /** Width of the decoded preview, or 0 when the harness produced no preview. */
+  decodedWidth: number;
+  /** Height of the decoded preview, or 0 when the harness produced no preview. */
+  decodedHeight: number;
 }
 
 /** Category for grouping images in the report. */

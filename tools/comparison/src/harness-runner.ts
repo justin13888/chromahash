@@ -284,6 +284,8 @@ export async function runAllHarnesses(
           hash: new Uint8Array(),
           matches: false,
           dataUri: "",
+          decodedWidth: 0,
+          decodedHeight: 0,
         });
         continue;
       }
@@ -303,6 +305,8 @@ export async function runAllHarnesses(
         hash,
         matches: true, // Will be updated after all complete
         dataUri,
+        decodedWidth: decoded.w,
+        decodedHeight: decoded.h,
       });
     } catch (error) {
       console.warn(
@@ -314,6 +318,8 @@ export async function runAllHarnesses(
         hash: new Uint8Array(),
         matches: false,
         dataUri: "",
+        decodedWidth: 0,
+        decodedHeight: 0,
       });
     }
   }
