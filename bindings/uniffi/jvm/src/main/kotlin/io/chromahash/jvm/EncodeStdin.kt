@@ -8,7 +8,28 @@ import io.chromahash.ffi.ImageInput
 /**
  * stdin/stdout CLI used by the cross-language comparison harness, mirroring the
  * other languages' `encode-stdin`. Backed by the UniFFI binding (`io.chromahash.ffi`).
+ *
+ * Tier codes are ordered by quality (spec §2.5): 1 is the 32-byte default.
  */
+
+private const val DEFAULT_TIER: UByte = 1u
+private const val MAX_TIER: UByte = 4u
+
+/**
+ * Quality tier from CHROMAHASH_TIER, matching the Rust harness so the
+ * cross-language benchmark measures the same workload in every language.
+ * Defaults to the 32-byte tier.
+ */
+private fun tierFromEnv(): UByte {
+    val raw = System.getenv("CHROMAHASH_TIER")
+    if (raw.isNullOrEmpty()) return DEFAULT_TIER
+    val tier = raw.toUByteOrNull()
+    if (tier == null || tier > MAX_TIER) {
+        System.err.println("CHROMAHASH_TIER: '$raw' is not a valid tier code (0..=$MAX_TIER)")
+        System.exit(1)
+    }
+    return tier!!
+}
 
 private fun parseGamut(s: String): Gamut =
     when (s) {
@@ -52,7 +73,8 @@ fun main(args: Array<String>) {
                 System.exit(1)
             }
 
-            val hash = ChromaHash.encode(w.toUInt(), h.toUInt(), rgba, gamut)
+            val hash =
+                ChromaHash.encodeWithQuality(w.toUInt(), h.toUInt(), rgba, gamut, tierFromEnv())
             System.out.write(hash.asBytes())
             System.out.flush()
         }

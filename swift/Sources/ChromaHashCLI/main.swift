@@ -14,6 +14,24 @@ func parseGamut(_ s: String) -> Gamut {
   }
 }
 
+/// Quality tier from CHROMAHASH_TIER, matching the Rust harness so the
+/// cross-language benchmark measures the same workload in every language.
+/// Defaults to the 32-byte tier.
+func tierFromEnv() -> UInt8 {
+  guard let raw = ProcessInfo.processInfo.environment["CHROMAHASH_TIER"],
+    !raw.isEmpty
+  else {
+    return ChromaHash.defaultTier
+  }
+  guard let tier = UInt8(raw), tier <= ChromaHash.maxTier else {
+    FileHandle.standardError.write(
+      Data(
+        "CHROMAHASH_TIER: \(raw) is not a valid tier code (0...\(ChromaHash.maxTier))\n".utf8))
+    exit(1)
+  }
+  return tier
+}
+
 func printUsage() -> Never {
   FileHandle.standardError.write(
     Data(
@@ -57,7 +75,8 @@ case "encode":
     exit(1)
   }
 
-  let hash = ChromaHash.encode(width: w, height: h, rgba: rgba, gamut: gamut)
+  let hash = ChromaHash.encodeWithQuality(
+    width: w, height: h, rgba: rgba, gamut: gamut, quality: tierFromEnv())
   FileHandle.standardOutput.write(Data(hash.hash))
 
 case "decode":

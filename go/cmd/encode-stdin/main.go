@@ -9,6 +9,22 @@ import (
 	chromahash "github.com/justin13888/chromahash/go"
 )
 
+// tierFromEnv reads the quality tier from CHROMAHASH_TIER, matching the Rust
+// harness so the cross-language benchmark measures the same workload in every
+// language. Defaults to the 32-byte tier.
+func tierFromEnv() uint8 {
+	raw, ok := os.LookupEnv("CHROMAHASH_TIER")
+	if !ok || raw == "" {
+		return chromahash.DefaultTier
+	}
+	tier, err := strconv.Atoi(raw)
+	if err != nil || tier < 0 || tier > int(chromahash.MaxTier) {
+		fmt.Fprintf(os.Stderr, "CHROMAHASH_TIER: %q is not a valid tier code (0..=%d)\n", raw, chromahash.MaxTier)
+		os.Exit(1)
+	}
+	return uint8(tier)
+}
+
 func usage() {
 	fmt.Fprintln(os.Stderr, "Usage:")
 	fmt.Fprintln(os.Stderr, "  encode-stdin encode <width> <height> <gamut>")
@@ -69,7 +85,7 @@ func main() {
 			os.Exit(1)
 		}
 
-		hash := chromahash.Encode(w, h, rgba, gamut)
+		hash := chromahash.EncodeWithQuality(w, h, rgba, gamut, tierFromEnv())
 		os.Stdout.Write(hash.Hash[:])
 
 	case "decode":

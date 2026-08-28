@@ -36,6 +36,25 @@ static byte[] ReadAll(Stream stream)
     return ms.ToArray();
 }
 
+// Quality tier from CHROMAHASH_TIER, matching the Rust harness so the
+// cross-language benchmark measures the same workload in every language.
+// Defaults to the 32-byte tier.
+static byte TierFromEnv()
+{
+    string? raw = Environment.GetEnvironmentVariable("CHROMAHASH_TIER");
+    if (string.IsNullOrEmpty(raw))
+    {
+        return ChromaHash.ChromaHash.DefaultTier;
+    }
+    if (!byte.TryParse(raw, out byte tier) || tier > ChromaHash.ChromaHash.MaxTier)
+    {
+        Console.Error.WriteLine(
+            $"CHROMAHASH_TIER: '{raw}' is not a valid tier code (0..={ChromaHash.ChromaHash.MaxTier})");
+        Environment.Exit(1);
+    }
+    return tier;
+}
+
 if (args.Length < 1)
 {
     Console.Error.WriteLine("Usage:");
@@ -64,7 +83,7 @@ switch (args[0])
             using var stdin = Console.OpenStandardInput();
             byte[] rgba = ReadExact(stdin, expectedLen);
 
-            var hash = ChromaHash.ChromaHash.Encode(w, h, rgba, gamut);
+            var hash = ChromaHash.ChromaHash.EncodeWithQuality(w, h, rgba, gamut, TierFromEnv());
             using var stdout = Console.OpenStandardOutput();
             stdout.Write(hash.AsBytes());
             return 0;

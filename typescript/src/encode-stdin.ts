@@ -1,7 +1,13 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { BatchEncoder, ChromaHash, init } from "./index.ts";
+import {
+  BatchEncoder,
+  ChromaHash,
+  DEFAULT_TIER,
+  init,
+  MAX_TIER,
+} from "./index.ts";
 import type { Gamut, ImageInput } from "./index.ts";
 
 const gamutMap: Record<string, Gamut> = {
@@ -38,6 +44,24 @@ if (!subcommand) {
   usage();
 }
 
+/**
+ * Quality tier from CHROMAHASH_TIER, matching the Rust harness so the
+ * cross-language benchmark measures the same workload in every language.
+ * Defaults to the 32-byte tier.
+ */
+function tierFromEnv(): number {
+  const raw = process.env.CHROMAHASH_TIER;
+  if (raw === undefined || raw === "") return DEFAULT_TIER;
+  const tier = Number.parseInt(raw, 10);
+  if (!Number.isInteger(tier) || tier < 0 || tier > MAX_TIER) {
+    process.stderr.write(
+      `CHROMAHASH_TIER: "${raw}" is not a valid tier code (0..=${MAX_TIER})\n`,
+    );
+    process.exit(1);
+  }
+  return tier;
+}
+
 switch (subcommand) {
   case "encode": {
     const wArg = args[1];
@@ -70,14 +94,14 @@ switch (subcommand) {
       process.exit(1);
     }
 
-    const hash = ChromaHash.encode(w, h, rgba, gamut);
+    const hash = ChromaHash.encodeWithQuality(w, h, rgba, gamut, tierFromEnv());
     process.stdout.write(Buffer.from(hash.hash));
     break;
   }
   case "decode": {
     const hashBuf = await readStdin();
-    if (hashBuf.length !== 32) {
-      process.stderr.write(`expected 32 bytes, got ${hashBuf.length}\n`);
+    if (hashBuf.length < 2) {
+      process.stderr.write(`expected a hash, got ${hashBuf.length} bytes\n`);
       process.exit(1);
     }
     const ch = ChromaHash.fromBytes(new Uint8Array(hashBuf));
@@ -87,8 +111,8 @@ switch (subcommand) {
   }
   case "average-color": {
     const hashBuf2 = await readStdin();
-    if (hashBuf2.length !== 32) {
-      process.stderr.write(`expected 32 bytes, got ${hashBuf2.length}\n`);
+    if (hashBuf2.length < 2) {
+      process.stderr.write(`expected a hash, got ${hashBuf2.length} bytes\n`);
       process.exit(1);
     }
     const ch2 = ChromaHash.fromBytes(new Uint8Array(hashBuf2));
@@ -141,8 +165,8 @@ switch (subcommand) {
     }
     const count = Number.parseInt(countArg, 10);
     const hashBuf = await readStdin();
-    if (hashBuf.length !== 32) {
-      process.stderr.write(`expected 32 bytes, got ${hashBuf.length}\n`);
+    if (hashBuf.length < 2) {
+      process.stderr.write(`expected a hash, got ${hashBuf.length} bytes\n`);
       process.exit(1);
     }
     const ch = ChromaHash.fromBytes(new Uint8Array(hashBuf));
