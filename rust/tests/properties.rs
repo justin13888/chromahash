@@ -21,12 +21,18 @@
 use chromahash::{COMPACT_TIER, ChromaHash, ChromaHashError, Gamut, MAX_TIER, Tunables};
 use proptest::prelude::*;
 
-/// Case budget for the properties that decode. A tier-4 decode rasterizes
-/// 256x256 px, so the default 256 cases put this file at ~5 minutes in a debug
-/// build — too slow for a gate that runs on every push. These properties are
-/// about shape invariants over the whole tier range, not rare-value hunting,
-/// so a smaller sample buys nearly all the signal.
-const DECODING_CASES: u32 = 48;
+// Case budgets. Two forces set these, and they pull the same way.
+//
+// A tier-4 decode rasterizes 256x256 px, so the decoding properties dominate
+// this file's runtime — at proptest's default 256 cases it took ~5 minutes in a
+// debug build. And cargo-mutants re-runs the whole suite *once per mutant*
+// (~2000 of them), so every second here is multiplied by two thousand.
+//
+// These properties are about shape invariants that hold or fail across the
+// whole tier range, not about hunting rare values, so a modest sample finds
+// what they can find. Raise them locally when investigating a specific failure.
+const CASES: u32 = 96;
+const DECODING_CASES: u32 = 24;
 
 /// How far `average_color` may sit from a solid input's own channel value.
 ///
@@ -46,6 +52,31 @@ const ALPHA_TOLERANCE: i32 = 4;
 /// its own, shorter, table — the second row.
 const OPAQUE_LEN: [usize; 5] = [21, 32, 108, 411, 1623];
 const ALPHA_LEN: [usize; 5] = [21, 32, 103, 388, 1528];
+
+/// A pseudo-random image from a seed, optionally forced opaque.
+///
+/// Cheaper than a `Vec<u8>` strategy — proptest would generate and shrink every
+/// byte — and the seed is all a failure needs to reproduce.
+fn deterministic_image(seed: u64, opaque: bool) -> (u32, u32, Vec<u8>) {
+    let mut state = seed | 1;
+    let mut next = || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state
+    };
+    let w = (next() % 24 + 1) as u32;
+    let h = (next() % 24 + 1) as u32;
+    let mut rgba = vec![0u8; (w * h * 4) as usize];
+    for px in rgba.chunks_exact_mut(4) {
+        let v = next();
+        px[0] = v as u8;
+        px[1] = (v >> 8) as u8;
+        px[2] = (v >> 16) as u8;
+        px[3] = if opaque { 255 } else { (v >> 24) as u8 & 0x7f };
+    }
+    (w, h, rgba)
+}
 
 fn gamuts() -> impl Strategy<Value = Gamut> {
     prop_oneof![
@@ -75,7 +106,146 @@ fn image(opaque: bool) -> impl Strategy<Value = (u32, u32, Vec<u8>)> {
     })
 }
 
+/// The `TooShort` boundary is one exact length — `ceil(PREFIX_BITS / 8)` = 7 —
+/// so sampling will not reliably land on it. Enumerate it instead: below 7 is
+/// `TooShort`, and 7 itself is *not* (it falls through to the header checks,
+/// and then fails the length check, because no tier is 7 bytes long).
+///
+/// Both entry points must agree; `from_bytes_tuned` is the sweep harness's own
+/// validator and had no test at all before.
+#[test]
+fn the_too_short_boundary_is_exact() {
+    let valid = ChromaHash::encode(4, 4, &[128u8; 4 * 4 * 4], Gamut::Srgb)
+        .as_bytes()
+        .to_vec();
+
+    for len in 0..=8usize {
+        let bytes = &valid[..len];
+        let expected = if len < 7 {
+            Err(ChromaHashError::TooShort)
+        } else {
+            Err(ChromaHashError::LengthMismatch)
+        };
+        assert_eq!(
+            ChromaHash::from_bytes(bytes),
+            expected,
+            "from_bytes at {len} bytes"
+        );
+        assert_eq!(
+            ChromaHash::from_bytes_tuned(bytes, &Tunables::DEFAULT),
+            expected,
+            "from_bytes_tuned at {len} bytes"
+        );
+    }
+}
+
+/// Byte 0 packs four fields — version, tier, alpha flag, reserved bit — and each
+/// has its own rejection path. There are only 256 values, so enumerate them all
+/// rather than sampling: a random header lands on the reserved-bit check only
+/// after passing the version and tier checks, which is a few percent of draws.
+///
+/// Both entry points must agree, value for value and error for error.
+#[test]
+fn every_header_byte_is_classified_the_same_by_both_validators() {
+    // A real 32-byte default-tier hash, so the length check passes for any
+    // header whose tier and alpha flag imply 32 bytes.
+    let valid = ChromaHash::encode(4, 4, &[128u8; 4 * 4 * 4], Gamut::Srgb)
+        .as_bytes()
+        .to_vec();
+    assert_eq!(valid.len(), 32);
+
+    let mut seen_version = false;
+    let mut seen_tier = false;
+    let mut seen_reserved = false;
+    let mut seen_ok = false;
+
+    for b0 in 0u8..=255 {
+        let mut bytes = valid.clone();
+        bytes[0] = b0;
+
+        let plain = ChromaHash::from_bytes(&bytes);
+        let tuned = ChromaHash::from_bytes_tuned(&bytes, &Tunables::DEFAULT);
+        assert_eq!(
+            plain.as_ref().map(|h| h.as_bytes()),
+            tuned.as_ref().map(|h| h.as_bytes()),
+            "byte 0 = {b0:#04x}"
+        );
+        assert_eq!(
+            plain.as_ref().err(),
+            tuned.as_ref().err(),
+            "byte 0 = {b0:#04x}"
+        );
+
+        // And the classification is the one the format defines, in field order.
+        let version = b0 & 0b0000_0111;
+        let tier = (b0 >> 3) & 0b0000_0111;
+        let reserved = (b0 >> 7) & 1;
+        let expected = if version != 0 {
+            Some(ChromaHashError::UnsupportedVersion)
+        } else if tier > MAX_TIER {
+            Some(ChromaHashError::InvalidTier)
+        } else if reserved != 0 {
+            Some(ChromaHashError::ReservedBitSet)
+        } else if tier != 1 {
+            // Only the default tier is 32 bytes; the compact tier is 21.
+            Some(ChromaHashError::LengthMismatch)
+        } else {
+            None
+        };
+        assert_eq!(
+            plain.as_ref().err().copied(),
+            expected,
+            "byte 0 = {b0:#04x}"
+        );
+
+        match expected {
+            Some(ChromaHashError::UnsupportedVersion) => seen_version = true,
+            Some(ChromaHashError::InvalidTier) => seen_tier = true,
+            Some(ChromaHashError::ReservedBitSet) => seen_reserved = true,
+            None => seen_ok = true,
+            _ => {}
+        }
+    }
+
+    // The sweep must actually reach every branch, or it proves nothing.
+    assert!(seen_version && seen_tier && seen_reserved && seen_ok);
+}
+
+/// Every error variant must render a distinct, non-empty message.
+///
+/// These strings are not decoration: the UniFFI and wasm bindings carry them
+/// across the FFI as the `reason` a caller sees, so an empty or duplicated one
+/// is what a Python or JavaScript user gets instead of a diagnosis.
+#[test]
+fn every_error_variant_has_its_own_message() {
+    use std::collections::HashSet;
+
+    let variants = [
+        ChromaHashError::TooShort,
+        ChromaHashError::UnsupportedVersion,
+        ChromaHashError::InvalidTier,
+        ChromaHashError::ReservedBitSet,
+        ChromaHashError::LengthMismatch,
+    ];
+
+    let mut seen = HashSet::new();
+    for v in variants {
+        let msg = v.to_string();
+        assert!(!msg.is_empty(), "{v:?} renders an empty message");
+        assert!(
+            msg.contains("chromahash"),
+            "{v:?} renders {msg:?}, which does not name the format"
+        );
+        assert!(
+            seen.insert(msg.clone()),
+            "{v:?} duplicates the message {msg:?}"
+        );
+    }
+}
+
 proptest! {
+    #![proptest_config(ProptestConfig::with_cases(CASES))]
+
     /// The byte length depends on the tier and the alpha mode, and on nothing
     /// else — not the dimensions, not the gamut, not the pixel content.
     #[test]
@@ -92,13 +262,25 @@ proptest! {
 
     /// `from_bytes` accepts exactly what the encoder produced, and hands back
     /// the same bytes.
+    ///
+    /// `opaque` is a parameter, not a fixed choice: tiers 0 and 1 have the same
+    /// byte length in both alpha modes (21 and 32), so a decoder that read the
+    /// alpha flag wrongly would still accept them. Only tiers 2–4 distinguish
+    /// 108/411/1623 from 103/388/1528, and only with an opaque image.
     #[test]
     fn from_bytes_round_trips_every_encode(
-        (w, h, rgba) in image(false),
+        opaque in any::<bool>(),
         gamut in gamuts(),
         tier in COMPACT_TIER..=MAX_TIER,
+        seed in any::<u64>(),
     ) {
+        let (w, h, rgba) = deterministic_image(seed, opaque);
         let encoded = ChromaHash::encode_with_quality(w, h, &rgba, gamut, tier);
+        prop_assert_eq!(
+            encoded.as_bytes().len(),
+            if opaque { OPAQUE_LEN } else { ALPHA_LEN }[tier as usize],
+            "tier {} alpha={}", tier, !opaque
+        );
         let parsed = ChromaHash::from_bytes(encoded.as_bytes())
             .map_err(|e| TestCaseError::fail(format!("rejected its own output: {e}")))?;
         prop_assert_eq!(parsed.as_bytes(), encoded.as_bytes());
@@ -269,19 +451,39 @@ proptest! {
     /// against a broken check and silently discarding good candidates.
     #[test]
     fn from_bytes_tuned_agrees_with_from_bytes_at_the_default(
-        (w, h, rgba) in image(false),
+        opaque in any::<bool>(),
         tier in COMPACT_TIER..=MAX_TIER,
-        index in 0usize..1623,
+        seed in any::<u64>(),
+        // Drive byte 0 directly rather than hoping a random index lands on it:
+        // the version, tier, alpha and reserved fields all live there, and each
+        // is a separate rejection path.
+        header in any::<u8>(),
+        touch_header in any::<bool>(),
+        // `None` keeps the full hash — without it every tier above 1 (108 bytes
+        // and up) would always be truncated below its valid length by the range
+        // below, and the paths that only run on a *valid* hash would never be
+        // reached at all.
+        keep in prop_oneof![Just(None), (0usize..=40).prop_map(Some)],
         patch in any::<u8>(),
-        truncate in 0usize..=8,
+        index in 0usize..1623,
     ) {
+        let (w, h, rgba) = deterministic_image(seed, opaque);
         let mut bytes = ChromaHash::encode_with_quality(w, h, &rgba, Gamut::Srgb, tier)
             .as_bytes()
             .to_vec();
-        let i = index % bytes.len();
-        bytes[i] = patch;
-        bytes.truncate(bytes.len().saturating_sub(truncate).max(1));
+        if touch_header {
+            bytes[0] = header;
+        } else {
+            let i = index % bytes.len();
+            bytes[i] = patch;
+        }
+        if let Some(keep) = keep {
+            bytes.truncate(keep.min(bytes.len()));
+        }
 
+        // Compare the whole `Result`, error variant included: the two differ
+        // meaningfully when they reject for *different reasons*, and mapping to
+        // the Ok payload alone would hide that.
         let plain = ChromaHash::from_bytes(&bytes).map(|h| h.as_bytes().to_vec());
         let tuned = ChromaHash::from_bytes_tuned(&bytes, &Tunables::DEFAULT)
             .map(|h| h.as_bytes().to_vec());

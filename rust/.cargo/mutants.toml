@@ -10,6 +10,14 @@
 # src/decode.rs instead.
 no_default_features = true
 
+# Build the sweep in release. cargo-mutants re-runs the whole suite once per
+# mutant (~2000 of them), and the suite is dominated by tier-4 decodes, which
+# rasterize 256x256 px — ~0.7s each in a debug build and ~20x faster optimized.
+# The extra compile time per mutant is repaid many times over. Mutation testing
+# asks whether a *test* notices a changed line, which the optimizer does not
+# affect.
+profile = "release"
+
 # Re-enable `simd` plus the opt-in `simd-diff-tests` (both dropped above with the
 # defaults) so the host-runnable SIMD backends — AVX2/SSE2 on the x86_64 sweep
 # host — and the generic SIMD math are actually built and exercised by the
