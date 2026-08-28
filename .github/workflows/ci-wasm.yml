@@ -3,9 +3,9 @@ name: CI (WASM)
 on:
   push:
     branches: [master]
-    paths: ["bindings/wasm/**", "rust/**", ".github/workflows/ci-wasm.yml"]
+    paths: ["bindings/wasm/**", "rust/**", "spec/test-vectors/**", ".github/workflows/ci-wasm.yml"]
   pull_request:
-    paths: ["bindings/wasm/**", "rust/**", ".github/workflows/ci-wasm.yml"]
+    paths: ["bindings/wasm/**", "rust/**", "spec/test-vectors/**", ".github/workflows/ci-wasm.yml"]
 
 jobs:
   # Format, lint (wasm32 target), run the spec vectors through the wasm-bindgen

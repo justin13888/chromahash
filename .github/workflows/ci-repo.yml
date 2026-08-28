@@ -1,0 +1,73 @@
+name: CI (Repo)
+
+# Repo-wide invariants that belong to no single language, and that no
+# path-filtered workflow was watching:
+#
+#  - `versions`: every publishable manifest carries the core crate's version.
+#    Each release-*.yml checks the pushed tag against its own manifest and
+#    fails only that pipeline, so a stale manifest does not announce itself —
+#    it just leaves one registry a version behind. Between 0.6.0 and 0.7.0
+#    eight manifests were stale, which would have failed five of eight
+#    publish workflows.
+#
+#  - `spec`: spec/ is the source of truth, and it matched no workflow's path
+#    filter at all. Editing spec/constants.py or a golden vector in
+#    spec/test-vectors/ — read at test time by ten suites — ran nothing but
+#    the commit linter. This job runs the spec's own derivation check and the
+#    Rust conformance suite, and the language workflows now list the vectors
+#    in their own path filters.
+#
+# No path filter: both jobs are cheap and both are about the repo as a whole.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  versions:
+    name: Manifest versions agree
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./tools/ci/check-versions.sh
+
+  spec:
+    name: Spec derivations and golden vectors
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # Independently re-derives every M1 matrix from gamut chromaticities and
+      # checks them against constants.py, plus the inverse relationships, white
+      # point, OKLAB bounds, mu-law round-trips and aspect encoding. Nothing ran
+      # it before — not CI, not a just recipe, only prose in TESTING.md.
+      - name: Validate spec constants
+        run: python3 spec/validate.py
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          # Cargo.lock is gitignored repo-wide, so key off the manifest.
+          key: ${{ runner.os }}-cargo-spec-${{ hashFiles('rust/Cargo.toml') }}
+
+      # The reference implementation against the vectors it publishes: this is
+      # what a spec/test-vectors/** change must not break.
+      - name: Rust conformance suite
+        run: cargo test --manifest-path rust/Cargo.toml --features full

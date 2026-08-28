@@ -3,9 +3,9 @@ name: CI (Android)
 on:
   push:
     branches: [master]
-    paths: ["bindings/uniffi/**", ".github/workflows/ci-android.yml"]
+    paths: ["bindings/uniffi/**", "rust/**", "spec/test-vectors/**", ".github/workflows/ci-android.yml"]
   pull_request:
-    paths: ["bindings/uniffi/**", ".github/workflows/ci-android.yml"]
+    paths: ["bindings/uniffi/**", "rust/**", "spec/test-vectors/**", ".github/workflows/ci-android.yml"]
 
 jobs:
   # Enforced correctness gate — runs the spec vectors through the binding.

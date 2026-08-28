@@ -3,9 +3,9 @@ name: CI (Python)
 on:
   push:
     branches: [master]
-    paths: ["python/**", "bindings/uniffi/**", "rust/**", ".github/workflows/ci-python.yml"]
+    paths: ["python/**", "bindings/uniffi/**", "rust/**", "spec/test-vectors/**", ".github/workflows/ci-python.yml"]
   pull_request:
-    paths: ["python/**", "bindings/uniffi/**", "rust/**", ".github/workflows/ci-python.yml"]
+    paths: ["python/**", "bindings/uniffi/**", "rust/**", "spec/test-vectors/**", ".github/workflows/ci-python.yml"]
 
 jobs:
   ci:

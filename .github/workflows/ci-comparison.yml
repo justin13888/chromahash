@@ -6,11 +6,19 @@ on:
     paths:
       - "tools/comparison/**"
       - "typescript/**"
+      # The R-D gate exists to catch encoder quality regressions, and the
+      # encoder is in rust/. Without this the gate never fired on the changes
+      # it was built for.
+      - "rust/**"
       - ".github/workflows/ci-comparison.yml"
   pull_request:
     paths:
       - "tools/comparison/**"
       - "typescript/**"
+      # The R-D gate exists to catch encoder quality regressions, and the
+      # encoder is in rust/. Without this the gate never fired on the changes
+      # it was built for.
+      - "rust/**"
       - ".github/workflows/ci-comparison.yml"
 
 jobs:

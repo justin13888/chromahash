@@ -3,9 +3,9 @@ name: CI (C#)
 on:
   push:
     branches: [master]
-    paths: ["csharp/**", "bindings/c/**", "rust/**", ".github/workflows/ci-csharp.yml"]
+    paths: ["csharp/**", "bindings/c/**", "rust/**", "spec/test-vectors/**", ".github/workflows/ci-csharp.yml"]
   pull_request:
-    paths: ["csharp/**", "bindings/c/**", "rust/**", ".github/workflows/ci-csharp.yml"]
+    paths: ["csharp/**", "bindings/c/**", "rust/**", "spec/test-vectors/**", ".github/workflows/ci-csharp.yml"]
 
 jobs:
   ci:

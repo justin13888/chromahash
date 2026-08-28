@@ -3,9 +3,9 @@ name: CI (Go)
 on:
   push:
     branches: [master]
-    paths: ["go/**", "bindings/c/**", "rust/**", ".github/workflows/ci-go.yml"]
+    paths: ["go/**", "bindings/c/**", "rust/**", "spec/test-vectors/**", ".github/workflows/ci-go.yml"]
   pull_request:
-    paths: ["go/**", "bindings/c/**", "rust/**", ".github/workflows/ci-go.yml"]
+    paths: ["go/**", "bindings/c/**", "rust/**", "spec/test-vectors/**", ".github/workflows/ci-go.yml"]
 
 jobs:
   ci:

@@ -4,10 +4,22 @@ on:
   push:
     branches: [master]
     paths:
-      ["typescript/**", "bindings/wasm/**", "rust/**", ".github/workflows/ci-typescript.yml"]
+      [
+        "typescript/**",
+        "bindings/wasm/**",
+        "rust/**",
+        "spec/test-vectors/**",
+        ".github/workflows/ci-typescript.yml",
+      ]
   pull_request:
     paths:
-      ["typescript/**", "bindings/wasm/**", "rust/**", ".github/workflows/ci-typescript.yml"]
+      [
+        "typescript/**",
+        "bindings/wasm/**",
+        "rust/**",
+        "spec/test-vectors/**",
+        ".github/workflows/ci-typescript.yml",
+      ]
 
 jobs:
   ci:

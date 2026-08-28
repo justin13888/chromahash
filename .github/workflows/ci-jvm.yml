@@ -3,9 +3,9 @@ name: CI (JVM)
 on:
   push:
     branches: [master]
-    paths: ["bindings/uniffi/**", "rust/**", ".github/workflows/ci-jvm.yml"]
+    paths: ["bindings/uniffi/**", "rust/**", "spec/test-vectors/**", ".github/workflows/ci-jvm.yml"]
   pull_request:
-    paths: ["bindings/uniffi/**", "rust/**", ".github/workflows/ci-jvm.yml"]
+    paths: ["bindings/uniffi/**", "rust/**", "spec/test-vectors/**", ".github/workflows/ci-jvm.yml"]
 
 jobs:
   ci:
