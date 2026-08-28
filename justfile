@@ -778,6 +778,17 @@ rd-gate *args: build-compare
     cargo build --manifest-path rust/Cargo.toml --release --example encode_stdin
     mise exec -- node tools/comparison/dist/rd-gate.js {{args}}
 
+# Check every table in spec/EXPERIMENTS.md against the sweep results in
+# tools/comparison/output/sweeps/. The document is transcribed by hand, so a
+# re-run of a sweep silently invalidates it; this is the only thing that
+# notices. Needs the sweep outputs on disk (they are gitignored), so it reports
+# what it could not check rather than failing on a missing file.
+#   --list-unbound   tables with no binding, and why
+#   --section 11.5   just one section
+#   --fix            rewrite disagreeing cells from the measured values
+verify-experiments *args: build-compare
+    mise exec -- node tools/comparison/dist/verify-experiments.js {{args}}
+
 # Refresh the R-D gate baseline after an intended encoder change. Every number
 # moving is the point — but review the diff and say in the commit message which
 # change moved it.
