@@ -560,15 +560,31 @@ swift-cbuild:
         -library bindings/uniffi/target/release/libchromahash_uniffi.a \
         -headers "$hdr" -output swift/ChromaHashFFI.xcframework
 
-# Run the Swift spec-vector tests. --no-parallel: the blocking OperationQueue in
+# Run the Swift spec-vector tests. Skips off macOS for the same reason
+# swift-cbuild does — SwiftPM consumes an xcframework, which only xcodebuild
+# can assemble — so `just test` is runnable on Linux. ci-swift.yml is the
+# enforcing gate. --no-parallel: the blocking OperationQueue in
 # BatchEncoder deadlocks Swift Testing's parallel pool on low-core machines (see
 # ci-swift.yml); the suite runs in ~0.05s, so serial costs nothing. Package.swift
 # is at the repo root; CHROMAHASH_LOCAL_XCFRAMEWORK selects the locally built
 # xcframework over the released remote one.
 test-swift: swift-cbuild
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ "$(uname)" != "Darwin" ]; then
+        echo "test-swift: SKIPPED — no xcframework off macOS (see swift-cbuild)." >&2
+        echo "test-swift: the Swift binding is gated by ci-swift.yml on macos-latest." >&2
+        exit 0
+    fi
     CHROMAHASH_LOCAL_XCFRAMEWORK=1 mise exec swift@6.2.4 -- swift test --no-parallel
 
 build-swift: swift-cbuild
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ "$(uname)" != "Darwin" ]; then
+        echo "build-swift: SKIPPED — no xcframework off macOS (see swift-cbuild)." >&2
+        exit 0
+    fi
     CHROMAHASH_LOCAL_XCFRAMEWORK=1 mise exec swift@6.2.4 -- swift build
 
 # Assemble the multi-platform release xcframework (macOS + iOS device/simulator)
