@@ -146,7 +146,11 @@ mod tests {
             for tier in 0u8..=crate::constants::MAX_TIER {
                 let level = crate::constants::render_level(tier);
                 let (w, h) = decode_output_size(byte, tier);
-                assert_eq!((w, h), (bw << level, bh << level), "byte={byte} tier={tier}");
+                assert_eq!(
+                    (w, h),
+                    (bw << level, bh << level),
+                    "byte={byte} tier={tier}"
+                );
                 assert_eq!(w.max(h), 32u32 << level, "long side must be 32·2^level");
                 assert!(w >= 2 << level && h >= 2 << level);
             }

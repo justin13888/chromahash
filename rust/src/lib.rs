@@ -386,7 +386,12 @@ mod tests {
     #[test]
     fn default_encode_is_32_bytes() {
         let rgba = solid_image(4, 4, 128, 128, 128, 255);
-        assert_eq!(ChromaHash::encode(4, 4, &rgba, Gamut::Srgb).as_bytes().len(), 32);
+        assert_eq!(
+            ChromaHash::encode(4, 4, &rgba, Gamut::Srgb)
+                .as_bytes()
+                .len(),
+            32
+        );
         assert_eq!(
             ChromaHash::encode_with_quality(4, 4, &rgba, Gamut::Srgb, DEFAULT_TIER)
                 .as_bytes()
