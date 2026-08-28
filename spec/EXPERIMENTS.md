@@ -19,6 +19,15 @@ tune and validated on holdout, per the pre-registered rule in `RATIONALE.md`.
 > audit, the additions and what moved. Round-1 and round-2 conclusions survive;
 > two effect sizes do not, and are corrected in place.
 
+> **Tier numbering.** Every section below was written before the tier codes
+> were reordered by quality, and uses the *old* numbering, where code 0 was the
+> 32-byte default. The shipped codes are `0` = compact (21 B), `1` = default
+> (32 B), `2` = 108 B, `3` = 411 B, `4` = 1623 B. So a table that says "tier 0"
+> means the 32-byte default (code 1 today), "tier 1" means 108 B (code 2), and
+> so on; the *byte* anchors quoted alongside them are unchanged and unambiguous.
+> §11.14 is the one table restated in the shipped codes, because it is the
+> current cross-format record rather than the log of a finished round.
+
 > **Status: §8 has shipped.** The recipe this file converged on is now
 > `Tunables::DEFAULT` — the tier-0 layout `L 28 @ 4 / C 15 @ 3`, the selection
 > weights `aniso = 1.2` / `sel_hv = 0.15`, and the encoder-only `scale_fit = 2`
@@ -52,29 +61,36 @@ but nothing could decode one. Four tooling changes opened that surface:
 
 ## 1. The rate–distortion curve of v0.7
 
-Shipped constants, AC layout resized to each budget at the shipped 26:9 luma:
-chroma count ratio and 5 b luma / 4 b chroma precision
-(`sweeps/budget-ladder.json`). Points ≤ 80 B are tier 0, ≥ 108 B tier 1.
+The constants that ship today (post-§10 adoption), AC layout resized to each
+budget at the shipped 26:9 luma:chroma count ratio and 5 b luma / 4 b chroma
+precision (`sweeps/budget-ladder.json`, both splits). Points ≤ 80 B render at
+the default tier's raster, ≥ 108 B at the next one up — that is the tier's
+*raster*, not its byte budget, which the layout override sets directly.
+
+Both splits were re-measured together for v0.7. §4.5 and §7.12 quote an
+**earlier** ladder, taken against the pre-adoption v0.6-derived constants, and
+keep those numbers: they are what the round-1 and round-2 candidates were
+measured against.
 
 | Bytes | 10 | 12 | 14 | 16 | 18 | 21 | 24 | 28 | **32** | 40 | 48 | 64 | 80 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| ΔE00 tune | 15.22 | 13.79 | 12.72 | 12.35 | 12.07 | 11.70 | 11.14 | 10.80 | **10.43** | 10.03 | 9.73 | 9.32 | 8.98 |
-| ΔE00 holdout | 14.75 | 13.84 | 13.28 | 13.07 | 12.88 | 12.61 | 12.14 | 11.79 | **11.55** | 11.14 | 10.72 | 10.24 | 9.85 |
+| ΔE00 tune | 15.18 | 13.21 | 12.62 | 12.07 | 11.83 | 11.42 | 10.93 | 10.61 | **10.28** | 9.97 | 9.67 | 9.18 | 8.83 |
+| ΔE00 holdout | 14.73 | 13.64 | 13.27 | 12.83 | 12.63 | 12.37 | 12.00 | 11.74 | **11.38** | 10.99 | 10.60 | 10.11 | 9.74 |
 
 | Bytes | **108** | 129 | 161 | 189 | 246 | 310 | **411** | 512 | 767 | 1017 | **1623** |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| ΔE00 tune | **8.57** | 8.35 | 8.07 | 7.89 | 7.67 | 7.42 | **7.09** | 6.90 | 6.63 | 6.50 | **6.24** |
-| ΔE00 holdout | **9.44** | 9.16 | 8.85 | 8.63 | 8.31 | 8.08 | **7.79** | 7.59 | 7.27 | 7.09 | **6.88** |
+| ΔE00 tune | **8.39** | 8.19 | 7.91 | 7.76 | 7.41 | 7.15 | **6.87** | 6.71 | 6.44 | 6.23 | **6.06** |
+| ΔE00 holdout | **9.28** | 9.00 | 8.67 | 8.48 | 8.16 | 7.90 | **7.60** | 7.39 | 7.06 | 6.88 | **6.64** |
 
 Marginal value collapses far faster than 1/bytes (tune split):
 
 | Interval | 16→32 B | 32→64 B | 64→129 B | 129→246 B | 246→512 B | 512→1017 B |
 |---|---|---|---|---|---|---|
-| ΔE00 gained per byte | 0.119 | 0.035 | 0.0149 | 0.0059 | 0.0029 | 0.00081 |
+| ΔE00 gained per byte | 0.112 | 0.034 | 0.0153 | 0.0066 | 0.0026 | 0.00095 |
 
-Each doubling of the budget buys roughly a third of what the previous one did.
-The four shipped tier anchors are four points on this one smooth curve; there is
-nothing special about 32/108/411/1623 B beyond ×4 arithmetic.
+Each doubling of the budget buys 30–45% of what the previous one did. The five
+shipped tier anchors are five points on this one smooth curve; there is nothing
+special about 21/32/108/411/1623 B beyond ×4 arithmetic above the default.
 
 ## 2. Cross-format at equal bytes, same corpus, same scoring
 
@@ -145,11 +161,19 @@ Three things this says that `RATIONALE.md` does not:
 
 ## 3. The optimal budget
 
+> Built on §2 and superseded with it by **§11.14** — the crossovers below are
+> the round-1 record. The shape survives; the ChromaHash side of every crossover
+> moved with §10's adoption.
+
 | Region | What is true there |
 |---|---|
 | < 12 B | Below the format's own floor: 54 bits (6.75 B) of descriptor + aspect + DC + scales before a single AC coefficient. |
 | 12–20 B | ChromaHash beats BlurHash and raw pixels; ThumbHash not yet reachable. |
-| **20–32 B** | **ThumbHash's budget.** With the retuned allocation ChromaHash beats it on ΔE00, SSIMULACRA2 and Butteraugli simultaneously. No real codec exists here (WebP's floor is ~48 B, mozjpeg ~320 B, AVIF ~466 B). |
+| **20–32 B** | **ThumbHash's budget.** With the retuned allocation ChromaHash beats it on ΔE00, SSIMULACRA2 and Butteraugli simultaneously. No real codec exists here. WebP's floor is ~48 B, which the current lineup
+reproduces (`CODEC_FLOOR_BYTES` in `rd/lineup.ts` declares the same 48 B, and
+470 B for AVIF); the mozjpeg and AVIF floors quoted in earlier rounds are not
+reproducible from the sweeps now on disk, which carry no AVIF row below 1.5 kB
+and no mozjpeg at all. |
 | **32–110 B** | **The format's strongest region.** It leads every LQIP and every size-matched codec on ΔE00 by 8–25%, and still leads or ties the guards up to ~64 B. |
 | 110–190 B | Still leads ΔE00; already behind WebP and lqip-modern on SSIMULACRA2 and Butteraugli. |
 | ~190 B | WebP draws level on ΔE00 (7.87 vs 7.87) while winning all three guards. |
@@ -180,7 +204,7 @@ byte count *and* coefficient count fixed, vary only the raster
 | Coefficients (bytes) | small raster | native tier raster | Δ |
 |---|---|---|---|
 | 104 L / 36 C (108 B) | 8.568 @32 px | 8.571 @64 px | −0.04% |
-| 416 L / 144 C (411 B) | 7.089 @32 px | 7.093 @128 px | −0.06% |
+| 416 L / 144 C (411 B) | 7.089 @32 px | 7.093 @128 px | −0.005% |
 | 1664 L / 576 C (1623 B) | 6.237 @64 px | 6.258 @256 px | −0.34% |
 
 Within noise, and if anything the *smaller* raster scores better. All of the
@@ -313,10 +337,10 @@ one bit under luma, plus the stack):
 
 | Bytes | 12 | 16 | 21 | 24 | 28 | 32 | 48 | 64 | 108 | 246 | 411 |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| tune, shipped | 13.79 | 12.35 | 11.70 | 11.14 | 10.80 | 10.43 | 9.73 | 9.32 | 8.57 | 7.67 | 7.09 |
-| tune, tuned | 12.63 | 11.76 | 11.02 | 10.68 | 10.40 | 10.20 | 9.59 | 9.22 | 8.41 | 7.48 | 6.92 |
+| tune, pre-adoption shipped | 13.79 | 12.35 | 11.70 | 11.14 | 10.80 | 10.43 | 9.73 | 9.32 | 8.57 | 7.67 | 7.09 |
+| tune, tuned | 12.63 | 11.75 | 11.02 | 10.68 | 10.40 | 10.20 | 9.59 | 9.22 | 8.41 | 7.48 | 6.92 |
 | tune Δ | −8.4% | −4.8% | −5.8% | −4.1% | −3.7% | −2.3% | −1.5% | −1.1% | −1.9% | −2.5% | −2.4% |
-| holdout, shipped | 13.84 | 13.07 | 12.61 | 12.14 | 11.79 | 11.55 | 10.72 | 10.24 | 9.44 | 8.31 | 7.79 |
+| holdout, pre-adoption shipped | 13.84 | 13.07 | 12.61 | 12.14 | 11.79 | 11.55 | 10.72 | 10.24 | 9.44 | 8.31 | 7.79 |
 | holdout, tuned | 13.28 | 12.64 | 12.11 | 11.79 | 11.47 | 11.24 | 10.52 | 10.14 | 9.26 | 8.15 | 7.63 |
 | holdout Δ | −4.0% | −3.3% | −4.0% | −2.9% | −2.7% | −2.7% | −1.9% | −1.0% | −1.9% | −1.9% | −2.1% |
 
@@ -493,7 +517,37 @@ node tools/comparison/dist/cfl-probe.js      --split tune   # §4.8
 node tools/comparison/dist/coeff-stats.js    --split tune   # §4.9, §4.10
 node tools/comparison/dist/entropy-budget.js --split tune   # §7.13
 just rd-gate                                                # §7.14 CI gate
+
+# Round 3 — v0.7 stabilization (§11)
+just sweep alpha-layout                         # §11.1
+just sweep alpha-layout-control                 # §11.2
+just sweep alpha-fields                         # §11.3
+just sweep alpha-ac-count                       # §11.3
+just sweep alpha-ceiling                        # §11.3
+just sweep alpha-encoder                        # §11.3
+just sweep graphics-layout                      # §11.4
+just sweep graphics-encoder                     # §11.4
+just sweep selection-weights                    # §11.5
+just sweep companding-family                    # §11.6
+just sweep deadzone                             # §11.7
+just sweep quant-ranges                         # §11.8
+just sweep scalefactor-bands                    # §11.9
+just sweep compact-tier                         # §11.10
+just sweep compact-tier-graphics                # §11.10
+just sweep alpha-tier1                          # §11.11
+just sweep v07-holdout-photo --split holdout    # §11.12
+just sweep v07-holdout-alpha --split holdout    # §11.12
+just sweep adopted-defaults                     # §10.3
+just sweep adopted-defaults --split holdout     # §10.3
+
+# Check the tables in this file against the results above
+just verify-experiments
+just verify-experiments --list-unbound
 ```
+
+`aniso-selection` and `aniso-extended`, named in §11.5, were deleted when
+`selection-weights` replaced them; their outputs survive only in the gitignored
+`output/sweeps/`.
 
 Every command above reads the corpus of `tools/comparison/src/natural-images.ts`
 and `holdout-images.ts`, content-pinned by SHA-256. The numbers in this file are
@@ -798,9 +852,9 @@ The whole ladder under the constants-only recipe
 
 | Bytes | 12 | 16 | 21 | 24 | 28 | 32 | 40 | 48 | 64 | 80 | 108 | 161 | 246 | 411 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| tune, shipped | 13.79 | 12.35 | 11.70 | 11.14 | 10.80 | 10.43 | 10.03 | 9.73 | 9.32 | 8.98 | 8.57 | 8.07 | 7.67 | 7.09 |
+| tune, pre-adoption shipped | 13.79 | 12.35 | 11.70 | 11.14 | 10.80 | 10.43 | 10.03 | 9.73 | 9.32 | 8.98 | 8.57 | 8.07 | 7.67 | 7.09 |
 | tune, optimized | 12.43 | 11.70 | 10.96 | 10.66 | 10.38 | 10.19 | 9.84 | 9.53 | 9.19 | 8.83 | 8.39 | 7.90 | 7.40 | 6.92 |
-| holdout, shipped | 13.84 | 13.07 | 12.61 | 12.14 | 11.79 | 11.55 | 11.14 | 10.72 | 10.24 | 9.85 | 9.44 | 8.85 | 8.31 | 7.79 |
+| holdout, pre-adoption shipped | 13.84 | 13.07 | 12.61 | 12.14 | 11.79 | 11.55 | 11.14 | 10.72 | 10.24 | 9.85 | 9.44 | 8.85 | 8.31 | 7.79 |
 | holdout, optimized | 13.15 | 12.58 | 12.05 | 11.74 | 11.42 | 11.23 | 10.78 | 10.46 | 10.11 | 9.74 | 9.28 | 8.67 | 8.16 | 7.63 |
 
 (The 32 B row of this ladder uses the ratio-derived `L33@4 C11@3`; the *measured*
@@ -1324,10 +1378,10 @@ because a sweep that quietly changes budget mid-campaign reports a comparison no
 | layout | ΔE00 | Δ% | paired 95% CI | win/n |
 |---|---|---|---|---|
 | **shipped** L20@5 C9@4 | 15.689 | — | — | — |
-| L22@4 C14@3 (the arithmetic in §8.1) | 15.541 | −0.94% | [+0.054, +0.250] | 15/16 |
-| L29@4 C9@3 | 15.497 | −1.22% | [+0.057, +0.366] | 12/16 |
-| L36@3 C10@3 | 15.432 | −1.64% | [+0.098, +0.460] | 13/16 |
-| **L43@3 C11@2** | **15.401** | **−1.84%** | [+0.112, +0.513] | 13/16 |
+| L22@4 C14@3 (the arithmetic in §8.1) | 15.541 | −0.94% | [+0.053, +0.251] | 15/16 |
+| L29@4 C9@3 | 15.497 | −1.22% | [+0.058, +0.353] | 12/16 |
+| L36@3 C10@3 | 15.432 | −1.64% | [+0.093, +0.452] | 13/16 |
+| **L43@3 C11@2** | **15.401** | **−1.84%** | [+0.107, +0.518] | 13/16 |
 
 The shipped layout is significantly worse than a dozen alternatives, and the
 direction is consistent: alpha mode wants **more luma coefficients at lower
@@ -1372,8 +1426,8 @@ optimum, but it is close to it and the gap does not justify a second constant:
 | layout | ΔE00 | Δ% | paired 95% CI |
 |---|---|---|---|
 | **DEFAULT** L28@4 C15@3 | 10.450 | — | — |
-| pre-adoption L26@5 C9@4 | 10.570 | +1.14% | [−0.299, +0.032] |
-| L30@4 C13@3 | 10.394 | −0.54% | [+0.008, +0.104] |
+| pre-adoption L26@5 C9@4 | 10.569 | +1.14% | [−0.300, +0.022] |
+| L30@4 C13@3 | 10.394 | −0.54% | [+0.008, +0.102] |
 | L40@4 C7@3 | 10.344 | −1.01% | includes zero |
 
 Exactly one arm reaches significance, by 0.54%. Graphics wants slightly more
@@ -1387,9 +1441,9 @@ the §8 adoption was chosen on photographs, and it holds on content it never saw
 | variant | ΔE00 | Δ% | paired 95% CI |
 |---|---|---|---|
 | **DEFAULT** (full stack) | 10.450 | — | — |
-| no selection weights | 10.513 | +0.60% | [−0.226, +0.081] |
-| no encoder search (`scale_fit=0 ac_nearest=0`) | 10.577 | +1.22% | **[−0.224, −0.038]** |
-| pre-adoption (everything off) | 10.766 | **+3.02%** | **[−0.581, −0.112]** |
+| no selection weights | 10.513 | +0.60% | [−0.229, +0.076] |
+| no encoder search (`scale_fit=0 ac_nearest=0`) | 10.577 | +1.22% | **[−0.228, −0.039]** |
+| pre-adoption (everything off) | 10.766 | **+3.02%** | **[−0.597, −0.114]** |
 | `sel_hv = 0.30` | 10.410 | −0.39% | includes zero |
 
 Turning the adoption off costs 3.02% on graphics, significantly. Note the last
@@ -1409,12 +1463,12 @@ adopted pair as incumbent and an explicit isotropic arm.
 | variant | ΔE00 | Δ% | paired 95% CI | win/n |
 |---|---|---|---|---|
 | **DEFAULT** aniso 1.2 / hv 0.15 | 10.183 | — | — | — |
-| isotropic (aniso 0, hv 0) | 10.161 | −0.21% | [−0.066, +0.115] | 15/31 |
-| **aniso 1.2 / hv 0.30** | **10.100** | **−0.81%** | **[+0.011, +0.164]** | 18/31 |
+| isotropic (aniso 0, hv 0) | 10.161 | −0.21% | [−0.061, +0.117] | 15/31 |
+| **aniso 1.2 / hv 0.30** | **10.100** | **−0.81%** | **[+0.006, +0.164]** | 18/31 |
 | aniso 2.0 / hv 0.30 | 10.126 | −0.56% | includes zero | 16/31 |
-| aniso 1.2 / hv −0.15 | 10.281 | +0.97% | **[−0.189, −0.010]** | 11/31 |
-| aniso 1.2 / hv −0.30 | 10.383 | +1.97% | **[−0.313, −0.089]** | 7/31 |
-| aniso 3.2 / hv 0.0 | 10.321 | +1.36% | **[−0.238, −0.048]** | 9/31 |
+| aniso 1.2 / hv −0.15 | 10.281 | +0.97% | **[−0.199, −0.008]** | 11/31 |
+| aniso 1.2 / hv −0.30 | 10.383 | +1.97% | **[−0.315, −0.085]** | 7/31 |
+| aniso 3.2 / hv 0.0 | 10.321 | +1.36% | **[−0.234, −0.047]** | 9/31 |
 
 Three findings, and two of them are uncomfortable:
 
@@ -1453,7 +1507,8 @@ the bit-depth change: every µ_L ∈ {4…7} lands within ±0.14% of the shipped
 
 ### 11.7 Deadzone, re-derived — and it was measuring nothing
 
-The first re-run reported every arm byte-identical to the base. That was not a
+`sweeps/deadzone.json`. The first re-run reported every arm byte-identical to
+the base. That was not a
 result: adopting `ac_nearest = 1` had silently killed the knob. The deadzone
 forces a small coefficient to the exact-zero centre code, and the ±2
 reconstruction search then runs on that code — for a small value the
@@ -1507,14 +1562,14 @@ tier code is spent on it.
 
 | layout | ΔE00 | Δ% vs shipped shape | paired CI vs the leader |
 |---|---|---|---|
-| shipped shape L13@5 C6@4 | 11.419 | — | **[−0.710, −0.266]** |
+| shipped shape L13@5 C6@4 | 11.419 | — | **[−0.710, −0.262]** |
 | **L18@4 C7@3** | **10.947** | −4.13% | (leader) |
-| L19@4 C6@3 | 10.963 | −3.99% | [−0.088, +0.043] |
-| L16@4 C8@3 | 10.982 | −3.83% | [−0.190, +0.114] |
-| L24@3 C7@3 | 10.989 | −3.76% | [−0.166, +0.067] |
-| L20@4 C5@3 | 10.990 | −3.76% | [−0.155, +0.051] |
-| L35@3 C2@2 (count-maximal) | 11.367 | −0.45% | **[−0.653, −0.192]** |
-| L19@5 C2@4 (precision-maximal) | 11.355 | −0.56% | **[−0.605, −0.225]** |
+| L19@4 C6@3 | 10.963 | −3.99% | [−0.088, +0.040] |
+| L16@4 C8@3 | 10.982 | −3.83% | [−0.203, +0.110] |
+| L24@3 C7@3 | 10.989 | −3.76% | [−0.150, +0.074] |
+| L20@4 C5@3 | 10.990 | −3.76% | [−0.160, +0.046] |
+| L35@3 C2@2 (count-maximal) | 11.367 | −0.45% | **[−0.648, −0.186]** |
+| L19@5 C2@4 (precision-maximal) | 11.355 | −0.56% | **[−0.607, −0.230]** |
 
 The extremes are decisively rejected and the shipped shape is decisively beaten
 — by 4.13% — but **the leading seven layouts are a plateau**: every paired CI
@@ -1675,6 +1730,8 @@ compact / 0 / 1 / 2 / 3 — monotone, which `validate.py` asserts.
 
 Every decision above was taken on tune, with holdout untouched until they were
 all frozen. It rejected half of them.
+`sweeps/v07-holdout-photo.json` and `sweeps/v07-holdout-alpha.json`, both run
+with `--split holdout`.
 
 **Photographic holdout (32 images):**
 
@@ -1779,19 +1836,19 @@ neighbourhood.
 |---|---|---|---|---|---|
 | 21.1 | ThumbHash | 12.851 | −326.3 | 31.75 | 0.2589 |
 | **21** | **ChromaHash compact** | **12.047** | **−323.2** | **30.52** | **0.2576** |
-| **32** | **ChromaHash tier 0** | **11.150** | **−285.8** | **28.49** | **0.2550** |
+| **32** | **ChromaHash tier 1** (default) | **11.150** | **−285.8** | **28.49** | **0.2550** |
 | 47.8 | WebP | 15.570 | −406.0 | 37.87 | 0.2852 |
 | 62.3 | lqip-modern r8 | 13.275 | −315.4 | 31.08 | 0.2582 |
 | 63.5 | WebP | 12.198 | −259.5 | 27.47 | 0.2556 |
 | 79.5 | WebP | 11.085 | −203.5 | 24.72 | 0.2534 |
 | 82.2 | lqip-modern r16 | 11.230 | **−183.3** | **23.86** | 0.2525 |
 | 107.2 | WebP | 10.255 | −167.5 | 22.91 | **0.2498** |
-| **108** | **ChromaHash tier 1** | **9.281** | **−159.4** | **22.51** | 0.2505 |
+| **108** | **ChromaHash tier 2** | **9.281** | **−159.4** | **22.51** | 0.2505 |
 | 128.6 | lqip-modern r24 | 10.223 | −124.4 | 21.22 | 0.2487 |
 | 188.3 | **WebP** | **8.763** | **−93.7** | **18.33** | **0.2410** |
 | 262.3 | lqip-modern r48 | 8.132 | −66.7 | 15.64 | 0.2351 |
 | 405.7 | **WebP** | **7.289** | **−62.2** | **14.01** | **0.2285** |
-| 411 | ChromaHash tier 2 | 7.604 | −76.3 | 17.76 | 0.2441 |
+| 411 | ChromaHash tier 3 | 7.604 | −76.3 | 17.76 | 0.2441 |
 
 Four things this settles.
 
@@ -1802,7 +1859,7 @@ Four things this settles.
    this corpus is ~48 B and it scores 15.570 there — worse than ChromaHash at
    **12 bytes**. Between 12 and 48 bytes the comparison set is other LQIPs and
    raw pixels, and ChromaHash leads all of them.
-3. **Tier 1 (108 B) is the format's strongest point.** It beats size-matched
+3. **Code 2 (108 B) is the format's strongest point.** It beats size-matched
    WebP on ΔE00 by 9.5% *and* takes SSIMULACRA2 and Butteraugli, losing only
    DSSIM by 0.0007. It also beats lqip-modern at 129 B while being 20 B smaller.
 4. **WebP wins from ~190 B up, on every axis.** The ΔE00 crossover is between
