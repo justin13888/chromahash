@@ -11,6 +11,7 @@ import {
   isVersionSupported,
   type OutputGamut,
 } from "./decode.ts";
+import { bodyLenBytes, COMPACT_TIER, DEFAULT_TIER } from "./header.ts";
 import { ChromaHash, init } from "./index.ts";
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
@@ -152,18 +153,25 @@ describe("pure-TS decode matches WASM exactly (sync guard)", () => {
   });
 
   it("agrees on a deterministic fuzz corpus of random hashes", () => {
-    // Seeded LCG so a failure is reproducible. Each hash clears the version bit
-    // (bit 47) so it is a well-formed v0.6 stream both paths agree to decode.
+    // Seeded LCG so a failure is reproducible. v1 hashes are self-describing,
+    // so a random body is only decodable once byte 0 is a well-formed
+    // descriptor and the buffer is exactly the length it implies — which is
+    // what makes fuzzing the *body* meaningful rather than fuzzing validation.
     let state = 0x12345678 >>> 0;
     const next = (): number => {
       state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
       return state;
     };
+    const tiers = [COMPACT_TIER, DEFAULT_TIER, 2];
     for (let n = 0; n < 256; n++) {
-      const hash = new Uint8Array(32);
-      for (let i = 0; i < 32; i++) hash[i] = next() & 0xff;
-      hash[5] = (hash[5] ?? 0) & 0x7f; // clear version bit (v0.6)
-      assertExactDecode(hash, `fuzz#${n}`);
+      const tier = tiers[n % tiers.length] as number;
+      const hasAlpha = (n & 1) === 1;
+      const len = bodyLenBytes(tier, hasAlpha);
+      const hash = new Uint8Array(len);
+      for (let i = 0; i < len; i++) hash[i] = next() & 0xff;
+      // version 0, the chosen tier, the chosen alpha flag, reserved bit clear.
+      hash[0] = (tier << 3) | (hasAlpha ? 1 << 6 : 0);
+      assertExactDecode(hash, `fuzz#${n} (tier ${tier}, alpha ${hasAlpha})`);
     }
   });
 
@@ -195,11 +203,33 @@ describe("pure-TS decode matches WASM exactly (sync guard)", () => {
 });
 
 describe("pure-TS isVersionSupported", () => {
-  it("reports v0.6 / legacy bit correctly", () => {
-    const v06 = new Uint8Array(32);
-    assert.ok(isVersionSupported(v06));
-    const legacy = new Uint8Array(32);
-    legacy[5] = 0x80;
-    assert.ok(!isVersionSupported(legacy));
+  it("reads the wire generation from the descriptor byte", () => {
+    // Byte 0 bits 0..3 are the version field. v1 is 0.
+    const v1 = new Uint8Array(32);
+    v1[0] = DEFAULT_TIER << 3;
+    assert.ok(isVersionSupported(v1));
+
+    for (let generation = 1; generation <= 7; generation++) {
+      const future = new Uint8Array(32);
+      future[0] = (DEFAULT_TIER << 3) | generation;
+      assert.ok(
+        !isVersionSupported(future),
+        `generation ${generation} must not report as supported`,
+      );
+    }
+  });
+
+  it("rejects rather than mis-decoding an unsupported generation", () => {
+    const future = new Uint8Array(32);
+    future[0] = (DEFAULT_TIER << 3) | 1;
+    assert.throws(() => decode(future), /wire-format generation/);
+  });
+
+  it("rejects a length that disagrees with the descriptor", () => {
+    // A compact-tier descriptor on a 32-byte buffer: the renumbering's own
+    // hazard, and exactly what the self-describing length check exists for.
+    const mismatched = new Uint8Array(32);
+    mismatched[0] = COMPACT_TIER << 3;
+    assert.throws(() => decode(mismatched), /disagrees with its descriptor/);
   });
 });

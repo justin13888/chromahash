@@ -3,7 +3,13 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { ChromaHash, init } from "./index.ts";
+import {
+  ChromaHash,
+  COMPACT_TIER,
+  DEFAULT_TIER,
+  init,
+  MAX_TIER,
+} from "./index.ts";
 import type { Gamut } from "./index.ts";
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
@@ -23,7 +29,13 @@ function loadVectors<T>(name: string): T {
 
 interface EncodeVector {
   name: string;
-  input: { width: number; height: number; gamut: Gamut; rgba: number[] };
+  input: {
+    width: number;
+    height: number;
+    gamut: Gamut;
+    tier: number;
+    rgba: number[];
+  };
   expected: { hash: number[]; average_color: [number, number, number, number] };
 }
 
@@ -33,11 +45,12 @@ describe("integration encode", () => {
   for (const vec of vectors) {
     it(`encode ${vec.name}`, () => {
       const rgba = new Uint8Array(vec.input.rgba);
-      const ch = ChromaHash.encode(
+      const ch = ChromaHash.encodeWithQuality(
         vec.input.width,
         vec.input.height,
         rgba,
         vec.input.gamut,
+        vec.input.tier,
       );
       assert.deepStrictEqual(
         ch.hash,
@@ -167,16 +180,40 @@ describe("fromBytes", () => {
 });
 
 describe("isVersionSupported", () => {
-  it("reports v0.6 hashes as supported", () => {
+  it("reports a v1 hash as supported", () => {
     const rgba = new Uint8Array(4 * 4 * 4).fill(128);
     const ch = ChromaHash.encode(4, 4, rgba, "sRGB");
     assert.ok(ch.isVersionSupported());
   });
 
-  it("reports a legacy (bit 47 set) hash as unsupported", () => {
+  it("reports a future wire generation as unsupported", () => {
     const rgba = new Uint8Array(4 * 4 * 4).fill(128);
     const bytes = new Uint8Array(ChromaHash.encode(4, 4, rgba, "sRGB").hash);
-    bytes[5] = (bytes[5] ?? 0) | 0x80;
-    assert.ok(!ChromaHash.fromBytes(bytes).isVersionSupported());
+    // Byte 0 bits 0..3 are the version field; 1 is a generation this build
+    // does not implement. fromBytes must refuse it outright rather than
+    // decode garbage, which is the whole point of the descriptor byte.
+    bytes[0] = ((bytes[0] ?? 0) & ~0b111) | 1;
+    assert.throws(() => ChromaHash.fromBytes(bytes), /wire-format generation/);
+  });
+
+  it("defaults to the 32-byte tier and can address every other one", () => {
+    const rgba = new Uint8Array(4 * 4 * 4).fill(128);
+    assert.strictEqual(ChromaHash.encode(4, 4, rgba, "sRGB").hash.length, 32);
+    assert.strictEqual(
+      ChromaHash.encodeWithQuality(4, 4, rgba, "sRGB", DEFAULT_TIER).hash
+        .length,
+      32,
+    );
+    assert.strictEqual(
+      ChromaHash.encodeWithQuality(4, 4, rgba, "sRGB", COMPACT_TIER).hash
+        .length,
+      21,
+    );
+    for (let tier = COMPACT_TIER; tier <= MAX_TIER; tier++) {
+      const ch = ChromaHash.encodeWithQuality(4, 4, rgba, "sRGB", tier);
+      assert.strictEqual(ch.tier, tier);
+      // Round-trips through the self-describing length check.
+      assert.deepStrictEqual(ChromaHash.fromBytes(ch.hash).hash, ch.hash);
+    }
   });
 });

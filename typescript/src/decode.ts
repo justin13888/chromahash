@@ -1,8 +1,8 @@
 /**
- * Pure-TypeScript ChromaHash **decode** path (v0.6).
+ * Pure-TypeScript ChromaHash **decode** path (v1).
  *
  * This is the one hand-maintained algorithm port in the TypeScript package: a
- * render-only module that reconstructs a placeholder from a 32-byte hash with
+ * render-only module that reconstructs a placeholder from a hash with
  * **no WebAssembly init**, so latency-sensitive consumers (server-side render,
  * the critical browser paint path) skip the `.wasm` fetch + instantiate.
  *
@@ -16,40 +16,42 @@
  * if a spec change lands in the core, that guard fails until this module follows.
  */
 
-// ---------------------------------------------------------------------------
-// v0.6 format constants (the locked `Tunables::DEFAULT`, layout B)
-// ---------------------------------------------------------------------------
-
-type Tier = readonly [count: number, bits: number];
-
-const L_TIERS: readonly Tier[] = [
-  [27, 5],
-  [0, 5],
-];
-const C_COUNT = 9;
-const C_BITS = 4;
-const LA_TIERS: readonly Tier[] = [
-  [7, 6],
-  [13, 5],
-];
-const CA_COUNT = 9;
-const CA_BITS = 4;
-const ALPHA_AC_COUNT = 5;
-const ALPHA_AC_BITS = 4;
-
-const MAX_CHROMA_A = 0.35;
-const MAX_CHROMA_B = 0.33;
-const MAX_L_SCALE = 0.5;
-const MAX_A_SCALE = 0.125;
-const MAX_B_SCALE = 0.125;
-const MAX_ALPHA_SCALE = 0.5;
-const MU_L = 5.0;
-const MU_C = 8.0;
-const MU_ALPHA = 5.0;
-const W_MIN_L = 1.0;
-const W_EXP_L = 1;
-const W_MIN_C = 1.0;
-const W_EXP_C = 1;
+import {
+  ALPHA_DC_BITS,
+  ALPHA_SCALE_BITS,
+  ANISO_OBLIQUE,
+  A_DC_BITS,
+  A_SCALE_BITS,
+  assertHash,
+  B_DC_BITS,
+  BASE_LONG_EDGE,
+  B_SCALE_BITS,
+  DESCRIPTOR_BITS,
+  L_DC_BITS,
+  L_SCALE_BITS,
+  MAX_ALPHA_SCALE,
+  MAX_A_SCALE,
+  MAX_B_SCALE,
+  MAX_CHROMA_A,
+  MAX_CHROMA_B,
+  MAX_L_SCALE,
+  MU_ALPHA,
+  MU_C,
+  MU_L,
+  PREFIX_BITS,
+  readAspect,
+  readHasAlpha,
+  readTier,
+  renderLevel,
+  SEL_HV,
+  SEL_ONE,
+  tierCountScale,
+  tierLayout,
+  W_EXP_C,
+  W_EXP_L,
+  W_MIN_C,
+  W_MIN_L,
+} from "./header.ts";
 
 type Mat3 = readonly [
   readonly [number, number, number],
@@ -326,6 +328,23 @@ function muLawDequantize(index: number, bits: number, mu: number): number {
   return muExpand(compressed, mu);
 }
 
+/** Dequantize a unit-range DC/scale code (`code / (2^bits - 1)`). Per spec §7.1. */
+function dequantizeLDc(code: number, bits: number): number {
+  return code / ((1 << bits) - 1);
+}
+
+/** Dequantize a zero-centred chroma DC code. Per spec §7.1. */
+function dequantizeCDc(code: number, range: number, bits: number): number {
+  const center = 1 << (bits - 1);
+  const span = center - 1;
+  return ((code - center) / span) * range;
+}
+
+/** Dequantize an AC scale code (linear grid; `scale_mu` is 0 in v1). §7.2. */
+function dequantizeScale(code: number, range: number, bits: number): number {
+  return (code / ((1 << bits) - 1)) * range;
+}
+
 // ---------------------------------------------------------------------------
 // Aspect
 // ---------------------------------------------------------------------------
@@ -335,15 +354,26 @@ function decodeAspect(byte: number): number {
   return portablePow(2.0, (byte / 255.0) * 8.0 - 4.0);
 }
 
-/** Decode output size from aspect byte. Longer side = 32px. Per spec §8.2. */
-function decodeOutputSize(byte: number): [number, number] {
+/** Base (render-level-0) output size from an aspect byte. Per spec §8.2. */
+function baseOutputSize(byte: number): [number, number] {
   const ratio = decodeAspect(byte);
   if (ratio > 1.0) {
-    const h = Math.max(roundHalfAwayFromZero(32.0 / ratio), 1.0);
-    return [32, h];
+    const h = Math.max(roundHalfAwayFromZero(BASE_LONG_EDGE / ratio), 1.0);
+    return [BASE_LONG_EDGE, h];
   }
-  const w = Math.max(roundHalfAwayFromZero(32.0 * ratio), 1.0);
-  return [w, 32];
+  const w = Math.max(roundHalfAwayFromZero(BASE_LONG_EDGE * ratio), 1.0);
+  return [w, BASE_LONG_EDGE];
+}
+
+/**
+ * Natural output size for an aspect byte at a tier. The base size is scaled by
+ * a **bit shift** on the tier's render level — not re-derived from
+ * `32·2^level / ratio`, which disagrees for non-power-of-two ratios (§8.2).
+ */
+function decodeOutputSize(byte: number, tier: number): [number, number] {
+  const [w, h] = baseOutputSize(byte);
+  const level = renderLevel(tier);
+  return [w << level, h << level];
 }
 
 // ---------------------------------------------------------------------------
@@ -356,19 +386,65 @@ interface Selection {
   pK: number;
 }
 
+/** Quantize a selection-weight parameter onto the Q12 grid. */
+function q12(v: number): number {
+  return roundHalfAwayFromZero(v * SEL_ONE);
+}
+
+const ANISO_Q12 = q12(ANISO_OBLIQUE);
+const SEL_HV_Q12 = q12(SEL_HV);
+
 /**
- * Select the K lowest-spatial-frequency AC coefficients for an aspect byte.
- * Per spec §6.1 (v0.6). Priority (cx·H)² + (cy·W)²; ties break by (cx, cy).
+ * Exact integer sort key for one candidate frequency. Per spec §6.2 (v1).
+ *
+ * Every intermediate stays under 2^51 at every tier for the parameter ranges
+ * the format allows, so a JavaScript `number` evaluates it without a bignum —
+ * which is the whole reason the spec defines the order on a Q12 integer grid
+ * rather than in floating point.
  */
-function selectCoefficients(aspectByte: number, k: number): Selection {
-  const [w, h] = decodeOutputSize(aspectByte);
-  const entries: Array<[number, number, number]> = [];
+function selectionKey(
+  px: number,
+  py: number,
+  aQ12: number,
+  hQ12: number,
+): number {
+  const sq = px * px;
+  const tq = py * py;
+  const p = sq + tq;
+  if (aQ12 === 0 && hQ12 === 0) return p * 65536;
+  const d = sq - tq;
+  // Truncate toward zero, matching the reference's `/`.
+  const x = Math.trunc((d * SEL_ONE) / p);
+  const u = (SEL_ONE + aQ12) * SEL_ONE - Math.floor((aQ12 * x * x) / SEL_ONE);
+  const v = SEL_ONE * SEL_ONE + hQ12 * x;
+  return p * Math.floor((u * v) / 4294967296);
+}
+
+/**
+ * Select the K lowest-priority AC coefficients for an (aspect byte, tier).
+ * Per spec §6.2 (v1): the weighted priority order, ties broken by (cx, cy).
+ *
+ * `priorities` carries the *unweighted* priority `(cx·H)² + (cy·W)²`, which is
+ * what the synthesis window and the `p_K` band edge are defined on.
+ */
+function selectCoefficients(
+  aspectByte: number,
+  tier: number,
+  k: number,
+): Selection {
+  const [w, h] = decodeOutputSize(aspectByte, tier);
+  const entries: Array<[number, number, number, number]> = [];
   for (let cy = 0; cy < h; cy++) {
     for (let cx = 0; cx < w; cx++) {
       if (cx === 0 && cy === 0) continue;
       const px = cx * h;
       const py = cy * w;
-      entries.push([px * px + py * py, cx, cy]);
+      entries.push([
+        selectionKey(px, py, ANISO_Q12, SEL_HV_Q12),
+        cx,
+        cy,
+        px * px + py * py,
+      ]);
     }
   }
   entries.sort((p, q) => p[0] - q[0] || p[1] - q[1] || p[2] - q[2]);
@@ -377,8 +453,8 @@ function selectCoefficients(aspectByte: number, k: number): Selection {
   const last = entries[entries.length - 1];
   return {
     coeffs: entries.map(([, cx, cy]) => [cx, cy]),
-    priorities: entries.map(([p]) => p),
-    pK: last ? last[0] : 1,
+    priorities: entries.map(([, , , pri]) => pri),
+    pK: last ? last[3] : 1,
   };
 }
 
@@ -459,54 +535,74 @@ function prepareChannel(
 // Render
 // ---------------------------------------------------------------------------
 
-/** Render a ChromaHash at the given pixel dimensions. Per spec §11 (v0.6). */
+/** Render a ChromaHash at the given pixel dimensions. Per spec §11 (v1). */
 function renderAtSize(
   hash: Uint8Array,
   w: number,
   h: number,
   output: OutputGamut,
 ): Uint8Array {
-  // 1. Header (48 bits)
-  const lDcQ = readBits(hash, 0, 7);
-  const aDcQ = readBits(hash, 7, 7);
-  const bDcQ = readBits(hash, 14, 7);
-  const lSclQ = readBits(hash, 21, 6);
-  const aSclQ = readBits(hash, 27, 6);
-  const bSclQ = readBits(hash, 33, 5);
-  const aspect = readBits(hash, 38, 8);
-  const hasAlpha = readBits(hash, 46, 1) === 1;
+  // 1. Descriptor byte + aspect byte (§2.5), then the 38-bit DC/scale group.
+  const tier = readTier(hash);
+  const hasAlpha = readHasAlpha(hash);
+  const aspect = readAspect(hash);
+
+  let bitpos = DESCRIPTOR_BITS;
+  const lDcQ = readBits(hash, bitpos, L_DC_BITS);
+  bitpos += L_DC_BITS;
+  const aDcQ = readBits(hash, bitpos, A_DC_BITS);
+  bitpos += A_DC_BITS;
+  const bDcQ = readBits(hash, bitpos, B_DC_BITS);
+  bitpos += B_DC_BITS;
+  const lSclQ = readBits(hash, bitpos, L_SCALE_BITS);
+  bitpos += L_SCALE_BITS;
+  const aSclQ = readBits(hash, bitpos, A_SCALE_BITS);
+  bitpos += A_SCALE_BITS;
+  const bSclQ = readBits(hash, bitpos, B_SCALE_BITS);
+  bitpos += B_SCALE_BITS;
 
   // 2. DC values + scale factors
-  const lDc = lDcQ / 127.0;
-  const aDc = ((aDcQ - 64.0) / 63.0) * MAX_CHROMA_A;
-  const bDc = ((bDcQ - 64.0) / 63.0) * MAX_CHROMA_B;
-  const lScale = (lSclQ / 63.0) * MAX_L_SCALE;
-  const aScale = (aSclQ / 63.0) * MAX_A_SCALE;
-  const bScale = (bSclQ / 31.0) * MAX_B_SCALE;
+  const lDc = dequantizeLDc(lDcQ, L_DC_BITS);
+  const aDc = dequantizeCDc(aDcQ, MAX_CHROMA_A, A_DC_BITS);
+  const bDc = dequantizeCDc(bDcQ, MAX_CHROMA_B, B_DC_BITS);
+  const lScale = dequantizeScale(lSclQ, MAX_L_SCALE, L_SCALE_BITS);
+  const aScale = dequantizeScale(aSclQ, MAX_A_SCALE, A_SCALE_BITS);
+  const bScale = dequantizeScale(bSclQ, MAX_B_SCALE, B_SCALE_BITS);
 
-  // 3. Coefficient selection (mirrors the encoder exactly)
-  const lTiers = hasAlpha ? LA_TIERS : L_TIERS;
-  const lCount = (lTiers[0]?.[0] ?? 0) + (lTiers[1]?.[0] ?? 0);
-  const cCount = hasAlpha ? CA_COUNT : C_COUNT;
-  const cBits = hasAlpha ? CA_BITS : C_BITS;
-  const lSel = selectCoefficients(aspect, lCount);
-  const cSel = selectCoefficients(aspect, cCount);
+  // 3. Coefficient selection (mirrors the encoder exactly). Counts come from
+  //    the tier's §3.2 row scaled by 4^level; bit widths stay constant.
+  const layout = tierLayout(tier);
+  const scale = tierCountScale(tier);
+  const lBands = (hasAlpha ? layout.laBands : layout.lBands).map(
+    ([count, bits]) => [count * scale, bits] as const,
+  );
+  const lCount = lBands.reduce((acc, [count]) => acc + count, 0);
+  const cCount = (hasAlpha ? layout.caCount : layout.cCount) * scale;
+  const cBits = hasAlpha ? layout.caBits : layout.cBits;
+  const alphaAcCount = layout.aCount * scale;
+  const alphaAcBits = layout.aBits;
+  const lSel = selectCoefficients(aspect, tier, lCount);
+  const cSel = selectCoefficients(aspect, tier, cCount);
 
-  // 4. AC payload
-  let bitpos = 48;
-
+  // 4. Alpha prefix, then the AC payload.
   let alphaDcVal = 1.0;
   let alphaScaleVal = 0.0;
   if (hasAlpha) {
-    alphaDcVal = readBits(hash, bitpos, 5) / 31.0;
-    bitpos += 5;
-    alphaScaleVal = (readBits(hash, bitpos, 4) / 15.0) * MAX_ALPHA_SCALE;
-    bitpos += 4;
+    alphaDcVal = dequantizeLDc(
+      readBits(hash, bitpos, ALPHA_DC_BITS),
+      ALPHA_DC_BITS,
+    );
+    bitpos += ALPHA_DC_BITS;
+    alphaScaleVal = dequantizeScale(
+      readBits(hash, bitpos, ALPHA_SCALE_BITS),
+      MAX_ALPHA_SCALE,
+      ALPHA_SCALE_BITS,
+    );
+    bitpos += ALPHA_SCALE_BITS;
   }
 
   const lAc: number[] = [];
-  for (const tier of lTiers) {
-    const [count, bits] = tier;
+  for (const [count, bits] of lBands) {
     for (let i = 0; i < count; i++) {
       const q = readBits(hash, bitpos, bits);
       bitpos += bits;
@@ -530,11 +626,11 @@ function renderAtSize(
   let alphaSel: Selection | null = null;
   const alphaAc: number[] = [];
   if (hasAlpha) {
-    alphaSel = selectCoefficients(aspect, ALPHA_AC_COUNT);
-    for (let i = 0; i < ALPHA_AC_COUNT; i++) {
-      const q = readBits(hash, bitpos, ALPHA_AC_BITS);
-      bitpos += ALPHA_AC_BITS;
-      alphaAc.push(muLawDequantize(q, ALPHA_AC_BITS, MU_ALPHA) * alphaScaleVal);
+    alphaSel = selectCoefficients(aspect, tier, alphaAcCount);
+    for (let i = 0; i < alphaAcCount; i++) {
+      const q = readBits(hash, bitpos, alphaAcBits);
+      bitpos += alphaAcBits;
+      alphaAc.push(muLawDequantize(q, alphaAcBits, MU_ALPHA) * alphaScaleVal);
     }
   }
 
@@ -627,7 +723,7 @@ function renderAtSize(
 // Public API
 // ---------------------------------------------------------------------------
 
-/** A decoded RGBA image (≤ 32×32 px). `rgba` is row-major, 4 bytes/pixel. */
+/** A decoded RGBA image (≤ 256×256 px at the top tier). Row-major, 4 bytes/pixel. */
 export interface DecodedImage {
   w: number;
   h: number;
@@ -642,17 +738,7 @@ export interface RgbaColor {
   a: number;
 }
 
-function assertHash(hash: Uint8Array): void {
-  if (hash.length !== 32) {
-    throw new Error("ChromaHash must be exactly 32 bytes");
-  }
-}
-
-function readAspect(hash: Uint8Array): number {
-  return readBits(hash, 38, 8);
-}
-
-/** Decode a ChromaHash into an sRGB RGBA image. Per spec §11 (v0.6). */
+/** Decode a ChromaHash into an sRGB RGBA image. Per spec §11 (v1). */
 export function decode(hash: Uint8Array): DecodedImage {
   return decodeTo(hash, "sRGB");
 }
@@ -664,7 +750,7 @@ export function decode(hash: Uint8Array): DecodedImage {
  */
 export function decodeTo(hash: Uint8Array, output: OutputGamut): DecodedImage {
   assertHash(hash);
-  const [w, h] = decodeOutputSize(readAspect(hash));
+  const [w, h] = decodeOutputSize(readAspect(hash), readTier(hash));
   return { w, h, rgba: renderAtSize(hash, w, h, output) };
 }
 
@@ -688,7 +774,7 @@ export function decodeCappedTo(
   output: OutputGamut,
 ): DecodedImage {
   assertHash(hash);
-  const [natW, natH] = decodeOutputSize(readAspect(hash));
+  const [natW, natH] = decodeOutputSize(readAspect(hash), readTier(hash));
   const w = Math.min(natW, maxWidth);
   const h = Math.min(natH, maxHeight);
   return { w, h, rgba: renderAtSize(hash, w, h, output) };
@@ -697,18 +783,24 @@ export function decodeCappedTo(
 /** Extract the average color without a full decode. Per spec §11.2. */
 export function averageColor(hash: Uint8Array): RgbaColor {
   assertHash(hash);
-  const lDcQ = readBits(hash, 0, 7);
-  const aDcQ = readBits(hash, 7, 7);
-  const bDcQ = readBits(hash, 14, 7);
-  const hasAlpha = readBits(hash, 46, 1) === 1;
+  const hasAlpha = readHasAlpha(hash);
+  let bitpos = DESCRIPTOR_BITS;
+  const lDcQ = readBits(hash, bitpos, L_DC_BITS);
+  bitpos += L_DC_BITS;
+  const aDcQ = readBits(hash, bitpos, A_DC_BITS);
+  bitpos += A_DC_BITS;
+  const bDcQ = readBits(hash, bitpos, B_DC_BITS);
 
-  const lDc = lDcQ / 127.0;
-  const aDc = ((aDcQ - 64.0) / 63.0) * MAX_CHROMA_A;
-  const bDc = ((bDcQ - 64.0) / 63.0) * MAX_CHROMA_B;
+  const lDc = dequantizeLDc(lDcQ, L_DC_BITS);
+  const aDc = dequantizeCDc(aDcQ, MAX_CHROMA_A, A_DC_BITS);
+  const bDc = dequantizeCDc(bDcQ, MAX_CHROMA_B, B_DC_BITS);
 
   const lClamped = clamp01(lDc);
   const rgbLin = oklabToLinearSrgb([lClamped, aDc, bDc]);
-  const alpha = hasAlpha ? readBits(hash, 48, 5) / 31.0 : 1.0;
+  // The alpha DC sits immediately after the fixed prefix, in alpha mode only.
+  const alpha = hasAlpha
+    ? dequantizeLDc(readBits(hash, PREFIX_BITS, ALPHA_DC_BITS), ALPHA_DC_BITS)
+    : 1.0;
 
   return {
     r: linearToGamma8(clamp01(rgbLin[0]), SRGB_GAMMA_LUT),
@@ -718,11 +810,9 @@ export function averageColor(hash: Uint8Array): RgbaColor {
   };
 }
 
-/**
- * Whether this hash uses the v0.6 bitstream this module implements. Decoding an
- * unsupported (legacy v0.2–v0.5) hash produces garbage, not an error.
- */
-export function isVersionSupported(hash: Uint8Array): boolean {
-  assertHash(hash);
-  return ((hash[5] ?? 0) >> 7) % 2 === 0;
-}
+export {
+  COMPACT_TIER,
+  DEFAULT_TIER,
+  isVersionSupported,
+  MAX_TIER,
+} from "./header.ts";
