@@ -1,6 +1,6 @@
 {
-  "note": "Baseline for the tier-0 R-D regression gate (src/rd-gate.ts). Regenerate deliberately with `just rd-gate-update` after an intended encoder change, and say so in the commit message.",
-  "tier": 0,
+  "note": "Baseline for the default-tier (32-byte) R-D regression gate (src/rd-gate.ts). Regenerate deliberately with `just rd-gate-update` after an intended encoder change, and say so in the commit message.",
+  "tier": 1,
   "tolerancePct": 1,
   "images": [
     {

@@ -5,7 +5,7 @@
   "variants": [
     {
       "label": "t1 shipped (108 B, 64px)",
-      "tier": 1
+      "tier": 2
     },
     {
       "label": "t1 counts @tier0 (32px)",
@@ -13,7 +13,7 @@
     },
     {
       "label": "t2 shipped (411 B, 128px)",
-      "tier": 2
+      "tier": 3
     },
     {
       "label": "t2 counts @tier0 (32px)",
@@ -21,16 +21,16 @@
     },
     {
       "label": "t2 counts @tier1 (64px)",
-      "tier": 1,
+      "tier": 2,
       "tune": "l1=104:5 c=36:4"
     },
     {
       "label": "t3 shipped (1623 B, 256px)",
-      "tier": 3
+      "tier": 4
     },
     {
       "label": "t3 counts @tier1 (64px)",
-      "tier": 1,
+      "tier": 2,
       "tune": "l1=416:5 c=144:4"
     }
   ]

@@ -44,7 +44,12 @@ import { generateFixtures } from "./generate-fixtures.ts";
 import { ensureNaturalImages } from "./natural-images.ts";
 import { ensureHoldoutImages } from "./holdout-images.ts";
 import { CodecThumbAdapter } from "./adapters/codec-thumb.ts";
-import { buildRdLineup, RD_ANCHORS, type RdVariant } from "./rd/lineup.ts";
+import {
+  buildRdLineup,
+  DEFAULT_TIER,
+  type RdVariant,
+  TIER_BYTES,
+} from "./rd/lineup.ts";
 import { computeRdCurves, generateRdSection } from "./rd/report.ts";
 import { splitFor } from "./corpus.ts";
 import {
@@ -296,13 +301,21 @@ async function main(): Promise<void> {
   // otherwise it's the cross-format LQIP line-up.
   let adapters: FormatAdapter[];
   let activeFormatNames: string[];
-  // chromahash quality tier (0..=3) for the ChromaHash column, from the
+  // chromahash quality tier (0..=4, ordered by quality) for the ChromaHash column, from the
   // environment so `CHROMAHASH_TIER=2 just compare` evaluates a higher-fidelity
   // build under a more generous size budget (the encoded-bytes column shows the
   // size–quality trade-off). Matches the encode_stdin / benchmark convention.
-  const chromaTier =
-    Number.parseInt(process.env.CHROMAHASH_TIER ?? "0", 10) || 0;
-  if (chromaTier !== 0) {
+  const chromaTier = Number.parseInt(
+    process.env.CHROMAHASH_TIER ?? String(DEFAULT_TIER),
+    10,
+  );
+  if (!Number.isInteger(chromaTier) || !TIER_BYTES.has(chromaTier)) {
+    console.error(
+      `CHROMAHASH_TIER=${process.env.CHROMAHASH_TIER} is not a valid tier code (0..=4).`,
+    );
+    process.exit(1);
+  }
+  if (chromaTier !== DEFAULT_TIER) {
     console.log(`ChromaHash quality tier: ${chromaTier}`);
   }
   // R-D variant lineup (null outside --rd mode); kept for curve aggregation.
@@ -322,7 +335,7 @@ async function main(): Promise<void> {
     // 32-byte one in a table captioned "version comparison" — the reader would
     // score a 3x byte increase as a quality win. Refuse instead of misleading.
     const taggedVersions = versionList.filter((v) => v !== "current");
-    if (chromaTier !== 0 && taggedVersions.length > 0) {
+    if (chromaTier !== DEFAULT_TIER && taggedVersions.length > 0) {
       console.error(
         `CHROMAHASH_TIER=${chromaTier} cannot be applied to released tags (${taggedVersions.join(", ")}): quality tiers are a v1 feature, so those columns would stay at 32 bytes while "current" grew, and the comparison would no longer be equal-budget.\nEither drop CHROMAHASH_TIER to compare at 32 bytes, or pass --versions current to sweep the working tree's tiers on their own.`,
       );
@@ -364,7 +377,9 @@ async function main(): Promise<void> {
     // the same number of bytes, and that was previously visible only in `--rd`.
     // They target the active tier's byte anchor, so the columns are equal-budget.
     if (!(values["skip-codecs"] ?? false)) {
-      const anchor = RD_ANCHORS[chromaTier] ?? RD_ANCHORS[0] ?? 32;
+      // Keyed by tier code, not positional: RD_ANCHORS[tier] silently
+      // returned another tier's budget (and `undefined` for the compact tier).
+      const anchor = TIER_BYTES.get(chromaTier) ?? 32;
       // No general codec can reach the tier-0 budget — AVIF's floor is ~470 B
       // against 32 — so there the honest row is the codec's smallest possible
       // output, labelled as such. From tier 1 up the budget is reachable and

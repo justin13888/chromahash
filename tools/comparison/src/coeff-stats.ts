@@ -81,7 +81,7 @@ function dump(
       input: Buffer.from(input.smallRgba),
       encoding: "utf8",
       maxBuffer: 128 * 1024 * 1024,
-      env: { ...process.env, CHROMAHASH_TIER: "0", CHROMAHASH_TUNE: tune },
+      env: { ...process.env, CHROMAHASH_TIER: "1", CHROMAHASH_TUNE: tune },
     },
   );
   const g: Record<string, number[]> = { l: [], a: [], b: [], alpha: [] };

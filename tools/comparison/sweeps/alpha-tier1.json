@@ -7,47 +7,47 @@
   "variants": [
     {
       "label": "SHIPPED A5@4 L20@5 C9@4",
-      "tier": 1,
+      "tier": 2,
       "tune": "la1=20:5 ca=9:4 alpha_ac_count=5 alpha_ac_bits=4"
     },
     {
       "label": "A28@3 L22@4 C3@3 (t0 winner)",
-      "tier": 1,
+      "tier": 2,
       "tune": "la1=22:4 ca=3:3 alpha_ac_count=28 alpha_ac_bits=3"
     },
     {
       "label": "A40@3 L13@4 C3@3",
-      "tier": 1,
+      "tier": 2,
       "tune": "la1=13:4 ca=3:3 alpha_ac_count=40 alpha_ac_bits=3"
     },
     {
       "label": "A20@4 L20@5 C1@4",
-      "tier": 1,
+      "tier": 2,
       "tune": "la1=20:5 ca=2:4 alpha_ac_count=20 alpha_ac_bits=4"
     },
     {
       "label": "A16@4 L14@4 C9@4",
-      "tier": 1,
+      "tier": 2,
       "tune": "la1=14:4 ca=9:4 alpha_ac_count=16 alpha_ac_bits=4"
     },
     {
       "label": "A12@4 L18@4 C9@4",
-      "tier": 1,
+      "tier": 2,
       "tune": "la1=18:4 ca=9:4 alpha_ac_count=12 alpha_ac_bits=4"
     },
     {
       "label": "A32@3 L19@4 C3@3",
-      "tier": 1,
+      "tier": 2,
       "tune": "la1=19:4 ca=3:3 alpha_ac_count=32 alpha_ac_bits=3"
     },
     {
       "label": "A24@3 L22@4 C5@3",
-      "tier": 1,
+      "tier": 2,
       "tune": "la1=22:4 ca=5:3 alpha_ac_count=24 alpha_ac_bits=3"
     },
     {
       "label": "A20@3 L26@4 C3@3",
-      "tier": 1,
+      "tier": 2,
       "tune": "la1=28:4 ca=3:3 alpha_ac_count=20 alpha_ac_bits=3"
     }
   ]

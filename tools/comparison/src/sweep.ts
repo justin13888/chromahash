@@ -37,6 +37,7 @@ import {
   splitFor,
 } from "./corpus.ts";
 import { gamutToSrgbReference } from "./gamut.ts";
+import { DEFAULT_TIER } from "./rd/lineup.ts";
 import { generateFixtures } from "./generate-fixtures.ts";
 import { ensureAlphaImages } from "./alpha-images.ts";
 import { ensureGraphicImages } from "./graphic-images.ts";
@@ -61,12 +62,12 @@ interface SweepVariant {
   label: string;
   /** CHROMAHASH_TUNE string; omit for the shipped defaults. */
   tune?: string;
-  /** Quality tier (default 0). */
+  /** Quality tier code, ordered by quality (default: the 32-byte default tier). */
   tier?: number;
   /**
-   * Decode capped to the image's tier-0 natural render size — the
-   * embedded-tiers experiment: what would a tier-0-sized rendering of this
-   * variant's hash look like?
+   * Decode capped to the image's default-tier natural render size — the
+   * embedded-tiers experiment: what would a default-tier-sized rendering of
+   * this variant's hash look like?
    */
   capToTier0?: boolean;
   /**
@@ -78,7 +79,7 @@ interface SweepVariant {
    * The tag is built through the same cached worktree + decode shim as
    * `just compare-versions`. That shim exposes only the pre-v1 API, so it
    * ignores CHROMAHASH_TUNE, has no quality tier, and always decodes uncapped —
-   * `tune`, a non-zero `tier`, and `capToTier0` are rejected rather than
+   * `tune`, an explicit `tier`, and `capToTier0` are rejected rather than
    * silently dropped.
    */
   version?: string;
@@ -289,7 +290,7 @@ function resolveVersionBinaries(variants: SweepVariant[]): Map<string, string> {
     if (!v.version) continue;
     const rejected = [
       v.tune ? "tune" : null,
-      v.tier ? "tier" : null,
+      v.tier !== undefined ? "tier" : null,
       v.capToTier0 ? "capToTier0" : null,
     ].filter(Boolean);
     if (rejected.length > 0) {
@@ -316,7 +317,7 @@ async function scoreVariant(
   inputs: ImageInput[],
   versionBinaries: Map<string, string>,
 ): Promise<SweepRow> {
-  const tier = variant.tier ?? 0;
+  const tier = variant.tier ?? DEFAULT_TIER;
   // A tag variant runs its own binary; hashes are not portable across format
   // generations, so the same binary must both encode and decode.
   const cli = variant.version
@@ -338,9 +339,18 @@ async function scoreVariant(
     let capW = w;
     let capH = h;
     if (variant.capToTier0) {
-      // The image's tier-0 natural render size, from an uncapped tier-0 decode
-      // of the incumbent (dimensions depend only on the aspect byte).
-      const t0 = encodeViaRust(cli, w, h, rgba, gamut, 0, variant.tune);
+      // The image's default-tier natural render size, from an uncapped
+      // default-tier decode of the incumbent (dimensions depend only on the
+      // aspect byte).
+      const t0 = encodeViaRust(
+        cli,
+        w,
+        h,
+        rgba,
+        gamut,
+        DEFAULT_TIER,
+        variant.tune,
+      );
       const t0dec = decodeViaRust(
         cli,
         t0,

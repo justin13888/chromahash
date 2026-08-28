@@ -5,8 +5,8 @@
   "variants": [
     { "label": "v0.6 (32 B)", "version": "v0.6" },
     { "label": "v1 tier 0 (32 B)" },
-    { "label": "v1 tier 1 (108 B)", "tier": 1 },
-    { "label": "v1 tier 2 (411 B)", "tier": 2 },
-    { "label": "v1 tier 3 (1623 B)", "tier": 3 }
+    { "label": "v1 tier 1 (108 B)", "tier": 2 },
+    { "label": "v1 tier 2 (411 B)", "tier": 3 },
+    { "label": "v1 tier 3 (1623 B)", "tier": 4 }
   ]
 }

@@ -3,13 +3,13 @@
   "description": "At the fixed tier-1 budget: does trading coefficient count for per-coefficient precision (or chroma width) beat the shipped constant-precision count scaling? All variants keep the no-alpha AC payload within 2 bits of the default 202·4 (same byte length).",
   "photoOnly": true,
   "variants": [
-    { "label": "default t1 (26:5 / 9:4)", "tier": 1 },
-    { "label": "t1 L split 10:6+14:5", "tier": 1, "tune": "l1=10:6 l2=14:5" },
+    { "label": "default t1 (26:5 / 9:4)", "tier": 2 },
+    { "label": "t1 L split 10:6+14:5", "tier": 2, "tune": "l1=10:6 l2=14:5" },
     {
       "label": "t1 fewer L, wider C 18:5/14:4",
-      "tier": 1,
+      "tier": 2,
       "tune": "l1=18:5 c=14:4"
     },
-    { "label": "t1 L mostly-6b 20:6+2:5", "tier": 1, "tune": "l1=20:6 l2=2:5" }
+    { "label": "t1 L mostly-6b 20:6+2:5", "tier": 2, "tune": "l1=20:6 l2=2:5" }
   ]
 }

@@ -48,10 +48,10 @@
       "label": "L28@4C15@3 grid1 obj2 +dcs",
       "tune": "l1=28:4 c=15:3 refine_passes=2 refine_grid=1 refine_obj=2 refine_dc=1 refine_scale=1"
     },
-    { "label": "t1 108B base", "tier": 1 },
+    { "label": "t1 108B base", "tier": 2 },
     {
       "label": "t1 108B grid1 obj2",
-      "tier": 1,
+      "tier": 2,
       "tune": "refine_passes=2 refine_grid=1 refine_obj=2"
     }
   ]

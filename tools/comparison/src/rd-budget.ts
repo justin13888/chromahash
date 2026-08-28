@@ -60,14 +60,14 @@ const C_BITS = 4;
  * no shipped layout to run and one is synthesized instead.
  */
 const SHIPPED_ANCHORS = new Map<number, number>([
-  [21, 4], // the compact tier
-  [32, 0],
-  [108, 1],
-  [411, 2],
-  [1623, 3],
+  [21, 0], // the compact tier
+  [32, 1], // the default tier
+  [108, 2],
+  [411, 3],
+  [1623, 4],
 ]);
 
-/** Encoded length in bytes for a tier-0 (nL, nC) AC layout. */
+/** Encoded length in bytes for a default-tier (nL, nC) AC layout. */
 function bytesFor(nL: number, nC: number): number {
   return Math.ceil((PREFIX_BITS + nL * L_BITS + 2 * nC * C_BITS) / 8);
 }
@@ -105,11 +105,15 @@ function allocate(targetBytes: number): { nL: number; nC: number } | null {
  * to clear the top selected frequency index (~sqrt(4·nL/π)) with margin.
  */
 function tierFor(nL: number): number {
-  for (let t = 0; t <= 3; t++) {
-    const raster = 32 << t;
-    if (raster >= 2.2 * Math.sqrt((4 * Math.max(nL, 1)) / Math.PI)) return t;
+  // Returns a tier *code*, not a render level: the codes are ordered by quality
+  // and code 1 is level 0, so the code is the level plus one.
+  for (let level = 0; level <= 3; level++) {
+    const raster = 32 << level;
+    if (raster >= 2.2 * Math.sqrt((4 * Math.max(nL, 1)) / Math.PI)) {
+      return level + 1;
+    }
   }
-  return 3;
+  return 4;
 }
 
 /** One scored row of the output table. */

@@ -53,10 +53,10 @@ const GATE_IMAGES = [
   "portrait-suit",
 ] as const;
 
-/** Quality tier the gate scores. */
-const TIER = 0;
-/** Encoded length a tier-0 hash must have, per the shipped v1 layout. */
-const TIER0_BYTES = 32;
+/** Quality tier the gate scores: the 32-byte default (spec §2.5 tier code 1). */
+const TIER = 1;
+/** Encoded length a default-tier hash must have, per the shipped v1 layout. */
+const TIER_BYTES = 32;
 /** Default two-sided tolerance on mean ΔE00, in percent. */
 const DEFAULT_TOLERANCE_PCT = 1.0;
 
@@ -97,10 +97,10 @@ async function measure(): Promise<Baseline["images"]> {
     );
     const { smallWidth: w, smallHeight: h, smallRgba: rgba } = input;
     const hash = encodeViaRust(RUST_CLI, w, h, rgba, "srgb", TIER);
-    if (hash.length !== TIER0_BYTES) {
+    if (hash.length !== TIER_BYTES) {
       throw new Error(
         [
-          `${label}: tier-${TIER} hash is ${hash.length} B, expected ${TIER0_BYTES} B —`,
+          `${label}: tier-${TIER} hash is ${hash.length} B, expected ${TIER_BYTES} B —`,
           "the wire layout changed, which is a spec change, not a quality regression.",
         ].join(" "),
       );

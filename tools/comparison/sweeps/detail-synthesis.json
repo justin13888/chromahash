@@ -16,16 +16,16 @@
     },
     { "label": "32B synth 234 g0.5", "tune": "synth_count=234 synth_gain=0.5" },
     { "label": "32B synth 600 g0.5", "tune": "synth_count=600 synth_gain=0.5" },
-    { "label": "108B t1 base", "tier": 1 },
+    { "label": "108B t1 base", "tier": 2 },
     {
       "label": "108B t1 synth 312 g0.5",
-      "tier": 1,
+      "tier": 2,
       "tune": "synth_count=312 synth_gain=0.5"
     },
-    { "label": "411B t2 base", "tier": 2 },
+    { "label": "411B t2 base", "tier": 3 },
     {
       "label": "411B t2 synth 1248 g0.5",
-      "tier": 2,
+      "tier": 3,
       "tune": "synth_count=1248 synth_gain=0.5"
     }
   ]

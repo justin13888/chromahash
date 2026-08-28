@@ -13,9 +13,28 @@ import type { FormatAdapter } from "../types.ts";
 import { prepareVersionBinaries } from "../version-builds.ts";
 
 /**
- * Canonical equal-byte anchors for the R-D comparison: the four ChromaHash
- * quality-tier sizes (tiers 0..=3, no-alpha) in bytes. Codec baselines target
- * these budgets so every family is judged at the same byte cost.
+ * Byte length of each shipped ChromaHash tier code (no-alpha), per spec §3.5.
+ * The codes are ordered by quality: 0 is the 21-byte compact tier, 1 the
+ * 32-byte default, 2..=4 the higher tiers.
+ *
+ * Keyed by tier code rather than positional, so indexing it with a tier can
+ * never silently return a different tier's budget.
+ */
+export const TIER_BYTES: ReadonlyMap<number, number> = new Map([
+  [0, 21],
+  [1, 32],
+  [2, 108],
+  [3, 411],
+  [4, 1623],
+]);
+
+/** The 32-byte default tier's code (spec §2.5). Never write the literal 0. */
+export const DEFAULT_TIER = 1;
+
+/**
+ * Canonical equal-byte anchors for the R-D comparison: the ChromaHash
+ * quality-tier sizes in bytes. Codec baselines target these budgets so every
+ * family is judged at the same byte cost.
  */
 export const RD_ANCHORS: readonly number[] = [32, 108, 411, 1623];
 
@@ -35,11 +54,11 @@ export interface RdVariant {
 }
 
 /** ChromaHash quality tiers swept (the whole point of the comparison). */
-const CHROMAHASH_TIERS: readonly number[] = [0, 1, 2, 3];
+const CHROMAHASH_TIERS: readonly number[] = [1, 2, 3, 4];
 
 /**
  * The predecessor format, plotted as a single point at the 32 B anchor. v1's
- * tier 0 is byte-for-byte the v0.6 footprint, so this is the one genuinely
+ * default tier is byte-for-byte the v0.6 footprint, so this is the one genuinely
  * equal-budget comparison on the chart — and the only way to read what the v1
  * redesign cost or bought at the size both formats share. Its own family (and
  * so its own marker) rather than a point on the tier curve: it is a different

@@ -120,146 +120,146 @@
     },
     {
       "label": "108B SHIPPED (t1)",
-      "tier": 1
+      "tier": 2
     },
     {
       "label": "108B L24@4 C17@3",
-      "tier": 1,
+      "tier": 2,
       "tune": "l1=24:4 c=17:3"
     },
     {
       "label": "108B L26@4 C16@3",
-      "tier": 1,
+      "tier": 2,
       "tune": "l1=26:4 c=16:3"
     },
     {
       "label": "108B L28@4 C15@3",
-      "tier": 1,
+      "tier": 2,
       "tune": "l1=28:4 c=15:3"
     },
     {
       "label": "108B L30@4 C13@3",
-      "tier": 1,
+      "tier": 2,
       "tune": "l1=30:4 c=13:3"
     },
     {
       "label": "108B L32@4 C12@3",
-      "tier": 1,
+      "tier": 2,
       "tune": "l1=32:4 c=12:3"
     },
     {
       "label": "108B L34@4 C11@3",
-      "tier": 1,
+      "tier": 2,
       "tune": "l1=34:4 c=11:3"
     },
     {
       "label": "108B L36@4 C9@3",
-      "tier": 1,
+      "tier": 2,
       "tune": "l1=36:4 c=9:3"
     },
     {
       "label": "108B L38@4 C8@3",
-      "tier": 1,
+      "tier": 2,
       "tune": "l1=38:4 c=8:3"
     },
     {
       "label": "108B L40@4 C7@3",
-      "tier": 1,
+      "tier": 2,
       "tune": "l1=40:4 c=7:3"
     },
     {
       "label": "108B L28@4 C11@4",
-      "tier": 1,
+      "tier": 2,
       "tune": "l1=28:4 c=11:4"
     },
     {
       "label": "108B L30@4 C10@4",
-      "tier": 1,
+      "tier": 2,
       "tune": "l1=30:4 c=10:4"
     },
     {
       "label": "108B L32@4 C9@4",
-      "tier": 1,
+      "tier": 2,
       "tune": "l1=32:4 c=9:4"
     },
     {
       "label": "108B L34@4 C8@4",
-      "tier": 1,
+      "tier": 2,
       "tune": "l1=34:4 c=8:4"
     },
     {
       "label": "108B L36@4 C7@4",
-      "tier": 1,
+      "tier": 2,
       "tune": "l1=36:4 c=7:4"
     },
     {
       "label": "108B L38@3 C14@3",
-      "tier": 1,
+      "tier": 2,
       "tune": "l1=38:3 c=14:3"
     },
     {
       "label": "108B L40@3 C13@3",
-      "tier": 1,
+      "tier": 2,
       "tune": "l1=40:3 c=13:3"
     },
     {
       "label": "108B L42@3 C12@3",
-      "tier": 1,
+      "tier": 2,
       "tune": "l1=42:3 c=12:3"
     },
     {
       "label": "108B L44@3 C11@3",
-      "tier": 1,
+      "tier": 2,
       "tune": "l1=44:3 c=11:3"
     },
     {
       "label": "108B L46@3 C10@3",
-      "tier": 1,
+      "tier": 2,
       "tune": "l1=46:3 c=10:3"
     },
     {
       "label": "108B L48@3 C9@3",
-      "tier": 1,
+      "tier": 2,
       "tune": "l1=48:3 c=9:3"
     },
     {
       "label": "108B L40@3 C10@4",
-      "tier": 1,
+      "tier": 2,
       "tune": "l1=40:3 c=10:4"
     },
     {
       "label": "108B L44@3 C8@4",
-      "tier": 1,
+      "tier": 2,
       "tune": "l1=44:3 c=8:4"
     },
     {
       "label": "108B L46@3 C8@4",
-      "tier": 1,
+      "tier": 2,
       "tune": "l1=46:3 c=8:4"
     },
     {
       "label": "108B L26@5 C9@4",
-      "tier": 1,
+      "tier": 2,
       "tune": "l1=26:5 c=9:4"
     },
     {
       "label": "108B L29@5 C9@3",
-      "tier": 1,
+      "tier": 2,
       "tune": "l1=29:5 c=9:3"
     },
     {
       "label": "108B L8@5+20@4 C10@4",
-      "tier": 1,
+      "tier": 2,
       "tune": "l1=8:5 c=10:4 l2=20:4"
     },
     {
       "label": "108B L8@5+24@4 C8@4",
-      "tier": 1,
+      "tier": 2,
       "tune": "l1=8:5 c=8:4 l2=24:4"
     },
     {
       "label": "108B L8@5+28@4 C6@4",
-      "tier": 1,
+      "tier": 2,
       "tune": "l1=8:5 c=6:4 l2=28:4"
     }
   ]

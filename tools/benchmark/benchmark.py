@@ -84,6 +84,13 @@ HARNESSES: dict[str, dict] = {
     },
 }
 
+# Tier codes, ordered by quality (spec §2.5); mirrors rust/src/constants.rs.
+COMPACT_TIER = 0
+DEFAULT_TIER = 1
+MAX_TIER = 4
+# Every shipped tier, smallest first — the order reports present them in.
+ALL_TIERS = list(range(COMPACT_TIER, MAX_TIER + 1))
+
 OPERATIONS = ["encode", "decode"]
 MODES = ["single", "bulk"]
 
@@ -432,13 +439,13 @@ def main() -> None:
     parser.add_argument(
         "--tier",
         type=int,
-        default=0,
-        choices=range(0, 4),
+        default=DEFAULT_TIER,
+        choices=range(0, MAX_TIER + 1),
         help=(
-            "chromahash quality tier (0-3) to benchmark — higher tiers carry more "
-            "detail in more bytes (~4x per tier). Run once at 0 and again at e.g. 2 "
-            "to see how encode/decode scale under a more generous size budget. "
-            "ThumbHash baselines ignore this."
+            f"chromahash quality tier code (0-{MAX_TIER}, ordered by quality) to "
+            f"benchmark. {DEFAULT_TIER} is the 32-byte default and 0 the 21-byte "
+            "compact tier; each higher code carries more detail in more bytes "
+            "(~4x per code). ThumbHash baselines ignore this."
         ),
     )
     args = parser.parse_args()

@@ -88,57 +88,57 @@
     },
     {
       "label": " 108 B  t1 L104/C36",
-      "tier": 1,
+      "tier": 2,
       "tune": "l1=26:5 c=9:4"
     },
     {
       "label": " 129 B  t1 L124/C44",
-      "tier": 1,
+      "tier": 2,
       "tune": "l1=31:5 c=11:4"
     },
     {
       "label": " 161 B  t1 L156/C56",
-      "tier": 1,
+      "tier": 2,
       "tune": "l1=39:5 c=14:4"
     },
     {
       "label": " 189 B  t1 L188/C64",
-      "tier": 1,
+      "tier": 2,
       "tune": "l1=47:5 c=16:4"
     },
     {
       "label": " 246 B  t1 L248/C84",
-      "tier": 1,
+      "tier": 2,
       "tune": "l1=62:5 c=21:4"
     },
     {
       "label": " 310 B  t1 L312/C108",
-      "tier": 1,
+      "tier": 2,
       "tune": "l1=78:5 c=27:4"
     },
     {
       "label": " 411 B  t1 L416/C144",
-      "tier": 1,
+      "tier": 2,
       "tune": "l1=104:5 c=36:4"
     },
     {
       "label": " 512 B  t1 L520/C180",
-      "tier": 1,
+      "tier": 2,
       "tune": "l1=130:5 c=45:4"
     },
     {
       "label": " 767 B  t1 L780/C272",
-      "tier": 1,
+      "tier": 2,
       "tune": "l1=195:5 c=68:4"
     },
     {
       "label": "1017 B  t1 L1040/C360",
-      "tier": 1,
+      "tier": 2,
       "tune": "l1=260:5 c=90:4"
     },
     {
       "label": "1623 B  t1 L1664/C576",
-      "tier": 1,
+      "tier": 2,
       "tune": "l1=416:5 c=144:4"
     }
   ]

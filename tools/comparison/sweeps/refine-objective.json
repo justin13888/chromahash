@@ -58,7 +58,7 @@
     },
     {
       "label": "t1 wc=3 +dc+scale",
-      "tier": 1,
+      "tier": 2,
       "tune": "refine_passes=2 refine_grid=1 refine_obj=3 refine_wc=3 refine_dc=1 refine_scale=1"
     }
   ]

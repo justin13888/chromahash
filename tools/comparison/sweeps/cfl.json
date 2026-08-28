@@ -13,21 +13,21 @@
     { "label": "32B 4b base L28@4C15@3", "tune": "l1=28:4 c=15:3" },
     { "label": "32B 4b paid cfl5 L28C13", "tune": "cfl_bits=5 l1=28:4 c=13:3" },
     { "label": "32B 4b ctrl no-cfl L28C13", "tune": "l1=28:4 c=13:3" },
-    { "label": "108B t1 shipped", "tier": 1 },
-    { "label": "108B t1 free cfl5", "tier": 1, "tune": "cfl_bits=5" },
+    { "label": "108B t1 shipped", "tier": 2 },
+    { "label": "108B t1 free cfl5", "tier": 2, "tune": "cfl_bits=5" },
     {
       "label": "108B t1 paid cfl5 L25C9",
-      "tier": 1,
+      "tier": 2,
       "tune": "cfl_bits=5 l1=25:5 c=9:4"
     },
     {
       "label": "108B t1 ctrl no-cfl L25C9",
-      "tier": 1,
+      "tier": 2,
       "tune": "l1=25:5 c=9:4"
     },
-    { "label": "411B t2 shipped", "tier": 2 },
-    { "label": "411B t2 free cfl5", "tier": 2, "tune": "cfl_bits=5" },
-    { "label": "1623B t3 shipped", "tier": 3 },
-    { "label": "1623B t3 free cfl5", "tier": 3, "tune": "cfl_bits=5" }
+    { "label": "411B t2 shipped", "tier": 3 },
+    { "label": "411B t2 free cfl5", "tier": 3, "tune": "cfl_bits=5" },
+    { "label": "1623B t3 shipped", "tier": 4 },
+    { "label": "1623B t3 free cfl5", "tier": 4, "tune": "cfl_bits=5" }
   ]
 }

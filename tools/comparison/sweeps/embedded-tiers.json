@@ -6,39 +6,39 @@
     { "label": "t0 native 32 B", "tune": "" },
     {
       "label": "t1 interleaved, full 108 B",
-      "tier": 1,
+      "tier": 2,
       "tune": "interleave=1"
     },
-    { "label": "t1 seq, full 108 B", "tier": 1 },
+    { "label": "t1 seq, full 108 B", "tier": 2 },
     {
       "label": "t1 interleaved, trunc 32 B",
-      "tier": 1,
+      "tier": 2,
       "tune": "interleave=1 trunc_bytes=32"
     },
-    { "label": "t1 seq, trunc 32 B", "tier": 1, "tune": "trunc_bytes=32" },
+    { "label": "t1 seq, trunc 32 B", "tier": 2, "tune": "trunc_bytes=32" },
     {
       "label": "t1 interleaved, trunc 48 B",
-      "tier": 1,
+      "tier": 2,
       "tune": "interleave=1 trunc_bytes=48"
     },
-    { "label": "t1 seq, trunc 48 B", "tier": 1, "tune": "trunc_bytes=48" },
+    { "label": "t1 seq, trunc 48 B", "tier": 2, "tune": "trunc_bytes=48" },
     {
       "label": "t1 interleaved, trunc 64 B",
-      "tier": 1,
+      "tier": 2,
       "tune": "interleave=1 trunc_bytes=64"
     },
-    { "label": "t1 seq, trunc 64 B", "tier": 1, "tune": "trunc_bytes=64" },
+    { "label": "t1 seq, trunc 64 B", "tier": 2, "tune": "trunc_bytes=64" },
     { "label": "t0 interleaved, full 32 B", "tune": "interleave=1" },
     {
       "label": "t2 interleaved, trunc 32 B",
-      "tier": 2,
+      "tier": 3,
       "tune": "interleave=1 trunc_bytes=32"
     },
     {
       "label": "t2 interleaved, trunc 108 B",
-      "tier": 2,
+      "tier": 3,
       "tune": "interleave=1 trunc_bytes=108"
     },
-    { "label": "t2 interleaved, full 411 B", "tier": 2, "tune": "interleave=1" }
+    { "label": "t2 interleaved, full 411 B", "tier": 3, "tune": "interleave=1" }
   ]
 }

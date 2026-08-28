@@ -8,10 +8,10 @@
       "label": "t0 pre-adoption constants",
       "tune": "l1=26:5 c=9:4 aniso=0 sel_hv=0 scale_fit=0 ac_nearest=0"
     },
-    { "label": "t1 DEFAULT (post-adoption)", "tier": 1 },
+    { "label": "t1 DEFAULT (post-adoption)", "tier": 2 },
     {
       "label": "t1 pre-adoption constants",
-      "tier": 1,
+      "tier": 2,
       "tune": "aniso=0 sel_hv=0 scale_fit=0 ac_nearest=0"
     }
   ]

@@ -6,9 +6,9 @@
     { "label": "tier 0 native (32 B)" },
     {
       "label": "tier 1 capped to t0 size (108 B)",
-      "tier": 1,
+      "tier": 2,
       "capToTier0": true
     },
-    { "label": "tier 1 natural (108 B)", "tier": 1 }
+    { "label": "tier 1 natural (108 B)", "tier": 2 }
   ]
 }

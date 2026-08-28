@@ -64,20 +64,20 @@
       "label": "24B L22C8 stack+REFINE",
       "tune": "l1=22:4 c=8:3 aniso=1.2 sel_hv=0.15 scale_fit=2 ac_nearest=1 refine_passes=2 refine_grid=1 refine_obj=3 refine_wc=3 refine_dc=1 refine_scale=1"
     },
-    { "label": "108B t1 base", "tier": 1 },
+    { "label": "108B t1 base", "tier": 2 },
     {
       "label": "108B t1 stack",
-      "tier": 1,
+      "tier": 2,
       "tune": "aniso=1.2 sel_hv=0.15 scale_fit=2 ac_nearest=1"
     },
     {
       "label": "108B t1 stack+REFINE",
-      "tier": 1,
+      "tier": 2,
       "tune": "aniso=1.2 sel_hv=0.15 scale_fit=2 ac_nearest=1 refine_passes=2 refine_grid=1 refine_obj=3 refine_wc=3 refine_dc=1 refine_scale=1"
     },
     {
       "label": "411B t2 stack",
-      "tier": 2,
+      "tier": 3,
       "tune": "aniso=1.2 sel_hv=0.15 scale_fit=2 ac_nearest=1"
     }
   ]

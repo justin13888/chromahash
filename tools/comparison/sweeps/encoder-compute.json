@@ -14,16 +14,16 @@
       "label": "21 B fit2+nearest",
       "tune": "l1=13:5 c=6:4 scale_fit=2 ac_nearest=1"
     },
-    { "label": "108 B shipped-quant", "tier": 1 },
+    { "label": "108 B shipped-quant", "tier": 2 },
     {
       "label": "108 B fit2+nearest",
-      "tier": 1,
+      "tier": 2,
       "tune": "scale_fit=2 ac_nearest=1"
     },
-    { "label": "411 B shipped-quant", "tier": 2 },
+    { "label": "411 B shipped-quant", "tier": 3 },
     {
       "label": "411 B fit2+nearest",
-      "tier": 2,
+      "tier": 3,
       "tune": "scale_fit=2 ac_nearest=1"
     }
   ]

@@ -36,10 +36,10 @@
       "label": "32B L28@4C15@3 +refine",
       "tune": "l1=28:4 c=15:3 refine_passes=2 refine_dc=1 refine_scale=1"
     },
-    { "label": "108B t1 shipped", "tier": 1 },
+    { "label": "108B t1 shipped", "tier": 2 },
     {
       "label": "108B t1 +refine p2dc",
-      "tier": 1,
+      "tier": 2,
       "tune": "refine_passes=2 refine_dc=1 refine_scale=1"
     }
   ]

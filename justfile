@@ -109,7 +109,7 @@ compare: build-compare go-cbuild swift-cbuild ts-cbuild python-cbuild csharp-cbu
 # Local-only: compare chromahash's own format versions (v0.2–v0.6 + the current
 # working tree, the primary variant) to gauge whether current changes improve
 # quality. v0.6 is the immediate predecessor and the one baseline that matters
-# for an A/B — it and a tier-0 working tree are both exactly 32 bytes, so the
+# for an A/B — it and a default-tier working tree are both exactly 32 bytes, so the
 # comparison is equal-budget. Each tag is built as a release encode_stdin in a
 # cached git worktree under tools/comparison/.versions/ (gitignored). Not run in
 # CI. Requires iqa-cli on PATH (run `just install-iqa` once). Writes
@@ -118,7 +118,7 @@ compare-versions: build-compare
     mise exec -- node tools/comparison/dist/main.js --versions v0.2,v0.3,v0.4,v0.5,v0.6,current
 
 # Rate–distortion comparison: sweep every format's quality knob (ChromaHash
-# tiers 0–3, BlurHash components, lqip-modern sizes) plus equal-byte WebP/JPEG/
+# codes 1–4, BlurHash components, lqip-modern sizes) plus equal-byte WebP/JPEG/
 # AVIF (+JXL when cjxl/djxl are on PATH) and raw-RGB565 baselines at the four
 # ChromaHash tier byte anchors (32/108/411/1623 B), on the photographic corpus
 # only. Requires iqa-cli on PATH (run `just install-iqa` once). Writes

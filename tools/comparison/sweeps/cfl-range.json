@@ -15,17 +15,17 @@
     { "label": "free cfl4 range0.10", "tune": "cfl_bits=4 cfl_range=0.1" },
     {
       "label": "t1 free cfl8 range0.10",
-      "tier": 1,
-      "tune": "cfl_bits=8 cfl_range=0.1"
-    },
-    {
-      "label": "t2 free cfl8 range0.10",
       "tier": 2,
       "tune": "cfl_bits=8 cfl_range=0.1"
     },
     {
-      "label": "t3 free cfl8 range0.10",
+      "label": "t2 free cfl8 range0.10",
       "tier": 3,
+      "tune": "cfl_bits=8 cfl_range=0.1"
+    },
+    {
+      "label": "t3 free cfl8 range0.10",
+      "tier": 4,
       "tune": "cfl_bits=8 cfl_range=0.1"
     }
   ]

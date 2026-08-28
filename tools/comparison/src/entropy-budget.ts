@@ -81,7 +81,7 @@ const MAX_C = 60;
 
 /** Byte budgets scored, with the tier whose raster carries that many coefficients. */
 const BUDGETS: ReadonlyArray<{ bytes: number; tier: number }> = [
-  { bytes: 32, tier: 0 },
+  { bytes: 32, tier: 1 },
   { bytes: 108, tier: 1 },
 ];
 
@@ -678,7 +678,7 @@ async function main(): Promise<void> {
     (r) =>
       r.tier === 0 &&
       r.layout ===
-        layoutLabel({ ...SHIPPED, ratioIndex: 0, tier: 0, budgetBytes: 32 }),
+        layoutLabel({ ...SHIPPED, ratioIndex: 0, tier: 1, budgetBytes: 32 }),
   );
   console.log("\nShipped tier-0 layout L26@5 C9@4 — AC payload, bits/image");
   if (shippedRow) {
