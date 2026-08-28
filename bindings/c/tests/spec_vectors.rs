@@ -210,8 +210,10 @@ fn integration_decode_capped_vectors() {
 
 #[test]
 fn from_bytes_rejects_wrong_length() {
-    // v1 self-describing validation: a tier-0 header implies exactly 32 bytes, so
-    // any other length is InvalidData (the length does not match the header).
+    // v1 self-describing validation: the header fixes the exact byte length, so
+    // any other length is InvalidData. A zeroed byte 0 is tier *0* — the 21-byte
+    // compact tier, not the 32-byte default — which is why the buffers below are
+    // 16 and 33 rather than a fixed 32.
     let mut handle: *mut ChromaHash = ptr::null_mut();
     let buf = [0u8; 16];
     assert_eq!(

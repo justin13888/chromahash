@@ -110,19 +110,23 @@ pub use constants::MAX_TIER;
 /// remain reserved and are rejected.
 pub use constants::is_valid_tier;
 
-/// The wire layout of byte 0 and the fixed prefix, as named constants.
+/// The format generation this build writes and accepts — the `version` field of
+/// byte 0.
 ///
-/// These describe the format, not this crate's implementation of it, and every
-/// binding needs them to build or inspect a header without magic numbers. They
-/// were private, so `typescript/src/header.ts` re-derived the whole layout by
-/// hand and six other bindings hand-declared the tier codes — seven copies free
-/// to drift from the format independently.
-pub use constants::{
-    ALPHA_FLAG_BIT, BASE_LONG_EDGE, DESCRIPTOR_BITS, FORMAT_VERSION, PREFIX_BITS,
-    RESERVED_FLAG_BIT, TIER_BITS, VERSION_BITS, render_level,
-};
+/// Public because it describes the *format*, not this crate's implementation of
+/// it, and the FFI layers re-export it so a binding can name the generation it
+/// speaks instead of writing a literal.
+///
+/// The rest of the byte-0 layout (`VERSION_BITS`, `TIER_BITS`, the flag bit
+/// positions, `PREFIX_BITS`) stays private. Publishing it was considered and
+/// rejected: nothing outside this crate needs to *assemble* a header — the
+/// bindings hand bytes to `from_bytes` and let it validate — and a pre-1.0
+/// crate should not carry public items with no consumer.
+pub use constants::FORMAT_VERSION;
 
-use constants::body_len_bytes;
+use constants::{
+    ALPHA_FLAG_BIT, PREFIX_BITS, RESERVED_FLAG_BIT, TIER_BITS, VERSION_BITS, body_len_bytes,
+};
 
 // Tuning interface for the comparison harness: not part of the public API.
 // `Tunables::DEFAULT` is the v1 default-tier format; overrides exist solely so the

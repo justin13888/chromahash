@@ -90,8 +90,8 @@ test-thumbhash:
     cargo test --manifest-path tools/thumbhash-rs/Cargo.toml
 
 lint-fix-thumbhash:
-    cargo clippy --manifest-path tools/thumbhash-rs/Cargo.toml --fix --allow-staged --allow-dirty
-    cargo clippy --manifest-path tools/thumbhash-rs/Cargo.toml -- -D warnings
+    cargo clippy --manifest-path tools/thumbhash-rs/Cargo.toml --all-targets --fix --allow-staged --allow-dirty
+    cargo clippy --manifest-path tools/thumbhash-rs/Cargo.toml --all-targets -- -D warnings
 
 # ─── Gamut → sRGB reference (delegates to gamut-color) ────────────────────────
 # Standalone crate (keeps the core chromahash crate zero-dep). Wraps gamut's
@@ -115,8 +115,8 @@ test-gamutref:
     cargo test --manifest-path tools/gamut-ref-stdin/Cargo.toml
 
 lint-fix-gamutref:
-    cargo clippy --manifest-path tools/gamut-ref-stdin/Cargo.toml --fix --allow-staged --allow-dirty
-    cargo clippy --manifest-path tools/gamut-ref-stdin/Cargo.toml -- -D warnings
+    cargo clippy --manifest-path tools/gamut-ref-stdin/Cargo.toml --all-targets --fix --allow-staged --allow-dirty
+    cargo clippy --manifest-path tools/gamut-ref-stdin/Cargo.toml --all-targets -- -D warnings
 
 # Build the comparison tool (installs node deps first so a clean checkout works)
 build-compare:
@@ -262,8 +262,8 @@ lint-rust:
     cargo clippy --manifest-path rust/Cargo.toml --all-targets --features full -- -D warnings
 
 lint-fix-rust:
-    cargo clippy --manifest-path rust/Cargo.toml --fix --allow-staged --allow-dirty
-    cargo clippy --manifest-path rust/Cargo.toml -- -D warnings
+    cargo clippy --manifest-path rust/Cargo.toml --all-targets --features full --fix --allow-staged --allow-dirty
+    cargo clippy --manifest-path rust/Cargo.toml --all-targets --features full -- -D warnings
 
 test-rust:
     cargo test --manifest-path rust/Cargo.toml
@@ -350,8 +350,8 @@ lint-c:
     cargo clippy --manifest-path bindings/c/Cargo.toml --all-targets -- -D warnings
 
 lint-fix-c:
-    cargo clippy --manifest-path bindings/c/Cargo.toml --fix --allow-staged --allow-dirty
-    cargo clippy --manifest-path bindings/c/Cargo.toml -- -D warnings
+    cargo clippy --manifest-path bindings/c/Cargo.toml --all-targets --fix --allow-staged --allow-dirty
+    cargo clippy --manifest-path bindings/c/Cargo.toml --all-targets -- -D warnings
 
 # Build the staticlib + cdylib (also regenerates include/chromahash.h via build.rs)
 build-c:
@@ -392,8 +392,8 @@ lint-wasm:
     cargo clippy --manifest-path bindings/wasm/Cargo.toml --target wasm32-unknown-unknown --all-targets -- -D warnings
 
 lint-fix-wasm:
-    cargo clippy --manifest-path bindings/wasm/Cargo.toml --target wasm32-unknown-unknown --fix --allow-staged --allow-dirty
-    cargo clippy --manifest-path bindings/wasm/Cargo.toml --target wasm32-unknown-unknown -- -D warnings
+    cargo clippy --manifest-path bindings/wasm/Cargo.toml --target wasm32-unknown-unknown --all-targets --fix --allow-staged --allow-dirty
+    cargo clippy --manifest-path bindings/wasm/Cargo.toml --target wasm32-unknown-unknown --all-targets -- -D warnings
 
 # Build the web + nodejs packages (.wasm + JS glue + .d.ts) under bindings/wasm/pkg*
 build-wasm:
@@ -421,8 +421,8 @@ lint-android:
     cargo clippy --manifest-path bindings/uniffi/Cargo.toml --all-targets -- -D warnings
 
 lint-fix-android:
-    cargo clippy --manifest-path bindings/uniffi/Cargo.toml --fix --allow-staged --allow-dirty
-    cargo clippy --manifest-path bindings/uniffi/Cargo.toml -- -D warnings
+    cargo clippy --manifest-path bindings/uniffi/Cargo.toml --all-targets --fix --allow-staged --allow-dirty
+    cargo clippy --manifest-path bindings/uniffi/Cargo.toml --all-targets -- -D warnings
 
 # Runs the spec test vectors through the binding (the enforced correctness gate)
 test-android:
@@ -556,12 +556,27 @@ build-jvm:
 # ─── Swift ───────────────────────────────────────────────────────────────────
 
 format-swift:
-    @command -v swift-format >/dev/null 2>&1 && (cd swift && swift-format format -i -r Sources Tests) || echo "swift-format not found, skipping"
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v swift-format >/dev/null 2>&1; then
+        echo "format-swift: SKIPPED — swift-format not on PATH." >&2
+        exit 0
+    fi
+    cd swift && swift-format format -i -r Sources Tests
 
 format-fix-swift: format-swift
 
+# `command -v` guards the *absence* of the tool; a lint failure must still fail
+# the recipe. The old `A && B || echo` form sent a non-zero exit from B to the
+# `||` branch too, so the only Swift gate that runs off macOS could not fail.
 format-check-swift:
-    @command -v swift-format >/dev/null 2>&1 && (cd swift && swift-format lint -r Sources Tests) || echo "swift-format not found, skipping"
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v swift-format >/dev/null 2>&1; then
+        echo "format-check-swift: SKIPPED — swift-format not on PATH." >&2
+        exit 0
+    fi
+    cd swift && swift-format lint -r Sources Tests
 
 lint-swift: format-check-swift
 

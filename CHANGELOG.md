@@ -122,6 +122,7 @@ the format version via producer-side metadata. See `spec/README.md` §2.5 for de
 - **tools**: Let `just test` run off macOS
 - Bring every manifest to the core crate's 0.7.0
 - **rust**: Keep the example within the declared MSRV
+- **rust**: Repair what the adversarial review found, and make the claims true
 
 ### Documentation
 
@@ -140,6 +141,7 @@ the format version via producer-side metadata. See `spec/README.md` §2.5 for de
 - **spec**: Order the tier codes by quality
 - Name tiers by code, not byte budget
 - **spec**: Correct EXPERIMENTS.md against the sweeps that produced it
+- Correct TESTING.md against reality and surface the release blockers
 
 <!-- git-cliff-unreleased-end -->
 
