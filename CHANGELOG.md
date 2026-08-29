@@ -26,6 +26,9 @@ crates.io, PyPI, NuGet, Go and SwiftPM coordinates are unchanged.
 
 <!-- git-cliff-unreleased-start -->
 ## [Unreleased]
+<!-- git-cliff-unreleased-end -->
+
+## [0.7.0] - 2026-08-29
 
 ### ⚠ Breaking changes
 
@@ -141,6 +144,9 @@ crates.io, PyPI, NuGet, Go and SwiftPM coordinates are unchanged.
 - Bring every manifest to the core crate's 0.7.0
 - **rust**: Keep the example within the declared MSRV
 - **rust**: Repair what the adversarial review found, and make the claims true
+- **comparison**: Point the Swift harness at the root .build directory
+- **comparison**: Skip harnesses whose build failed
+- **comparison**: Report an unbuilt harness as unavailable, not as failing
 
 ### Documentation
 
@@ -162,7 +168,6 @@ crates.io, PyPI, NuGet, Go and SwiftPM coordinates are unchanged.
 - Correct TESTING.md against reality and surface the release blockers
 - Record what the mutation sweep taught about its own configuration
 
-<!-- git-cliff-unreleased-end -->
 
 ## [0.6.0] - 2026-06-13
 
