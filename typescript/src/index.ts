@@ -9,7 +9,7 @@
  * once before any encode/decode**:
  *
  * ```ts
- * import { init, ChromaHash } from "@chromahash/typescript";
+ * import { init, ChromaHash } from "@visualcommons/chromahash";
  * await init();                                   // browser: fetches the co-located .wasm
  * const hash = ChromaHash.encode(w, h, rgba, "sRGB");
  * ```
@@ -18,7 +18,7 @@
  * bytes: `await init(readFileSync(".../chromahash_wasm_bg.wasm"))`.
  *
  * Render-only consumers that want to skip the WASM init entirely can import the
- * pure-TypeScript decode path from `@chromahash/typescript/decode`.
+ * pure-TypeScript decode path from `@visualcommons/chromahash/decode`.
  */
 
 import { assertHash, isVersionSupported, readTier } from "./header.ts";

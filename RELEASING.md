@@ -75,7 +75,7 @@ is skipped, so re-pushing a tag is safe):
 - [`release-rust`](.github/workflows/release-rust.yml) →
   [`chromahash`](https://crates.io/crates/chromahash) on crates.io.
 - [`release-npm`](.github/workflows/release-npm.yml) →
-  [`@chromahash/typescript`](https://www.npmjs.com/package/@chromahash/typescript)
+  [`@visualcommons/chromahash`](https://www.npmjs.com/package/@visualcommons/chromahash)
   on npm (with provenance).
 - [`release-pypi`](.github/workflows/release-pypi.yml) →
   [`chromahash`](https://pypi.org/project/chromahash/) on PyPI (one wheel per
@@ -115,26 +115,50 @@ probed on 2026-08-28; ✅ means a release has actually landed there.
 | PyPI | ✅ 0.6.0 | — |
 | NuGet | ✅ 0.6.0 | — |
 | Go proxy | ✅ v0.6.0 | — |
-| Maven Central | ✅ 0.6.0, but under `io.github.justin13888` | **`io.github.visualcommons` namespace verification** |
-| npm | ❌ 404 | **`@chromahash` scope + trusted publisher** |
+| Maven Central | ✅ 0.6.0, under the old `io.github.justin13888` | namespace verified 2026-08-28; first publish under `io.github.visualcommons` is 0.7.0 |
+| npm | ❌ never published | **first `npm publish` to claim `@visualcommons/chromahash`, then trusted publisher** |
 | Swift Package Index | — (tag-based) | submit the repo once |
 
-**Two blockers before `v0.7.0` publishes everywhere.** Both need the maintainer's
-registry accounts; neither can be done from the repo:
+**One blocker before `v0.7.0` publishes everywhere**, and it needs the
+maintainer's npm account — it cannot be done from the repo:
 
-1. **npm.** `@chromahash/typescript` has never published — run 28472417808 failed
-   with `E404 … PUT`, i.e. the `@chromahash` scope does not exist on npmjs.com.
-   Create the scope, then add a trusted publisher for
-   `@chromahash/typescript` → repo `visualcommons/chromahash`, workflow
-   `release-npm.yml`. A scoped package may need one manual
-   `npm publish --access public` to claim the name first.
-2. **Sonatype.** The `justin13888` → `visualcommons` migration changed the Maven
-   `groupId` to `io.github.visualcommons`, which is **not yet a verified
-   namespace** — `repo1.maven.org/maven2/io/github/visualcommons/…` 404s today,
-   while the 0.6.0 artifacts sit under `io.github.justin13888`. Verify the new
-   namespace at central.sonatype.com before tagging, or both JVM publishes fail.
-   Note this also orphans the published `io.github.justin13888` 0.6.0 artifacts:
-   consumers must change their coordinates, which is a release-note item.
+**npm.** The package has never published; run 28472417808 failed with
+`E404 … PUT` against the then-current name `@chromahash/typescript`, whose scope
+did not exist. It was renamed to `@visualcommons/chromahash` for 0.7.0, matching
+the GitHub org and the `io.github.visualcommons` Maven group. npm attaches a
+trusted-publisher policy to an *existing* package, so the name has to be claimed
+by one manual publish first:
+
+```bash
+just ts-cbuild            # wasm-pack → typescript/wasm/, exactly as the workflow does
+rm -f typescript/wasm/.gitignore   # see the warning below — NOT optional
+just build-ts
+cd typescript
+npm pack --dry-run | grep -c wasm/ # MUST be non-zero before you publish
+npm login                          # interactive; OIDC is unavailable outside CI
+npm publish --access public        # no --provenance: that needs a CI OIDC token
+```
+
+> **Do not skip the `rm`.** `wasm-pack` writes a `.gitignore` containing `*` into
+> its out-dir, and npm's packlist honours nested `.gitignore` files. Without the
+> removal, `npm pack` silently drops the entire `wasm/` runtime — the tarball
+> builds, publishes, and is unusable — even though `wasm` is in the package.json
+> `files` list. npm does not allow republishing a version, so the mistake costs a
+> version number. `release-npm.yml` handles this at the "Drop wasm-pack's
+> .gitignore" step; a manual publish must do it by hand.
+
+Publishing manually before tagging is safe: `release-npm.yml`'s "Skip if version
+already on npm" step makes the tag push a no-op for npm rather than a failure.
+Then add the trusted publisher on the package's npm settings page: repo
+`visualcommons/chromahash`, workflow `release-npm.yml`, no environment. From
+0.8.0 on, npm publishes over OIDC with provenance and no stored token.
+
+**Sonatype** (resolved). The `justin13888` → `visualcommons` migration changed
+the Maven `groupId` to `io.github.visualcommons`; that namespace was verified at
+central.sonatype.com on 2026-08-28. `repo1.maven.org/maven2/io/github/visualcommons/`
+still 404s and will until the first artifact lands — verification does not create
+the path. This does orphan the published `io.github.justin13888` 0.6.0 artifacts:
+consumers must change their coordinates, which is a release-note item.
 
 The rest:
 

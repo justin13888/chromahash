@@ -12,6 +12,18 @@ and v0.4 all shared header bit 47 = 1, so an older decoder applied to a newer ha
 silently produced garbled output. Applications spanning the 0.6/0.7 boundary MUST track
 the format version via producer-side metadata. See `spec/README.md` §2.5 for details.
 
+**Package coordinates change in 0.7.0.** The `justin13888` → `visualcommons` move
+renames two of them, and neither is picked up automatically by a dependency
+update — the old coordinates keep resolving to 0.6.0 forever:
+
+| | 0.6.0 | 0.7.0 |
+| --- | --- | --- |
+| npm | *(never published)* | `@visualcommons/chromahash` |
+| Maven (JVM) | `io.github.justin13888:chromahash-jvm` | `io.github.visualcommons:chromahash-jvm` |
+| Maven (Android) | `io.github.justin13888:chromahash-android` | `io.github.visualcommons:chromahash-android` |
+
+crates.io, PyPI, NuGet, Go and SwiftPM coordinates are unchanged.
+
 <!-- git-cliff-unreleased-start -->
 ## [Unreleased]
 
@@ -37,6 +49,7 @@ the format version via producer-side metadata. See `spec/README.md` §2.5 for de
 - **ts**: Port the pure-TS decoder to v1 and expose tiers
 - **c**: `ChromaHashImageInput` gains a `quality` field; Go's `FromBytes` returns `(ChromaHash, error)`; C#'s `FromBytes` throws on malformed input.
 - **uniffi**: `encode`, `encodeWithQuality` and `encodeBatch` are fallible in Python, Kotlin, Swift, and TypeScript's WASM layer; Swift's `fromBytes` and Python's `from_bytes` now raise on malformed input; `ImageInput` gains a `quality` field.
+- **ts**: The npm package is `@visualcommons/chromahash`, not `@chromahash/typescript`, and the Maven coordinates move from `io.github.justin13888` to `io.github.visualcommons`. The old coordinates keep resolving to 0.6.0; consumers must change them by hand.
 
 
 ### Added
@@ -104,6 +117,7 @@ the format version via producer-side metadata. See `spec/README.md` §2.5 for de
 ### Changed
 
 - **rust**: Stop publishing wire constants nothing consumes
+- **ts**: Rename the npm package to @visualcommons/chromahash
 
 ### Fixed
 

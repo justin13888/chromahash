@@ -9,7 +9,7 @@ chromahash is a multi-language library implementing a compact, high-fidelity Low
 | Language | Package | Registry |
 | -------- | ------- | -------- |
 | Rust | `chromahash` | [crates.io](https://crates.io/crates/chromahash) |
-| TypeScript | `@chromahash/typescript` | [npm](https://www.npmjs.com/package/@chromahash/typescript) |
+| TypeScript | `@visualcommons/chromahash` | [npm](https://www.npmjs.com/package/@visualcommons/chromahash) |
 | Python | `chromahash` | [PyPI](https://pypi.org/project/chromahash/) |
 | C# | `ChromaHash` | [NuGet](https://www.nuget.org/packages/ChromaHash) |
 | Java / Kotlin (JVM) | `io.github.visualcommons:chromahash-jvm` | [Maven Central](https://central.sonatype.com/artifact/io.github.visualcommons/chromahash-jvm) † |
@@ -22,11 +22,11 @@ chromahash is a multi-language library implementing a compact, high-fidelity Low
 >
 > The table lists where each package *publishes*, which is not the same as what
 > is live today. As of 0.6.0: crates.io, PyPI, NuGet and the Go proxy are live;
-> npm has not published yet (the `@chromahash` scope needs claiming); and † the
-> JVM/Android artifacts are still on Maven Central under the pre-rename
-> `io.github.justin13888` coordinates — `io.github.visualcommons` needs Sonatype
-> namespace verification before the next tag. Both are one-time account actions,
-> tracked in [`RELEASING.md`](RELEASING.md#one-time-registry-bootstrap).
+> npm has not published yet (0.7.0 is the first release under the
+> `@visualcommons` scope); and † the JVM/Android artifacts are still on Maven
+> Central under the pre-rename `io.github.justin13888` coordinates —
+> `io.github.visualcommons` takes over from 0.7.0. See
+> [`RELEASING.md`](RELEASING.md#one-time-registry-bootstrap).
 
 ## Why ChromaHash?
 
