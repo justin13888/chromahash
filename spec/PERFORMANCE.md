@@ -66,9 +66,18 @@ single-threaded CPU for a placeholder.**
 
 ### Capped decode is the mitigation, and it is undocumented as such
 
-Tier-4 hash decoded at increasing caps: 16² = 2.7 ms, 32² = 5.3 ms,
-64² = 17.6 ms, 128² = 65.3 ms, 256² (natural) = 243 ms. Linear in rendered
-pixels, so `decode_capped` buys **90×** at 16×16.
+Rust decode, natural against capped to 32×32:
+
+| tier | natural | capped 32×32 | saving |
+|---|---:|---:|---:|
+| 0 | 343 µs | 285 µs | — (already 32 px) |
+| 1 | 322 µs | 321 µs | — (already 32 px) |
+| 2 | 2047 µs | 541 µs | 3.8× |
+| 3 | 16.2 ms | 1.66 ms | 9.7× |
+| 4 | 242 ms | 5.17 ms | **47×** |
+
+Linear in rendered pixels, so capping harder pays more still: a tier-4 hash at
+16×16 costs 2.7 ms, a 90× reduction on natural size.
 
 The residual matters though: a tier-4 hash capped to 16×16 still costs 2.7 ms
 against a tier-1 natural decode's 0.33 ms, because `K` does not shrink with the
@@ -120,6 +129,25 @@ Two things fall out, and both change decisions:
   informed option rather than a guess.
 
 `dc_search` is genuinely free, confirming its design note.
+
+**But this table is a 100×100 result, and does not generalise.** Repeat it at
+512×512 and every arm collapses into the noise:
+
+| lever | 100×100 | 512×512 |
+|---|---:|---:|
+| shipped | 2.51 ms | 47.3 ms |
+| `scale_fit=0` | 1.56 ms (−38%) | 46.6 ms (−1.5%) |
+| `scale_fit=1` | 1.57 ms (−37%) | 46.4 ms (−1.9%) |
+| `ac_nearest=0` | 1.76 ms (−30%) | 47.0 ms (−0.6%) |
+| all three off | 1.55 ms (−38%) | 47.3 ms (−0.0%) |
+| `refine_passes=1` | 20.7 ms (8.3×) | 510 ms (10.8×) |
+
+This is §1 restated: `quantize_and_pack` is 37.5% of a 100×100 encode and 4.0%
+of a 512×512 one, so the searches it contains can only ever be worth what the
+stage is worth. **The encoder-only levers are a thumbnail-sized concern.** For
+anything at photo resolution they are free, and `ac_nearest`'s ΔE00 — however
+small — comes at no measurable cost. Any decision to drop them should be scoped
+to small inputs, which is the opposite of what the 100×100 column alone implies.
 
 `refine_passes` measures 7.8–14.7× here against EXPERIMENTS' "~54× encode time".
 Both may be right — that figure was measured with the full REFINE stack
@@ -177,16 +205,24 @@ language landing together.
 In-process, spawn excluded, 100×100 tier 1. The old harness's "single" column
 measured process startup; these are the operations.
 
-| implementation | encode | vs Rust | decode | vs Rust |
-|---|---:|---:|---:|---:|
-| Rust | 2.50 ms | 1.00× | 315 µs | 1.00× |
-| C# | 2.49 ms | 1.00× | 324 µs | 1.03× |
-| Go | 2.82 ms | 1.13× | 324 µs | 1.03× |
-| Kotlin | 2.77 ms | 1.11× | 331 µs | 1.05× |
-| Python | 8.65 ms | 3.46× | 482 µs | 1.53× |
-| TypeScript (wasm) | 1.69 ms | **0.68×** | 403 µs | 1.28× |
-| TypeScript (pure) | — | — | 2189 µs | 6.95× |
-| Swift | not measured | | not measured | |
+| implementation | encode t0 | encode t1 | encode t2 | decode t1 | decode t2 |
+|---|---:|---:|---:|---:|---:|
+| Rust | 1414 µs | 2508 µs | 7225 µs | 322 µs | 2047 µs |
+| Rust (scalar) | 1455 µs | 2516 µs | 7284 µs | — | — |
+| Go | 1442 µs | 2590 µs | 7726 µs | 319 µs | 1222 µs |
+| C# | 1476 µs | 2614 µs | 7759 µs | 324 µs | 1213 µs |
+| Kotlin | 1767 µs | *5988 µs* | 7841 µs | *1453 µs* | 1314 µs |
+| Python | 6679 µs | 7861 µs | 13333 µs | 363 µs | 2154 µs |
+| TypeScript (wasm) | **1054 µs** | **1658 µs** | **4922 µs** | 401 µs | 1769 µs |
+| TypeScript (pure) | — | — | — | 1537 µs | 17774 µs |
+| Swift | not measured | | | | |
+
+> *Italicised cells are not trustworthy.* Even with a 2-second warmup, the JVM
+> and .NET rows are not monotonic in tier — Kotlin's tier-1 encode exceeds its
+> tier-2, and C#'s tier-0 decode (680 µs) exceeds its tier-1 (324 µs), which is
+> impossible for the work involved. That is JIT state, not the binding. Managed
+> runtimes need a JMH- or BenchmarkDotNet-grade harness to be pinned down; this
+> one is honest about not being that.
 
 **FFI cost is the buffer copy, not the transition.** Go's +13% on encode against
 +3% on decode is explained by direction: encode passes 40 KB of RGBA in for 32
@@ -218,12 +254,22 @@ item in this document combined.
 
 `bench-batch`, 200 images, 100×100 tier 1, reported per batch and divided:
 
-| threads | Rust | Go |
-|---|---:|---:|
-| 1 (serial) | 2460 µs/img | 2458 µs/img |
-| 16 (auto) | 209 µs/img | 208 µs/img |
+| implementation | 1 thread | auto (16) | scaling |
+|---|---:|---:|---:|
+| Rust | 2470 µs/img | 216 µs/img | **11.5×** |
+| Rust (scalar) | 2517 µs/img | 221 µs/img | 11.4× |
+| Go | 2490 µs/img | 213 µs/img | **11.7×** |
+| C# | 2500 µs/img | 213 µs/img | **11.7×** |
+| Kotlin | 2671 µs/img | 1116 µs/img | **2.4×** |
+| TypeScript (wasm) | 1715 µs/img | — (serial) | — |
+| Python | 7906 µs/img | — (serial, GIL) | — |
 
-11.8× on 16 threads. The serial figure matches single-image encode, as it should.
+The serial figures match single-image encode, as they should.
+
+**Kotlin's batch encoder does not scale.** 2.4× on sixteen threads, where Rust,
+Go and C# all reach ~11.6× against the same native worker pool. Every one of
+those four is a thin binding over the same `BatchEncoder`, so the algorithm is
+not the variable — this is worth a look at the JVM binding's dispatch.
 
 The old benchmark's "bulk per-op" column was wall-clock ÷ count on a parallel
 encoder, printed in the same table as GIL-bound Python — comparing threading
@@ -266,7 +312,9 @@ Ordered by measured size, not by appeal:
    tier 4 decode is the more expensive half.
 5. **A batch decode API** — none exists in any implementation, so every bulk
    decode is a serial loop.
-6. **Document the tier-4 cost.** 250 ms to decode and 1.8 s to encode a 512×512
+6. **Kotlin batch dispatch** (§8) — 2.4× against ~11.6× for the three sibling
+   bindings over the same native pool.
+7. **Document the tier-4 cost.** 250 ms to decode and 1.8 s to encode a 512×512
    source are defensible for an archival tier and indefensible as a surprise.
 
 ## 11. Corrections to published claims
