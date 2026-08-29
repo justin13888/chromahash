@@ -42,13 +42,13 @@ print(width, height, len(pixels))
 ## Building from source
 
 The native library and the generated bindings module are build outputs, staged
-by the `just` recipe (needs the Rust toolchain):
+by the mise task (needs the Rust toolchain):
 
 ```sh
-just python-cbuild   # stages chromahash/_uniffi.py + the native lib
+mise run cbuild:python   # stages chromahash/_uniffi.py + the native lib
 ```
 
-`just build-python` and `just test-python` run this step automatically.
+`mise run build:python` and `mise run test:python` run this step automatically.
 
 See the [project repository](https://github.com/visualcommons/chromahash) for the
 full format specification and the other language implementations.

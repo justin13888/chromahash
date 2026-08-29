@@ -25,10 +25,10 @@ Because the package is cgo, builds need a C toolchain with `CGO_ENABLED=1` and
 the static library staged into [`go/lib`](lib):
 
 ```sh
-just go-cbuild   # builds libchromahash_c.a and stages it into go/lib
+mise run cbuild:go   # builds libchromahash_c.a and stages it into go/lib
 ```
 
-`just build-go` and `just test-go` run this step automatically.
+`mise run build:go` and `mise run test:go` run this step automatically.
 
 ## Usage
 

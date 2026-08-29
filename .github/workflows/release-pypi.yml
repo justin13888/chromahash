@@ -1,7 +1,7 @@
 name: Release (PyPI)
 
 # Publish the chromahash Python package to PyPI when a release tag is pushed.
-# Releases are cut with `just release X.Y.Z` (see RELEASING.md). Publishes via
+# Releases are cut with `mise run release X.Y.Z` (see RELEASING.md). Publishes via
 # PyPI trusted publishing (OIDC) — no stored token. Idempotent: a version already
 # on PyPI is skipped.
 #
@@ -63,7 +63,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
 
       # Build the cdylib for this platform, generate the (platform-independent)
-      # ctypes bindings, and stage both into the package — mirrors `just python-cbuild`
+      # ctypes bindings, and stage both into the package — mirrors `mise run cbuild:python`
       # but with an explicit --target so the output path is uniform across runners.
       - name: Build cdylib + stage into package
         shell: bash
@@ -78,7 +78,7 @@ jobs:
           fi
           cp "bindings/uniffi/target/${{ matrix.target }}/release/${{ matrix.lib }}" python/chromahash/
           # Platform-independent ctypes bindings: generate from a HOST-NATIVE build
-          # (mirrors `just python-cbuild`). uniffi-bindgen reads the namespace from the
+          # (mirrors `mise run cbuild:python`). uniffi-bindgen reads the namespace from the
           # library's embedded metadata, which cross-compiled (zigbuild / cross-arch)
           # libs can omit — so bindgen must run against a native build, never the
           # cross-compiled payload above. The .py is identical across platforms.

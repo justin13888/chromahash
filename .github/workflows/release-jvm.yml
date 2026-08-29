@@ -1,7 +1,7 @@
 name: Release (JVM)
 
 # Publish the chromahash-jvm desktop/server JAR to Maven Central + GitHub Packages
-# when a release tag is pushed. Releases are cut with `just release X.Y.Z`, which
+# when a release tag is pushed. Releases are cut with `mise run release X.Y.Z`, which
 # creates and pushes the `vX.Y.Z` tag (see RELEASING.md).
 #
 # Unlike the Android AAR, the JVM JAR must be a CROSS-PLATFORM "fat JAR": JNA loads

@@ -8,7 +8,7 @@
 # core crate was bumped and eight manifests were not, which would have failed
 # five of the eight publish workflows on the v0.7.0 tag.
 #
-# `just check-versions`, and the versions job of ci-versions.yml.
+# `mise run check:versions`, and the versions job of ci-versions.yml.
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."

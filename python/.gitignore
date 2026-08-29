@@ -8,6 +8,6 @@ dist/
 .pytest_cache/
 .ruff_cache/
 
-# Generated UniFFI bindings + native lib staged by `just python-cbuild`.
+# Generated UniFFI bindings + native lib staged by `mise run cbuild:python`.
 chromahash/_uniffi.py
 chromahash/libchromahash_uniffi.*

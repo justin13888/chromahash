@@ -8,9 +8,9 @@ and Go (cgo) bindings link against.
 ## Build
 
 ```sh
-just build-c     # builds libchromahash_c.{a,dylib,so} + regenerates the header
-just test-c      # spec-vector parity gate + compile/link/run the C example
-just gen-c-header
+mise run build:c     # builds libchromahash_c.{a,dylib,so} + regenerates the header
+mise run test:c      # spec-vector parity gate + compile/link/run the C example
+mise run gen:c-header
 ```
 
 The library is emitted under `bindings/c/target/<profile>/`:

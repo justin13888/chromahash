@@ -52,7 +52,7 @@ jobs:
       # Independently re-derives every M1 matrix from gamut chromaticities and
       # checks them against constants.py, plus the inverse relationships, white
       # point, OKLAB bounds, mu-law round-trips and aspect encoding. Nothing ran
-      # it before — not CI, not a just recipe, only prose in TESTING.md.
+      # it before — not CI, not a mise task, only prose in TESTING.md.
       - name: Validate spec constants
         run: python3 spec/validate.py
 

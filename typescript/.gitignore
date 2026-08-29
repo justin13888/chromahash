@@ -16,5 +16,5 @@ pnpm-debug.log*
 !.yarn/sdks
 !.yarn/versions
 
-# wasm-pack glue (.wasm + JS + .d.ts) staged here by `just ts-cbuild`.
+# wasm-pack glue (.wasm + JS + .d.ts) staged here by `mise run cbuild:ts`.
 wasm/

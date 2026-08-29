@@ -89,7 +89,7 @@ jobs:
 
       # Syntax only — `compileall` does not execute imports. Running the driver
       # for real needs every language's native library staged, which is what
-      # `just benchmark` does locally; that is out of scope for a lint job.
+      # `mise run benchmark` does locally; that is out of scope for a lint job.
       - name: Byte-compile
         run: python3 -m compileall -q tools/benchmark/benchmark.py
 

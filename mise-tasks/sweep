@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+#MISE description="Score CHROMAHASH_TUNE variants over the tune split and emit a decision table"
+#MISE depends=["build:compare"]
+#
+# Usage: mise run sweep <config> [args...]
+#
+# <config> is a name under tools/comparison/sweeps/, e.g.
+#   mise run sweep companding-family
+# Results land in output/sweeps/<name>.json. Pass `--split holdout` only to
+# validate a finished winner against the pre-registered rule — never to tune.
+set -euo pipefail
+
+config="${1:?usage: mise run sweep <config> [args...]}"
+shift
+
+cargo build --manifest-path rust/Cargo.toml --release --example encode_stdin
+node tools/comparison/dist/sweep.js "tools/comparison/sweeps/$config.json" "$@"

@@ -57,7 +57,7 @@ float rounding — so each baseline decodes a hash it encoded itself.
 ## Running
 
 ```sh
-just benchmark              # builds all harnesses (mise toolchains) + runs
+mise run benchmark              # builds all harnesses (mise toolchains) + runs
 ```
 
 Fast local iteration (skip the build, fewer/smaller runs):

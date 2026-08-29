@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+#MISE description="Run the Swift spec-vector tests (macOS only; ci-swift.yml is the enforcing gate)"
+#MISE depends=["cbuild:swift"]
+#
+# Skips off macOS for the same reason cbuild:swift does — SwiftPM consumes an
+# xcframework, which only xcodebuild can assemble — so `mise run test` is
+# runnable on Linux. ci-swift.yml is the enforcing gate. --no-parallel: the
+# blocking OperationQueue in BatchEncoder deadlocks Swift Testing's parallel
+# pool on low-core machines (see ci-swift.yml); the suite runs in ~0.05s, so
+# serial costs nothing. Package.swift is at the repo root;
+# CHROMAHASH_LOCAL_XCFRAMEWORK selects the locally built xcframework over the
+# released remote one.
+set -euo pipefail
+
+if [ "$(uname)" != "Darwin" ]; then
+    echo "test:swift: SKIPPED — no xcframework off macOS (see cbuild:swift)." >&2
+    echo "test:swift: the Swift binding is gated by ci-swift.yml on macos-latest." >&2
+    exit 0
+fi
+
+CHROMAHASH_LOCAL_XCFRAMEWORK=1 swift test --no-parallel

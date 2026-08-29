@@ -22,7 +22,7 @@
   <!-- Native chromahash-c library (the cdylib wrapping the Rust core). Copied next
        to the managed assembly so P/Invoke resolves it from the application
        directory, and flows transitively to referencing projects (tests, CLI).
-       Built + staged by `just csharp-cbuild` into bindings/c/target/release. -->
+       Built + staged by `mise run cbuild:csharp` into bindings/c/target/release. -->
   <PropertyGroup>
     <ChromahashNativeDir>$(MSBuildThisFileDirectory)../../../bindings/c/target/release</ChromahashNativeDir>
   </PropertyGroup>

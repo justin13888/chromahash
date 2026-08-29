@@ -56,7 +56,7 @@ but nothing could decode one. Four tooling changes opened that surface:
 |---|---|
 | `ChromaHash::from_bytes_tuned` (used by `encode_stdin`) | `from_bytes` validated length against the **shipped** layout, so any length-changing sweep encoded fine and then failed to decode. Every sweep before this one had to hold the byte count fixed — which is why no byte-budget question had ever been asked. |
 | `sweep.js` records per-image ΔE00 | Enables paired statistics and per-image (oracle) analyses. |
-| `tools/comparison/src/rd-budget.ts` | Cross-format R-D at arbitrary byte budgets on the **same corpus split** as `just sweep`, so a ladder row and a ThumbHash row are directly comparable. |
+| `tools/comparison/src/rd-budget.ts` | Cross-format R-D at arbitrary byte budgets on the **same corpus split** as `mise run sweep`, so a ladder row and a ThumbHash row are directly comparable. |
 | `src/cfl-probe.ts`, `src/coeff-stats.ts` | Size two roadmap items (chroma-from-luma, entropy coding) from corpus statistics instead of by assertion. |
 
 ## 1. The rate–distortion curve of v0.7
@@ -483,31 +483,31 @@ decoder must understand.
 
 ```sh
 # Round 1 — the byte-budget study (§1–§4)
-just sweep budget-ladder                        # R-D ladder, shipped constants
-just sweep budget-ladder --split holdout
-just sweep budget-ladder-tuned                  # round-1 recipe
-just sweep render-raster                        # §4.1
-just sweep allocation-grid                      # §4.2, §4.7
-just sweep precision-by-budget                  # §4.2
-just sweep thumbhash-headtohead                 # §4.3
-just sweep encoder-compute                      # §4.4
-just sweep holdout-candidates --split holdout   # §4.5
-just sweep retune-32b                           # §4.6
+mise run sweep budget-ladder                        # R-D ladder, shipped constants
+mise run sweep budget-ladder --split holdout
+mise run sweep budget-ladder-tuned                  # round-1 recipe
+mise run sweep render-raster                        # §4.1
+mise run sweep allocation-grid                      # §4.2, §4.7
+mise run sweep precision-by-budget                  # §4.2
+mise run sweep thumbhash-headtohead                 # §4.3
+mise run sweep encoder-compute                      # §4.4
+mise run sweep holdout-candidates --split holdout   # §4.5
+mise run sweep retune-32b                           # §4.6
 
 # Round 2 — the roadmap, materialized (§7)
-just sweep refine-ablation                      # §7.1  pixel-domain RDO
-just sweep refine-objective                     # §7.2  metric-targeted RDO
-just sweep refine-grid                          # §7.2  render-grid control
-just sweep selection-hv                         # §7.4  trained selection order
-just sweep prefix-shrink                        # §7.5  header field widths
-just sweep detail-synthesis                     # §7.8  decoder-side synthesis
-just sweep cfl                                  # §7.10 chroma-from-luma
-just sweep cfl-range                            # §7.10 the CfL audit
-just sweep embedded-tiers                       # §7.11 progressive prefixes
-just sweep combined-optimizer                   # §7.12 stacking, tune
-just sweep final-candidates --split holdout     # §7.12 the holdout verdict
-just sweep budget-ladder-optimized              # §7.12 optimized ladder
-just sweep budget-ladder-optimized --split holdout
+mise run sweep refine-ablation                      # §7.1  pixel-domain RDO
+mise run sweep refine-objective                     # §7.2  metric-targeted RDO
+mise run sweep refine-grid                          # §7.2  render-grid control
+mise run sweep selection-hv                         # §7.4  trained selection order
+mise run sweep prefix-shrink                        # §7.5  header field widths
+mise run sweep detail-synthesis                     # §7.8  decoder-side synthesis
+mise run sweep cfl                                  # §7.10 chroma-from-luma
+mise run sweep cfl-range                            # §7.10 the CfL audit
+mise run sweep embedded-tiers                       # §7.11 progressive prefixes
+mise run sweep combined-optimizer                   # §7.12 stacking, tune
+mise run sweep final-candidates --split holdout     # §7.12 the holdout verdict
+mise run sweep budget-ladder-optimized              # §7.12 optimized ladder
+mise run sweep budget-ladder-optimized --split holdout
 
 # Cross-format R-D at arbitrary budgets, with guard-aware winners (§2, §7.14)
 node tools/comparison/dist/rd-budget.js --split tune \
@@ -516,35 +516,35 @@ node tools/comparison/dist/rd-budget.js --split tune \
 node tools/comparison/dist/cfl-probe.js      --split tune   # §4.8
 node tools/comparison/dist/coeff-stats.js    --split tune   # §4.9, §4.10
 node tools/comparison/dist/entropy-budget.js --split tune   # §7.13
-just rd-gate                                                # §7.14 CI gate
+mise run rd:gate                                                # §7.14 CI gate
 
 # Round 3 — v0.7 stabilization (§11)
-just sweep alpha-layout                         # §11.1
-just sweep alpha-layout-control                 # §11.2
-just sweep alpha-fields                         # §11.3
-just sweep alpha-ac-count                       # §11.3
-just sweep alpha-ceiling                        # §11.3
-just sweep alpha-encoder                        # §11.3
-just sweep alpha-balance                        # §11.3  C3-vs-C5 chroma count
-just sweep graphics-layout                      # §11.4
-just sweep graphics-encoder                     # §11.4
-just sweep selection-weights                    # §11.5
-just sweep companding-family                    # §11.6
-just sweep deadzone                             # §11.7
-just sweep quant-ranges                         # §11.8
-just sweep scalefactor-bands                    # §11.9
-just sweep compact-tier                         # §11.10
-just sweep compact-tier-graphics                # §11.10
-just sweep compact-tier-alpha                   # §11.12 compact tier, alpha corpus
-just sweep alpha-tier1                          # §11.11
-just sweep v07-holdout-photo --split holdout    # §11.12
-just sweep v07-holdout-alpha --split holdout    # §11.12
-just sweep adopted-defaults                     # §10.3
-just sweep adopted-defaults --split holdout     # §10.3
+mise run sweep alpha-layout                         # §11.1
+mise run sweep alpha-layout-control                 # §11.2
+mise run sweep alpha-fields                         # §11.3
+mise run sweep alpha-ac-count                       # §11.3
+mise run sweep alpha-ceiling                        # §11.3
+mise run sweep alpha-encoder                        # §11.3
+mise run sweep alpha-balance                        # §11.3  C3-vs-C5 chroma count
+mise run sweep graphics-layout                      # §11.4
+mise run sweep graphics-encoder                     # §11.4
+mise run sweep selection-weights                    # §11.5
+mise run sweep companding-family                    # §11.6
+mise run sweep deadzone                             # §11.7
+mise run sweep quant-ranges                         # §11.8
+mise run sweep scalefactor-bands                    # §11.9
+mise run sweep compact-tier                         # §11.10
+mise run sweep compact-tier-graphics                # §11.10
+mise run sweep compact-tier-alpha                   # §11.12 compact tier, alpha corpus
+mise run sweep alpha-tier1                          # §11.11
+mise run sweep v07-holdout-photo --split holdout    # §11.12
+mise run sweep v07-holdout-alpha --split holdout    # §11.12
+mise run sweep adopted-defaults                     # §10.3
+mise run sweep adopted-defaults --split holdout     # §10.3
 
 # Check the tables in this file against the results above
-just verify-experiments
-just verify-experiments --list-unbound
+mise run verify:experiments
+mise run verify:experiments --list-unbound
 ```
 Five configs in `tools/comparison/sweeps/` are **not** written up above, and are
 listed here so their absence is not mistaken for a result being withheld:
@@ -552,7 +552,7 @@ listed here so their absence is not mistaken for a result being withheld:
 `output/sweeps/`) and were superseded before this file's round-3 numbers were
 taken; `capped-tier1-vs-tier0`, `scalefactor-bands-t1` and
 `tier-precision-vs-count` were written but never run. None of them informed an
-adopted constant. `just verify-experiments` checks the tables that *are* here
+adopted constant. `mise run verify:experiments` checks the tables that *are* here
 against the outputs that produced them.
 
 `aniso-selection` and `aniso-extended`, named in §11.5, were deleted when
@@ -941,7 +941,7 @@ again once restored.
 > nothing (ThumbHash on "tune": 11.17 before, 12.04 after). Treat any future
 > addition the same way — re-run §6 in full, or do not add it.
 
-**U18 — a CI quality gate.** `just rd-gate` encodes 8 pinned photos at tier 0 and
+**U18 — a CI quality gate.** `mise run rd:gate` encodes 8 pinned photos at tier 0 and
 compares mean ΔE00 against `tools/comparison/baselines/rd-gate.json` with a
 **two-sided** ±1% tolerance (an unexplained improvement also fails — a stale
 baseline gates nothing), and asserts every hash is exactly 32 bytes. Wired into

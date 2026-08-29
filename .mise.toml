@@ -10,8 +10,746 @@ dotnet = "9"
 "cargo:convco" = "0.6.4"
 "cargo:cargo-ndk" = "4.1.2" # cross-compile the Android binding's cdylib per ABI
 "cargo:wasm-pack" = "0.15.0" # build the WASM binding (chromahash-wasm) for the web
-"cargo:cargo-mutants" = "27.1.0" # mutation-test the core Rust crate (just mutants-rust)
-"aqua:cli/cli" = "2.93.0"   # gh — used by the Android publishing bootstrap recipes
+"cargo:cargo-mutants" = "27.1.0" # mutation-test the core Rust crate (mise run mutants:rust)
+"aqua:cli/cli" = "2.93.0"   # gh — used by the Android publishing bootstrap tasks
+"aqua:jdx/hk" = "1.56.1"    # git hook manager; config in hk.pkl, install with `hk install`
 
 [settings]
 experimental = true
+
+# ─── Tasks ───────────────────────────────────────────────────────────────────
+# Cross-language task runner. Run `mise tasks` to see everything, `mise run
+# <task>` to run one. Tasks whose body is a shell script live in mise-tasks/.
+#
+# Naming: `<verb>[:<qualifier>]:<target>`. The bare verbs (format, lint, test,
+# build, format:check, lint:fix) are the aggregates that fan out over every
+# implementation; `mise run 'test:*'` and friends select leaves by glob.
+#
+# Unlike the justfile this replaces, mise runs `depends` in PARALLEL by default.
+# That is the desired behaviour for the aggregates. Where it is not — see
+# benchmark:batch — the ordering is expressed with a sequential `run` array
+# instead of `depends`.
+
+# ─── All languages ───────────────────────────────────────────────────────────
+
+[tasks.format]
+description = "Format all implementations"
+alias = "format:fix"
+depends = [
+  "format:rust", "format:c", "format:wasm", "format:ts", "format:jvm",
+  "format:swift", "format:go", "format:python", "format:csharp", "format:android",
+  "format:compare", "format:thumbhash", "format:gamutref", "format:benchmark",
+]
+
+[tasks."format:check"]
+description = "Check formatting (no writes) across all implementations"
+depends = [
+  "format:check:rust", "format:check:c", "format:check:wasm", "format:check:ts",
+  "format:check:jvm", "format:check:swift", "format:check:go", "format:check:python",
+  "format:check:csharp", "format:check:android", "format:check:compare",
+  "format:check:thumbhash", "format:check:gamutref", "format:check:benchmark",
+]
+
+[tasks.lint]
+description = "Lint all implementations"
+depends = [
+  "lint:rust", "lint:c", "lint:wasm", "lint:ts", "lint:jvm", "lint:swift",
+  "lint:go", "lint:python", "lint:csharp", "lint:android", "lint:compare",
+  "lint:thumbhash", "lint:gamutref", "lint:benchmark",
+]
+
+[tasks."lint:fix"]
+description = "Auto-fix linting in all implementations"
+depends = [
+  "lint:fix:rust", "lint:fix:c", "lint:fix:wasm", "lint:fix:ts", "lint:fix:jvm",
+  "lint:fix:swift", "lint:fix:go", "lint:fix:python", "lint:fix:csharp",
+  "lint:fix:android", "lint:fix:compare", "lint:fix:thumbhash",
+  "lint:fix:gamutref", "lint:fix:benchmark",
+]
+
+[tasks.test]
+description = "Run all tests"
+depends = [
+  "test:rust", "test:c", "test:wasm", "test:ts", "test:jvm", "test:swift",
+  "test:go", "test:python", "test:csharp", "test:android", "test:thumbhash",
+  "test:gamutref",
+]
+
+[tasks.build]
+description = "Build all implementations"
+depends = [
+  "build:rust", "build:c", "build:wasm", "build:ts", "build:jvm", "build:swift",
+  "build:go", "build:python", "build:csharp", "build:android:crate",
+  "build:thumbhash", "build:gamutref",
+]
+
+# ─── Rust ────────────────────────────────────────────────────────────────────
+
+[tasks."format:rust"]
+description = "Format the core Rust crate"
+alias = "format:fix:rust"
+run = "cargo fmt --manifest-path rust/Cargo.toml"
+
+[tasks."format:check:rust"]
+description = "Check core Rust formatting"
+run = "cargo fmt --manifest-path rust/Cargo.toml --check"
+
+# --all-targets: plain `cargo clippy` checks the lib and bins only, so test and
+# example code is never linted. That is how an MSRV violation in an example and
+# a lint error in a #[cfg(test)] block both survived in-tree.
+[tasks."lint:rust"]
+description = "Clippy the core Rust crate"
+run = "cargo clippy --manifest-path rust/Cargo.toml --all-targets --features full -- -D warnings"
+
+[tasks."lint:fix:rust"]
+description = "Auto-fix clippy findings in the core Rust crate"
+run = [
+  "cargo clippy --manifest-path rust/Cargo.toml --all-targets --features full --fix --allow-staged --allow-dirty",
+  "cargo clippy --manifest-path rust/Cargo.toml --all-targets --features full -- -D warnings",
+]
+
+[tasks."test:rust"]
+description = "Test the core Rust crate"
+run = "cargo test --manifest-path rust/Cargo.toml"
+
+[tasks."build:rust"]
+description = "Build the core Rust crate"
+run = "cargo build --manifest-path rust/Cargo.toml"
+
+# Pin every vector backend this CPU/arch actually provides (AVX2/SSE2, NEON, …)
+# against the scalar reference. The `full` feature turns on `simd-diff-tests`,
+# which *fails* rather than silently skipping if the host can't run a backend it
+# was asked to validate. Other targets: `mise run test:simd:emulated`.
+[tasks."test:simd:diff"]
+description = "Run the native-host SIMD differential tests"
+run = "cargo test --manifest-path rust/Cargo.toml --features full simd::"
+
+[tasks."setup:simd-targets"]
+description = "Install the rustup targets the emulated SIMD sweep cross-compiles to"
+run = "rustup target add x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu wasm32-wasip1"
+
+# cargo-mutants applies small code mutations and checks the tests catch each one;
+# a surviving (MISSED) mutant is a test gap. Arguments pass through to
+# cargo-mutants. Full sweep of the core crate — slow (~1100 mutants); the hk
+# pre-push hook and CI use the diff form (mutants:rust:diff).
+[tasks."mutants:rust"]
+description = "Mutation-test the core Rust crate (full sweep, slow)"
+run = "cargo mutants -d rust"
+
+# ─── C binding (chromahash-c) ─────────────────────────────────────────────────
+# Hand-written extern "C" surface + cbindgen header. The header is regenerated on
+# every build (build.rs) into bindings/c/include/chromahash.h (a committed artifact).
+
+[tasks."format:c"]
+description = "Format the C binding crate"
+alias = "format:fix:c"
+run = "cargo fmt --manifest-path bindings/c/Cargo.toml"
+
+[tasks."format:check:c"]
+description = "Check C binding formatting"
+run = "cargo fmt --manifest-path bindings/c/Cargo.toml --check"
+
+[tasks."lint:c"]
+description = "Clippy the C binding crate"
+run = "cargo clippy --manifest-path bindings/c/Cargo.toml --all-targets -- -D warnings"
+
+[tasks."lint:fix:c"]
+description = "Auto-fix clippy findings in the C binding crate"
+run = [
+  "cargo clippy --manifest-path bindings/c/Cargo.toml --all-targets --fix --allow-staged --allow-dirty",
+  "cargo clippy --manifest-path bindings/c/Cargo.toml --all-targets -- -D warnings",
+]
+
+# Also regenerates include/chromahash.h via build.rs, hence the gen:c-header alias.
+[tasks."build:c"]
+description = "Build the C staticlib + cdylib (regenerates include/chromahash.h)"
+alias = "gen:c-header"
+run = "cargo build --manifest-path bindings/c/Cargo.toml"
+
+[tasks."test:c"]
+description = "Spec vectors through the C ABI, plus the C linkage smoke test"
+depends = ["build:c", "test:c:example"]
+run = "cargo test --manifest-path bindings/c/Cargo.toml"
+
+# ─── WASM binding (chromahash-wasm) ───────────────────────────────────────────
+# wasm-bindgen wrapper for the TypeScript web package. Built with wasm-pack
+# (mise-managed). clippy/build target the wasm32-unknown-unknown triple.
+
+[tasks."format:wasm"]
+description = "Format the WASM binding crate"
+alias = "format:fix:wasm"
+run = "cargo fmt --manifest-path bindings/wasm/Cargo.toml"
+
+[tasks."format:check:wasm"]
+description = "Check WASM binding formatting"
+run = "cargo fmt --manifest-path bindings/wasm/Cargo.toml --check"
+
+[tasks."lint:wasm"]
+description = "Clippy the WASM binding crate"
+run = "cargo clippy --manifest-path bindings/wasm/Cargo.toml --target wasm32-unknown-unknown --all-targets -- -D warnings"
+
+[tasks."lint:fix:wasm"]
+description = "Auto-fix clippy findings in the WASM binding crate"
+run = [
+  "cargo clippy --manifest-path bindings/wasm/Cargo.toml --target wasm32-unknown-unknown --all-targets --fix --allow-staged --allow-dirty",
+  "cargo clippy --manifest-path bindings/wasm/Cargo.toml --target wasm32-unknown-unknown --all-targets -- -D warnings",
+]
+
+[tasks."build:wasm"]
+description = "Build the web + nodejs WASM packages under bindings/wasm/pkg*"
+run = [
+  "wasm-pack build --target web bindings/wasm --out-dir pkg",
+  "wasm-pack build --target nodejs bindings/wasm --out-dir pkg-node",
+]
+
+[tasks."test:wasm"]
+description = "Spec vectors through the wasm-bindgen surface, run in Node"
+run = "wasm-pack test --node bindings/wasm"
+
+# ─── Android / UniFFI binding (chromahash-uniffi) ─────────────────────────────
+# Host-only tasks (no Android NDK/SDK required) — wired into the aggregates so
+# the hk gates stay green. The AAR build (build:android:aar) needs the NDK + SDK
+# and is intentionally kept OUT of the aggregates.
+
+[tasks."format:android"]
+description = "Format the UniFFI binding crate"
+alias = "format:fix:android"
+run = "cargo fmt --manifest-path bindings/uniffi/Cargo.toml"
+
+[tasks."format:check:android"]
+description = "Check UniFFI binding formatting"
+run = "cargo fmt --manifest-path bindings/uniffi/Cargo.toml --check"
+
+[tasks."lint:android"]
+description = "Clippy the UniFFI binding crate"
+run = "cargo clippy --manifest-path bindings/uniffi/Cargo.toml --all-targets -- -D warnings"
+
+[tasks."lint:fix:android"]
+description = "Auto-fix clippy findings in the UniFFI binding crate"
+run = [
+  "cargo clippy --manifest-path bindings/uniffi/Cargo.toml --all-targets --fix --allow-staged --allow-dirty",
+  "cargo clippy --manifest-path bindings/uniffi/Cargo.toml --all-targets -- -D warnings",
+]
+
+[tasks."test:android"]
+description = "Spec test vectors through the UniFFI binding (the correctness gate)"
+run = "cargo test --manifest-path bindings/uniffi/Cargo.toml"
+
+[tasks."build:android:crate"]
+description = "Host build of the UniFFI crate (lib + cdylib + bindgen bin)"
+run = "cargo build --manifest-path bindings/uniffi/Cargo.toml"
+
+# Cross-compile every ABI + generate Kotlin + assemble the AAR. Requires the
+# Android NDK (ANDROID_NDK_HOME / ANDROID_NDK_LATEST_HOME) + SDK and the android
+# rustup targets. cargo-ndk is mise-managed (`cargo:cargo-ndk`). Not in `build`.
+[tasks."build:android:aar"]
+description = "Cross-compile every ABI, generate Kotlin, assemble the AAR (needs NDK+SDK)"
+run = "( cd bindings/uniffi/android && ./gradlew assembleRelease )"
+
+# ─── TypeScript ──────────────────────────────────────────────────────────────
+# The package wraps the wasm-pack glue (full encode+decode path) plus a synced
+# pure-TS decode-only module. `cbuild:ts` stages the glue into typescript/wasm/
+# (gitignored build output); tsc + the test runner consume it from there.
+
+[tasks."cbuild:ts"]
+description = "Stage the wasm-pack glue into typescript/wasm/"
+run = "wasm-pack build --target web bindings/wasm --out-dir ../../typescript/wasm"
+
+[tasks."format:ts"]
+description = "Format the TypeScript package (Biome)"
+alias = "format:fix:ts"
+run = "pnpm --prefix typescript run format"
+
+[tasks."format:check:ts"]
+description = "Check TypeScript formatting (Biome)"
+run = "pnpm --prefix typescript run format:check"
+
+[tasks."lint:ts"]
+description = "Lint the TypeScript package (Biome)"
+run = "pnpm --prefix typescript run lint"
+
+[tasks."lint:fix:ts"]
+description = "Auto-fix TypeScript lint findings (Biome)"
+run = "pnpm --prefix typescript run lint:fix"
+
+[tasks."test:ts"]
+description = "Test the TypeScript package"
+depends = ["cbuild:ts"]
+run = "pnpm --prefix typescript run test"
+
+[tasks."build:ts"]
+description = "Build the TypeScript package"
+depends = ["cbuild:ts"]
+run = "pnpm --prefix typescript run build"
+
+# ─── JVM binding (chromahash-jvm) ─────────────────────────────────────────────
+# Desktop/server JAR over the shared chromahash-uniffi crate. format/lint run
+# ktlint on the hand-written Kotlin (CLI + tests); the generated bindings under
+# build/ are excluded. test/build run the full pipeline (cargo cdylib +
+# uniffi-bindgen + JNA-bundled native lib), so they need the Rust toolchain.
+
+[tasks."format:jvm"]
+description = "Format the JVM binding's Kotlin (ktlint)"
+alias = ["format:fix:jvm", "lint:fix:jvm"]
+run = "( cd bindings/uniffi/jvm && ./gradlew ktlintFormat )"
+
+[tasks."format:check:jvm"]
+description = "Check the JVM binding's Kotlin formatting (ktlint)"
+run = "( cd bindings/uniffi/jvm && ./gradlew ktlintCheck )"
+
+[tasks."lint:jvm"]
+description = "Lint the JVM binding's Kotlin (ktlint)"
+run = "( cd bindings/uniffi/jvm && ./gradlew ktlintCheck )"
+
+[tasks."test:jvm"]
+description = "Spec test vectors through the JVM binding (the correctness gate)"
+run = "( cd bindings/uniffi/jvm && ./gradlew test )"
+
+[tasks."build:jvm"]
+description = "Build the JVM binding JAR"
+run = "( cd bindings/uniffi/jvm && ./gradlew build )"
+
+# ─── Go ──────────────────────────────────────────────────────────────────────
+
+[tasks."format:go"]
+description = "Format the Go binding (gofmt)"
+alias = "format:fix:go"
+run = "( cd go && gofmt -w . )"
+
+[tasks."format:check:go"]
+description = "Check Go binding formatting (gofmt)"
+run = 'cd go && test -z "$(gofmt -l .)"'
+
+# Build the chromahash-c static library + header and stage them for the cgo build
+# (go/lib, go/include — both gitignored). The Go package is a cgo wrapper, so a
+# bare `go build`/`go test` requires these to be present first.
+[tasks."cbuild:go"]
+description = "Stage the chromahash-c staticlib + header for the cgo build"
+run = [
+  "cargo build --manifest-path bindings/c/Cargo.toml --release",
+  "mkdir -p go/lib go/include",
+  "cp bindings/c/target/release/libchromahash_c.a go/lib/",
+  "cp bindings/c/include/chromahash.h go/include/",
+]
+
+[tasks."lint:go"]
+description = "Vet the Go binding"
+alias = "lint:fix:go"
+depends = ["cbuild:go"]
+run = "( cd go && CGO_ENABLED=1 go vet ./... )"
+
+[tasks."test:go"]
+description = "Test the Go binding"
+depends = ["cbuild:go"]
+run = "( cd go && CGO_ENABLED=1 go test ./... -v )"
+
+[tasks."build:go"]
+description = "Build the Go binding"
+depends = ["cbuild:go"]
+run = "( cd go && CGO_ENABLED=1 go build ./... )"
+
+# ─── Python ──────────────────────────────────────────────────────────────────
+
+[tasks."format:python"]
+description = "Format the Python package (Ruff)"
+alias = "format:fix:python"
+run = "( cd python && uv run ruff format . )"
+
+[tasks."format:check:python"]
+description = "Check Python formatting (Ruff)"
+run = "( cd python && uv run ruff format --check . )"
+
+[tasks."lint:python"]
+description = "Lint the Python package (Ruff)"
+run = "( cd python && uv run ruff check . )"
+
+[tasks."lint:fix:python"]
+description = "Auto-fix Python lint findings (Ruff)"
+run = "( cd python && uv run ruff check --fix . )"
+
+[tasks."test:python"]
+description = "Test the Python package"
+depends = ["cbuild:python"]
+run = "( cd python && uv run pytest tests/ -v )"
+
+[tasks."build:python"]
+description = "Build the Python package"
+depends = ["cbuild:python"]
+run = "( cd python && uv build )"
+
+# ─── C# ──────────────────────────────────────────────────────────────────────
+
+[tasks."format:csharp"]
+description = "Format the C# package (dotnet format)"
+alias = "format:fix:csharp"
+run = "dotnet format csharp/Chromahash.sln --verbosity quiet"
+
+[tasks."format:check:csharp"]
+description = "Check C# formatting (dotnet format)"
+run = "dotnet format csharp/Chromahash.sln --verify-no-changes --verbosity quiet"
+
+# Build the chromahash-c cdylib (release); the lib csproj copies it next to the
+# managed assembly so P/Invoke resolves it at runtime.
+[tasks."cbuild:csharp"]
+description = "Build the chromahash-c cdylib the C# package P/Invokes"
+run = "cargo build --manifest-path bindings/c/Cargo.toml --release"
+
+[tasks."lint:csharp"]
+description = "Lint the C# package (build -warnaserror)"
+alias = "lint:fix:csharp"
+run = "dotnet build csharp/Chromahash.sln -warnaserror --verbosity quiet"
+
+[tasks."test:csharp"]
+description = "Test the C# package"
+depends = ["cbuild:csharp"]
+run = "dotnet test csharp/Chromahash.sln --verbosity quiet"
+
+[tasks."build:csharp"]
+description = "Build the C# package"
+depends = ["cbuild:csharp"]
+run = "dotnet build csharp/Chromahash.sln --verbosity quiet"
+
+# ─── Comparison tool ────────────────────────────────────────────────────────
+
+[tasks."format:compare"]
+description = "Format the comparison tool (Biome)"
+alias = "format:fix:compare"
+run = "pnpm --prefix tools/comparison run format"
+
+[tasks."format:check:compare"]
+description = "Check comparison tool formatting (Biome)"
+run = "pnpm --prefix tools/comparison run format:check"
+
+[tasks."lint:compare"]
+description = "Lint the comparison tool (Biome)"
+run = "pnpm --prefix tools/comparison run lint"
+
+[tasks."lint:fix:compare"]
+description = "Auto-fix comparison tool lint findings (Biome)"
+run = "pnpm --prefix tools/comparison run lint:fix"
+
+# ─── Benchmark driver (Python) ────────────────────────────────────────────────
+# The cross-language performance harness. Not published, but every benchmark
+# number quoted in the docs comes out of it, so it is held to the same lint and
+# format contract as the `python/` package (see tools/benchmark/pyproject.toml).
+
+[tasks."format:benchmark"]
+description = "Format the benchmark driver (Ruff)"
+alias = "format:fix:benchmark"
+run = "uvx ruff format tools/benchmark"
+
+[tasks."format:check:benchmark"]
+description = "Check benchmark driver formatting (Ruff)"
+run = "uvx ruff format --check tools/benchmark"
+
+[tasks."lint:benchmark"]
+description = "Lint the benchmark driver (Ruff)"
+run = "uvx ruff check tools/benchmark"
+
+[tasks."lint:fix:benchmark"]
+description = "Auto-fix benchmark driver lint findings (Ruff)"
+run = "uvx ruff check --fix tools/benchmark"
+
+# ─── ThumbHash baseline (native Rust) ─────────────────────────────────────────
+# Standalone benchmark harness crate (keeps the core chromahash crate zero-dep).
+
+[tasks."format:thumbhash"]
+description = "Format the ThumbHash baseline crate"
+alias = "format:fix:thumbhash"
+run = "cargo fmt --manifest-path tools/thumbhash-rs/Cargo.toml"
+
+[tasks."format:check:thumbhash"]
+description = "Check ThumbHash baseline formatting"
+run = "cargo fmt --manifest-path tools/thumbhash-rs/Cargo.toml --check"
+
+[tasks."lint:thumbhash"]
+description = "Clippy the ThumbHash baseline crate"
+run = "cargo clippy --manifest-path tools/thumbhash-rs/Cargo.toml --all-targets -- -D warnings"
+
+[tasks."lint:fix:thumbhash"]
+description = "Auto-fix clippy findings in the ThumbHash baseline crate"
+run = [
+  "cargo clippy --manifest-path tools/thumbhash-rs/Cargo.toml --all-targets --fix --allow-staged --allow-dirty",
+  "cargo clippy --manifest-path tools/thumbhash-rs/Cargo.toml --all-targets -- -D warnings",
+]
+
+[tasks."build:thumbhash"]
+description = "Build the ThumbHash baseline crate"
+run = "cargo build --manifest-path tools/thumbhash-rs/Cargo.toml"
+
+[tasks."test:thumbhash"]
+description = "Test the ThumbHash baseline crate"
+run = "cargo test --manifest-path tools/thumbhash-rs/Cargo.toml"
+
+# ─── Gamut → sRGB reference (delegates to gamut-color) ────────────────────────
+# Standalone crate (keeps the core chromahash crate zero-dep). Wraps gamut's
+# color primitives for the comparison harness's metric-reference conversion.
+
+[tasks."format:gamutref"]
+description = "Format the gamut reference crate"
+alias = "format:fix:gamutref"
+run = "cargo fmt --manifest-path tools/gamut-ref-stdin/Cargo.toml"
+
+[tasks."format:check:gamutref"]
+description = "Check gamut reference formatting"
+run = "cargo fmt --manifest-path tools/gamut-ref-stdin/Cargo.toml --check"
+
+[tasks."lint:gamutref"]
+description = "Clippy the gamut reference crate"
+run = "cargo clippy --manifest-path tools/gamut-ref-stdin/Cargo.toml --all-targets -- -D warnings"
+
+[tasks."lint:fix:gamutref"]
+description = "Auto-fix clippy findings in the gamut reference crate"
+run = [
+  "cargo clippy --manifest-path tools/gamut-ref-stdin/Cargo.toml --all-targets --fix --allow-staged --allow-dirty",
+  "cargo clippy --manifest-path tools/gamut-ref-stdin/Cargo.toml --all-targets -- -D warnings",
+]
+
+[tasks."build:gamutref"]
+description = "Build the gamut reference crate"
+run = "cargo build --manifest-path tools/gamut-ref-stdin/Cargo.toml"
+
+[tasks."test:gamutref"]
+description = "Test the gamut reference crate"
+run = "cargo test --manifest-path tools/gamut-ref-stdin/Cargo.toml"
+
+# ─── Comparison / analysis harness ───────────────────────────────────────────
+
+[tasks."build:compare"]
+description = "Build the comparison tool (installs node deps first)"
+run = [
+  "pnpm --prefix tools/comparison install --frozen-lockfile",
+  "pnpm --prefix tools/comparison run build",
+]
+
+# Prerequisite for `compare`'s quality metrics. Pulls in ssimulacra2/butteraugli,
+# which build vendored C++ (needs a C/C++ toolchain). Without it the report still
+# builds, but metrics show as N/A.
+[tasks."install:iqa"]
+description = "Install iqa-cli (the iqa-rs metrics CLI) — needed for quality metrics"
+run = "cargo install iqa-cli --locked --version 1.2.1"
+
+# Emits output/report.html, output/report.json, and standalone images under
+# output/images/ (the HTML and JSON both reference them). Requires iqa-cli on
+# PATH — run `mise run install:iqa` once first. The harnesses are binding-backed,
+# so each language's native lib is staged first (the C + JVM harnesses self-build
+# inside the comparison tool).
+[tasks.compare]
+description = "Generate the LQIP comparison report"
+depends = ["build:compare", "cbuild:go", "cbuild:swift", "cbuild:ts", "cbuild:python", "cbuild:csharp"]
+run = "pnpm --prefix tools/comparison run compare"
+
+# Local-only: compare chromahash's own format versions (v0.2–v0.6 + the current
+# working tree, the primary variant) to gauge whether current changes improve
+# quality. v0.6 is the immediate predecessor and the one baseline that matters
+# for an A/B — it and a default-tier working tree are both exactly 32 bytes, so
+# the comparison is equal-budget. Each tag is built as a release encode_stdin in
+# a cached git worktree under tools/comparison/.versions/ (gitignored). Not run
+# in CI. Requires iqa-cli on PATH (run `mise run install:iqa` once). Writes
+# output/versions-report.{html,json}.
+[tasks."compare:versions"]
+description = "Local-only: compare chromahash format versions (v0.2–v0.6 + current)"
+depends = ["build:compare"]
+run = "node tools/comparison/dist/main.js --versions v0.2,v0.3,v0.4,v0.5,v0.6,current"
+
+# Rate–distortion comparison: sweep every format's quality knob (ChromaHash
+# codes 1–4, BlurHash components, lqip-modern sizes) plus equal-byte WebP/JPEG/
+# AVIF (+JXL when cjxl/djxl are on PATH) and raw-RGB565 baselines at the four
+# ChromaHash tier byte anchors (32/108/411/1623 B), on the photographic corpus
+# only. Requires iqa-cli on PATH (run `mise run install:iqa` once). Writes
+# output/rd-report.{html,json} — never clobbers the standard report.
+[tasks."compare:rd"]
+description = "Cross-format rate–distortion comparison report"
+depends = ["build:compare"]
+run = [
+  "cargo build --manifest-path rust/Cargo.toml --release --example encode_stdin",
+  "node tools/comparison/dist/main.js --rd",
+]
+
+# Cross-format rate-distortion at arbitrary byte budgets, on the same corpus
+# split as `sweep` — so a ladder row and a ThumbHash row are directly comparable.
+# Emits a guard-aware winner-per-metric summary alongside the curve. Long: it
+# re-encodes WebP/JPEG/AVIF at every budget (~1h per split).
+[tasks."rd:budget"]
+description = "Cross-format rate–distortion at arbitrary byte budgets"
+depends = ["build:compare"]
+run = [
+  "cargo build --manifest-path rust/Cargo.toml --release --example encode_stdin",
+  "node tools/comparison/dist/rd-budget.js",
+]
+
+[tasks."cfl:probe"]
+description = "Chroma-from-luma sizing probe (per-index chroma predictability from luma)"
+depends = ["build:compare"]
+run = [
+  "cargo build --manifest-path rust/Cargo.toml --release --example encode_stdin",
+  "node tools/comparison/dist/cfl-probe.js",
+]
+
+[tasks."coeff:stats"]
+description = "AC entropy headroom, and l2-ball prefix energy vs the best fixed/oracle set"
+depends = ["build:compare"]
+run = [
+  "cargo build --manifest-path rust/Cargo.toml --release --example encode_stdin",
+  "node tools/comparison/dist/coeff-stats.js",
+]
+
+[tasks."entropy:budget"]
+description = "What entropy-coding the AC payload would buy, costed leave-one-image-out"
+depends = ["build:compare"]
+run = [
+  "cargo build --manifest-path rust/Cargo.toml --release --example encode_stdin",
+  "node tools/comparison/dist/entropy-budget.js",
+]
+
+# Train Lloyd-Max codebooks and run the chroma VQ probe on the tune split's
+# dumped coefficients (→ output/sweeps/tables.json with ready-to-paste
+# CHROMAHASH_TUNE fragments for the companding-family sweep).
+[tasks."train:tables"]
+description = "Train Lloyd-Max codebooks and run the chroma VQ probe"
+depends = ["build:compare"]
+run = [
+  "cargo build --manifest-path rust/Cargo.toml --release --example encode_stdin",
+  "node tools/comparison/dist/train-tables.js",
+]
+
+# ─── Quality gate ───────────────────────────────────────────────────────────
+
+# Tier-0 R-D regression gate: encode a fixed handful of content-pinned corpus
+# photos, score mean ΔE00, and compare it against the checked-in baseline
+# tools/comparison/baselines/rd-gate.json. Deliberately small — a few images, no
+# codec baselines — so CI can run it on every push; `compare:rd` and the sweeps
+# remain the full picture. Two-sided: an improvement past tolerance also fails,
+# because a stale baseline gates nothing. Requires iqa-cli (`mise run install:iqa`).
+[tasks."rd:gate"]
+description = "Encoder quality regression gate (mean ΔE00 vs the checked-in baseline)"
+depends = ["build:compare"]
+run = [
+  "cargo build --manifest-path rust/Cargo.toml --release --example encode_stdin",
+  "node tools/comparison/dist/rd-gate.js",
+]
+
+# Every number moving is the point — but review the diff and say in the commit
+# message which change moved it.
+[tasks."rd:gate:update"]
+description = "Refresh the R-D gate baseline after an intended encoder change"
+depends = ["build:compare"]
+run = [
+  "cargo build --manifest-path rust/Cargo.toml --release --example encode_stdin",
+  "node tools/comparison/dist/rd-gate.js --update",
+]
+
+# Check every table in spec/EXPERIMENTS.md against the sweep results in
+# tools/comparison/output/sweeps/. The document is transcribed by hand, so a
+# re-run of a sweep silently invalidates it; this is the only thing that
+# notices. Needs the sweep outputs on disk (they are gitignored), so it reports
+# what it could not check rather than failing on a missing file.
+#   --list-unbound   tables with no binding, and why
+#   --section 11.5   just one section
+#   --fix            rewrite disagreeing cells from the measured values
+[tasks."verify:experiments"]
+description = "Check every table in spec/EXPERIMENTS.md against the sweep output"
+depends = ["build:compare"]
+run = "node tools/comparison/dist/verify-experiments.js"
+
+# ─── Benchmark ──────────────────────────────────────────────────────────────
+
+[tasks."build:benchmark"]
+description = "Build every benchmark harness (release), incl. both ThumbHash baselines"
+depends = ["cbuild:go", "cbuild:swift", "cbuild:ts", "cbuild:python", "cbuild:csharp"]
+run = [
+  "cargo build --manifest-path rust/Cargo.toml --release --example encode_stdin",
+  "pnpm --prefix typescript run build",
+  "( cd go && CGO_ENABLED=1 go build -o encode-stdin ./cmd/encode-stdin )",
+  "( cd bindings/uniffi/jvm && ./gradlew installDist -q )",
+  "( cd swift && swift build -c release )",
+  "dotnet build csharp/src/Chromahash.Cli -c Release --verbosity quiet",
+  "cargo build --manifest-path tools/thumbhash-rs/Cargo.toml --release",
+  "pnpm --prefix tools/comparison run build",
+]
+
+[tasks.benchmark]
+description = "Run the performance benchmark (encode/decode × single/bulk, vs ThumbHash)"
+depends = ["build:benchmark"]
+run = "( cd tools/benchmark && uv run benchmark.py --skip-build --tiers all )"
+
+# ─── Batch benchmarks ─────────────────────────────────────────────────────────
+# Intentionally sequential — running these in parallel would skew the numbers,
+# since each benchmark wants the whole machine. mise runs `depends` in parallel,
+# so the ordering is expressed as a sequential `run` array instead. Do not turn
+# this back into a `depends` list.
+
+[tasks."benchmark:batch"]
+description = "Every BatchEncoder throughput benchmark, run one at a time"
+run = [
+  { task = "benchmark:batch:rust" },
+  { task = "benchmark:batch:go" },
+  { task = "benchmark:batch:swift" },
+  { task = "benchmark:batch:jvm" },
+  { task = "benchmark:batch:csharp" },
+  { task = "benchmark:batch:python" },
+  { task = "benchmark:batch:ts" },
+]
+
+[tasks."benchmark:batch:rust"]
+description = "Rust BatchEncoder throughput benchmark"
+run = "cargo run --manifest-path rust/Cargo.toml --release --example batch_bench"
+
+[tasks."benchmark:batch:ts"]
+description = "TypeScript BatchEncoder throughput benchmark"
+depends = ["cbuild:ts"]
+run = "pnpm --prefix typescript run bench"
+
+[tasks."benchmark:batch:jvm"]
+description = "JVM BatchEncoder throughput benchmark"
+run = "( cd bindings/uniffi/jvm && ./gradlew bench -q )"
+
+[tasks."benchmark:batch:swift"]
+description = "Swift BatchEncoder throughput benchmark"
+depends = ["cbuild:swift"]
+run = "( cd swift && swift run -c release ChromaHashBatchBench )"
+
+[tasks."benchmark:batch:go"]
+description = "Go BatchEncoder throughput benchmark"
+depends = ["cbuild:go"]
+run = "( cd go && CGO_ENABLED=1 go test -bench=Encode -benchmem -run='^$' ./... )"
+
+[tasks."benchmark:batch:python"]
+description = "Python BatchEncoder throughput benchmark"
+depends = ["cbuild:python"]
+run = "( cd python && uv run python benchmarks/batch_bench.py )"
+
+[tasks."benchmark:batch:csharp"]
+description = "C# BatchEncoder throughput benchmark"
+depends = ["cbuild:csharp"]
+run = "dotnet run -c Release --project csharp/benchmarks/Chromahash.Bench"
+
+# ─── Repo ────────────────────────────────────────────────────────────────────
+
+# Every publishable manifest must carry the core crate's version. Each
+# release-*.yml checks the pushed tag against its own manifest and fails only
+# that pipeline, so a stale manifest leaves one registry a version behind
+# without announcing it. Run before tagging (RELEASING.md step 2).
+[tasks."check:versions"]
+description = "Check every publishable manifest carries the core crate's version"
+run = "./tools/ci/check-versions.sh"
+
+# Independently re-derive the spec constants and check them against
+# spec/constants.py. Documented in TESTING.md since the beginning but wired to
+# nothing — no task and no workflow ran it until ci-repo.yml.
+[tasks."validate:spec"]
+description = "Re-derive the spec constants and check them against spec/constants.py"
+run = "python3 spec/validate.py"
+
+# Lives here rather than in mise-tasks/ so it sits beside cbuild:swift; the
+# macOS guard mirrors the one in mise-tasks/cbuild/swift.
+[tasks."build:swift"]
+description = "Build the Swift package (macOS only)"
+depends = ["cbuild:swift"]
+run = '''
+if [ "$(uname)" != "Darwin" ]; then
+    echo "build:swift: SKIPPED — no xcframework off macOS (see cbuild:swift)." >&2
+    exit 0
+fi
+CHROMAHASH_LOCAL_XCFRAMEWORK=1 swift build
+'''

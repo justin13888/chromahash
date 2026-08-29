@@ -1,7 +1,7 @@
 name: Release (npm)
 
 # Publish the @visualcommons/chromahash package to npm when a release tag is pushed.
-# Releases are cut with `just release X.Y.Z`, which creates and pushes the
+# Releases are cut with `mise run release X.Y.Z`, which creates and pushes the
 # `vX.Y.Z` tag (see RELEASING.md). This workflow builds the wasm glue + TypeScript
 # and publishes via npm trusted publishing (OIDC) — no stored token. It is
 # idempotent: a version already on npm is skipped.
@@ -44,7 +44,7 @@ jobs:
       - name: Install wasm-pack
         run: command -v wasm-pack >/dev/null 2>&1 || cargo install wasm-pack --locked
 
-      # Mirrors `just ts-cbuild` / ci-typescript.yml: --out-dir is relative to the
+      # Mirrors `mise run cbuild:ts` / ci-typescript.yml: --out-dir is relative to the
       # crate dir (bindings/wasm), so ../../typescript/wasm resolves to the package.
       - name: Build WASM glue (staged into typescript/wasm/)
         run: wasm-pack build --target web bindings/wasm --out-dir ../../typescript/wasm

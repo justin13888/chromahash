@@ -126,7 +126,7 @@ MODES = ["single", "bulk"]
 def build_harnesses() -> None:
     """Build every harness in release mode.
 
-    Note: `just benchmark` already builds with mise-pinned toolchains and then
+    Note: `mise run benchmark` already builds with mise-pinned toolchains and then
     runs this script with --skip-build. This function exists for standalone
     `uv run benchmark.py` use and relies on the toolchains being on PATH.
     """

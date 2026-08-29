@@ -168,8 +168,9 @@ tasks.test {
     // built lib on the JNA search path so the test never depends on packaging.
     systemProperty("jna.library.path", releaseDir.absolutePath)
     // The golden vectors live outside this module, so Gradle could not see them
-    // change and reported the task UP-TO-DATE across an edit to them. `just
-    // test` then passed without running the conformance gate at all. CI checks
+    // change and reported the task UP-TO-DATE across an edit to them.
+    // `mise run test` then passed without running the conformance gate at all.
+    // CI checks
     // out fresh so it never noticed; a local run did.
     inputs
         .dir(rootProject.layout.projectDirectory.dir("../../../spec/test-vectors"))

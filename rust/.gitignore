@@ -3,6 +3,6 @@ target/
 Cargo.lock
 *.rs.bk
 
-# cargo-mutants output (just mutants-rust)
+# cargo-mutants output (mise run mutants:rust)
 mutants.out/
 mutants.out.old/

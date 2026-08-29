@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+#MISE description="Incremental mutation sweep: only core lines changed vs BASE (default origin/master)"
+#
+# Usage: mise run mutants:rust:diff [BASE]
+set -euo pipefail
+
+base="${1:-origin/master}"
+
+diff="$(mktemp)"
+trap 'rm -f "$diff"' EXIT
+
+git -C rust diff --relative "$base" -- . > "$diff"
+if [ ! -s "$diff" ]; then
+    echo "mutants:rust:diff: no core Rust changes vs $base — nothing to test"
+    exit 0
+fi
+
+cargo mutants -d rust --in-diff "$diff"

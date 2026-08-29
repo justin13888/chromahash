@@ -51,14 +51,14 @@ Migration from the pure-Kotlin impl is mostly swapping the import
 
 ## Develop / test (no Android toolchain required)
 
-These run on any host with a Rust toolchain — they are the enforced correctness gate (lefthook
+These run on any host with a Rust toolchain — they are the enforced correctness gate (hk
 pre-push + CI), and they validate the marshalling layer against the shared `spec/` test vectors:
 
 ```bash
-just test-android          # spec vectors through the binding (byte-exact)
-just lint-android          # clippy -D warnings
-just format-check-android  # rustfmt --check
-just build-android-crate   # host build of the crate (lib + cdylib + bindgen bin)
+mise run test:android          # spec vectors through the binding (byte-exact)
+mise run lint:android          # clippy -D warnings
+mise run format:check:android  # rustfmt --check
+mise run build:android:crate   # host build of the crate (lib + cdylib + bindgen bin)
 ```
 
 ## Build the AAR (requires the Android NDK)
@@ -77,7 +77,7 @@ export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/<version>"
 Then:
 
 ```bash
-just build-android-aar     # cargo ndk (all ABIs) → uniffi-bindgen → gradle assembleRelease
+mise run build:android:aar     # cargo ndk (all ABIs) → uniffi-bindgen → gradle assembleRelease
 ```
 
 The Gradle `assembleRelease` task wires the native steps automatically (`preBuild` depends on

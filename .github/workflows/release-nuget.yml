@@ -1,7 +1,7 @@
 name: Release (NuGet)
 
 # Publish the ChromaHash .NET package to NuGet when a release tag is pushed.
-# Releases are cut with `just release X.Y.Z` (see RELEASING.md). Publishes via
+# Releases are cut with `mise run release X.Y.Z` (see RELEASING.md). Publishes via
 # NuGet trusted publishing (OIDC) — no stored API key. Idempotent: --skip-duplicate
 # plus a flat-container probe avoid re-publishing an existing version.
 #

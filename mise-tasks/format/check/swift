@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+#MISE description="Check Swift binding formatting (swift-format lint)"
+#MISE alias="lint:swift"
+#
+# `command -v` guards the *absence* of the tool; a lint failure must still fail
+# the task. The old `A && B || echo` form sent a non-zero exit from B to the
+# `||` branch too, so the only Swift gate that runs off macOS could not fail.
+set -euo pipefail
+
+if ! command -v swift-format >/dev/null 2>&1; then
+    echo "format:check:swift: SKIPPED — swift-format not on PATH." >&2
+    exit 0
+fi
+
+cd swift && swift-format lint -r Sources Tests
