@@ -577,7 +577,9 @@ mod tests {
             // the default. Every pre-existing entry passes DEFAULT_TIER, so its
             // bytes are unchanged — the diff on regeneration must be a pure
             // insertion.
-            let test_hashes: Vec<(&str, u32, u32, Vec<u8>, Gamut, u8)> = vec![
+            /// One decode fixture: name, width, height, RGBA, source gamut, tier.
+            type DecodeCase = (&'static str, u32, u32, Vec<u8>, Gamut, u8);
+            let test_hashes: Vec<DecodeCase> = vec![
                 (
                     "solid_gray_4x4",
                     4,

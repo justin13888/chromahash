@@ -52,10 +52,7 @@
       "reps": 7,
       "medianNsPerOp": 1413820,
       "minNsPerOp": 1408753,
-      "ci95NsPerOp": [
-        1412340,
-        1437966
-      ],
+      "ci95NsPerOp": [1412340, 1437966],
       "iqrPct": 0.014887326533787893,
       "noisy": false
     },
@@ -73,10 +70,7 @@
       "reps": 7,
       "medianNsPerOp": 284225,
       "minNsPerOp": 283438,
-      "ci95NsPerOp": [
-        283608,
-        287055
-      ],
+      "ci95NsPerOp": [283608, 287055],
       "iqrPct": 0.008586507168616413,
       "noisy": false
     },
@@ -98,10 +92,7 @@
       "reps": 7,
       "medianNsPerOp": 2536075,
       "minNsPerOp": 2522871,
-      "ci95NsPerOp": [
-        2525019,
-        2570326
-      ],
+      "ci95NsPerOp": [2525019, 2570326],
       "iqrPct": 0.009938389046065277,
       "noisy": false
     },
@@ -119,10 +110,7 @@
       "reps": 7,
       "medianNsPerOp": 320250,
       "minNsPerOp": 318929,
-      "ci95NsPerOp": [
-        319873,
-        321062
-      ],
+      "ci95NsPerOp": [319873, 321062],
       "iqrPct": 0.002652615144418423,
       "noisy": false
     },
@@ -144,10 +132,7 @@
       "reps": 7,
       "medianNsPerOp": 7225006,
       "minNsPerOp": 7120606,
-      "ci95NsPerOp": [
-        7198260,
-        7277110
-      ],
+      "ci95NsPerOp": [7198260, 7277110],
       "iqrPct": 0.007806775523785032,
       "noisy": false
     },
@@ -165,10 +150,7 @@
       "reps": 7,
       "medianNsPerOp": 1349281,
       "minNsPerOp": 1329476,
-      "ci95NsPerOp": [
-        1340312,
-        1355722
-      ],
+      "ci95NsPerOp": [1340312, 1355722],
       "iqrPct": 0.009510991409498838,
       "noisy": false
     },
@@ -190,10 +172,7 @@
       "reps": 7,
       "medianNsPerOp": 1455341,
       "minNsPerOp": 1446628,
-      "ci95NsPerOp": [
-        1447086,
-        1464092
-      ],
+      "ci95NsPerOp": [1447086, 1464092],
       "iqrPct": 0.009072100627962794,
       "noisy": false
     },
@@ -211,10 +190,7 @@
       "reps": 7,
       "medianNsPerOp": 281124,
       "minNsPerOp": 280454,
-      "ci95NsPerOp": [
-        280525,
-        281912
-      ],
+      "ci95NsPerOp": [280525, 281912],
       "iqrPct": 0.004446436447973137,
       "noisy": false
     },
@@ -236,10 +212,7 @@
       "reps": 7,
       "medianNsPerOp": 2493750,
       "minNsPerOp": 2484640,
-      "ci95NsPerOp": [
-        2488854,
-        2524277
-      ],
+      "ci95NsPerOp": [2488854, 2524277],
       "iqrPct": 0.007951278195488722,
       "noisy": false
     },
@@ -257,10 +230,7 @@
       "reps": 7,
       "medianNsPerOp": 320445,
       "minNsPerOp": 319602,
-      "ci95NsPerOp": [
-        319616,
-        325819
-      ],
+      "ci95NsPerOp": [319616, 325819],
       "iqrPct": 0.01206759350278519,
       "noisy": false
     },
@@ -282,10 +252,7 @@
       "reps": 7,
       "medianNsPerOp": 7284167,
       "minNsPerOp": 7237594,
-      "ci95NsPerOp": [
-        7252233,
-        7484940
-      ],
+      "ci95NsPerOp": [7252233, 7484940],
       "iqrPct": 0.018791579050837247,
       "noisy": false
     },
@@ -303,10 +270,7 @@
       "reps": 7,
       "medianNsPerOp": 1286472,
       "minNsPerOp": 1256966,
-      "ci95NsPerOp": [
-        1264275,
-        1290549
-      ],
+      "ci95NsPerOp": [1264275, 1290549],
       "iqrPct": 0.015754326561324306,
       "noisy": false
     },
@@ -328,10 +292,7 @@
       "reps": 7,
       "medianNsPerOp": 1441574,
       "minNsPerOp": 1422633,
-      "ci95NsPerOp": [
-        1437308,
-        1444685
-      ],
+      "ci95NsPerOp": [1437308, 1444685],
       "iqrPct": 0.004628968058524918,
       "noisy": false
     },
@@ -349,10 +310,7 @@
       "reps": 7,
       "medianNsPerOp": 285967,
       "minNsPerOp": 284807,
-      "ci95NsPerOp": [
-        285115,
-        287531
-      ],
+      "ci95NsPerOp": [285115, 287531],
       "iqrPct": 0.006946605727234261,
       "noisy": false
     },
@@ -374,10 +332,7 @@
       "reps": 7,
       "medianNsPerOp": 2590206,
       "minNsPerOp": 2572013,
-      "ci95NsPerOp": [
-        2573662,
-        2595824
-      ],
+      "ci95NsPerOp": [2573662, 2595824],
       "iqrPct": 0.005648392444461946,
       "noisy": false
     },
@@ -395,10 +350,7 @@
       "reps": 7,
       "medianNsPerOp": 318502,
       "minNsPerOp": 317818,
-      "ci95NsPerOp": [
-        318414,
-        319598
-      ],
+      "ci95NsPerOp": [318414, 319598],
       "iqrPct": 0.0031020213373856363,
       "noisy": false
     },
@@ -420,10 +372,7 @@
       "reps": 7,
       "medianNsPerOp": 7726205,
       "minNsPerOp": 7550906,
-      "ci95NsPerOp": [
-        7624307,
-        7744077
-      ],
+      "ci95NsPerOp": [7624307, 7744077],
       "iqrPct": 0.011881577048499231,
       "noisy": false
     },
@@ -441,10 +390,7 @@
       "reps": 7,
       "medianNsPerOp": 1221886,
       "minNsPerOp": 1217375,
-      "ci95NsPerOp": [
-        1220637,
-        1227457
-      ],
+      "ci95NsPerOp": [1220637, 1227457],
       "iqrPct": 0.0031299973974658847,
       "noisy": false
     },
@@ -466,10 +412,7 @@
       "reps": 7,
       "medianNsPerOp": 1054158,
       "minNsPerOp": 1050393,
-      "ci95NsPerOp": [
-        1051197,
-        1065452
-      ],
+      "ci95NsPerOp": [1051197, 1065452],
       "iqrPct": 0.00904608227609144,
       "noisy": false
     },
@@ -487,10 +430,7 @@
       "reps": 7,
       "medianNsPerOp": 342786,
       "minNsPerOp": 341353,
-      "ci95NsPerOp": [
-        341510,
-        344745
-      ],
+      "ci95NsPerOp": [341510, 344745],
       "iqrPct": 0.005663883589178088,
       "noisy": false
     },
@@ -512,10 +452,7 @@
       "reps": 7,
       "medianNsPerOp": 1657815,
       "minNsPerOp": 1654389,
-      "ci95NsPerOp": [
-        1655989,
-        1675459
-      ],
+      "ci95NsPerOp": [1655989, 1675459],
       "iqrPct": 0.007848282226907104,
       "noisy": false
     },
@@ -533,10 +470,7 @@
       "reps": 7,
       "medianNsPerOp": 400838,
       "minNsPerOp": 398976,
-      "ci95NsPerOp": [
-        399787,
-        403579
-      ],
+      "ci95NsPerOp": [399787, 403579],
       "iqrPct": 0.008917567695677555,
       "noisy": false
     },
@@ -558,10 +492,7 @@
       "reps": 7,
       "medianNsPerOp": 4921894,
       "minNsPerOp": 4867131,
-      "ci95NsPerOp": [
-        4905502,
-        4969499
-      ],
+      "ci95NsPerOp": [4905502, 4969499],
       "iqrPct": 0.008578303392962141,
       "noisy": false
     },
@@ -579,10 +510,7 @@
       "reps": 7,
       "medianNsPerOp": 1769030,
       "minNsPerOp": 1757149,
-      "ci95NsPerOp": [
-        1765271,
-        1779522
-      ],
+      "ci95NsPerOp": [1765271, 1779522],
       "iqrPct": 0.006613511359332516,
       "noisy": false
     },
@@ -600,10 +528,7 @@
       "reps": 7,
       "medianNsPerOp": 922589,
       "minNsPerOp": 918539,
-      "ci95NsPerOp": [
-        920801,
-        925529
-      ],
+      "ci95NsPerOp": [920801, 925529],
       "iqrPct": 0.003059325441773097,
       "noisy": false
     },
@@ -621,10 +546,7 @@
       "reps": 7,
       "medianNsPerOp": 1536930,
       "minNsPerOp": 1529960,
-      "ci95NsPerOp": [
-        1534795,
-        1538280
-      ],
+      "ci95NsPerOp": [1534795, 1538280],
       "iqrPct": 0.001784076047705491,
       "noisy": false
     },
@@ -642,10 +564,7 @@
       "reps": 7,
       "medianNsPerOp": 17774176,
       "minNsPerOp": 17689808,
-      "ci95NsPerOp": [
-        17708654,
-        17897056
-      ],
+      "ci95NsPerOp": [17708654, 17897056],
       "iqrPct": 0.006864200061932548,
       "noisy": false
     },
@@ -667,10 +586,7 @@
       "reps": 7,
       "medianNsPerOp": 6678608,
       "minNsPerOp": 6668068,
-      "ci95NsPerOp": [
-        6670186,
-        6736385
-      ],
+      "ci95NsPerOp": [6670186, 6736385],
       "iqrPct": 0.008578958369768071,
       "noisy": false
     },
@@ -688,10 +604,7 @@
       "reps": 7,
       "medianNsPerOp": 305675,
       "minNsPerOp": 304955,
-      "ci95NsPerOp": [
-        305635,
-        306964
-      ],
+      "ci95NsPerOp": [305635, 306964],
       "iqrPct": 0.0032730841580109592,
       "noisy": false
     },
@@ -713,10 +626,7 @@
       "reps": 7,
       "medianNsPerOp": 7860561,
       "minNsPerOp": 7820940,
-      "ci95NsPerOp": [
-        7824656,
-        7953907
-      ],
+      "ci95NsPerOp": [7824656, 7953907],
       "iqrPct": 0.009696063677897798,
       "noisy": false
     },
@@ -734,10 +644,7 @@
       "reps": 7,
       "medianNsPerOp": 362654,
       "minNsPerOp": 357138,
-      "ci95NsPerOp": [
-        358647,
-        366532
-      ],
+      "ci95NsPerOp": [358647, 366532],
       "iqrPct": 0.016678431783463024,
       "noisy": false
     },
@@ -759,10 +666,7 @@
       "reps": 7,
       "medianNsPerOp": 13332723,
       "minNsPerOp": 13058037,
-      "ci95NsPerOp": [
-        13182196,
-        14121828
-      ],
+      "ci95NsPerOp": [13182196, 14121828],
       "iqrPct": 0.06060689928081458,
       "noisy": true
     },
@@ -780,10 +684,7 @@
       "reps": 7,
       "medianNsPerOp": 2153863,
       "minNsPerOp": 1571722,
-      "ci95NsPerOp": [
-        1823483,
-        2423465
-      ],
+      "ci95NsPerOp": [1823483, 2423465],
       "iqrPct": 0.164745390027128,
       "noisy": true
     },
@@ -805,10 +706,7 @@
       "reps": 7,
       "medianNsPerOp": 1766847,
       "minNsPerOp": 1685153,
-      "ci95NsPerOp": [
-        1739999,
-        2020038
-      ],
+      "ci95NsPerOp": [1739999, 2020038],
       "iqrPct": 0.12876298853267998,
       "noisy": true
     },
@@ -826,10 +724,7 @@
       "reps": 7,
       "medianNsPerOp": 301121,
       "minNsPerOp": 296651,
-      "ci95NsPerOp": [
-        297098,
-        338027
-      ],
+      "ci95NsPerOp": [297098, 338027],
       "iqrPct": 0.08112685598148253,
       "noisy": true
     },
@@ -851,10 +746,7 @@
       "reps": 7,
       "medianNsPerOp": 5987764,
       "minNsPerOp": 3738623,
-      "ci95NsPerOp": [
-        4897638,
-        6979249
-      ],
+      "ci95NsPerOp": [4897638, 6979249],
       "iqrPct": 0.27800235613828467,
       "noisy": true
     },
@@ -872,10 +764,7 @@
       "reps": 7,
       "medianNsPerOp": 1452667,
       "minNsPerOp": 521780,
-      "ci95NsPerOp": [
-        660462,
-        1747779
-      ],
+      "ci95NsPerOp": [660462, 1747779],
       "iqrPct": 0.6148611484944588,
       "noisy": true
     },
@@ -897,10 +786,7 @@
       "reps": 7,
       "medianNsPerOp": 7840604,
       "minNsPerOp": 7648244,
-      "ci95NsPerOp": [
-        7690054,
-        8111184
-      ],
+      "ci95NsPerOp": [7690054, 8111184],
       "iqrPct": 0.04023286981462142,
       "noisy": false
     },
@@ -918,10 +804,7 @@
       "reps": 7,
       "medianNsPerOp": 1314152,
       "minNsPerOp": 1305197,
-      "ci95NsPerOp": [
-        1309747,
-        1336339
-      ],
+      "ci95NsPerOp": [1309747, 1336339],
       "iqrPct": 0.014620074390177087,
       "noisy": false
     },
@@ -943,10 +826,7 @@
       "reps": 7,
       "medianNsPerOp": 1475741,
       "minNsPerOp": 1472675,
-      "ci95NsPerOp": [
-        1473732,
-        1482884
-      ],
+      "ci95NsPerOp": [1473732, 1482884],
       "iqrPct": 0.004435737707361929,
       "noisy": false
     },
@@ -964,10 +844,7 @@
       "reps": 7,
       "medianNsPerOp": 679589,
       "minNsPerOp": 544061,
-      "ci95NsPerOp": [
-        650287,
-        890590
-      ],
+      "ci95NsPerOp": [650287, 890590],
       "iqrPct": 0.23514285840412366,
       "noisy": true
     },
@@ -989,10 +866,7 @@
       "reps": 7,
       "medianNsPerOp": 2613550,
       "minNsPerOp": 2565165,
-      "ci95NsPerOp": [
-        2583155,
-        2620025
-      ],
+      "ci95NsPerOp": [2583155, 2620025],
       "iqrPct": 0.01009259436398768,
       "noisy": false
     },
@@ -1010,10 +884,7 @@
       "reps": 7,
       "medianNsPerOp": 323883,
       "minNsPerOp": 322639,
-      "ci95NsPerOp": [
-        322740,
-        325032
-      ],
+      "ci95NsPerOp": [322740, 325032],
       "iqrPct": 0.0053506976284645996,
       "noisy": false
     },
@@ -1035,10 +906,7 @@
       "reps": 7,
       "medianNsPerOp": 7759200,
       "minNsPerOp": 7393648,
-      "ci95NsPerOp": [
-        7555292,
-        7810651
-      ],
+      "ci95NsPerOp": [7555292, 7810651],
       "iqrPct": 0.021755786679039078,
       "noisy": false
     },
@@ -1056,10 +924,7 @@
       "reps": 7,
       "medianNsPerOp": 1212786,
       "minNsPerOp": 1205051,
-      "ci95NsPerOp": [
-        1206874,
-        1279299
-      ],
+      "ci95NsPerOp": [1206874, 1279299],
       "iqrPct": 0.05297719465759004,
       "noisy": true
     },
@@ -1081,10 +946,7 @@
       "reps": 7,
       "medianNsPerOp": 1634497,
       "minNsPerOp": 1601726,
-      "ci95NsPerOp": [
-        1603757,
-        1647436
-      ],
+      "ci95NsPerOp": [1603757, 1647436],
       "iqrPct": 0.02055341796283505,
       "noisy": false
     },
@@ -1106,10 +968,7 @@
       "reps": 7,
       "medianNsPerOp": 2490657,
       "minNsPerOp": 2464365,
-      "ci95NsPerOp": [
-        2466913,
-        2498752
-      ],
+      "ci95NsPerOp": [2466913, 2498752],
       "iqrPct": 0.010584556604943996,
       "noisy": false
     },
@@ -1131,10 +990,7 @@
       "reps": 7,
       "medianNsPerOp": 12830376,
       "minNsPerOp": 12422399,
-      "ci95NsPerOp": [
-        12729636,
-        14518369
-      ],
+      "ci95NsPerOp": [12729636, 14518369],
       "iqrPct": 0.13325685077350813,
       "noisy": true
     },
@@ -1156,10 +1012,7 @@
       "reps": 7,
       "medianNsPerOp": 54126022,
       "minNsPerOp": 49204497,
-      "ci95NsPerOp": [
-        53061212,
-        55926724
-      ],
+      "ci95NsPerOp": [53061212, 55926724],
       "iqrPct": 0.032635411484701386,
       "noisy": false
     },
@@ -1177,10 +1030,7 @@
       "reps": 7,
       "medianNsPerOp": 342956,
       "minNsPerOp": 283597,
-      "ci95NsPerOp": [
-        283728,
-        357982
-      ],
+      "ci95NsPerOp": [283728, 357982],
       "iqrPct": 0.20694928795530623,
       "noisy": true
     },
@@ -1191,20 +1041,14 @@
       "tier": 0,
       "source": null,
       "tune": null,
-      "decodeCap": [
-        32,
-        32
-      ],
+      "decodeCap": [32, 32],
       "threads": null,
       "bytes": 21,
       "iters": 556,
       "reps": 7,
       "medianNsPerOp": 285066,
       "minNsPerOp": 283669,
-      "ci95NsPerOp": [
-        283731,
-        285346
-      ],
+      "ci95NsPerOp": [283731, 285346],
       "iqrPct": 0.00323609269432342,
       "noisy": false
     },
@@ -1222,10 +1066,7 @@
       "reps": 7,
       "medianNsPerOp": 322072,
       "minNsPerOp": 320309,
-      "ci95NsPerOp": [
-        321205,
-        323056
-      ],
+      "ci95NsPerOp": [321205, 323056],
       "iqrPct": 0.004351511463275293,
       "noisy": false
     },
@@ -1236,20 +1077,14 @@
       "tier": 1,
       "source": null,
       "tune": null,
-      "decodeCap": [
-        32,
-        32
-      ],
+      "decodeCap": [32, 32],
       "threads": null,
       "bytes": 32,
       "iters": 493,
       "reps": 7,
       "medianNsPerOp": 321327,
       "minNsPerOp": 319443,
-      "ci95NsPerOp": [
-        320435,
-        321869
-      ],
+      "ci95NsPerOp": [320435, 321869],
       "iqrPct": 0.0031945650381075977,
       "noisy": false
     },
@@ -1267,10 +1102,7 @@
       "reps": 7,
       "medianNsPerOp": 2046614,
       "minNsPerOp": 1312716,
-      "ci95NsPerOp": [
-        1418982,
-        2191322
-      ],
+      "ci95NsPerOp": [1418982, 2191322],
       "iqrPct": 0.29969989455754725,
       "noisy": true
     },
@@ -1281,20 +1113,14 @@
       "tier": 2,
       "source": null,
       "tune": null,
-      "decodeCap": [
-        32,
-        32
-      ],
+      "decodeCap": [32, 32],
       "threads": null,
       "bytes": 108,
       "iters": 259,
       "reps": 7,
       "medianNsPerOp": 540565,
       "minNsPerOp": 534055,
-      "ci95NsPerOp": [
-        538959,
-        906436
-      ],
+      "ci95NsPerOp": [538959, 906436],
       "iqrPct": 0.38946380176297024,
       "noisy": true
     },
@@ -1312,10 +1138,7 @@
       "reps": 7,
       "medianNsPerOp": 16169228,
       "minNsPerOp": 15440276,
-      "ci95NsPerOp": [
-        16138564,
-        16711171
-      ],
+      "ci95NsPerOp": [16138564, 16711171],
       "iqrPct": 0.01991681359184248,
       "noisy": false
     },
@@ -1326,20 +1149,14 @@
       "tier": 3,
       "source": null,
       "tune": null,
-      "decodeCap": [
-        32,
-        32
-      ],
+      "decodeCap": [32, 32],
       "threads": null,
       "bytes": 411,
       "iters": 125,
       "reps": 7,
       "medianNsPerOp": 1658465,
       "minNsPerOp": 1589784,
-      "ci95NsPerOp": [
-        1602403,
-        1677026
-      ],
+      "ci95NsPerOp": [1602403, 1677026],
       "iqrPct": 0.03693143961434218,
       "noisy": false
     },
@@ -1357,10 +1174,7 @@
       "reps": 7,
       "medianNsPerOp": 242324482,
       "minNsPerOp": 238168274,
-      "ci95NsPerOp": [
-        240487044,
-        246699208
-      ],
+      "ci95NsPerOp": [240487044, 246699208],
       "iqrPct": 0.018982031704085103,
       "noisy": false
     },
@@ -1371,20 +1185,14 @@
       "tier": 4,
       "source": null,
       "tune": null,
-      "decodeCap": [
-        32,
-        32
-      ],
+      "decodeCap": [32, 32],
       "threads": null,
       "bytes": 1623,
       "iters": 38,
       "reps": 7,
       "medianNsPerOp": 5168047,
       "minNsPerOp": 5115503,
-      "ci95NsPerOp": [
-        5149761,
-        5233692
-      ],
+      "ci95NsPerOp": [5149761, 5233692],
       "iqrPct": 0.010538507099490387,
       "noisy": false
     },
@@ -1406,10 +1214,7 @@
       "reps": 7,
       "medianNsPerOp": 2507650,
       "minNsPerOp": 2476111,
-      "ci95NsPerOp": [
-        2488837,
-        2529700
-      ],
+      "ci95NsPerOp": [2488837, 2529700],
       "iqrPct": 0.009618567184415687,
       "noisy": false
     },
@@ -1431,10 +1236,7 @@
       "reps": 7,
       "medianNsPerOp": 47319251,
       "minNsPerOp": 46829915,
-      "ci95NsPerOp": [
-        47135021,
-        47880372
-      ],
+      "ci95NsPerOp": [47135021, 47880372],
       "iqrPct": 0.009676178095042122,
       "noisy": false
     },
@@ -1456,10 +1258,7 @@
       "reps": 7,
       "medianNsPerOp": 1564600,
       "minNsPerOp": 1559848,
-      "ci95NsPerOp": [
-        1560901,
-        1566455
-      ],
+      "ci95NsPerOp": [1560901, 1566455],
       "iqrPct": 0.0027240189185734373,
       "noisy": false
     },
@@ -1481,10 +1280,7 @@
       "reps": 7,
       "medianNsPerOp": 46628551,
       "minNsPerOp": 46416934,
-      "ci95NsPerOp": [
-        46486625,
-        46815965
-      ],
+      "ci95NsPerOp": [46486625, 46815965],
       "iqrPct": 0.0053846622855597635,
       "noisy": false
     },
@@ -1506,10 +1302,7 @@
       "reps": 7,
       "medianNsPerOp": 1567925,
       "minNsPerOp": 1556262,
-      "ci95NsPerOp": [
-        1559374,
-        1571897
-      ],
+      "ci95NsPerOp": [1559374, 1571897],
       "iqrPct": 0.006006345966803259,
       "noisy": false
     },
@@ -1531,10 +1324,7 @@
       "reps": 7,
       "medianNsPerOp": 46415045,
       "minNsPerOp": 45952570,
-      "ci95NsPerOp": [
-        46199238,
-        49079180
-      ],
+      "ci95NsPerOp": [46199238, 49079180],
       "iqrPct": 0.03754387182001009,
       "noisy": false
     },
@@ -1556,10 +1346,7 @@
       "reps": 7,
       "medianNsPerOp": 1760680,
       "minNsPerOp": 1740970,
-      "ci95NsPerOp": [
-        1755717,
-        1785645
-      ],
+      "ci95NsPerOp": [1755717, 1785645],
       "iqrPct": 0.012024047527091805,
       "noisy": false
     },
@@ -1581,10 +1368,7 @@
       "reps": 7,
       "medianNsPerOp": 47039751,
       "minNsPerOp": 46171182,
-      "ci95NsPerOp": [
-        46932697,
-        47600095
-      ],
+      "ci95NsPerOp": [46932697, 47600095],
       "iqrPct": 0.008634271894849103,
       "noisy": false
     },
@@ -1606,10 +1390,7 @@
       "reps": 7,
       "medianNsPerOp": 2465685,
       "minNsPerOp": 2456621,
-      "ci95NsPerOp": [
-        2457297,
-        2493160
-      ],
+      "ci95NsPerOp": [2457297, 2493160],
       "iqrPct": 0.010617536303299082,
       "noisy": false
     },
@@ -1631,10 +1412,7 @@
       "reps": 7,
       "medianNsPerOp": 47448979,
       "minNsPerOp": 47092661,
-      "ci95NsPerOp": [
-        47300615,
-        48005298
-      ],
+      "ci95NsPerOp": [47300615, 48005298],
       "iqrPct": 0.01116128336502246,
       "noisy": false
     },
@@ -1656,10 +1434,7 @@
       "reps": 7,
       "medianNsPerOp": 1554197,
       "minNsPerOp": 1539724,
-      "ci95NsPerOp": [
-        1546042,
-        1570779
-      ],
+      "ci95NsPerOp": [1546042, 1570779],
       "iqrPct": 0.01120836033012546,
       "noisy": false
     },
@@ -1681,10 +1456,7 @@
       "reps": 7,
       "medianNsPerOp": 47343481,
       "minNsPerOp": 46414228,
-      "ci95NsPerOp": [
-        46813185,
-        47740391
-      ],
+      "ci95NsPerOp": [46813185, 47740391],
       "iqrPct": 0.018757967966064854,
       "noisy": false
     },
@@ -1706,10 +1478,7 @@
       "reps": 7,
       "medianNsPerOp": 20716841,
       "minNsPerOp": 20271519,
-      "ci95NsPerOp": [
-        20376573,
-        20880931
-      ],
+      "ci95NsPerOp": [20376573, 20880931],
       "iqrPct": 0.014646489780946815,
       "noisy": false
     },
@@ -1731,10 +1500,7 @@
       "reps": 7,
       "medianNsPerOp": 510190444,
       "minNsPerOp": 507265407,
-      "ci95NsPerOp": [
-        507656467,
-        517924829
-      ],
+      "ci95NsPerOp": [507656467, 517924829],
       "iqrPct": 0.011075629828927177,
       "noisy": false
     },
@@ -1756,10 +1522,7 @@
       "reps": 7,
       "medianNsPerOp": 12510517,
       "minNsPerOp": 12363146,
-      "ci95NsPerOp": [
-        12470899,
-        12676623
-      ],
+      "ci95NsPerOp": [12470899, 12676623],
       "iqrPct": 0.013352845449952229,
       "noisy": false
     },
@@ -1781,10 +1544,7 @@
       "reps": 7,
       "medianNsPerOp": 12574338,
       "minNsPerOp": 12390112,
-      "ci95NsPerOp": [
-        12500653,
-        12610155
-      ],
+      "ci95NsPerOp": [12500653, 12610155],
       "iqrPct": 0.006516565722982793,
       "noisy": false
     },
@@ -1806,10 +1566,7 @@
       "reps": 7,
       "medianNsPerOp": 11987819,
       "minNsPerOp": 11560300,
-      "ci95NsPerOp": [
-        11576928,
-        12060129
-      ],
+      "ci95NsPerOp": [11576928, 12060129],
       "iqrPct": 0.02909657711715534,
       "noisy": false
     },
@@ -1831,10 +1588,7 @@
       "reps": 7,
       "medianNsPerOp": 2515612,
       "minNsPerOp": 2501449,
-      "ci95NsPerOp": [
-        2503637,
-        2529146
-      ],
+      "ci95NsPerOp": [2503637, 2529146],
       "iqrPct": 0.006343188059207859,
       "noisy": false
     },
@@ -1856,10 +1610,7 @@
       "reps": 7,
       "medianNsPerOp": 49409445,
       "minNsPerOp": 48813432,
-      "ci95NsPerOp": [
-        48870416,
-        49744275
-      ],
+      "ci95NsPerOp": [48870416, 49744275],
       "iqrPct": 0.014602005750115185,
       "noisy": false
     },
@@ -1881,10 +1632,7 @@
       "reps": 7,
       "medianNsPerOp": 493979667,
       "minNsPerOp": 492050928,
-      "ci95NsPerOp": [
-        493384437,
-        496695675
-      ],
+      "ci95NsPerOp": [493384437, 496695675],
       "iqrPct": 0.00564406429303496,
       "noisy": false
     },
@@ -1906,10 +1654,7 @@
       "reps": 7,
       "medianNsPerOp": 43120158,
       "minNsPerOp": 42052179,
-      "ci95NsPerOp": [
-        42114059,
-        43876218
-      ],
+      "ci95NsPerOp": [42114059, 43876218],
       "iqrPct": 0.03598638251742955,
       "noisy": false
     },
@@ -1931,10 +1676,7 @@
       "reps": 7,
       "medianNsPerOp": 503420970,
       "minNsPerOp": 501024842,
-      "ci95NsPerOp": [
-        501160601,
-        513231182
-      ],
+      "ci95NsPerOp": [501160601, 513231182],
       "iqrPct": 0.014563098156201161,
       "noisy": false
     },
@@ -1956,10 +1698,7 @@
       "reps": 7,
       "medianNsPerOp": 44278407,
       "minNsPerOp": 42830328,
-      "ci95NsPerOp": [
-        43041959,
-        45711717
-      ],
+      "ci95NsPerOp": [43041959, 45711717],
       "iqrPct": 0.05443778724921156,
       "noisy": true
     },
@@ -1981,10 +1720,7 @@
       "reps": 7,
       "medianNsPerOp": 498030884,
       "minNsPerOp": 492809197,
-      "ci95NsPerOp": [
-        493733217,
-        501134102
-      ],
+      "ci95NsPerOp": [493733217, 501134102],
       "iqrPct": 0.008630443689512235,
       "noisy": false
     },
@@ -2006,10 +1742,7 @@
       "reps": 7,
       "medianNsPerOp": 42491748,
       "minNsPerOp": 40236661,
-      "ci95NsPerOp": [
-        41424270,
-        42896708
-      ],
+      "ci95NsPerOp": [41424270, 42896708],
       "iqrPct": 0.02005079903985122,
       "noisy": false
     },
@@ -2031,10 +1764,7 @@
       "reps": 7,
       "medianNsPerOp": 342925878,
       "minNsPerOp": 340063450,
-      "ci95NsPerOp": [
-        341137480,
-        345715615
-      ],
+      "ci95NsPerOp": [341137480, 345715615],
       "iqrPct": 0.007541052355343098,
       "noisy": false
     },
@@ -2056,10 +1786,7 @@
       "reps": 7,
       "medianNsPerOp": 1581224868,
       "minNsPerOp": 1563554081,
-      "ci95NsPerOp": [
-        1573200893,
-        1598406445
-      ],
+      "ci95NsPerOp": [1573200893, 1598406445],
       "iqrPct": 0.011863180803452934,
       "noisy": false
     },
@@ -2081,10 +1808,7 @@
       "reps": 7,
       "medianNsPerOp": 534123737,
       "minNsPerOp": 517420120,
-      "ci95NsPerOp": [
-        523469705,
-        564781985
-      ],
+      "ci95NsPerOp": [523469705, 564781985],
       "iqrPct": 0.04877569408603161,
       "noisy": false
     },
@@ -2106,10 +1830,7 @@
       "reps": 7,
       "medianNsPerOp": 223145366,
       "minNsPerOp": 80027311,
-      "ci95NsPerOp": [
-        123462580,
-        238970934
-      ],
+      "ci95NsPerOp": [123462580, 238970934],
       "iqrPct": 0.34747621870848083,
       "noisy": true
     },
@@ -2131,10 +1852,7 @@
       "reps": 7,
       "medianNsPerOp": 499905100,
       "minNsPerOp": 491284100,
-      "ci95NsPerOp": [
-        496303400,
-        505950400
-      ],
+      "ci95NsPerOp": [496303400, 505950400],
       "iqrPct": 0.013654191565559142,
       "noisy": false
     },
@@ -2156,10 +1874,7 @@
       "reps": 7,
       "medianNsPerOp": 42659700,
       "minNsPerOp": 41396700,
-      "ci95NsPerOp": [
-        41773600,
-        44166200
-      ],
+      "ci95NsPerOp": [41773600, 44166200],
       "iqrPct": 0.031179309746669572,
       "noisy": false
     }
