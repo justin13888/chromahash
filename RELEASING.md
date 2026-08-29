@@ -111,18 +111,23 @@ probed on 2026-08-29; ✅ means a release has actually landed there.
 
 | Registry | Published | Bootstrap still needed |
 |---|---|---|
-| crates.io | ✅ 0.6.0 | — |
-| PyPI | ✅ 0.6.0 | — |
-| NuGet | ✅ 0.6.0 | — |
-| Go proxy | ✅ v0.6.0 | — |
-| Maven Central | ✅ 0.6.0, under the old `io.github.justin13888` | namespace verified 2026-08-28; first publish under `io.github.visualcommons` is 0.7.1 |
-| npm | ⚠️ 0.7.0 — name claimed, tarball broken (no `wasm/`) | **add the trusted publisher, and deprecate 0.7.0** |
-| Swift Package Index | — (tag-based) | submit the repo once |
+| crates.io | ✅ 0.6.0 | **re-point trusted publishing at `visualcommons/chromahash`** |
+| PyPI | ✅ 0.6.0 | **re-point the publisher at `visualcommons/chromahash`** |
+| NuGet | ✅ 0.6.0 | **re-create the trust policy for `visualcommons/chromahash`** |
+| Go proxy | ✅ v0.7.1 | — |
+| Maven Central | ✅ 0.7.1 under `io.github.visualcommons` | — |
+| npm | ✅ 0.7.1 (0.7.0 broken — no `wasm/`) | **deprecate 0.7.0** |
+| Swift Package Index | ✅ v0.7.1 release + xcframework | submit the repo once |
 
-**One blocker before `v0.7.1` publishes everywhere**, and it needs the
-maintainer's npm account — it cannot be done from the repo:
+> **Renaming the GitHub org invalidates every trusted-publishing policy.** A
+> policy is keyed on the repository's `owner/name`, so `justin13888` →
+> `visualcommons` silently voided the crates.io, PyPI and NuGet configs that the
+> table above had recorded as "already live". Nothing warns you: each workflow
+> builds fine and fails at its *auth* step, so nothing half-publishes — but the
+> v0.7.1 tag went out with three of eight registries dead. On the next org or
+> repo rename, re-point all four policies (npm included) before tagging.
 
-**npm.** The name is claimed but the published artifact is unusable. Run
+**npm** (resolved, with one artifact left behind). Run
 28472417808 first failed with `E404 … PUT` against the then-current name
 `@chromahash/typescript`, whose scope did not exist; it was renamed to
 `@visualcommons/chromahash`, matching the GitHub org and the
@@ -132,24 +137,22 @@ directory**, and since `dist/index.js` re-exports from `../wasm/chromahash_wasm.
 every import from it fails. npm forbids republishing a version, so 0.7.0 is spent
 — hence 0.7.1.
 
-Two account actions, both on npmjs.com — **no second manual publish is needed**:
+The trusted publisher was added on 2026-08-29 (repo `visualcommons/chromahash`,
+workflow `release-npm.yml`, no environment), and `v0.7.1` published over OIDC with
+provenance — no second manual publish was needed, and the workflow's "Drop
+wasm-pack's .gitignore" step shipped the runtime the manual publish had dropped
+(88 KB tarball, 8 `wasm/` entries). One account action remains: deprecate the
+broken version so consumers are steered off it.
 
-1. Add the trusted publisher on the package's settings page: repo
-   `visualcommons/chromahash`, workflow `release-npm.yml`, no environment. This
-   is what the claim publish was for; the package now exists, so the policy will
-   attach. From 0.7.1 on, CI publishes over OIDC with provenance and no stored
-   token — and its "Drop wasm-pack's .gitignore" step avoids the trap that broke
-   the manual publish.
-2. Deprecate the broken version so consumers are steered off it:
+```bash
+npm deprecate @visualcommons/chromahash@0.7.0 \
+  "Published without the wasm/ runtime and is unusable; use 0.7.1 or later."
+```
 
-   ```bash
-   npm deprecate @visualcommons/chromahash@0.7.0 \
-     "Published without the wasm/ runtime and is unusable; use 0.7.1 or later."
-   ```
-
-Do **not** `npm unpublish` it: 0.7.0 is the package's only version, so
-unpublishing removes the package and npm blocks re-registering the name for 24
-hours, stalling the release a full day.
+Deprecate rather than `npm unpublish`. Had it been unpublished before 0.7.1
+existed it would have taken the whole package with it — npm then blocks
+re-registering the name for 24 hours — and an unpublished version can never be
+republished either way, so removal buys nothing a deprecation notice does not.
 
 > **The trap, for any future manual publish.** `wasm-pack` writes a `.gitignore`
 > containing `*` into its out-dir, and npm's packlist honours nested `.gitignore`
@@ -174,18 +177,26 @@ hours, stalling the release a full day.
 
 **Sonatype** (resolved). The `justin13888` → `visualcommons` migration changed
 the Maven `groupId` to `io.github.visualcommons`; that namespace was verified at
-central.sonatype.com on 2026-08-28. `repo1.maven.org/maven2/io/github/visualcommons/`
-still 404s and will until the first artifact lands — verification does not create
-the path. This does orphan the published `io.github.justin13888` 0.6.0 artifacts:
+central.sonatype.com on 2026-08-28; `v0.7.1` is the first release under it. Both
+workflows run `publishAndReleaseToMavenCentral`, which auto-releases on the Portal
+— no manual "Publish" click — but `repo1.maven.org` lags the Portal by up to ~30
+minutes, so a 404 right after a green run is expected. This does orphan the published `io.github.justin13888` 0.6.0 artifacts:
 consumers must change their coordinates, which is a release-note item.
 
 The rest:
 
+- **crates.io** — Trusted Publishing config for crate `chromahash` → repo
+  `visualcommons/chromahash` + workflow `release-rust.yml`. The v0.7.1 run failed
+  with `No Trusted Publishing config found for repository visualcommons/chromahash`
+  because the config still named the old repo.
 - **PyPI** — *pending publisher* for project `chromahash` → repo + workflow
-  `release-pypi.yml`. Already live.
+  `release-pypi.yml`. The v0.7.1 run failed with `invalid-publisher: valid token,
+  but no corresponding publisher` for the same reason.
 - **NuGet** — trusted-publishing policy for `ChromaHash` → repo + workflow
   `release-nuget.yml`, with the `NUGET_USER` secret set to the owning account.
-  Already live.
+  The v0.7.1 run failed with HTTP 401 `No matching trust policy owned by user …`;
+  note the error's own hint — the secret must be the policy *creator*, not the
+  policy owner.
 - **JVM/Android** — GPG signing plus `MAVEN_CENTRAL_USERNAME`/`PASSWORD`
   (see the `just android-*` recipes), on top of the namespace above.
 - **Swift Package Index** — submit the repo once at
