@@ -111,9 +111,9 @@ probed on 2026-08-29; ✅ means a release has actually landed there.
 
 | Registry | Published | Bootstrap still needed |
 |---|---|---|
-| crates.io | ✅ 0.6.0 | **re-point trusted publishing at `visualcommons/chromahash`** |
-| PyPI | ✅ 0.6.0 | **re-point the publisher at `visualcommons/chromahash`** |
-| NuGet | ✅ 0.6.0 | **re-create the trust policy for `visualcommons/chromahash`** |
+| crates.io | ✅ 0.7.1 | — (re-pointed 2026-08-29) |
+| PyPI | ✅ 0.7.1 | — (re-pointed 2026-08-29) |
+| NuGet | ✅ 0.7.1 | — (re-pointed 2026-08-29) |
 | Go proxy | ✅ v0.7.1 | — |
 | Maven Central | ✅ 0.7.1 under `io.github.visualcommons` | — |
 | npm | ✅ 0.7.1 (0.7.0 broken — no `wasm/`) | **deprecate 0.7.0** |
@@ -124,8 +124,10 @@ probed on 2026-08-29; ✅ means a release has actually landed there.
 > `visualcommons` silently voided the crates.io, PyPI and NuGet configs that the
 > table above had recorded as "already live". Nothing warns you: each workflow
 > builds fine and fails at its *auth* step, so nothing half-publishes — but the
-> v0.7.1 tag went out with three of eight registries dead. On the next org or
-> repo rename, re-point all four policies (npm included) before tagging.
+> v0.7.1 tag went out with three of eight registries dead. Re-pointing all three
+> and re-running the failed workflows (`gh run rerun <id>` — no re-tag needed,
+> they are idempotent) published them. On the next org or repo rename, re-point
+> all four policies (npm included) *before* tagging.
 
 **npm** (resolved, with one artifact left behind). Run
 28472417808 first failed with `E404 … PUT` against the then-current name
@@ -186,15 +188,16 @@ consumers must change their coordinates, which is a release-note item.
 The rest:
 
 - **crates.io** — Trusted Publishing config for crate `chromahash` → repo
-  `visualcommons/chromahash` + workflow `release-rust.yml`. The v0.7.1 run failed
-  with `No Trusted Publishing config found for repository visualcommons/chromahash`
-  because the config still named the old repo.
+  `visualcommons/chromahash` + workflow `release-rust.yml`. Re-pointed 2026-08-29;
+  the first v0.7.1 run had failed with `No Trusted Publishing config found for
+  repository visualcommons/chromahash` because the config still named the old repo.
 - **PyPI** — *pending publisher* for project `chromahash` → repo + workflow
-  `release-pypi.yml`. The v0.7.1 run failed with `invalid-publisher: valid token,
-  but no corresponding publisher` for the same reason.
+  `release-pypi.yml`. Re-pointed 2026-08-29; the first v0.7.1 run had failed with
+  `invalid-publisher: valid token, but no corresponding publisher`, same reason.
 - **NuGet** — trusted-publishing policy for `ChromaHash` → repo + workflow
   `release-nuget.yml`, with the `NUGET_USER` secret set to the owning account.
-  The v0.7.1 run failed with HTTP 401 `No matching trust policy owned by user …`;
+  Re-pointed 2026-08-29; the first v0.7.1 run had failed with HTTP 401
+  `No matching trust policy owned by user …`;
   note the error's own hint — the secret must be the policy *creator*, not the
   policy owner.
 - **JVM/Android** — GPG signing plus `MAVEN_CENTRAL_USERNAME`/`PASSWORD`
