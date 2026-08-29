@@ -34,6 +34,81 @@ private fun tierFromEnv(): UByte {
     return tier!!
 }
 
+/**
+ * Fail loudly if asked for a knob only the Rust harness has.
+ *
+ * `CHROMAHASH_TUNE` overrides format constants through `chromahash::Tunables`,
+ * which no binding exposes; `CHROMAHASH_OUT` selects a decode output gamut this
+ * CLI does not implement. Ignoring either silently is the dangerous failure: a
+ * sweep would label shipped-default numbers as an ablation and nothing
+ * downstream could tell.
+ */
+private fun rejectRustOnlyEnv() {
+    for (key in listOf("CHROMAHASH_TUNE", "CHROMAHASH_OUT")) {
+        if (!System.getenv(key).isNullOrEmpty()) {
+            System.err.println(
+                "$key is not supported by this harness (Rust-only); refusing to " +
+                    "report numbers that would be silently mislabelled",
+            )
+            System.exit(1)
+        }
+    }
+}
+
+private fun benchEnvLong(
+    key: String,
+    fallback: Long,
+): Long {
+    val raw = System.getenv(key)
+    if (raw.isNullOrEmpty()) return fallback
+    val value = raw.toLongOrNull()
+    if (value == null) {
+        System.err.println("$key: invalid value '$raw'")
+        System.exit(1)
+    }
+    return value!!
+}
+
+/**
+ * Warm up for `CHROMAHASH_BENCH_WARMUP_MS`, then run `CHROMAHASH_BENCH_REPS`
+ * timed blocks of [iters] iterations, printing one mean-ns/op line per block on
+ * stdout. Everything else goes to stderr.
+ *
+ * Warmup is time-based rather than count-based because this contract is shared
+ * across seven harnesses whose per-op costs differ by two orders of magnitude,
+ * and because C2 needs wall-clock time rather than a trip count to settle. The
+ * accumulator is written out at the end so the timed work cannot be elided.
+ */
+private fun runBench(
+    iters: Int,
+    op: () -> Byte,
+) {
+    val reps = maxOf(1L, benchEnvLong("CHROMAHASH_BENCH_REPS", 1))
+    val warmupMs = benchEnvLong("CHROMAHASH_BENCH_WARMUP_MS", 0)
+    val n = maxOf(1, iters)
+    var acc = 0
+
+    // At least one iteration, so the default also validates the input before the
+    // first timed block.
+    val warmStart = System.nanoTime()
+    do {
+        acc = acc xor (op().toInt() and 0xFF)
+    } while ((System.nanoTime() - warmStart) / 1_000_000 < warmupMs)
+
+    val out = StringBuilder()
+    for (r in 0 until reps) {
+        val start = System.nanoTime()
+        for (i in 0 until n) {
+            acc = acc xor (op().toInt() and 0xFF)
+        }
+        out.append((System.nanoTime() - start) / n).append('\n')
+    }
+    print(out)
+    System.out.flush()
+    System.err.println("checksum=${Integer.toHexString(acc)}")
+    System.err.println("iters=$n")
+}
+
 private fun parseGamut(s: String): Gamut =
     when (s) {
         "srgb" -> Gamut.SRGB
@@ -56,6 +131,10 @@ fun main(args: Array<String>) {
         System.err.println("  chromahash average-color")
         System.err.println("  chromahash batch-encode <width> <height> <gamut> <count>")
         System.err.println("  chromahash batch-decode <count>")
+        System.err.println("  chromahash bench-encode <width> <height> <gamut> <iters>")
+        System.err.println("  chromahash bench-decode <iters> [max_width max_height]")
+        System.err.println("  chromahash bench-batch <width> <height> <gamut> <count>")
+        System.err.println("  chromahash bench-info")
         System.exit(1)
     }
 
@@ -128,6 +207,69 @@ fun main(args: Array<String>) {
             repeat(count) { acc = acc xor (ch.decode().rgba[0].toInt() and 0xFF) }
             System.out.write(byteArrayOf(acc.toByte()))
             System.out.flush()
+        }
+        "bench-encode" -> {
+            if (args.size != 5) {
+                System.err.println("Usage: chromahash bench-encode <width> <height> <gamut> <iters>")
+                System.exit(1)
+            }
+            rejectRustOnlyEnv()
+            val w = args[1].toInt()
+            val h = args[2].toInt()
+            val gamut = parseGamut(args[3])
+            val iters = args[4].toInt()
+            val rgba = System.`in`.readNBytes(w * h * 4)
+            val tier = tierFromEnv()
+            runBench(iters) {
+                ChromaHash.encodeWithQuality(w.toUInt(), h.toUInt(), rgba, gamut, tier).asBytes()[0]
+            }
+        }
+        "bench-decode" -> {
+            if (args.size != 2 && args.size != 4) {
+                System.err.println("Usage: chromahash bench-decode <iters> [max_width max_height]")
+                System.exit(1)
+            }
+            rejectRustOnlyEnv()
+            val iters = args[1].toInt()
+            val ch = ChromaHash.fromBytes(System.`in`.readBytes())
+            if (args.size == 4) {
+                val maxW = args[2].toUInt()
+                val maxH = args[3].toUInt()
+                runBench(iters) {
+                    val r = ch.decodeCapped(maxW, maxH)
+                    (r.rgba[0].toInt() xor r.width.toInt() xor r.height.toInt()).toByte()
+                }
+            } else {
+                runBench(iters) {
+                    val r = ch.decode()
+                    (r.rgba[0].toInt() xor r.width.toInt() xor r.height.toInt()).toByte()
+                }
+            }
+        }
+        "bench-batch" -> {
+            if (args.size != 5) {
+                System.err.println("Usage: chromahash bench-batch <width> <height> <gamut> <count>")
+                System.exit(1)
+            }
+            rejectRustOnlyEnv()
+            val w = args[1].toInt()
+            val h = args[2].toInt()
+            val gamut = parseGamut(args[3])
+            val count = args[4].toInt()
+            val rgba = System.`in`.readNBytes(w * h * 4)
+            val tier = tierFromEnv()
+            val items = List(count) { ImageInput(w.toUInt(), h.toUInt(), rgba, gamut, tier) }
+            val threads = benchEnvLong("CHROMAHASH_BATCH_THREADS", 0)
+            val encoder =
+                if (threads > 0) BatchEncoder.withThreads(threads.toUInt()) else BatchEncoder()
+            // One batch is one iteration, so the printed number is ns per batch.
+            encoder.use { enc -> runBench(1) { enc.encodeBatch(items)[0].asBytes()[0] } }
+        }
+        "bench-info" -> {
+            println("runtime=kotlin")
+            println("java_version=${System.getProperty("java.version")}")
+            println("jvm=${System.getProperty("java.vm.name")}")
+            println("threads=${Runtime.getRuntime().availableProcessors()}")
         }
         else -> {
             System.err.println("unknown subcommand: ${args[0]}")
