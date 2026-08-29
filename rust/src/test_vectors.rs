@@ -468,6 +468,57 @@ mod tests {
                     gradient_image(320, 20),
                     Gamut::Srgb,
                 ),
+                // v0.7.2: the two source gamuts no shared vector reached. Adobe
+                // RGB is the gamma-2.2 EOTF arm and BT.2020 the PQ + Reinhard
+                // one; both were pinned only by this crate's own goldens, so a
+                // binding that got either wrong still passed the parity gate.
+                // Same pixels as solid_p3_4x4, so a diff isolates the gamut.
+                (
+                    "solid_adobe_4x4",
+                    4,
+                    4,
+                    solid_image(4, 4, 200, 100, 50, 255),
+                    Gamut::AdobeRgb,
+                ),
+                (
+                    "solid_bt2020_4x4",
+                    4,
+                    4,
+                    solid_image(4, 4, 200, 100, 50, 255),
+                    Gamut::Bt2020,
+                ),
+                // v0.7.2: a colour whose OKLAB chroma runs past MAX_CHROMA_A and
+                // MAX_CHROMA_B, so the DC clamp in quantize_c_dc is exercised
+                // across languages rather than in the reference alone. ProPhoto
+                // blue clamps on both axes at once.
+                (
+                    "solid_out_of_gamut_4x4",
+                    4,
+                    4,
+                    solid_image(4, 4, 0, 0, 255, 255),
+                    Gamut::ProPhotoRgb,
+                ),
+                // v0.7.2: fully transparent. The alpha-weighted average has a
+                // zero weight sum here and must fall back to black rather than
+                // divide by zero — pinned by a core unit test and a property,
+                // but by no vector any other language replays.
+                (
+                    "transparent_4x4",
+                    4,
+                    4,
+                    solid_image(4, 4, 0, 0, 0, 0),
+                    Gamut::Srgb,
+                ),
+                // v0.7.2: uniform partial alpha. Distinct from the checkerboard
+                // case in that the alpha plane is flat, so its AC is zero while
+                // the flag is still set.
+                (
+                    "uniform_alpha_8x8",
+                    8,
+                    8,
+                    solid_image(8, 8, 200, 60, 40, 128),
+                    Gamut::Srgb,
+                ),
             ];
 
             // Every image is pinned at tier 0; a representative subset (gradients,
@@ -522,13 +573,18 @@ mod tests {
         {
             let mut cases = Vec::new();
 
-            let test_hashes: Vec<(&str, u32, u32, Vec<u8>, Gamut)> = vec![
+            // The tier is explicit so the decode vectors are not all pinned at
+            // the default. Every pre-existing entry passes DEFAULT_TIER, so its
+            // bytes are unchanged — the diff on regeneration must be a pure
+            // insertion.
+            let test_hashes: Vec<(&str, u32, u32, Vec<u8>, Gamut, u8)> = vec![
                 (
                     "solid_gray_4x4",
                     4,
                     4,
                     solid_image(4, 4, 128, 128, 128, 255),
                     Gamut::Srgb,
+                    DEFAULT_TIER,
                 ),
                 (
                     "solid_red_4x4",
@@ -536,6 +592,7 @@ mod tests {
                     4,
                     solid_image(4, 4, 255, 0, 0, 255),
                     Gamut::Srgb,
+                    DEFAULT_TIER,
                 ),
                 (
                     "gradient_16x16",
@@ -543,6 +600,7 @@ mod tests {
                     16,
                     gradient_image(16, 16),
                     Gamut::Srgb,
+                    DEFAULT_TIER,
                 ),
                 (
                     "checkerboard_alpha_8x8",
@@ -550,6 +608,7 @@ mod tests {
                     8,
                     checkerboard_alpha(8, 8),
                     Gamut::Srgb,
+                    DEFAULT_TIER,
                 ),
                 // v0.2: panorama decode
                 (
@@ -558,6 +617,7 @@ mod tests {
                     50,
                     gradient_image(200, 50),
                     Gamut::Srgb,
+                    DEFAULT_TIER,
                 ),
                 // v0.6: solid corner color — DC search + exact-zero quantizer
                 // must reproduce it almost exactly (v0.5 decoded (0,58,214))
@@ -567,6 +627,7 @@ mod tests {
                     4,
                     solid_image(4, 4, 0, 0, 255, 255),
                     Gamut::Srgb,
+                    DEFAULT_TIER,
                 ),
                 // v0.6: 1-px-wide strip decodes as a clean vertical profile
                 (
@@ -575,11 +636,44 @@ mod tests {
                     100,
                     strip_gradient(1, 100),
                     Gamut::Srgb,
+                    DEFAULT_TIER,
+                ),
+                // v0.7.2: the only byte-exact tier-4 decode oracle in any
+                // language. Deliberately a 16:1 source: decode_output_size
+                // clamps to 256x16 = 4096 px, where a square tier-4 case would
+                // render 256x256 and add ~3.5 MB of JSON. The full 1623-byte
+                // payload is still read either way — the AC read loop runs
+                // before the render-raster frequency filter — so every tier-4
+                // bit offset is exercised at a fraction of the size.
+                (
+                    "strip_100x1_t4_decode",
+                    100,
+                    1,
+                    strip_gradient(100, 1),
+                    Gamut::Srgb,
+                    MAX_TIER,
+                ),
+                // v0.7.2: decode halves of the two alpha gaps added above.
+                (
+                    "transparent_4x4_decode",
+                    4,
+                    4,
+                    solid_image(4, 4, 0, 0, 0, 0),
+                    Gamut::Srgb,
+                    DEFAULT_TIER,
+                ),
+                (
+                    "uniform_alpha_8x8_decode",
+                    8,
+                    8,
+                    solid_image(8, 8, 200, 60, 40, 128),
+                    Gamut::Srgb,
+                    DEFAULT_TIER,
                 ),
             ];
 
-            for (name, w, h, rgba, gamut) in &test_hashes {
-                let hash = ChromaHash::encode(*w, *h, rgba, *gamut);
+            for (name, w, h, rgba, gamut, tier) in &test_hashes {
+                let hash = ChromaHash::encode_with_quality(*w, *h, rgba, *gamut, *tier);
                 let (dw, dh, decoded_rgba) = hash.decode();
                 let bytes: Vec<String> = hash.as_bytes().iter().map(|b| b.to_string()).collect();
                 let decoded_str: Vec<String> = decoded_rgba.iter().map(|b| b.to_string()).collect();

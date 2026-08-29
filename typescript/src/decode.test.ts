@@ -113,7 +113,10 @@ interface EncodeVector {
 describe("pure-TS averageColor (spec vectors)", () => {
   const vectors = loadVectors<EncodeVector[]>("integration-encode.json");
 
-  for (const vec of vectors.slice(0, 64)) {
+  // Every vector, not a prefix. This was `.slice(0, 64)` with no explanation,
+  // which silently stopped covering the tail the moment the corpus grew past 64
+  // — it is at 58 and rising.
+  for (const vec of vectors) {
     it(`average color ${vec.name}`, () => {
       const avg = averageColor(new Uint8Array(vec.expected.hash));
       assert.equal(avg.r, vec.expected.average_color[0], "R mismatch");
@@ -169,16 +172,37 @@ describe("pure-TS decode matches WASM exactly (sync guard)", () => {
       state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
       return state;
     };
-    const tiers = [COMPACT_TIER, DEFAULT_TIER, 2];
-    for (let n = 0; n < 256; n++) {
-      const tier = tiers[n % tiers.length] as number;
-      const hasAlpha = (n & 1) === 1;
-      const len = bodyLenBytes(tier, hasAlpha);
-      const hash = new Uint8Array(len);
-      for (let i = 0; i < len; i++) hash[i] = next() & 0xff;
-      // version 0, the chosen tier, the chosen alpha flag, reserved bit clear.
-      hash[0] = (tier << 3) | (hasAlpha ? 1 << 6 : 0);
-      assertExactDecode(hash, `fuzz#${n} (tier ${tier}, alpha ${hasAlpha})`);
+    // Every shipped tier. This covered only [COMPACT_TIER, DEFAULT_TIER, 2], so
+    // the pure-TS decoder — the one genuine second implementation of the
+    // algorithm — had never been cross-checked against WebAssembly above tier 2.
+    //
+    // Case counts fall steeply with tier because cost rises ~16x per level: a
+    // tier-4 case renders 256x256 through *both* implementations. Measured on
+    // this suite, an even 5-way split over 256 cases cost 53 s, and this plan
+    // costs about a quarter of that — on a suite that runs in the pre-push gate.
+    //
+    // The cheap tiers keep broad randomized coverage. The expensive ones are
+    // here to reach the code path at all: what a high tier can break that a low
+    // one cannot is the bit offsets of a 1623-byte payload and the shifted
+    // render raster, and a handful of cases pins both. Volume adds little.
+    const fuzzPlan: ReadonlyArray<readonly [number, number]> = [
+      [COMPACT_TIER, 90],
+      [DEFAULT_TIER, 90],
+      [2, 48],
+      [3, 8],
+      [4, 4],
+    ];
+    let n = 0;
+    for (const [tier, count] of fuzzPlan) {
+      for (let i = 0; i < count; i++, n++) {
+        const hasAlpha = (n & 1) === 1;
+        const len = bodyLenBytes(tier, hasAlpha);
+        const hash = new Uint8Array(len);
+        for (let j = 0; j < len; j++) hash[j] = next() & 0xff;
+        // version 0, the chosen tier, the chosen alpha flag, reserved bit clear.
+        hash[0] = (tier << 3) | (hasAlpha ? 1 << 6 : 0);
+        assertExactDecode(hash, `fuzz#${n} (tier ${tier}, alpha ${hasAlpha})`);
+      }
     }
   });
 
