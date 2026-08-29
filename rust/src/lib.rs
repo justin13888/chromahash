@@ -140,6 +140,13 @@ pub use constants::{
 #[doc(hidden)]
 pub use encode::{CoeffDump, encode_debug_coefficients};
 
+/// Per-stage encode timing for `mise run benchmark:stages`. Compiled only under
+/// the off-by-default `bench-internals` feature, so this is not part of the
+/// published API surface — see `encode::stage_timing`.
+#[cfg(feature = "bench-internals")]
+#[doc(hidden)]
+pub use encode::stage_timing;
+
 /// ChromaHash: a compact LQIP (Low Quality Image Placeholder).
 ///
 /// The encoded form is variable length: 32 bytes at the default tier, and roughly 4×

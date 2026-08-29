@@ -132,6 +132,64 @@ struct Analysis {
 /// Signal-path front half of the encoder (spec §10 steps 1–7): color
 /// conversion, alpha handling, coefficient selection, and the forward DCT.
 /// Shared by [`encode_with`] and the sweep-only coefficient dump.
+/// Stage timing for `mise run benchmark:stages`, compiled only under the
+/// off-by-default `bench-internals` feature.
+///
+/// Answering "where does encode time actually go" needs per-stage numbers, and
+/// this crate has no dependencies to profile with. Everything here is behind the
+/// feature, so the shipped build contains not one instruction of it — the
+/// `stage!` marks below expand to nothing at all. It is also invisible to the
+/// mutation sweep, which builds with `no_default_features` (see
+/// rust/.cargo/mutants.toml), so it adds no mutants to the hot path.
+#[cfg(feature = "bench-internals")]
+pub mod stage_timing {
+    use std::cell::RefCell;
+    use std::time::Instant;
+
+    thread_local! {
+        static MARKS: RefCell<Vec<(&'static str, u128)>> = const { RefCell::new(Vec::new()) };
+        static LAST: RefCell<Option<Instant>> = const { RefCell::new(None) };
+    }
+
+    /// Begin a run, discarding any marks from a previous one.
+    pub fn reset() {
+        MARKS.with(|m| m.borrow_mut().clear());
+        LAST.with(|l| *l.borrow_mut() = Some(Instant::now()));
+    }
+
+    /// Record the nanoseconds elapsed since the previous mark under `name`.
+    pub fn mark(name: &'static str) {
+        let now = Instant::now();
+        LAST.with(|l| {
+            let mut last = l.borrow_mut();
+            if let Some(prev) = *last {
+                MARKS.with(|m| {
+                    m.borrow_mut()
+                        .push((name, now.duration_since(prev).as_nanos()))
+                });
+            }
+            *last = Some(now);
+        });
+    }
+
+    /// Drain the marks recorded since [`reset`].
+    pub fn take() -> Vec<(&'static str, u128)> {
+        MARKS.with(|m| std::mem::take(&mut *m.borrow_mut()))
+    }
+}
+
+#[cfg(feature = "bench-internals")]
+macro_rules! stage {
+    ($name:literal) => {
+        $crate::encode::stage_timing::mark($name)
+    };
+}
+
+#[cfg(not(feature = "bench-internals"))]
+macro_rules! stage {
+    ($name:literal) => {};
+}
+
 fn analyze(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables, tier: u8) -> Analysis {
     assert!(w >= 1, "width must be >= 1");
     assert!(h >= 1, "height must be >= 1");
@@ -150,6 +208,7 @@ fn analyze(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables, tier: u8) ->
 
     // 1. Precompute EOTF LUT (256 entries, eliminates per-pixel portable_pow)
     let eotf_lut = build_eotf_lut(gamut);
+    stage!("eotf_lut");
 
     // 2. Per-pixel OKLAB conversion with alpha accumulation.
     //
@@ -168,9 +227,11 @@ fn analyze(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables, tier: u8) ->
         lin_b[i] = eotf_lut[rgba[i * 4 + 2] as usize];
         alpha_pixels[i] = rgba[i * 4 + 3] as f64 / 255.0;
     }
+    stage!("linearize");
 
     let mut oklab_pixels = vec![[0.0f64; 3]; pixel_count];
     crate::simd::oklab_forward_batch(&lin_r, &lin_g, &lin_b, gamut, &mut oklab_pixels);
+    stage!("oklab_forward");
 
     let mut avg_l = 0.0;
     let mut avg_a = 0.0;
@@ -184,6 +245,7 @@ fn analyze(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables, tier: u8) ->
         avg_b += alpha * lab[2];
         avg_alpha += alpha;
     }
+    stage!("alpha_average");
 
     // 3. Compute alpha-weighted average color
     if avg_alpha > 0.0 {
@@ -204,6 +266,7 @@ fn analyze(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables, tier: u8) ->
         a_chan[i] = avg_a * (1.0 - alpha) + alpha * oklab_pixels[i][1];
         b_chan[i] = avg_b * (1.0 - alpha) + alpha * oklab_pixels[i][2];
     }
+    stage!("composite");
 
     // 5. Select coefficients (top-K isotropic frequencies, scaled to the tier)
     // The aspect field may be narrower than a byte; encoder and decoder must
@@ -244,8 +307,10 @@ fn analyze(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables, tier: u8) ->
         .map(|&(_, cy)| cy)
         .max()
         .unwrap_or(0);
+    stage!("selection");
     let cos_x = precompute_cos_table(w, (max_cx + 1).min(w.max(1)));
     let cos_y = precompute_cos_table(h, (max_cy + 1).min(h.max(1)));
+    stage!("cos_tables");
 
     // 7. DCT encode each channel (frequency clamp to source dims built in)
     let l = dct_encode_selected(&l_chan, w, h, &l_sel.coeffs, &cos_x, &cos_y);
@@ -256,6 +321,8 @@ fn analyze(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables, tier: u8) ->
     } else {
         (0.0, vec![], 0.0)
     };
+
+    stage!("dct_forward");
 
     Analysis {
         has_alpha,
