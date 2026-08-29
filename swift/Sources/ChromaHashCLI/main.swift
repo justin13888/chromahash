@@ -80,7 +80,11 @@ func benchEnvInt(_ key: String, _ fallback: Int) -> Int {
 /// Warmup is time-based rather than count-based because this contract is shared
 /// across seven harnesses whose per-op costs differ by two orders of magnitude.
 /// The accumulator is written out at the end so the timed work cannot be elided.
-func runBench(_ iters: Int, _ op: () -> UInt8) {
+//
+// `op` is `rethrows` because the encode call sites wrap a throwing API in
+// `orExit`, which makes the closure itself throwing; a non-throwing parameter
+// would not accept them.
+func runBench(_ iters: Int, _ op: () throws -> UInt8) rethrows {
   let reps = max(1, benchEnvInt("CHROMAHASH_BENCH_REPS", 1))
   let warmupNs = UInt64(max(0, benchEnvInt("CHROMAHASH_BENCH_WARMUP_MS", 0))) * 1_000_000
   let n = max(1, iters)
@@ -90,14 +94,14 @@ func runBench(_ iters: Int, _ op: () -> UInt8) {
   // first timed block.
   let warmStart = DispatchTime.now().uptimeNanoseconds
   repeat {
-    acc ^= op()
+    acc ^= try op()
   } while DispatchTime.now().uptimeNanoseconds - warmStart < warmupNs
 
   var out = ""
   for _ in 0..<reps {
     let start = DispatchTime.now().uptimeNanoseconds
     for _ in 0..<n {
-      acc ^= op()
+      acc ^= try op()
     }
     let elapsed = DispatchTime.now().uptimeNanoseconds - start
     out += "\(elapsed / UInt64(n))\n"
@@ -234,7 +238,7 @@ case "bench-encode":
     exit(1)
   }
   let tier = tierFromEnv()
-  runBench(iters) {
+  try runBench(iters) {
     orExit(
       try ChromaHash.encodeWithQuality(
         width: w, height: h, rgba: rgba, gamut: gamut, quality: tier)
@@ -291,7 +295,7 @@ case "bench-batch":
   let threads = benchEnvInt("CHROMAHASH_BATCH_THREADS", 0)
   let encoder = threads > 0 ? BatchEncoder(threads: threads) : BatchEncoder()
   // One batch is one iteration, so the printed number is ns per batch.
-  runBench(1) { orExit(try encoder.encodeBatch(items))[0].hash[0] }
+  try runBench(1) { orExit(try encoder.encodeBatch(items))[0].hash[0] }
 
 case "bench-info":
   var info = "runtime=swift\n"

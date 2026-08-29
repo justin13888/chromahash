@@ -309,6 +309,16 @@ pub fn dct_encode_selected_separable(
         if cx >= w || cy >= h || rows[cx].is_some() {
             continue;
         }
+        // The memoization guard duplicates the clamp below, and on its own is
+        // unobservable — a row built for a dead frequency is simply never read,
+        // so a mutated guard produces identical output. This states the
+        // invariant instead, which `[profile.mutants]` (debug-assertions on)
+        // turns into a real check: building a row for cx >= w means the guard
+        // stopped agreeing with the clamp.
+        debug_assert!(
+            cx < w && cy < h,
+            "row pass reached a frequency the source cannot represent"
+        );
         let cx_row = &cos_x[cx];
         let mut acc = vec![0.0f64; h];
         for (y, slot) in acc.iter_mut().enumerate() {
