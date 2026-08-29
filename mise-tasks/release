@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+#MISE description="Cut a CHANGELOG release section from [Unreleased] (see RELEASING.md for full steps)"
+#
+# Usage: mise run release X.Y.Z
+set -euo pipefail
+
+version="${1:?usage: mise run release X.Y.Z}"
+
+frag="$(mktemp)"
+git-cliff --tag "v$version" --unreleased --config cliff.toml > "$frag"
+awk -v frag="$frag" '
+    /<!-- git-cliff-unreleased-start -->/ {
+        print "<!-- git-cliff-unreleased-start -->"
+        print "## [Unreleased]"
+        print "<!-- git-cliff-unreleased-end -->"
+        print ""
+        while ((getline l < frag) > 0) { if (l=="" && !seen) continue; seen=1; print l }
+        close(frag)
+        skip=1; next
+    }
+    /<!-- git-cliff-unreleased-end -->/ { skip=0; next }
+    !skip { print }
+' CHANGELOG.md > CHANGELOG.md.tmp
+mv CHANGELOG.md.tmp CHANGELOG.md
+rm -f "$frag"
+
+echo "Cut [$version] in CHANGELOG.md. Remaining manual steps:"
+echo "  1. Update the link-reference block at the bottom of CHANGELOG.md:"
+echo "       [Unreleased]: .../compare/v$version...HEAD"
+echo "       [$version]: .../compare/<prev>...v$version"
+echo "  2. Bump the version to $version across all implementations and tools."
+echo "  3. Commit, then: git tag -a v$version -m 'v$version' && git push --tags"

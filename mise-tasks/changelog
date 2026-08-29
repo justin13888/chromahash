@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+#MISE description="Regenerate the CHANGELOG [Unreleased] section from conventional commits (idempotent)"
+#
+# git-cliff generates the [Unreleased] section from conventional commits; the
+# curated history and Keep a Changelog preamble are preserved. See RELEASING.md.
+set -euo pipefail
+
+frag="$(mktemp)"
+git-cliff --unreleased --config cliff.toml > "$frag"
+awk -v frag="$frag" '
+    /<!-- git-cliff-unreleased-start -->/ { print; while ((getline l < frag) > 0) { if (l=="" && !seen) continue; seen=1; print l } close(frag); skip=1; next }
+    /<!-- git-cliff-unreleased-end -->/ { skip=0 }
+    !skip { print }
+' CHANGELOG.md > CHANGELOG.md.tmp
+mv CHANGELOG.md.tmp CHANGELOG.md
+rm -f "$frag"
+echo "Updated [Unreleased] in CHANGELOG.md — review and add any manual 'Removed' entries."

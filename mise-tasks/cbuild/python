@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+#MISE description="Build the UniFFI lib, generate the ctypes bindings, stage both into the package"
+#
+# Stages chromahash/_uniffi.py + libchromahash_uniffi.* into python/chromahash/.
+set -euo pipefail
+
+case "$(uname)" in
+  Darwin) lib=libchromahash_uniffi.dylib ;;
+  *)      lib=libchromahash_uniffi.so ;;
+esac
+
+cargo build --release --manifest-path bindings/uniffi/Cargo.toml
+
+gen="$(mktemp -d)"
+( cd bindings/uniffi && cargo run --release --quiet --bin uniffi-bindgen -- \
+    generate --library "target/release/$lib" --language python --out-dir "$gen" )
+
+cp "$gen/chromahash_uniffi.py" python/chromahash/_uniffi.py
+cp "bindings/uniffi/target/release/$lib" python/chromahash/

@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+#MISE description="Build the UniFFI lib, generate Swift bindings, assemble ChromaHashFFI.xcframework"
+#
+# The xcframework step is macOS-only (xcodebuild); on other platforms this skips
+# with a warning so the tasks that depend on it (compare, build:benchmark) still
+# run — the Swift harness is simply absent there.
+set -euo pipefail
+
+if [ "$(uname)" != "Darwin" ]; then
+    echo "cbuild:swift: skipping — the xcframework build needs macOS/xcodebuild." >&2
+    exit 0
+fi
+
+cargo build --release --manifest-path bindings/uniffi/Cargo.toml
+
+gen="$(mktemp -d)"
+( cd bindings/uniffi && cargo run --release --quiet --bin uniffi-bindgen -- \
+    generate --library target/release/libchromahash_uniffi.dylib \
+    --language swift --out-dir "$gen" )
+
+mkdir -p swift/Sources/ChromaHashBindings
+cp "$gen/chromahash_uniffi.swift" swift/Sources/ChromaHashBindings/
+
+hdr="$(mktemp -d)"
+cp "$gen/chromahash_uniffiFFI.h" "$hdr/"
+cp "$gen/chromahash_uniffiFFI.modulemap" "$hdr/module.modulemap"
+
+rm -rf swift/ChromaHashFFI.xcframework
+xcodebuild -create-xcframework \
+    -library bindings/uniffi/target/release/libchromahash_uniffi.a \
+    -headers "$hdr" -output swift/ChromaHashFFI.xcframework

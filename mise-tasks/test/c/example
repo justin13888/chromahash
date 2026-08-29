@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+#MISE description="Compile + link + run the C example against the freshly built cdylib (proves linkage)"
+#MISE depends=["build:c"]
+set -euo pipefail
+
+lib="bindings/c/target/debug"
+out="$(mktemp -d)/roundtrip"
+cc bindings/c/examples/roundtrip.c -I bindings/c/include -L "$lib" -lchromahash_c -o "$out"
+case "$(uname)" in
+  Darwin) DYLD_LIBRARY_PATH="$lib" "$out" ;;
+  *)      LD_LIBRARY_PATH="$lib" "$out" ;;
+esac

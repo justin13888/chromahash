@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+#MISE description="Format the Swift binding (swift-format)"
+#MISE alias=["format:fix:swift", "lint:fix:swift"]
+set -euo pipefail
+
+if ! command -v swift-format >/dev/null 2>&1; then
+    echo "format:swift: SKIPPED — swift-format not on PATH." >&2
+    exit 0
+fi
+
+cd swift && swift-format format -i -r Sources Tests

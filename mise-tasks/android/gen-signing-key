@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+#MISE description="Generate a GPG signing key, export it to gitignored files, upload the public key (one-time)"
+#
+# Android publishing bootstrap (issue #17). One-time helper for Maven Central;
+# full walkthrough in RELEASING.md → "Publishing the Android AAR". `gpg` is the
+# one external tool (key generation).
+#
+# Usage: mise run android:signing-key [EMAIL] [NAME]
+set -euo pipefail
+
+email="${1:-2daegu@hopnine.com}"
+name="${2:-Justin Chung}"
+
+command -v gpg >/dev/null 2>&1 || { echo "gpg not found — install GnuPG (e.g. brew install gnupg)"; exit 1; }
+if [ -f signing-key.asc ]; then echo "signing-key.asc already exists — remove it first to regenerate"; exit 1; fi
+
+# Read a bounded chunk first, then truncate with bash — piping urandom
+# straight into `head -c 32` makes `head` close the pipe early, killing the
+# upstream reader with SIGPIPE, which `pipefail` turns into a 141 crash.
+raw="$(LC_ALL=C tr -dc 'A-Za-z0-9' < <(head -c 256 /dev/urandom))"
+pass="${raw:0:32}"
+
+batch="$(mktemp)"
+trap 'rm -f "$batch"' EXIT
+cat > "$batch" <<EOF
+%echo Generating ChromaHash Android signing key
+Key-Type: RSA
+Key-Length: 4096
+Subkey-Type: RSA
+Subkey-Length: 4096
+Name-Real: $name
+Name-Email: $email
+Expire-Date: 0
+Passphrase: $pass
+%commit
+%echo done
+EOF
+
+gpg --batch --generate-key "$batch"
+keyid="$(gpg --list-secret-keys --keyid-format=long --with-colons "$email" | awk -F: '/^sec:/ {print $5; exit}')"
+gpg --batch --pinentry-mode loopback --passphrase "$pass" --armor --export-secret-keys "$keyid" > signing-key.asc
+printf '%s' "$pass" > signing-password.txt
+
+echo
+echo "Generated key $keyid. Uploading the PUBLIC key (Maven Central verifies signatures against it)…"
+gpg --keyserver keyserver.ubuntu.com --send-keys "$keyid" \
+    || echo "  upload failed — retry later: gpg --keyserver keys.openpgp.org --send-keys $keyid"
+echo
+echo "Wrote (BOTH gitignored — never commit, delete after setting secrets):"
+echo "  signing-key.asc       → SIGNING_KEY secret"
+echo "  signing-password.txt  → SIGNING_PASSWORD secret"
+echo
+echo "Next: mise run android:set-secrets"
