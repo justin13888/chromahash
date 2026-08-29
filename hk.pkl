@@ -1,0 +1,88 @@
+/// chromahash git hooks — https://hk.jdx.dev
+///
+/// hk is mise-managed (`aqua:jdx/hk` in .mise.toml). Install the hooks once with
+/// `hk install`; `mise install` alone does not wire them up.
+///
+/// The gates deliberately shell out to `mise run <task>` rather than repeating
+/// the commands: the task graph in .mise.toml is the single definition, and CI
+/// runs the same underlying commands.
+///
+/// Every step is a whole-repo gate, so none of them consume hk's {{files}};
+/// `glob` decides only *whether* a step runs (see mutants-rust). Steps are
+/// serialised with `exclusive`/`depends` rather than left to run in parallel —
+/// they all drive cargo against the same target directories, so a parallel
+/// group would only contend on the cargo lock.
+///
+/// No `stash` is configured (hk defaults to none), because pre-commit's
+/// check-clean step compares the real working tree.
+amends "package://github.com/jdx/hk/releases/download/v1.56.1/hk@1.56.1#/Config.pkl"
+
+hooks {
+  ["commit-msg"] {
+    steps {
+      // Conventional commits, matching the ci-commits workflow. {{commit_msg_file}}
+      // is the commit message file; convco lints it via stdin.
+      ["convco"] {
+        check = "mise exec -- convco check --from-stdin < {{commit_msg_file}}"
+      }
+    }
+  }
+
+  ["pre-commit"] {
+    fix = true
+    steps {
+      ["format-fix"] {
+        fix = "mise run format"
+        exclusive = true
+      }
+      ["lint-fix"] {
+        fix = "mise run lint:fix"
+        exclusive = true
+        depends = List("format-fix")
+      }
+      // Fails if the fixers above changed anything, so style drift is committed
+      // deliberately rather than silently.
+      ["check-clean"] {
+        check = "git diff --exit-code"
+        depends = List("lint-fix")
+        exclusive = true
+      }
+    }
+  }
+
+  // The full local gate: a successful `git push` implies every check passed.
+  ["pre-push"] {
+    steps {
+      // Lint the conventional-commit format of the commits being pushed (those
+      // ahead of origin/master), complementing the per-commit `commit-msg` hook
+      // and mirroring the master check in the `ci-commits` workflow. Skips
+      // gracefully if origin/master isn't present locally.
+      ["commit-lint"] {
+        check = """
+          base="$(git rev-parse --verify --quiet origin/master)" || base=""
+          if [ -n "$base" ]; then mise exec -- convco check "$base..HEAD"; fi
+          """
+      }
+      ["format-check"] {
+        check = "mise run format:check"
+        exclusive = true
+      }
+      ["lint-check"] {
+        check = "mise run lint"
+        exclusive = true
+      }
+      ["test"] {
+        check = "mise run test"
+        exclusive = true
+      }
+      // Mutation-test only the core lines this push changes (cargo-mutants
+      // --in-diff vs origin/master). Gated on core .rs edits so non-Rust pushes
+      // skip it. Skip explicitly with: HK_SKIP_STEPS=mutants-rust git push
+      ["mutants-rust"] {
+        glob = "rust/src/**/*.rs"
+        check = "mise run mutants:rust:diff"
+        exclusive = true
+      }
+    }
+  }
+}
