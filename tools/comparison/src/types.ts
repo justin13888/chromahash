@@ -1,3 +1,6 @@
+import type { CorpusSplit } from "./corpus.ts";
+import type { PairedComparison } from "./paired.ts";
+
 /** Represents a loaded and downscaled image ready for encoding. */
 export interface ImageInput {
   /** Original file path. */
@@ -10,24 +13,36 @@ export interface ImageInput {
   smallWidth: number;
   /** Downscaled height (<=100px). */
   smallHeight: number;
-  /** Downscaled raw RGBA pixel data. */
+  /** Downscaled raw RGBA pixel data (the encoder input). */
   smallRgba: Uint8Array;
+  /**
+   * Display-resolution reference width (original capped to REFERENCE_CAP px on
+   * the long edge). Quality is judged at this scale — the resolution a
+   * placeholder is actually shown at — not at the encoder-input scale.
+   */
+  referenceWidth: number;
+  /** Display-resolution reference height. */
+  referenceHeight: number;
+  /** Display-resolution reference RGBA (original decoded at the capped size). */
+  referenceRgba: Uint8Array;
   /** Original file as a Buffer. */
   fileBuffer: Buffer;
   /** Source gamut identifier (e.g. "srgb", "displayp3"). */
   gamut?: string;
   /**
-   * Color-managed metric reference: smallRgba converted from its tagged gamut
-   * to sRGB appearance. Metrics for every format compare against this (not the
-   * raw gamut-encoded bytes). Equals smallRgba when gamut is sRGB.
+   * Color-managed metric reference: referenceRgba converted from its tagged
+   * gamut to sRGB appearance, at reference resolution. Metrics for every format
+   * compare against this (not the raw gamut-encoded bytes). Equals
+   * referenceRgba when gamut is sRGB.
    */
   metricReferenceRgba?: Uint8Array;
 }
 
 /**
  * Per-format quality metrics, computed by `iqa-cli` between the decoded preview
- * and the encoder input, both resampled to identical (source) dimensions.
- * All fields are null for CSS-only formats (e.g. unpic) or when iqa-cli is unavailable.
+ * (upscaled to display resolution by the configured policy) and the
+ * display-resolution reference. All fields are null for formats that produce no
+ * raster output, or when running with --allow-missing-iqa.
  */
 export interface MetricResult {
   /**
@@ -67,6 +82,12 @@ export interface FormatResult {
   dataUri: string;
   /** Quality metrics (all null for CSS-only formats like unpic). */
   metrics: MetricResult;
+  /**
+   * "As-rendered" metrics: both sides Gaussian-blurred before scoring, modeling
+   * the blur-up presentation LQIPs are typically displayed with. Null unless the
+   * run enables --blurred-scoring.
+   */
+  metricsBlurred: MetricResult | null;
 }
 
 /** An adapter that processes an image through a specific LQIP format. */
@@ -87,21 +108,38 @@ export interface HarnessResult {
   matches: boolean;
   /** Decoded preview as a base64 PNG data URI. */
   dataUri: string;
+  /** Width of the decoded preview, or 0 when the harness produced no preview. */
+  decodedWidth: number;
+  /** Height of the decoded preview, or 0 when the harness produced no preview. */
+  decodedHeight: number;
 }
 
 /** Category for grouping images in the report. */
 export type ImageCategory =
   | "Dimensions"
   | "Alpha"
+  | "Alpha (real)"
+  | "Graphics"
   | "Color Distribution"
   | "Quantization"
   | "Gamut"
+  | "Text/UI"
+  | "Illustration"
   | "Natural"
+  | "Portrait"
+  | "Night"
   | "Realistic";
 
 /** Per-format summary statistics, averaged across a set of images. */
 export interface FormatStat {
   name: string;
+  /**
+   * Images this format actually produced a result for. A codec baseline can
+   * fail to hit a small byte budget on some images (its container floor
+   * exceeds it), and a mean over the subset that fit would otherwise be
+   * presented as a mean over the whole set.
+   */
+  images: number;
   avgSize: number;
   avgEncode: number;
   avgDecode: number;
@@ -113,6 +151,14 @@ export interface FormatStat {
   avgSsimulacra2: number | null;
   avgButteraugli: number | null;
   avgPsnr: number | null;
+  /** Mean blurred "as-rendered" ΔE00; null unless --blurred-scoring ran. */
+  avgCiedeBlurred: number | null;
+  /** Median ΔE00 across the set (robust to outlier images). */
+  medianCiede: number | null;
+  /** 90th-percentile ΔE00 — the tail behaviour a mean hides. */
+  p90Ciede: number | null;
+  /** 95% bootstrap confidence interval of the mean ΔE00 (see stats.ts). */
+  ciCiede: [number, number] | null;
 }
 
 /**
@@ -132,6 +178,8 @@ export interface FormatJson {
   /** CSS gradient string for CSS-only formats (e.g. unpic), else null. */
   css: string | null;
   metrics: MetricResult;
+  /** Blurred "as-rendered" metrics; null unless --blurred-scoring ran. */
+  metricsBlurred: MetricResult | null;
 }
 
 /** A single language implementation's result as serialized into the JSON report. */
@@ -149,6 +197,8 @@ export interface ImplementationJson {
 export interface ComparisonImageJson {
   name: string;
   category: ImageCategory;
+  /** Corpus split (see corpus.ts) so downstream tools never re-derive it. */
+  split: CorpusSplit;
   originalWidth: number;
   originalHeight: number;
   /** Relative path to the standalone original (display-sized) image. */
@@ -167,11 +217,60 @@ export interface ComparisonImageJson {
  * The full machine-readable comparison report. Written alongside the HTML and
  * referencing the same standalone images under `images/`.
  */
+/** How the run scored quality — stamped into the JSON so results are interpretable. */
+export interface ScoringMetaJson {
+  /** Long-edge cap (px) of the display-resolution reference. */
+  referenceCap: number;
+  /** Upscale policy used to bring decodes to reference resolution. */
+  upscalePolicy: string;
+  /** Whether the blurred "as-rendered" metric set was computed. */
+  blurredScoring: boolean;
+  /** Gaussian sigma rule for blurred scoring (informational). */
+  blurSigmaRule: string;
+  /** Backdrop RGB both sides are composited over before scoring. */
+  alphaBackdrop: readonly [number, number, number];
+}
+
+/**
+ * One point on a rate–distortion curve: a single variant (e.g. "ChromaHash t2",
+ * "WebP@411B") aggregated as the MEAN over the images processed in the run.
+ */
+export interface RdPointJson {
+  /** Variant name, unique within the run (doubles as the formatName). */
+  variant: string;
+  /** Mean encoded size in bytes across the processed images. */
+  bytes: number;
+  /** Mean ΔE00 (lower is better), or null when never computed. */
+  ciede2000: number | null;
+  /** Mean SSIMULACRA2 (higher is better), or null when never computed. */
+  ssimulacra2: number | null;
+  /** Mean Butteraugli distance (lower is better), or null when never computed. */
+  butteraugli: number | null;
+  /** How many images contributed (variants can be unrepresentable per-image). */
+  imageCount: number;
+}
+
+/** A format family's rate–distortion curve (points sorted by mean bytes). */
+export interface RdCurveJson {
+  /** Family name the variants sweep (e.g. "ChromaHash", "BlurHash", "WebP"). */
+  format: string;
+  points: RdPointJson[];
+}
+
+/** Rate–distortion sweep results (present only in `--rd` runs). */
+export interface RdJson {
+  /** Canonical equal-byte anchors: every ChromaHash tier size (no-alpha). */
+  anchors: number[];
+  curves: RdCurveJson[];
+}
+
 export interface ComparisonJson {
   /** Schema version, bumped on breaking changes to this structure. */
   schemaVersion: number;
   /** Pre-formatted generation timestamp (matches the HTML footer). */
   generatedAt: string;
+  /** Scoring configuration for this run. */
+  scoring: ScoringMetaJson;
   /** Full commit SHA the report was built from, or null when unknown. */
   commit: string | null;
   /** Base repository URL, or null. */
@@ -180,9 +279,36 @@ export interface ComparisonJson {
   formats: string[];
   /** Language implementation names, in report order. */
   languages: string[];
-  /** Summary statistics for natural/realistic images (primary) and all images. */
-  summary: { naturalAndRealistic: FormatStat[]; all: FormatStat[] };
+  /**
+   * Summary statistics: photographic images (primary), all images, and the
+   * tune/holdout corpus splits (see corpus.ts).
+   */
+  summary: {
+    naturalAndRealistic: FormatStat[];
+    all: FormatStat[];
+    tune: FormatStat[];
+    holdout: FormatStat[];
+  };
   /** Cross-language pass/fail; pass is null when harnesses were skipped. */
   crossLanguage: { language: string; pass: boolean | null }[];
   images: ComparisonImageJson[];
+  /** Rate–distortion sweep (only written by `--rd` runs). */
+  rd?: RdJson;
+  /** Paired version A/B deltas (only written by `--versions` runs). */
+  paired?: PairedJson;
+}
+
+/**
+ * Paired per-image deltas against a released-tag baseline, over the same image
+ * subsets as `summary`. Present only in `--versions` runs that include a tag —
+ * see paired.ts for why version comparison needs paired statistics and the
+ * cross-format report does not.
+ */
+export interface PairedJson {
+  /** The released tag every candidate column is differenced against. */
+  baseline: string;
+  naturalAndRealistic: PairedComparison[];
+  all: PairedComparison[];
+  tune: PairedComparison[];
+  holdout: PairedComparison[];
 }

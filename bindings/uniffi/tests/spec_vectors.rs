@@ -4,7 +4,10 @@
 //! exercises the Gamut conversion, record packing, the i32 casts, and the fallible
 //! `from_bytes` — without needing the Android NDK/SDK, so it runs in plain `cargo test`.
 
-use chromahash_uniffi::{BatchEncoder, ChromaHash, Gamut, ImageInput};
+use chromahash_uniffi::{
+    BatchEncoder, COMPACT_TIER, ChromaHash, ChromaHashError, DEFAULT_TIER, Gamut, ImageInput,
+    MAX_TIER, compact_tier, default_tier, format_version, max_tier,
+};
 use serde_json::Value;
 
 const ENCODE_VECTORS: &str = include_str!(concat!(
@@ -14,6 +17,10 @@ const ENCODE_VECTORS: &str = include_str!(concat!(
 const DECODE_VECTORS: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../spec/test-vectors/integration-decode.json"
+));
+const DECODE_CAPPED_VECTORS: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../spec/test-vectors/integration-decode-capped.json"
 ));
 
 /// Map a spec-vector gamut string to the binding's `Gamut` enum.
@@ -49,9 +56,11 @@ fn integration_encode_vectors() {
         let w = input["width"].as_u64().expect("width") as u32;
         let h = input["height"].as_u64().expect("height") as u32;
         let gamut = gamut_from_str(input["gamut"].as_str().expect("gamut"));
+        let tier = input["tier"].as_u64().expect("tier") as u8;
         let rgba = bytes(&input["rgba"]);
 
-        let hash = ChromaHash::encode(w, h, rgba, gamut);
+        let hash = ChromaHash::encode_with_quality(w, h, rgba, gamut, tier)
+            .unwrap_or_else(|e| panic!("{name}: encode rejected a spec vector: {e}"));
 
         assert_eq!(
             hash.as_bytes(),
@@ -68,11 +77,6 @@ fn integration_encode_vectors() {
                 "{name}: average_color mismatch"
             );
         }
-
-        assert!(
-            hash.is_version_supported(),
-            "{name}: freshly encoded hash must report v0.6 supported"
-        );
     }
 }
 
@@ -83,30 +87,178 @@ fn batch_encode_matches_single_encode() {
     let cases: Value = serde_json::from_str(ENCODE_VECTORS).expect("parse encode vectors");
     let cases = cases.as_array().expect("encode vectors should be an array");
 
+    // Cycle through every tier so the test would fail if `quality` were ignored
+    // and every item silently encoded at the default.
     let items: Vec<ImageInput> = cases
         .iter()
-        .map(|case| {
+        .enumerate()
+        .map(|(i, case)| {
             let input = &case["input"];
             ImageInput {
                 w: input["width"].as_u64().expect("width") as u32,
                 h: input["height"].as_u64().expect("height") as u32,
                 rgba: bytes(&input["rgba"]),
                 gamut: gamut_from_str(input["gamut"].as_str().expect("gamut")),
+                quality: (i % (MAX_TIER as usize + 1)) as u8,
             }
         })
         .collect();
 
-    let hashes = BatchEncoder::new().encode_batch(items.clone());
+    let hashes = BatchEncoder::new()
+        .encode_batch(items.clone())
+        .expect("batch rejected the spec vectors");
     assert_eq!(hashes.len(), items.len(), "batch returned wrong count");
 
     for (i, (item, batched)) in items.iter().zip(hashes.iter()).enumerate() {
-        let single = ChromaHash::encode(item.w, item.h, item.rgba.clone(), item.gamut);
+        let single = ChromaHash::encode_with_quality(
+            item.w,
+            item.h,
+            item.rgba.clone(),
+            item.gamut,
+            item.quality,
+        )
+        .expect("single encode rejected a spec vector");
         assert_eq!(
             batched.as_bytes(),
             single.as_bytes(),
-            "batch item {i} diverges from single encode"
+            "batch item {i} diverges from single encode at tier {}",
+            item.quality
         );
     }
+}
+
+/// Pin the tier down to the byte count. Comparing batch against single alone
+/// would pass if both silently used one tier.
+#[test]
+fn batch_encode_honors_quality() {
+    // Opaque: alpha < 255 selects the alpha layouts, whose lengths differ.
+    let rgba: Vec<u8> = std::iter::repeat_n([128, 128, 128, 255], 8 * 8)
+        .flatten()
+        .collect();
+    let items: Vec<ImageInput> = (COMPACT_TIER..=MAX_TIER)
+        .map(|quality| ImageInput {
+            w: 8,
+            h: 8,
+            rgba: rgba.clone(),
+            gamut: Gamut::Srgb,
+            quality,
+        })
+        .collect();
+
+    let hashes = BatchEncoder::new().encode_batch(items).expect("batch");
+    assert_eq!(
+        hashes
+            .iter()
+            .map(|h| h.as_bytes().len())
+            .collect::<Vec<_>>(),
+        vec![21, 32, 108, 411, 1623],
+        "the per-tier byte lengths spec §3.3 tabulates"
+    );
+}
+
+/// The reserved bit is how v1 reserves room for a future extension: a decoder
+/// that ignored it would accept a hash written by a later format and render
+/// garbage. Neither it nor a reserved tier code was exercised here.
+#[test]
+fn from_bytes_rejects_a_malformed_header() {
+    let rgba = vec![128u8; 4 * 4 * 4];
+    let valid = ChromaHash::encode(4, 4, rgba, Gamut::Srgb)
+        .expect("encode")
+        .as_bytes();
+
+    for (what, mutate) in [
+        ("reserved bit set", 0usize),
+        ("reserved tier code", 1),
+        ("unsupported version", 2),
+    ] {
+        let mut bytes = valid.clone();
+        bytes[0] = match mutate {
+            0 => bytes[0] | 0b1000_0000,
+            1 => (bytes[0] & !0b0011_1000) | ((MAX_TIER + 1) << 3),
+            _ => bytes[0] | 0b0000_0001,
+        };
+        assert!(
+            matches!(
+                ChromaHash::from_bytes(bytes),
+                Err(ChromaHashError::InvalidData { .. })
+            ),
+            "{what}"
+        );
+    }
+}
+
+/// The decoded raster is a function of the tier, so assert the values rather
+/// than a range wide enough to pass at every one of them.
+#[test]
+fn decoded_dimensions_follow_the_tier_raster() {
+    let rgba: Vec<u8> = std::iter::repeat_n([128u8, 128, 128, 255], 4 * 4)
+        .flatten()
+        .collect();
+    let edges = [32i32, 32, 64, 128, 256];
+    for tier in COMPACT_TIER..=MAX_TIER {
+        let hash = ChromaHash::encode_with_quality(4, 4, rgba.clone(), Gamut::Srgb, tier)
+            .expect("a valid tier must encode");
+        let result = hash.decode();
+        assert_eq!(result.width, edges[tier as usize], "tier {tier} width");
+        assert_eq!(result.height, edges[tier as usize], "tier {tier} height");
+        assert_eq!(
+            result.rgba.len(),
+            (result.width * result.height * 4) as usize
+        );
+    }
+}
+
+/// The core panics on invalid input; a panic across FFI is undefined behaviour,
+/// so the binding must have turned each one into a typed error first.
+#[test]
+fn encode_rejects_invalid_input_without_panicking() {
+    let rgba = vec![128u8; 4 * 4 * 4];
+
+    assert!(matches!(
+        ChromaHash::encode(0, 4, rgba.clone(), Gamut::Srgb),
+        Err(ChromaHashError::InvalidDimensions { .. })
+    ));
+    assert!(matches!(
+        ChromaHash::encode(4, 0, rgba.clone(), Gamut::Srgb),
+        Err(ChromaHashError::InvalidDimensions { .. })
+    ));
+    assert!(matches!(
+        ChromaHash::encode(4, 4, vec![0u8; 3], Gamut::Srgb),
+        Err(ChromaHashError::InvalidLength { .. })
+    ));
+    assert!(matches!(
+        ChromaHash::encode_with_quality(4, 4, rgba.clone(), Gamut::Srgb, MAX_TIER + 1),
+        Err(ChromaHashError::InvalidTier { .. })
+    ));
+
+    // And the batch path validates every item up front, naming the bad one.
+    let good = ImageInput {
+        w: 4,
+        h: 4,
+        rgba: rgba.clone(),
+        gamut: Gamut::Srgb,
+        quality: DEFAULT_TIER,
+    };
+    let bad = ImageInput {
+        quality: MAX_TIER + 1,
+        ..good.clone()
+    };
+    let err = BatchEncoder::new()
+        .encode_batch(vec![good, bad])
+        .expect_err("a reserved tier must fail the batch");
+    assert!(matches!(err, ChromaHashError::InvalidTier { .. }));
+    assert!(err.to_string().starts_with("item 1:"), "got {err}");
+}
+
+/// The tier codes reach Kotlin, Swift, and Python through these functions —
+/// UniFFI cannot export a constant. Assert they still agree with the core.
+#[test]
+fn exported_tier_functions_match_the_core() {
+    assert_eq!(compact_tier(), chromahash::COMPACT_TIER);
+    assert_eq!(default_tier(), chromahash::DEFAULT_TIER);
+    assert_eq!(max_tier(), chromahash::MAX_TIER);
+    assert_eq!(format_version(), chromahash::FORMAT_VERSION);
+    assert!(compact_tier() < default_tier() && default_tier() < max_tier());
 }
 
 #[test]
@@ -142,16 +294,78 @@ fn integration_decode_vectors() {
 
 #[test]
 fn from_bytes_rejects_wrong_length() {
+    // The expected length is a function of the descriptor byte, so each buffer
+    // has to carry the descriptor for the tier whose length it is claiming.
+    // Descriptor 8 = version 0, tier 1 (the 32-byte default); descriptor 0 =
+    // the compact tier, which is 21 bytes.
+    let mut default_tier = vec![0u8; 32];
+    default_tier[0] = 8;
     assert!(
-        ChromaHash::from_bytes(vec![0u8; 16]).is_err(),
+        ChromaHash::from_bytes(default_tier.clone()).is_ok(),
+        "from_bytes should accept a 32-byte default-tier buffer"
+    );
+    assert!(
+        ChromaHash::from_bytes(vec![0u8; 21]).is_ok(),
+        "from_bytes should accept a 21-byte compact-tier buffer"
+    );
+
+    let mut short = default_tier.clone();
+    short.truncate(16);
+    assert!(
+        ChromaHash::from_bytes(short).is_err(),
         "from_bytes should reject a 16-byte buffer"
     );
+    let mut long = default_tier.clone();
+    long.push(0);
     assert!(
-        ChromaHash::from_bytes(vec![0u8; 33]).is_err(),
+        ChromaHash::from_bytes(long).is_err(),
         "from_bytes should reject a 33-byte buffer"
     );
+    // A compact descriptor on a 32-byte buffer is the renumbering's own hazard:
+    // it must be a length mismatch, not a silently mis-read default-tier hash.
     assert!(
-        ChromaHash::from_bytes(vec![0u8; 32]).is_ok(),
-        "from_bytes should accept a 32-byte buffer"
+        ChromaHash::from_bytes(vec![0u8; 32]).is_err(),
+        "a compact-tier descriptor on 32 bytes must be rejected"
     );
+}
+#[test]
+fn integration_decode_capped_vectors() {
+    // The capped decode has its own scaling path (it picks a render size that
+    // fits the cap, not the tier's natural raster), and neither this binding nor
+    // the UniFFI one replayed these vectors — the two FFI surfaces were the only
+    // ones exercising `decode` but not `decode_capped` against the contract.
+    let cases: Value =
+        serde_json::from_str(DECODE_CAPPED_VECTORS).expect("parse decode-capped vectors");
+    let cases = cases
+        .as_array()
+        .expect("decode-capped vectors should be an array");
+    assert!(!cases.is_empty(), "no decode-capped vectors found");
+
+    for case in cases {
+        let name = case["name"].as_str().unwrap_or("<unnamed>");
+        let input = &case["input"];
+        let max_w = input["max_width"].as_u64().expect("max_width") as u32;
+        let max_h = input["max_height"].as_u64().expect("max_height") as u32;
+        let hash = ChromaHash::from_bytes(bytes(&input["hash"]))
+            .unwrap_or_else(|e| panic!("{name}: from_bytes rejected a spec-vector hash: {e}"));
+        let result = hash.decode_capped(max_w, max_h);
+
+        let expected = &case["expected"];
+        assert_eq!(
+            result.width as u64,
+            expected["width"].as_u64().expect("width"),
+            "{name}: width mismatch"
+        );
+        assert_eq!(
+            result.height as u64,
+            expected["height"].as_u64().expect("height"),
+            "{name}: height mismatch"
+        );
+        assert_eq!(
+            result.rgba,
+            bytes(&expected["rgba"]),
+            "{name}: rgba mismatch"
+        );
+        assert!(result.width as u32 <= max_w && result.height as u32 <= max_h);
+    }
 }

@@ -9,7 +9,7 @@
  * once before any encode/decode**:
  *
  * ```ts
- * import { init, ChromaHash } from "@chromahash/typescript";
+ * import { init, ChromaHash } from "@visualcommons/chromahash";
  * await init();                                   // browser: fetches the co-located .wasm
  * const hash = ChromaHash.encode(w, h, rgba, "sRGB");
  * ```
@@ -18,9 +18,10 @@
  * bytes: `await init(readFileSync(".../chromahash_wasm_bg.wasm"))`.
  *
  * Render-only consumers that want to skip the WASM init entirely can import the
- * pure-TypeScript decode path from `@chromahash/typescript/decode`.
+ * pure-TypeScript decode path from `@visualcommons/chromahash/decode`.
  */
 
+import { assertHash, isVersionSupported, readTier } from "./header.ts";
 import initWasm, {
   ChromaHash as WasmHash,
   Gamut as WasmGamut,
@@ -101,6 +102,42 @@ export class ChromaHash {
   ): ChromaHash {
     ensureReady();
     const handle = WasmHash.encode(w, h, rgba, GAMUT_TO_WASM[gamut]);
+    try {
+      return new ChromaHash(handle.asBytes());
+    } finally {
+      handle.free();
+    }
+  }
+
+  /**
+   * Encode an image at an explicit quality tier (`0..=`{@link MAX_TIER},
+   * ordered by quality).
+   *
+   * {@link DEFAULT_TIER} is the 32-byte tier {@link encode} produces and
+   * {@link COMPACT_TIER} the 21-byte one. Pass those rather than a literal: the
+   * codes are ordered by quality, so a bare `0` selects the compact tier.
+   *
+   * @param w - Image width (>= 1)
+   * @param h - Image height (>= 1)
+   * @param rgba - Pixel data in RGBA format (4 bytes per pixel)
+   * @param gamut - Source color space
+   * @param quality - Tier code (`0..=`{@link MAX_TIER})
+   */
+  static encodeWithQuality(
+    w: number,
+    h: number,
+    rgba: Uint8Array,
+    gamut: Gamut,
+    quality: number,
+  ): ChromaHash {
+    ensureReady();
+    const handle = WasmHash.encodeWithQuality(
+      w,
+      h,
+      rgba,
+      GAMUT_TO_WASM[gamut],
+      quality,
+    );
     try {
       return new ChromaHash(handle.asBytes());
     } finally {
@@ -192,21 +229,36 @@ export class ChromaHash {
   }
 
   /**
-   * Whether this hash uses the v0.6 bitstream this library implements. Decoding
-   * an unsupported (legacy v0.2–v0.5) hash produces garbage, not an error.
+   * Whether this hash's wire-format generation is the one this library
+   * implements. Byte 0 carries an explicit 3-bit `version` field, so this is a
+   * real check and {@link fromBytes} rejects rather than producing garbage.
    */
   isVersionSupported(): boolean {
-    return ((this.hash[5] ?? 0) >> 7) % 2 === 0;
+    return isVersionSupported(this.hash);
   }
 
-  /** Create a ChromaHash from raw 32-byte data. */
+  /** The tier code this hash was encoded at (`0..=`{@link MAX_TIER}). */
+  get tier(): number {
+    return readTier(this.hash);
+  }
+
+  /**
+   * Create a ChromaHash from raw bytes.
+   *
+   * The hash is variable length and self-describing, so this validates the
+   * descriptor and the exact byte length (spec §2.6) and throws on anything
+   * malformed — a hash that constructs is guaranteed to decode.
+   */
   static fromBytes(bytes: Uint8Array): ChromaHash {
-    if (bytes.length !== 32) {
-      throw new Error("ChromaHash must be exactly 32 bytes");
-    }
+    assertHash(bytes);
     return new ChromaHash(new Uint8Array(bytes));
   }
 }
 
+export {
+  COMPACT_TIER,
+  DEFAULT_TIER,
+  MAX_TIER,
+} from "./header.ts";
 export { BatchEncoder } from "./batch.ts";
 export type { ImageInput } from "./batch.ts";

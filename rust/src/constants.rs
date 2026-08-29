@@ -8,13 +8,106 @@ pub enum Gamut {
     ProPhotoRgb,
 }
 
-/// AC bit layout (v0.6): how the 208-bit AC block is split between channels.
+// ── v1 wire format ─────────────────────────────────────────────────────────
+//
+// chromahash ships as release 0.7.0, but the on-wire format carries its own
+// generation number, independent of the package semver. This is wire-format
+// generation **v1**. Every framing parameter below is a named constant so the
+// encoder, decoder, and `spec/constants.py` agree without scattered literals.
+
+/// Wire-format generation, stored in the 3-bit `version` field of byte 0.
+///
+/// `0` is format **v1** (this redesign; chromahash 0.7.x). Future incompatible
+/// formats increment the field: `1` → v2, `2` → v3, `3` → v4, … A decoder MUST
+/// reject any value it does not implement.
+pub const FORMAT_VERSION: u8 = 0;
+
+/// Width of the byte-0 `version` field (bits 0..3).
+pub const VERSION_BITS: u32 = 3;
+/// Width of the byte-0 `tier` field (bits 3..6).
+pub const TIER_BITS: u32 = 3;
+/// Bit position of the `hasAlpha` flag within byte 0.
+pub const ALPHA_FLAG_BIT: u32 = 6;
+/// Bit position of the reserved flag within byte 0 (MUST be 0 in v1).
+pub const RESERVED_FLAG_BIT: u32 = 7;
+
+/// Highest valid tier code the v1 format defines (spec §2.5). Tier codes are
+/// `0..=MAX_TIER`, ordered by quality; codes `5..=7` remain reserved.
+pub const MAX_TIER: u8 = 4;
+
+/// The compact tier's code (spec §3.1). 21 bytes: the smallest and lowest-
+/// fidelity tier, rendered at [`DEFAULT_TIER`]'s resolution.
+pub const COMPACT_TIER: u8 = 0;
+
+/// The default tier's code (spec §3.5). Exactly 32 bytes, matching the v0.6
+/// footprint — what [`crate::ChromaHash::encode`] produces.
+///
+/// Never write the literal `1` for this: the codes are ordered by quality, so a
+/// bare `0` default would silently select the 21-byte compact tier.
+pub const DEFAULT_TIER: u8 = 1;
+
+/// Is `tier` a code this format defines? Codes `5..=7` remain reserved.
+#[inline]
+pub const fn is_valid_tier(tier: u8) -> bool {
+    tier <= MAX_TIER
+}
+
+/// Quality ordinal of a tier code: how many times the natural render size
+/// doubles, and the exponent behind the `4^level` coefficient scaling.
+///
+/// The compact tier renders at the default tier's size, so codes 0 and 1 share
+/// level 0 and every higher code is one level above its predecessor. Every
+/// place that scales with quality shifts by this rather than by the raw code.
+#[inline]
+pub const fn render_level(tier: u8) -> u8 {
+    tier.saturating_sub(1)
+}
+
+/// Natural render long-edge in pixels at render level 0. The natural render size
+/// scales to `BASE_LONG_EDGE << render_level(tier)` on the long edge
+/// (32 / 64 / 128 / 256 px).
+pub const BASE_LONG_EDGE: u32 = 32;
+
+/// DC code bit widths (L, a, b) — identical quantization to v0.6.
+pub const L_DC_BITS: u32 = 7;
+pub const A_DC_BITS: u32 = 7;
+pub const B_DC_BITS: u32 = 7;
+/// AC scale code bit widths (L, a, b).
+pub const L_SCALE_BITS: u32 = 6;
+pub const A_SCALE_BITS: u32 = 6;
+pub const B_SCALE_BITS: u32 = 5;
+/// Alpha DC / scale code bit widths (present only in alpha mode). These are the
+/// shipped values and the defaults of [`Tunables::alpha_dc_bits`] /
+/// [`Tunables::alpha_scale_bits`]; the alpha prefix is their sum (9 bits), which
+/// [`body_len_bytes`] computes from the tunables rather than from a constant so
+/// a sweep can resize it.
+pub const ALPHA_DC_BITS: u32 = 5;
+pub const ALPHA_SCALE_BITS: u32 = 4;
+
+/// Byte 0 (descriptor) + byte 1 (aspect) = 16 bits.
+pub const DESCRIPTOR_BITS: u32 = 16;
+/// DC + scale prefix after the descriptor/aspect bytes
+/// (L/a/b DC = 21 bits, L/a/b scale = 17 bits).
+pub const DC_SCALE_BITS: u32 =
+    L_DC_BITS + A_DC_BITS + B_DC_BITS + L_SCALE_BITS + A_SCALE_BITS + B_SCALE_BITS;
+/// Fixed prefix before the AC payload: descriptor + aspect + DC + scales = 54 bits.
+pub const PREFIX_BITS: u32 = DESCRIPTOR_BITS + DC_SCALE_BITS;
+
+/// AC bit layout: how the per-channel AC budget is split at one quality tier.
+///
+/// v1 carries **two** of these (see [`Tunables::layout`] and
+/// [`Tunables::layout_upper`]): the default tier has its own table, and codes 2..=4 scale
+/// a single base by `4^m` (bits per coefficient stay constant — higher tiers
+/// carry *more* coefficients, not finer ones). The split exists because the
+/// count-vs-precision optimum moves with the budget: at 32 bytes the format is
+/// better off with more, coarser coefficients than the tier-1 base scaled down
+/// would give it (spec §3.2).
 ///
 /// L coefficients are written in selection order through up to two precision
 /// tiers (a tier with count 0 is unused). Chroma a/b each get `c_count`
 /// coefficients at `c_bits`. The `la_*`/`ca_*` fields are the alpha-mode
-/// equivalents (alpha mode additionally stores alpha DC 5b + scale 4b + 5×4b
-/// alpha AC). Remaining bits up to 256 are padding zeros.
+/// equivalents (alpha mode additionally stores alpha DC 5b + scale 4b + scaled
+/// alpha AC). Trailing bits to the final byte boundary are padding zeros.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AcLayout {
     pub l_tiers: [(usize, u32); 2],
@@ -23,6 +116,14 @@ pub struct AcLayout {
     pub la_tiers: [(usize, u32); 2],
     pub ca_count: usize,
     pub ca_bits: u32,
+    /// Alpha AC coefficient count and bit width (alpha mode only).
+    ///
+    /// Part of the layout row rather than one global, because the rows
+    /// disagree: §11.3 measured the default tier wanting 28 coefficients where the
+    /// compact tier's smaller budget wants 16. A global would force one of
+    /// them to be wrong.
+    pub a_count: usize,
+    pub a_bits: u32,
 }
 
 /// Layout A: rebalance 15 bits from L to chroma (primary v0.6 candidate).
@@ -33,16 +134,46 @@ pub const LAYOUT_A: AcLayout = AcLayout {
     la_tiers: [(19, 5), (0, 5)],
     ca_count: 10,
     ca_bits: 4,
+    a_count: 5,
+    a_bits: 4,
 };
 
-/// Layout B: v0.5 channel split (isolates structural v0.6 gains in sweeps).
+/// Layout B: the **v1 upper-tier base** (the shipped default). Sized so a default-tier
+/// hash is exactly 32 bytes — the v0.6 footprint — for equal-budget comparison:
+/// no-alpha = 54 prefix + 26·5 L + 2·9·4 chroma = 256 bits; alpha = 54 + 9 +
+/// 20·5 L + 2·9·4 chroma + 5·4 alpha = 255 bits (both → 32 bytes).
 pub const LAYOUT_B: AcLayout = AcLayout {
-    l_tiers: [(27, 5), (0, 5)],
+    l_tiers: [(26, 5), (0, 5)],
     c_count: 9,
     c_bits: 4,
-    la_tiers: [(7, 6), (13, 5)],
-    ca_count: 9,
-    ca_bits: 4,
+    la_tiers: [(22, 4), (0, 4)],
+    ca_count: 3,
+    ca_bits: 3,
+    a_count: 28,
+    a_bits: 3,
+};
+
+/// Layout T0: the **v1 default-tier layout** (the shipped default at code 1). At a
+/// 32-byte budget the AC payload is 202 bits, and spending it on 28 luma
+/// coefficients at 4 bits plus 15 chroma at 3 beats the 26@5 / 9@4 split of
+/// [`LAYOUT_B`] by 3.5% mean ΔE00 on the never-tuned holdout split, with
+/// SSIMULACRA2, Butteraugli and DSSIM all improving (spec/EXPERIMENTS.md §8.3).
+/// Sized to the same anchor: no-alpha = 54 prefix + 28·4 L + 2·15·3 chroma =
+/// 256 bits.
+///
+/// The **alpha-mode** fields are deliberately left at the [`LAYOUT_B`] values.
+/// The rebalance was measured on a photographic corpus that contains no alpha
+/// at all, so there is no evidence for moving them; the arithmetic points at
+/// `L 22 @ 4, a/b 14 @ 3` (255 bits) and that needs its own sweep first.
+pub const LAYOUT_T0: AcLayout = AcLayout {
+    l_tiers: [(28, 4), (0, 4)],
+    c_count: 15,
+    c_bits: 3,
+    la_tiers: [(22, 4), (0, 4)],
+    ca_count: 3,
+    ca_bits: 3,
+    a_count: 28,
+    a_bits: 3,
 };
 
 /// Layout C: tiered L precision (6-bit low band) with widened chroma.
@@ -53,6 +184,8 @@ pub const LAYOUT_C: AcLayout = AcLayout {
     la_tiers: [(6, 6), (12, 5)],
     ca_count: 10,
     ca_bits: 4,
+    a_count: 5,
+    a_bits: 4,
 };
 
 /// Layout D: fewer but finer (5-bit) chroma coefficients.
@@ -63,14 +196,171 @@ pub const LAYOUT_D: AcLayout = AcLayout {
     la_tiers: [(19, 5), (0, 5)],
     ca_count: 8,
     ca_bits: 5,
+    a_count: 5,
+    a_bits: 4,
 };
 
-/// Number of alpha-channel AC coefficients (alpha mode only).
-pub const ALPHA_AC_COUNT: usize = 5;
-/// Bits per alpha AC coefficient.
-pub const ALPHA_AC_BITS: u32 = 4;
+/// Layout TC: the **compact-tier row** (tier code 4, 21 bytes).
+///
+/// Chosen on the photographic tune split and tie-broken on the graphics corpus:
+/// the leading 21-byte layouts are a plateau there (the top seven span 0.5% and
+/// every paired-bootstrap CI against the leader includes zero), so the tie was
+/// broken on which candidate holds up across both bodies of content rather than
+/// by mining the photographic guards. See `EXPERIMENTS.md` §11.5.
+///
+/// `54 + 19·4 + 2·6·3 = 166 bits` → 21 bytes (no alpha).
+/// `54 + 9 + 12·4 + 2·1·3 + 16·3 = 165 bits` → 21 bytes (alpha).
+pub const LAYOUT_TC: AcLayout = AcLayout {
+    l_tiers: [(19, 4), (0, 4)],
+    c_count: 6,
+    c_bits: 3,
+    la_tiers: [(12, 4), (0, 4)],
+    ca_count: 1,
+    ca_bits: 3,
+    a_count: 16,
+    a_bits: 3,
+};
 
-/// All v0.6 format parameters. The shipped format uses [`Tunables::DEFAULT`];
+/// Per-channel AC counts/bit-widths resolved for one (alpha mode, tier). The
+/// base [`AcLayout`] describes the default tier; tier `m` scales every coefficient *count*
+/// by `4^m` while bit widths stay fixed.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct AcShape {
+    /// L coefficient precision tiers (count, bits), in write order.
+    pub l_tiers: [(usize, u32); 2],
+    /// Chroma a/b coefficient count (each channel) and bit width.
+    pub c_count: usize,
+    pub c_bits: u32,
+    /// Alpha AC coefficient count (0 when not in alpha mode).
+    pub alpha_ac_count: usize,
+    /// Bits per alpha AC coefficient.
+    pub alpha_ac_bits: u32,
+}
+
+impl AcShape {
+    /// Total L coefficient count across both precision tiers.
+    pub fn l_count(&self) -> usize {
+        self.l_tiers[0].0 + self.l_tiers[1].0
+    }
+}
+
+/// `4^level` — the count multiplier for a tier code (1, 4, 16, 64; 1 for the
+/// compact tier, which shares the default tier's render level).
+#[inline]
+pub(crate) fn tier_count_scale(tier: u8) -> usize {
+    1usize << (2 * render_level(tier) as usize)
+}
+
+/// The [`AcLayout`] that governs a tier code. The table has three rows: the
+/// compact tier, the default tier, and one base that codes 2..=4 scale by
+/// `4^level`.
+pub(crate) fn tier_layout(t: &Tunables, tier: u8) -> &AcLayout {
+    match tier {
+        COMPACT_TIER => &t.layout_compact,
+        DEFAULT_TIER => &t.layout,
+        _ => &t.layout_upper,
+    }
+}
+
+/// Resolve the layout for a (alpha mode, tier): pick the tier's table, then the
+/// alpha or no-alpha counts, then scale them by `4^level`.
+pub(crate) fn ac_shape(t: &Tunables, has_alpha: bool, tier: u8) -> AcShape {
+    let layout = tier_layout(t, tier);
+    let s = tier_count_scale(tier);
+    if has_alpha {
+        AcShape {
+            l_tiers: [
+                (layout.la_tiers[0].0 * s, layout.la_tiers[0].1),
+                (layout.la_tiers[1].0 * s, layout.la_tiers[1].1),
+            ],
+            c_count: layout.ca_count * s,
+            c_bits: layout.ca_bits,
+            alpha_ac_count: layout.a_count * s,
+            alpha_ac_bits: layout.a_bits,
+        }
+    } else {
+        AcShape {
+            l_tiers: [
+                (layout.l_tiers[0].0 * s, layout.l_tiers[0].1),
+                (layout.l_tiers[1].0 * s, layout.l_tiers[1].1),
+            ],
+            c_count: layout.c_count * s,
+            c_bits: layout.c_bits,
+            alpha_ac_count: 0,
+            alpha_ac_bits: layout.a_bits,
+        }
+    }
+}
+
+/// AC payload bits for a resolved shape: L tiers + both chroma channels + alpha
+/// AC. Excludes the prefix and the alpha DC/scale (see [`body_len_bytes`]).
+pub(crate) fn ac_payload_bits(shape: &AcShape) -> usize {
+    let l_bits: usize = shape.l_tiers.iter().map(|&(n, b)| n * b as usize).sum();
+    l_bits
+        + 2 * shape.c_count * shape.c_bits as usize
+        + shape.alpha_ac_count * shape.alpha_ac_bits as usize
+}
+
+/// Bits before the AC payload for a given tunable header layout: descriptor
+/// byte + aspect field + DC fields + scale fields. Equals [`PREFIX_BITS`] (54)
+/// for the shipped widths; the sweep-only field-width knobs move it.
+pub(crate) fn prefix_bits(t: &Tunables) -> u32 {
+    let scale_bits =
+        t.l_scale_bits + t.a_scale_bits + if t.b_scale_from_a { 0 } else { t.b_scale_bits };
+    8 + t.aspect_bits + t.l_dc_bits + t.a_dc_bits + t.b_dc_bits + scale_bits + 2 * t.cfl_bits
+}
+
+/// Total encoded length in bytes for a (tunables, alpha mode, tier): the
+/// header prefix (+ alpha DC/scale in alpha mode) plus the AC payload, rounded
+/// up to a whole number of bytes. This is the deterministic length formula a
+/// decoder recomputes to validate a hash.
+pub(crate) fn body_len_bytes(t: &Tunables, has_alpha: bool, tier: u8) -> usize {
+    let shape = ac_shape(t, has_alpha, tier);
+    let mut bits = prefix_bits(t) as usize + ac_payload_bits(&shape);
+    if has_alpha {
+        bits += (t.alpha_dc_bits + t.alpha_scale_bits) as usize;
+    }
+    bits.div_ceil(8)
+}
+
+/// Experimental AC companding family (sweep-only). The shipped v1 format uses
+/// [`Companding::MuLaw`]; the alternatives exist so the corpus sweep can compare
+/// the µ-law choice against its audio-codec siblings on equal footing:
+/// A-law (G.711's other half, linear near zero), power-law (AAC/MP3 quantize
+/// |x|^0.75), and trained Lloyd-Max codebooks ([`Companding::Table`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Companding {
+    /// µ-law (the shipped quantizer); uses the group's `mu_*` parameter.
+    MuLaw,
+    /// A-law with parameter `a` (G.711 uses 87.6).
+    ALaw { a: f64 },
+    /// Power-law |x|^gamma (AAC/MP3 use gamma = 0.75).
+    Power { gamma: f64 },
+    /// Trained codebook: the group's [`QuantTable`] holds the positive half of
+    /// a symmetric odd-level quantizer with the center pinned at exactly 0.
+    Table,
+}
+
+/// Positive half of a symmetric odd-level codebook for [`Companding::Table`]:
+/// `len` ascending reconstruction levels for indices center+1..=center+len
+/// (mirrored for the negative side; the center index decodes to exactly 0).
+/// 31 slots cover up to 6-bit fields (2^5 − 1 positive levels). Fixed-size so
+/// [`Tunables`] stays `Copy`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct QuantTable {
+    pub levels: [f64; 31],
+    pub len: u8,
+}
+
+impl QuantTable {
+    /// No trained levels (must not be used with `Companding::Table`).
+    pub const EMPTY: QuantTable = QuantTable {
+        levels: [0.0; 31],
+        len: 0,
+    };
+}
+
+/// All v1 format parameters. The shipped format uses [`Tunables::DEFAULT`];
 /// the comparison harness can override these while sweeping the corpus to lock
 /// the final constants, via the `CHROMAHASH_TUNE` env parser in the
 /// `rust/examples/encode_stdin.rs` example binary.
@@ -80,7 +370,12 @@ pub const ALPHA_AC_BITS: u32 = 4;
 /// that parser in lockstep — an unhandled key aborts the whole sweep.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Tunables {
+    /// AC layout at the **default tier** (code 1, 32 bytes).
     pub layout: AcLayout,
+    /// AC layout base for **codes 2..=4**, scaled by `4^level`.
+    pub layout_upper: AcLayout,
+    /// AC layout of the compact tier (code 4). The third row of the table.
+    pub layout_compact: AcLayout,
     /// DC chroma quantization ranges. Sized to the union OKLab hull of the
     /// display-output gamuts (sRGB ∪ Display P3 ∪ Adobe RGB: max |a| ≈ 0.347,
     /// max |b| ≈ 0.321) so wide-gamut colors are stored faithfully for
@@ -104,25 +399,202 @@ pub struct Tunables {
     /// Encoder-only: search the ±1 neighborhood of the DC codes for the
     /// triple minimizing post-clip sRGB error (off only for ablation).
     pub dc_search: bool,
+    /// AC companding family per channel group (sweep-only; defaults reproduce
+    /// the shipped µ-law bytes exactly).
+    pub compand_l: Companding,
+    pub compand_c: Companding,
+    pub compand_alpha: Companding,
+    /// Trained codebooks used when the group's family is [`Companding::Table`].
+    pub table_l: QuantTable,
+    pub table_c: QuantTable,
+    pub table_alpha: QuantTable,
+    /// Encoder deadzone per group: a normalized |value/scale| below this
+    /// quantizes to the exact-zero center code. 0.0 disables (shipped).
+    pub deadzone_l: f64,
+    pub deadzone_c: f64,
+    pub deadzone_alpha: f64,
+    /// Scalefactor-band experiment (MP3/AAC-style): coefficients at selection
+    /// index ≥ floor(count·band_split) quantize against `scale·band_gain_*`
+    /// instead of `scale`, symmetric in encode and decode. Gain 1.0 disables.
+    pub band_split: f64,
+    pub band_gain_l: f64,
+    pub band_gain_c: f64,
+    /// Anisotropic (CSF oblique-effect) selection weight: sorts candidates by
+    /// priority·(1 + aniso·sin²2θ), penalizing diagonals, so the budget goes to
+    /// axis-aligned detail first. Human contrast sensitivity is lower for
+    /// diagonal frequencies, and the corpus agrees. 0.0 reproduces the pure
+    /// priority order coefficient for coefficient.
+    ///
+    /// Quantized to Q12 and compared as an exact integer key
+    /// (`dct::selection_key`, spec §6.2) — the order is bit-exact across
+    /// languages, and costs no more than the unweighted sort.
+    pub aniso_oblique: f64,
+    /// Encoder-only: pick the AC code whose *dequantized* value is closest to
+    /// the coefficient, instead of the code nearest in the companded domain.
+    /// The shipped quantizer rounds in µ-law space, which is not the same
+    /// decision — µ-law levels are unevenly spaced, so the nearest compressed
+    /// level is not always the nearest reconstruction. Costs a ±2 neighborhood
+    /// search per coefficient and zero bits; the decoder is untouched.
+    pub ac_nearest: bool,
+    /// Encoder-only AC scale-factor policy (zero wire cost — every mode writes
+    /// a legal scale code and the decoder is untouched):
+    /// * `0` — shipped: code = round(max|AC| / max_scale), coefficients
+    ///   normalized by the **unquantized** max|AC|.
+    /// * `1` — normalize by the dequantized scale the decoder will actually
+    ///   use, removing the encoder/decoder scale mismatch.
+    /// * `2` — search every scale code for the one minimizing reconstruction
+    ///   SSE over the channel's AC set (clipping a lone outlier can buy back
+    ///   resolution for everything else).
+    pub scale_fit: u32,
+    /// Encoder-only pixel-domain refinement passes (0 = off, the shipped
+    /// behaviour). Each pass is a coordinate descent over the AC codes —
+    /// optionally the DC and scale codes too — scored by the error of the
+    /// *decoded pixels* rather than of the coefficients. Coefficient-domain
+    /// SSE is separable and independently-rounded codes already minimize it;
+    /// the decoded error is not separable, because the render path clamps L
+    /// and clips each output channel into gamut. That non-linearity is the one
+    /// place independent rounding is provably not optimal.
+    pub refine_passes: u32,
+    /// Largest code offset tried per coefficient during refinement.
+    pub refine_delta: u32,
+    /// Refinement objective: `0` = squared error in gamma-encoded sRGB (models
+    /// the whole decode path, including the gamut clip), `1` = squared error in
+    /// OKLAB with no clipping model (the cheap control — should behave like the
+    /// coefficient-domain search), `2` = squared error in OKLAB *after* the
+    /// gamut clip (perceptual, and models the clip).
+    pub refine_obj: u32,
+    /// Include the three DC codes as refinement coordinates. The shipped DC
+    /// search optimizes the flat-colour target with the AC set assumed zero;
+    /// with AC present a different DC can cancel clipping.
+    pub refine_dc: bool,
+    /// Include the AC scale codes as refinement coordinates. Amplitude that
+    /// pushes a pixel out of gamut is discarded at decode, so trading it for
+    /// resolution everywhere else can pay — clipping pre-compensation, chosen
+    /// by measurement rather than by rule.
+    pub refine_scale: bool,
+    /// Encoder-only closed-loop passes: decode, take the residual against the
+    /// source, re-project it onto the *same* selected basis, add it to the
+    /// unquantized coefficients and requantize. Cheaper than the coordinate
+    /// descent and strictly weaker, but a clean ablation of "does re-projection
+    /// alone recover anything the first projection lost?"
+    pub reproject_passes: u32,
+    /// Width of the aspect field. 8 bits is the shipped ~1.09% max ratio error;
+    /// narrower fields coarsen the aspect grid symmetrically about 1:1 and hand
+    /// the saved bits to the AC payload. The 54-bit prefix is 21% of a 32-byte
+    /// hash and 32% of a 21-byte one, so at small budgets this is the largest
+    /// pool of recoverable bits in the format.
+    pub aspect_bits: u32,
+    /// DC field widths (shipped 7/7/7).
+    pub l_dc_bits: u32,
+    pub a_dc_bits: u32,
+    pub b_dc_bits: u32,
+    /// AC scale field widths (shipped 6/6/5).
+    pub l_scale_bits: u32,
+    pub a_scale_bits: u32,
+    pub b_scale_bits: u32,
+    /// Drop the b-scale field and reuse the a-scale for both chroma channels.
+    /// Saves `b_scale_bits` outright; costs whatever the two scales actually
+    /// differ by, which the range-asymmetry evidence suggests is little.
+    pub b_scale_from_a: bool,
+    /// µ-law parameter for the AC scale fields (0 = the shipped linear grid).
+    /// Corpus scales cluster well below the range maximum, so a logarithmic
+    /// grid should carry the same accuracy in fewer bits.
+    pub scale_mu: f64,
+    /// Horizontal/vertical selection asymmetry: sorts candidates by
+    /// `priority·(1 + aniso·sin²2θ)·(1 + hv·cos2θ)`. Positive values push
+    /// horizontal frequencies (vertical edges) down the order. Generalizes the
+    /// oblique-effect weight into the 2-parameter family a corpus-trained
+    /// selection order would live in. Shares the Q12 integer key with
+    /// [`Tunables::aniso_oblique`]; `|hv| < 1` keeps the weight positive.
+    pub sel_hv: f64,
+    /// Alpha DC code width, in bits (alpha mode only). The quantizer's top code
+    /// is `2^bits - 1`, so narrowing this coarsens the flat alpha level rather
+    /// than clipping it.
+    pub alpha_dc_bits: u32,
+    /// Alpha AC scale-factor code width, in bits (alpha mode only).
+    pub alpha_scale_bits: u32,
+    /// Quantize the alpha AC plane through the same path as L/a/b, so
+    /// [`Tunables::scale_fit`] and [`Tunables::ac_nearest`] apply to it.
+    ///
+    /// Alpha has always used a bare quantizer and a nominal scale code, so
+    /// every encoder-side improvement since v0.6 has skipped it — the alpha
+    /// channel runs a generation behind the channels beside it. `false`
+    /// reproduces that legacy path exactly.
+    pub alpha_ac_fit: bool,
+    /// Grid the pixel-domain refinement scores on: `0` = the encoder input
+    /// (reconstruct the source as well as possible), `1` = the **natural render
+    /// grid**, against the ideal full-basis downsample of the source — i.e. the
+    /// pixels a decoder will actually emit. The two are different objectives:
+    /// the encoder input is 100 px here while a default-tier decode is 32 px.
+    pub refine_grid: u32,
+    /// Per-channel weights for `refine_obj = 3` (clipped OKLAB, weighted).
+    /// `refine_wl` scales the L term, `refine_wc` the a/b terms. Lets the
+    /// objective be steered between "match the pixels" and "match the colour",
+    /// which is what the metric actually rewards.
+    pub refine_wl: f64,
+    pub refine_wc: f64,
+    /// Chroma-from-luma: width of each signalled per-channel gain field
+    /// (0 = off, the shipped format). Each chroma AC coefficient is coded as a
+    /// residual against `alpha · (the decoder's dequantized luma AC at the same
+    /// selection index)`. Costs `2 · cfl_bits` prefix bits and pays only if the
+    /// residual's scale shrinks by more than that. Wire-level.
+    pub cfl_bits: u32,
+    /// Range of the signalled CfL gain: alpha spans [-cfl_range, +cfl_range].
+    pub cfl_range: f64,
+    /// Decoder-side detail synthesis: how many frequencies *beyond* the coded
+    /// set to synthesize at render time, seeded deterministically from the hash
+    /// bytes. Costs zero bytes and attacks the format's real weakness — it
+    /// wins dE00 but loses SSIMULACRA2/DSSIM to real codecs, because every bit
+    /// goes to a handful of global low frequencies and the result is too smooth.
+    pub synth_count: usize,
+    /// Amplitude of the synthesized detail, as a fraction of the RMS of the
+    /// highest-frequency quarter of the coded luma AC set. 0 disables.
+    pub synth_gain: f64,
+    /// Embedded/progressive AC order: write the AC codes of all three channels
+    /// merged by frequency priority instead of channel-sequentially, so a
+    /// truncated payload still carries the lowest frequencies of every channel.
+    /// This is the structural prerequisite for a tier-t hash being a usable
+    /// prefix of a tier-t+1 one.
+    pub interleave: bool,
+    /// Decode only the first `trunc_bytes` bytes, treating every AC code that
+    /// falls past them as the exact-zero centre code (0 = decode it all).
+    /// Measurement-only: it is how a progressive decoder would behave.
+    pub trunc_bytes: usize,
 }
 
 impl Tunables {
-    /// v0.6 format constants, locked by the 2026-06 corpus sweep
-    /// (tools/comparison, 52 images; see spec §12.1 once regenerated).
+    /// The v1 format constants, locked by the 2026-08 corpus sweep
+    /// (tools/comparison, 39 curated photos + Kodak24 over a tune/holdout
+    /// split; spec/EXPERIMENTS.md).
     ///
-    /// Sweep conclusions: layout B (the v0.5 channel split) beats chroma-
-    /// rebalanced layouts on natural images; chroma AC scale range 0.125
-    /// (v0.5: 0.5) is the single largest quality win (the corpus maximum
-    /// chroma scale is 0.113 — the old range wasted two bits); chroma DC
-    /// ranges sized to the display-output gamut hull (sRGB ∪ P3 ∪ Adobe);
-    /// µ_C=8 exploits the finer chroma
-    /// scale near zero; out-of-gamut chroma is clipped per-channel at decode
-    /// (relative-colorimetric, §12.6); the synthesis window is DISABLED (w_min=1.0) — with fine
-    /// chroma scales it costs more detail than the banding it suppresses,
-    /// and v0.5's visible striping turned out to be chroma quantization
-    /// noise, not luma ringing.
+    /// Carried over from v0.6: chroma AC scale range 0.125 (v0.5: 0.5) is the
+    /// single largest quality win (the corpus maximum chroma scale is 0.113 —
+    /// the old range wasted two bits); chroma DC ranges sized to the
+    /// display-output gamut hull (sRGB ∪ P3 ∪ Adobe); µ_C=8 exploits the finer
+    /// chroma scale near zero; out-of-gamut chroma is clipped per-channel at
+    /// decode (relative-colorimetric, §12.6); the synthesis window is DISABLED
+    /// (w_min=1.0) — with fine chroma scales it costs more detail than the
+    /// banding it suppresses, and v0.5's visible striping turned out to be
+    /// chroma quantization noise, not luma ringing.
+    ///
+    /// New in v1, and validated together on the never-tuned holdout split at
+    /// −3.50% mean ΔE00 with SSIMULACRA2, Butteraugli and DSSIM all improving
+    /// (EXPERIMENTS.md §8):
+    ///
+    /// * [`LAYOUT_T0`] at the default tier — more, coarser coefficients where the
+    ///   budget is tightest, while codes 2..=4 keep [`LAYOUT_B`] scaled by `4^level`.
+    /// * `aniso_oblique = 1.2`, `sel_hv = 0.15` — a perceptual selection order
+    ///   (spec §6.2), integer-exact and free at decode.
+    /// * `scale_fit = 2`, `ac_nearest = true` — encoder-only quantization
+    ///   decisions that cost no bits and leave the decoder untouched.
+    ///
+    /// Deliberately *not* default: the pixel-domain refinement of §8.2. It is
+    /// worth a further −0.6 pp at the default tier and costs ~54× encode time, so it
+    /// belongs behind an encoder quality setting, not here.
     pub const DEFAULT: Tunables = Tunables {
-        layout: LAYOUT_B,
+        layout: LAYOUT_T0,
+        layout_upper: LAYOUT_B,
+        layout_compact: LAYOUT_TC,
         max_chroma_a: 0.35,
         max_chroma_b: 0.33,
         max_l_scale: 0.5,
@@ -137,6 +609,49 @@ impl Tunables {
         w_min_c: 1.0,
         w_exp_c: 1,
         dc_search: true,
+        compand_l: Companding::MuLaw,
+        compand_c: Companding::MuLaw,
+        compand_alpha: Companding::MuLaw,
+        table_l: QuantTable::EMPTY,
+        table_c: QuantTable::EMPTY,
+        table_alpha: QuantTable::EMPTY,
+        deadzone_l: 0.0,
+        deadzone_c: 0.0,
+        deadzone_alpha: 0.0,
+        band_split: 0.5,
+        band_gain_l: 1.0,
+        band_gain_c: 1.0,
+        aniso_oblique: 1.2,
+        ac_nearest: true,
+        scale_fit: 2,
+        refine_passes: 0,
+        refine_delta: 1,
+        refine_obj: 0,
+        refine_dc: false,
+        refine_scale: false,
+        reproject_passes: 0,
+        aspect_bits: 8,
+        l_dc_bits: L_DC_BITS,
+        a_dc_bits: A_DC_BITS,
+        b_dc_bits: B_DC_BITS,
+        l_scale_bits: L_SCALE_BITS,
+        a_scale_bits: A_SCALE_BITS,
+        b_scale_bits: B_SCALE_BITS,
+        b_scale_from_a: false,
+        scale_mu: 0.0,
+        sel_hv: 0.15,
+        alpha_dc_bits: ALPHA_DC_BITS,
+        alpha_scale_bits: ALPHA_SCALE_BITS,
+        alpha_ac_fit: false,
+        refine_grid: 0,
+        refine_wl: 1.0,
+        refine_wc: 1.0,
+        cfl_bits: 0,
+        cfl_range: 0.5,
+        synth_count: 0,
+        synth_gain: 0.0,
+        interleave: false,
+        trunc_bytes: 0,
     };
 }
 
@@ -266,12 +781,53 @@ mod tests {
         c
     }
 
+    /// `ac_shape` scales *both* `l_tiers` entries by `4^level`. Every shipped
+    /// layout has a zero second entry (`[(28, 4), (0, 4)]` and friends), so
+    /// `0 * s == 0 / s` and the scaling of that entry is unobservable through
+    /// the shipped tiers — a mutation of it survives every test in the crate.
+    ///
+    /// `LAYOUT_C` is the exception: it is the tiered-precision arm the sweep
+    /// explores (`[(8, 6), (14, 5)]`), and it is *only* reachable through
+    /// `Tunables`. Exercising it here is what pins the second entry's scaling,
+    /// so a bug in it would be caught before the sweep ever adopted the layout.
+    #[test]
+    fn both_l_tier_entries_scale_with_the_tier() {
+        let mut t = Tunables::DEFAULT;
+        t.layout_upper = LAYOUT_C;
+        assert_ne!(
+            LAYOUT_C.l_tiers[1].0, 0,
+            "this test needs a layout whose second L tier is non-empty"
+        );
+
+        // Tier 2 scales counts by 4^1; tier 3 by 4^2.
+        for (tier, scale) in [(2u8, 4usize), (3, 16)] {
+            for has_alpha in [false, true] {
+                let shape = ac_shape(&t, has_alpha, tier);
+                let src = if has_alpha {
+                    LAYOUT_C.la_tiers
+                } else {
+                    LAYOUT_C.l_tiers
+                };
+                assert_eq!(
+                    shape.l_tiers[0].0,
+                    src[0].0 * scale,
+                    "tier {tier} alpha={has_alpha}: first L tier"
+                );
+                assert_eq!(
+                    shape.l_tiers[1].0,
+                    src[1].0 * scale,
+                    "tier {tier} alpha={has_alpha}: second L tier"
+                );
+            }
+        }
+    }
+
     fn identity_error(m: &[[f64; 3]; 3]) -> f64 {
         let mut err = 0.0_f64;
-        for i in 0..3 {
-            for j in 0..3 {
+        for (i, row) in m.iter().enumerate() {
+            for (j, value) in row.iter().enumerate() {
                 let expected = if i == j { 1.0 } else { 0.0 };
-                err = err.max((m[i][j] - expected).abs());
+                err = err.max((value - expected).abs());
             }
         }
         err

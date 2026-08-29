@@ -1,6 +1,6 @@
 name: Release (npm)
 
-# Publish the @chromahash/typescript package to npm when a release tag is pushed.
+# Publish the @visualcommons/chromahash package to npm when a release tag is pushed.
 # Releases are cut with `just release X.Y.Z`, which creates and pushes the
 # `vX.Y.Z` tag (see RELEASING.md). This workflow builds the wasm glue + TypeScript
 # and publishes via npm trusted publishing (OIDC) — no stored token. It is
@@ -91,7 +91,7 @@ jobs:
         working-directory: typescript
         run: |
           ver="$(node -p "require('./package.json').version")"
-          if npm view "@chromahash/typescript@$ver" version >/dev/null 2>&1; then
+          if npm view "@visualcommons/chromahash@$ver" version >/dev/null 2>&1; then
             echo "Version $ver already on npm — skipping."
             echo "published=true" >> "$GITHUB_OUTPUT"
           else

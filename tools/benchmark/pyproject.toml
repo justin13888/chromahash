@@ -1,8 +1,18 @@
 [project]
 name = "chromahash-benchmark"
-version = "0.6.0"
+version = "0.7.0"
 requires-python = ">=3.12"
 dependencies = ["matplotlib"]
 
 [tool.uv]
 dev-dependencies = []
+
+# The same lint/format contract as the `python/` package, so `just lint-benchmark`
+# holds this driver to the repo's standard rather than to whatever ruff's
+# defaults happen to be that release.
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

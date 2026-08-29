@@ -1,6 +1,6 @@
 {
-  "name": "@chromahash/typescript",
-  "version": "0.6.0",
+  "name": "@visualcommons/chromahash",
+  "version": "0.7.0",
   "description": "Modern, high-quality image placeholder representation for professional formats",
   "license": "MIT OR Apache-2.0",
   "author": "Justin Chung <noreply@justinchung.net>",

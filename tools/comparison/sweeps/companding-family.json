@@ -1,0 +1,62 @@
+{
+  "name": "companding-family",
+  "description": "The shipped \u00b5-law (\u00b5_L=5, \u00b5_C=8) vs its audio-codec siblings at identical bit budgets: \u00b5 variations, A-law (G.711), power-law |x|^\u03b3 (AAC/MP3 use 0.75), and Lloyd-Max codebooks trained on the tune corpus (append via train-tables output).",
+  "corpus": "photo",
+  "variants": [
+    {
+      "label": "default (\u00b5-law 5/8)"
+    },
+    {
+      "label": "mu_l=4",
+      "tune": "mu_l=4"
+    },
+    {
+      "label": "mu_l=6",
+      "tune": "mu_l=6"
+    },
+    {
+      "label": "mu_l=7",
+      "tune": "mu_l=7"
+    },
+    {
+      "label": "mu_c=6",
+      "tune": "mu_c=6"
+    },
+    {
+      "label": "mu_c=10",
+      "tune": "mu_c=10"
+    },
+    {
+      "label": "mu_c=12",
+      "tune": "mu_c=12"
+    },
+    {
+      "label": "alaw 87.6 (L+C)",
+      "tune": "compand_l=alaw:87.6 compand_c=alaw:87.6"
+    },
+    {
+      "label": "pow 0.6 (L+C)",
+      "tune": "compand_l=pow:0.6 compand_c=pow:0.6"
+    },
+    {
+      "label": "pow 0.75 (L+C)",
+      "tune": "compand_l=pow:0.75 compand_c=pow:0.75"
+    },
+    {
+      "label": "pow 0.9 (L+C)",
+      "tune": "compand_l=pow:0.9 compand_c=pow:0.9"
+    },
+    {
+      "label": "Lloyd-Max L (trained)",
+      "tune": "compand_l=table table_l=0.020020,0.045096,0.076642,0.111710,0.156839,0.202868,0.264992,0.315166,0.385545,0.467690,0.555452,0.631367,0.742992,0.863635,1.000000"
+    },
+    {
+      "label": "Lloyd-Max C (trained)",
+      "tune": "compand_c=table table_c=0.046992,0.123910,0.217175,0.334150,0.533425,0.775506,1.000000"
+    },
+    {
+      "label": "Lloyd-Max L+C (trained)",
+      "tune": "compand_l=table table_l=0.020020,0.045096,0.076642,0.111710,0.156839,0.202868,0.264992,0.315166,0.385545,0.467690,0.555452,0.631367,0.742992,0.863635,1.000000 compand_c=table table_c=0.046992,0.123910,0.217175,0.334150,0.533425,0.775506,1.000000"
+    }
+  ]
+}

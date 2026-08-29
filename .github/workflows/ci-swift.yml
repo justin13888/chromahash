@@ -3,9 +3,9 @@ name: CI (Swift)
 on:
   push:
     branches: [master]
-    paths: ["swift/**", "Package.swift", "bindings/uniffi/**", "rust/**", ".github/workflows/ci-swift.yml"]
+    paths: ["swift/**", "Package.swift", "bindings/uniffi/**", "rust/**", "spec/test-vectors/**", ".github/workflows/ci-swift.yml"]
   pull_request:
-    paths: ["swift/**", "Package.swift", "bindings/uniffi/**", "rust/**", ".github/workflows/ci-swift.yml"]
+    paths: ["swift/**", "Package.swift", "bindings/uniffi/**", "rust/**", "spec/test-vectors/**", ".github/workflows/ci-swift.yml"]
 
 jobs:
   ci:

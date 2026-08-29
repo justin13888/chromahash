@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from chromahash import BatchEncoder, ChromaHash, Gamut, ImageInput
+from chromahash import BatchEncoder, ChromaHash, ChromaHashError, Gamut, ImageInput
 
 
 def solid_image(w: int, h: int, r: int, g: int, b: int, a: int) -> bytes:
@@ -70,9 +70,12 @@ def test_context_manager() -> None:
 
 
 def test_invalid_item_raises_with_index() -> None:
+    """The typed error is the same one `encode_with_quality` raises — the batch
+    path does not have a taxonomy of its own.
+    """
     items = [
         ImageInput(2, 2, solid_image(2, 2, 0, 0, 0, 255), Gamut.SRGB),
         ImageInput(2, 2, bytes(3), Gamut.SRGB),  # wrong length
     ]
-    with pytest.raises(ValueError, match="item 1"):
+    with pytest.raises(ChromaHashError.InvalidLength, match="item 1"):
         BatchEncoder().encode_batch(items)

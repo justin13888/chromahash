@@ -1,0 +1,58 @@
+{
+  "name": "refine-grid",
+  "description": "The first refinement pass optimized the encoder-input grid (100 px) while a tier-0 decoder renders 32 px, and it optimized squared error while the format is judged on dE00. refine_grid=1 moves the objective onto the decoder's own render grid, scored against the ideal full-basis downsample of the source. refine_obj picks what error means there: 0 = gamma sRGB, 2 = clipped OKLAB, 3 = clipped OKLAB with L/chroma weights.",
+  "photoOnly": true,
+  "variants": [
+    { "label": "32B shipped" },
+    { "label": "grid0 obj0 p2 (prior)", "tune": "refine_passes=2" },
+    { "label": "grid1 obj0 p2", "tune": "refine_passes=2 refine_grid=1" },
+    { "label": "grid1 obj0 p4", "tune": "refine_passes=4 refine_grid=1" },
+    {
+      "label": "grid1 obj0 p2 +dc+scale",
+      "tune": "refine_passes=2 refine_grid=1 refine_dc=1 refine_scale=1"
+    },
+    {
+      "label": "grid1 obj2 p2",
+      "tune": "refine_passes=2 refine_grid=1 refine_obj=2"
+    },
+    {
+      "label": "grid1 obj2 p2 +dc+scale",
+      "tune": "refine_passes=2 refine_grid=1 refine_obj=2 refine_dc=1 refine_scale=1"
+    },
+    {
+      "label": "grid1 obj3 wc=2",
+      "tune": "refine_passes=2 refine_grid=1 refine_obj=3 refine_wc=2"
+    },
+    {
+      "label": "grid1 obj3 wc=3",
+      "tune": "refine_passes=2 refine_grid=1 refine_obj=3 refine_wc=3"
+    },
+    {
+      "label": "grid1 obj3 wc=0.5",
+      "tune": "refine_passes=2 refine_grid=1 refine_obj=3 refine_wc=0.5"
+    },
+    {
+      "label": "grid0 obj2 p2 (prior best)",
+      "tune": "refine_passes=2 refine_obj=2"
+    },
+    {
+      "label": "grid1 obj2 p2 d2",
+      "tune": "refine_passes=2 refine_delta=2 refine_grid=1 refine_obj=2"
+    },
+    { "label": "L28@4C15@3 base", "tune": "l1=28:4 c=15:3" },
+    {
+      "label": "L28@4C15@3 grid1 obj2",
+      "tune": "l1=28:4 c=15:3 refine_passes=2 refine_grid=1 refine_obj=2"
+    },
+    {
+      "label": "L28@4C15@3 grid1 obj2 +dcs",
+      "tune": "l1=28:4 c=15:3 refine_passes=2 refine_grid=1 refine_obj=2 refine_dc=1 refine_scale=1"
+    },
+    { "label": "t1 108B base", "tier": 2 },
+    {
+      "label": "t1 108B grid1 obj2",
+      "tier": 2,
+      "tune": "refine_passes=2 refine_grid=1 refine_obj=2"
+    }
+  ]
+}

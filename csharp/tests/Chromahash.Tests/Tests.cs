@@ -73,11 +73,14 @@ static class Helpers
     public static Gamut GamutFromString(string s) =>
         s switch
         {
+            "sRGB" => Gamut.Srgb,
             "Display P3" => Gamut.DisplayP3,
             "Adobe RGB" => Gamut.AdobeRgb,
             "BT.2020" => Gamut.Bt2020,
             "ProPhoto RGB" => Gamut.ProPhotoRgb,
-            _ => Gamut.Srgb,
+            // Not a fallback to sRGB: that would report a hash mismatch for an
+            // unrecognised gamut instead of naming the real cause.
+            _ => throw new ArgumentException($"unknown gamut in spec vector: {s}"),
         };
 }
 
@@ -92,13 +95,40 @@ public class ChromaHashTests
         Assert.Equal(32, hash.AsBytes().Length);
     }
 
-    [Fact]
-    public void DecodeProducesValidDimensions()
+    /// <summary>
+    /// The byte length is a function of the tier alone, so assert all five —
+    /// the table spec §3.3 tabulates. Asserting only the default would pass
+    /// even if every higher tier collapsed to the same size.
+    /// </summary>
+    [Theory]
+    [InlineData(CH.CompactTier, 21)]
+    [InlineData(CH.DefaultTier, 32)]
+    [InlineData((byte)2, 108)]
+    [InlineData((byte)3, 411)]
+    [InlineData(CH.MaxTier, 1623)]
+    public void EachTierEncodesToItsDocumentedLength(byte tier, int expected)
     {
-        CH hash = CH.Encode(4, 4, Helpers.SolidImage(4, 4, 128, 64, 32, 255), Gamut.Srgb);
-        var (w, h, pixels) = hash.Decode();
-        Assert.True(w > 0 && w <= 32);
-        Assert.True(h > 0 && h <= 32);
+        byte[] rgba = Helpers.SolidImage(4, 4, 128, 128, 128, 255);
+        Assert.Equal(expected, CH.EncodeWithQuality(4, 4, rgba, Gamut.Srgb, tier).AsBytes().Length);
+    }
+
+    /// <summary>
+    /// Decoded dimensions come from the aspect byte and the tier's raster. A
+    /// range check wide enough to pass at every tier cannot tell them apart,
+    /// so assert the values.
+    /// </summary>
+    [Theory]
+    [InlineData(CH.CompactTier, 32u)]
+    [InlineData(CH.DefaultTier, 32u)]
+    [InlineData((byte)2, 64u)]
+    [InlineData((byte)3, 128u)]
+    [InlineData(CH.MaxTier, 256u)]
+    public void DecodedDimensionsFollowTheTierRaster(byte tier, uint edge)
+    {
+        byte[] rgba = Helpers.SolidImage(4, 4, 128, 64, 32, 255);
+        var (w, h, pixels) = CH.EncodeWithQuality(4, 4, rgba, Gamut.Srgb, tier).Decode();
+        Assert.Equal(edge, w);
+        Assert.Equal(edge, h);
         Assert.Equal((int)(w * h * 4), pixels.Length);
     }
 
@@ -109,15 +139,40 @@ public class ChromaHashTests
         Assert.Equal(hash, CH.FromBytes(hash.AsBytes()));
     }
 
+    /// <summary>
+    /// The header is self-describing, so a length that disagrees with it is
+    /// rejected at construction, not at first use.
+    /// </summary>
     [Fact]
-    public void VersionSupported()
+    public void FromBytesRejectsWrongLength()
     {
-        CH hash = CH.Encode(4, 4, Helpers.SolidImage(4, 4, 128, 128, 128, 255), Gamut.Srgb);
-        Assert.True(hash.IsVersionSupported(), "v0.6 hash must be supported");
+        byte[] valid = CH.Encode(4, 4, Helpers.SolidImage(4, 4, 128, 64, 32, 255), Gamut.Srgb).AsBytes();
 
-        byte[] legacy = hash.AsBytes();
-        legacy[5] |= 0x80; // flip header bit 47 to simulate a legacy v0.2–v0.5 hash
-        Assert.False(CH.FromBytes(legacy).IsVersionSupported());
+        Assert.Throws<ArgumentException>(() => CH.FromBytes(valid[..^1]));
+        Assert.Throws<ArgumentException>(() => CH.FromBytes([.. valid, (byte)0]));
+        Assert.Throws<ArgumentException>(() => CH.FromBytes([]));
+    }
+
+    /// <summary>
+    /// The reserved bit is how v1 reserves room for a future extension: a
+    /// decoder that ignored it would accept a hash written by a later format
+    /// and render garbage.
+    /// </summary>
+    [Theory]
+    [InlineData("reserved bit set", 0b1000_0000, 0)]
+    [InlineData("reserved tier code", 0, (CH.MaxTier + 1) << 3)]
+    [InlineData("unsupported version", 0b0000_0001, 0)]
+    public void FromBytesRejectsAMalformedHeader(string what, int orMask, int tierBits)
+    {
+        byte[] bytes = CH.Encode(4, 4, Helpers.SolidImage(4, 4, 1, 2, 3, 255), Gamut.Srgb).AsBytes();
+        int b0 = bytes[0] | orMask;
+        if (tierBits != 0)
+            b0 = (b0 & ~0b0011_1000) | tierBits;
+        bytes[0] = (byte)b0;
+
+        var ex = Assert.Throws<ArgumentException>(() => CH.FromBytes(bytes));
+        Assert.NotNull(ex);
+        Assert.NotEmpty(what);
     }
 
     [Theory]
@@ -127,6 +182,29 @@ public class ChromaHashTests
     {
         byte[] rgba = Helpers.SolidImage(4, 4, 128, 128, 128, 255);
         Assert.Throws<ArgumentOutOfRangeException>(() => CH.Encode(w, h, rgba, Gamut.Srgb));
+    }
+
+    [Fact]
+    public void ReservedTierThrows()
+    {
+        byte[] rgba = Helpers.SolidImage(4, 4, 128, 128, 128, 255);
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            CH.EncodeWithQuality(4, 4, rgba, Gamut.Srgb, CH.MaxTier + 1)
+        );
+    }
+
+    /// <summary>
+    /// The tier codes are declared as C# consts for constant expressions, but
+    /// the format owns them and the native ABI exports them. Assert the two
+    /// agree, so a renumber in the core cannot leave this package one code
+    /// behind.
+    /// </summary>
+    [Fact]
+    public void TierConstantsMatchTheNativeAbi()
+    {
+        Assert.Equal(CH.CompactTier, Native.ReadExportedByte("CHROMAHASH_COMPACT_TIER"));
+        Assert.Equal(CH.DefaultTier, Native.ReadExportedByte("CHROMAHASH_DEFAULT_TIER"));
+        Assert.Equal(CH.MaxTier, Native.ReadExportedByte("CHROMAHASH_MAX_TIER"));
     }
 }
 
@@ -157,9 +235,10 @@ public class SpecVectorTests
             uint w = (uint)input.GetProperty("width").GetInt32();
             uint h = (uint)input.GetProperty("height").GetInt32();
             Gamut gamut = Helpers.GamutFromString(input.GetProperty("gamut").GetString()!);
+            byte tier = (byte)input.GetProperty("tier").GetInt32();
             byte[] rgba = Bytes(input.GetProperty("rgba"));
 
-            CH ch = CH.Encode(w, h, rgba, gamut);
+            CH ch = CH.EncodeWithQuality(w, h, rgba, gamut, tier);
             Assert.True(ch.AsBytes().SequenceEqual(Bytes(tc.GetProperty("expected").GetProperty("hash"))), $"{name}: hash mismatch");
             Assert.True(ch.AverageColor().SequenceEqual(Bytes(tc.GetProperty("expected").GetProperty("average_color"))), $"{name}: average_color mismatch");
         }

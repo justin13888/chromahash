@@ -1,8 +1,16 @@
 """CLI harness: ChromaHash encode/decode/average-color via stdin/stdout."""
 
+import os
 import sys
 
-from chromahash import BatchEncoder, ChromaHash, Gamut, ImageInput
+from chromahash import (
+    DEFAULT_TIER,
+    MAX_TIER,
+    BatchEncoder,
+    ChromaHash,
+    Gamut,
+    ImageInput,
+)
 
 GAMUT_MAP = {
     "srgb": Gamut.SRGB,
@@ -11,6 +19,23 @@ GAMUT_MAP = {
     "bt2020": Gamut.BT2020,
     "prophoto": Gamut.PROPHOTO_RGB,
 }
+
+
+def tier_from_env() -> int:
+    """Quality tier from CHROMAHASH_TIER, matching the Rust harness so the
+    cross-language benchmark measures the same workload in every language.
+    Defaults to the 32-byte tier."""
+    raw = os.environ.get("CHROMAHASH_TIER")
+    if not raw:
+        return DEFAULT_TIER
+    try:
+        tier = int(raw)
+    except ValueError:
+        tier = -1
+    if not 0 <= tier <= MAX_TIER:
+        sys.stderr.write(f"CHROMAHASH_TIER: {raw!r} is not a valid tier code (0..={MAX_TIER})\n")
+        sys.exit(1)
+    return tier
 
 
 def usage() -> None:
@@ -50,25 +75,17 @@ def main() -> None:
             sys.stderr.write(f"expected {expected_len} bytes, got {len(rgba)}\n")
             sys.exit(1)
 
-        ch = ChromaHash.encode(w, h, rgba, gamut)
+        ch = ChromaHash.encode_with_quality(w, h, rgba, gamut, tier_from_env())
         sys.stdout.buffer.write(ch.as_bytes())
 
     elif subcommand == "decode":
-        hash_bytes = sys.stdin.buffer.read(32)
-        if len(hash_bytes) != 32:
-            sys.stderr.write(f"expected 32 bytes, got {len(hash_bytes)}\n")
-            sys.exit(1)
-
+        hash_bytes = sys.stdin.buffer.read()
         ch = ChromaHash.from_bytes(hash_bytes)
         _w, _h, rgba = ch.decode()
         sys.stdout.buffer.write(rgba)
 
     elif subcommand == "average-color":
-        hash_bytes = sys.stdin.buffer.read(32)
-        if len(hash_bytes) != 32:
-            sys.stderr.write(f"expected 32 bytes, got {len(hash_bytes)}\n")
-            sys.exit(1)
-
+        hash_bytes = sys.stdin.buffer.read()
         ch = ChromaHash.from_bytes(hash_bytes)
         r, g, b, a = ch.average_color()
         sys.stdout.buffer.write(bytes([r, g, b, a]))
@@ -89,7 +106,7 @@ def main() -> None:
         count = int(sys.argv[5])
 
         rgba = sys.stdin.buffer.read(w * h * 4)
-        items = [ImageInput(w, h, rgba, gamut) for _ in range(count)]
+        items = [ImageInput(w, h, rgba, gamut, tier_from_env()) for _ in range(count)]
         encoder = BatchEncoder()
         hashes = encoder.encode_batch(items)
         encoder.close()
@@ -103,7 +120,7 @@ def main() -> None:
             sys.exit(1)
 
         count = int(sys.argv[2])
-        hash_bytes = sys.stdin.buffer.read(32)
+        hash_bytes = sys.stdin.buffer.read()
         ch = ChromaHash.from_bytes(hash_bytes)
         acc = 0
         for _ in range(count):

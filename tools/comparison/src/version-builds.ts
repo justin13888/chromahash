@@ -19,10 +19,15 @@ export interface VersionBinary {
  * A minimal `encode_stdin` dropped into each tag worktree before building, so every
  * version frames its output identically: `encode` writes the 32-byte hash; `decode`
  * writes a `"w h\n"` header then RGBA. It normalizes two stock differences across
- * v0.2–v0.5 — v0.2's example omits the dimension header, and only v0.3+ support a
+ * v0.2–v0.6 — v0.2's example omits the dimension header, and only v0.3+ support a
  * capped decode — by always decoding uncapped with a header. It calls only the
  * stable `ChromaHash::encode`/`from_bytes`/`decode` API + `Gamut`, so it compiles
  * against every tag, and the encode path is byte-identical to the stock example.
+ *
+ * The shim is pinned to the pre-v1 API: a fixed `[u8; 32]` hash and an infallible
+ * `from_bytes`. That holds through v0.6 and no further — v1 (0.7.x) made hashes
+ * variable-length and `from_bytes` fallible, so `current` is always built from the
+ * working tree's own example rather than this shim.
  */
 const DECODE_SHIM = `use chromahash::{ChromaHash, Gamut};
 use std::io::{self, Read, Write};
@@ -122,9 +127,10 @@ function ensureWorktree(tag: string, dir: string): void {
  * re-runs cheap. A version that fails to build is logged and omitted from the
  * result rather than aborting the whole run.
  *
- * Each version must round-trip with its OWN binary: header bit 47 makes v0.6
- * (current) bitstream-incompatible with the v0.2–v0.5 tags, so a hash produced by
- * one version cannot be decoded by another.
+ * Each version must round-trip with its OWN binary: every format generation is
+ * bitstream-incompatible with the last (v1 is an explicit clean break from the
+ * v0.6 wire format), so a hash produced by one version cannot be decoded by
+ * another.
  *
  * Returns the binaries in the order requested.
  */

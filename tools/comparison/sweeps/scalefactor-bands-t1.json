@@ -1,0 +1,16 @@
+{
+  "name": "scalefactor-bands-t1",
+  "description": "Scalefactor bands at tier 1 — the audio-codec analogy predicts per-band scales pay off once there are enough coefficients per band to matter (104 L at t1 vs 26 at t0).",
+  "photoOnly": true,
+  "variants": [
+    { "label": "default t1 (single scale)", "tier": 2 },
+    { "label": "t1 gain_l=0.7", "tier": 2, "tune": "band_gain_l=0.7" },
+    { "label": "t1 gain_l=0.5", "tier": 2, "tune": "band_gain_l=0.5" },
+    { "label": "t1 gain_c=0.7", "tier": 2, "tune": "band_gain_c=0.7" },
+    {
+      "label": "t1 split=0.25 gain_l=0.6",
+      "tier": 2,
+      "tune": "band_split=0.25 band_gain_l=0.6"
+    }
+  ]
+}

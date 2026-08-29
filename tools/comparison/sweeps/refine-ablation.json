@@ -1,0 +1,46 @@
+{
+  "name": "refine-ablation",
+  "description": "U1/U2/U3/U5 materialized: coordinate descent over the quantized codes scored on the DECODED PIXELS instead of the coefficients. refine_obj=1 (OKLAB, no clipping model) is the control - the objective there is separable and independent rounding already minimizes it, so it should find nothing. refine_obj=0 (gamma sRGB) and 2 (clipped OKLAB) model the L clamp and the per-channel gamut clip, which is the only place the orthogonality argument fails. refine_dc adds the DC codes (U2), refine_scale adds the AC scale codes (U3, clipping pre-compensation).",
+  "photoOnly": true,
+  "variants": [
+    { "label": "32B shipped" },
+    { "label": "32B obj1 control p1", "tune": "refine_passes=1 refine_obj=1" },
+    { "label": "32B obj0 p1", "tune": "refine_passes=1" },
+    { "label": "32B obj0 p2", "tune": "refine_passes=2" },
+    { "label": "32B obj0 p4", "tune": "refine_passes=4" },
+    { "label": "32B obj2 p2", "tune": "refine_passes=2 refine_obj=2" },
+    { "label": "32B obj0 p2 +dc", "tune": "refine_passes=2 refine_dc=1" },
+    { "label": "32B obj0 p2 +scale", "tune": "refine_passes=2 refine_scale=1" },
+    {
+      "label": "32B obj0 p2 +dc+scale",
+      "tune": "refine_passes=2 refine_dc=1 refine_scale=1"
+    },
+    {
+      "label": "32B obj0 p2 d2 +dc+scale",
+      "tune": "refine_passes=2 refine_delta=2 refine_dc=1 refine_scale=1"
+    },
+    {
+      "label": "32B obj2 p2 +dc+scale",
+      "tune": "refine_passes=2 refine_obj=2 refine_dc=1 refine_scale=1"
+    },
+    {
+      "label": "32B fit2+near (prior best)",
+      "tune": "scale_fit=2 ac_nearest=1"
+    },
+    {
+      "label": "32B fit2+near+refine p2dc",
+      "tune": "scale_fit=2 ac_nearest=1 refine_passes=2 refine_dc=1 refine_scale=1"
+    },
+    { "label": "32B L28@4C15@3", "tune": "l1=28:4 c=15:3" },
+    {
+      "label": "32B L28@4C15@3 +refine",
+      "tune": "l1=28:4 c=15:3 refine_passes=2 refine_dc=1 refine_scale=1"
+    },
+    { "label": "108B t1 shipped", "tier": 2 },
+    {
+      "label": "108B t1 +refine p2dc",
+      "tier": 2,
+      "tune": "refine_passes=2 refine_dc=1 refine_scale=1"
+    }
+  ]
+}

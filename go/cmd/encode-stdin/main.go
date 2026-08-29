@@ -9,6 +9,22 @@ import (
 	chromahash "github.com/visualcommons/chromahash/go"
 )
 
+// tierFromEnv reads the quality tier from CHROMAHASH_TIER, matching the Rust
+// harness so the cross-language benchmark measures the same workload in every
+// language. Defaults to the 32-byte tier.
+func tierFromEnv() uint8 {
+	raw, ok := os.LookupEnv("CHROMAHASH_TIER")
+	if !ok || raw == "" {
+		return chromahash.DefaultTier
+	}
+	tier, err := strconv.Atoi(raw)
+	if err != nil || tier < 0 || tier > int(chromahash.MaxTier) {
+		fmt.Fprintf(os.Stderr, "CHROMAHASH_TIER: %q is not a valid tier code (0..=%d)\n", raw, chromahash.MaxTier)
+		os.Exit(1)
+	}
+	return uint8(tier)
+}
+
 func usage() {
 	fmt.Fprintln(os.Stderr, "Usage:")
 	fmt.Fprintln(os.Stderr, "  encode-stdin encode <width> <height> <gamut>")
@@ -69,28 +85,34 @@ func main() {
 			os.Exit(1)
 		}
 
-		hash := chromahash.Encode(w, h, rgba, gamut)
+		hash := chromahash.EncodeWithQuality(w, h, rgba, gamut, tierFromEnv())
 		os.Stdout.Write(hash.Hash[:])
 
 	case "decode":
-		var hash [32]byte
-		_, err := io.ReadFull(os.Stdin, hash[:])
+		hash, err := io.ReadAll(os.Stdin)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "failed to read hash from stdin: %v\n", err)
 			os.Exit(1)
 		}
-		ch := chromahash.FromBytes(hash)
+		ch, err := chromahash.FromBytes(hash)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			os.Exit(1)
+		}
 		_, _, rgba := ch.Decode()
 		os.Stdout.Write(rgba)
 
 	case "average-color":
-		var hash [32]byte
-		_, err := io.ReadFull(os.Stdin, hash[:])
+		hash, err := io.ReadAll(os.Stdin)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "failed to read hash from stdin: %v\n", err)
 			os.Exit(1)
 		}
-		ch := chromahash.FromBytes(hash)
+		ch, err := chromahash.FromBytes(hash)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			os.Exit(1)
+		}
 		r, g, b, a := ch.AverageColor()
 		os.Stdout.Write([]byte{r, g, b, a})
 
@@ -126,9 +148,10 @@ func main() {
 			os.Exit(1)
 		}
 
+		tier := tierFromEnv()
 		items := make([]chromahash.ImageInput, count)
 		for i := range items {
-			items[i] = chromahash.ImageInput{W: w, H: h, Rgba: rgba, Gamut: gamut}
+			items[i] = chromahash.ImageInput{W: w, H: h, Rgba: rgba, Gamut: gamut, Quality: tier}
 		}
 		be := chromahash.NewBatchEncoder()
 		hashes := be.EncodeBatch(items)
@@ -147,12 +170,16 @@ func main() {
 			fmt.Fprintf(os.Stderr, "invalid count: %v\n", err)
 			os.Exit(1)
 		}
-		var hash [32]byte
-		if _, err := io.ReadFull(os.Stdin, hash[:]); err != nil {
+		hash, err := io.ReadAll(os.Stdin)
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "failed to read hash from stdin: %v\n", err)
 			os.Exit(1)
 		}
-		ch := chromahash.FromBytes(hash)
+		ch, err := chromahash.FromBytes(hash)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			os.Exit(1)
+		}
 		var acc byte
 		for i := 0; i < count; i++ {
 			_, _, rgba := ch.Decode()

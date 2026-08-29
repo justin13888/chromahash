@@ -1,0 +1,145 @@
+{
+  "name": "budget-ladder",
+  "description": "ChromaHash rate-distortion ladder across byte budgets. Every point is the shipped v1 signal path with only the AC layout resized (L:C count ratio held at the shipped 26:9, L 5 b / chroma 4 b). Points at <=80 B use tier 0 (32 px raster); >=99 B use tier 1 (64 px raster) so the decoder's frequency filter never drops a selected coefficient. Incumbent is the shipped 32 B tier-0 default.",
+  "photoOnly": true,
+  "variants": [
+    {
+      "label": "  32 B  t0 SHIPPED"
+    },
+    {
+      "label": "  10 B  t0 L2/C2",
+      "tune": "l1=2:5 c=2:4"
+    },
+    {
+      "label": "  12 B  t0 L5/C2",
+      "tune": "l1=5:5 c=2:4"
+    },
+    {
+      "label": "  14 B  t0 L8/C2",
+      "tune": "l1=8:5 c=2:4"
+    },
+    {
+      "label": "  16 B  t0 L10/C3",
+      "tune": "l1=10:5 c=3:4"
+    },
+    {
+      "label": "  18 B  t0 L10/C5",
+      "tune": "l1=10:5 c=5:4"
+    },
+    {
+      "label": "  20 B  t0 L13/C5",
+      "tune": "l1=13:5 c=5:4"
+    },
+    {
+      "label": "  21 B  t0 L13/C6",
+      "tune": "l1=13:5 c=6:4"
+    },
+    {
+      "label": "  22 B  t0 L18/C4",
+      "tune": "l1=18:5 c=4:4"
+    },
+    {
+      "label": "  24 B  t0 L18/C6",
+      "tune": "l1=18:5 c=6:4"
+    },
+    {
+      "label": "  26 B  t0 L18/C8",
+      "tune": "l1=18:5 c=8:4"
+    },
+    {
+      "label": "  28 B  t0 L21/C8",
+      "tune": "l1=21:5 c=8:4"
+    },
+    {
+      "label": "  30 B  t0 L26/C7",
+      "tune": "l1=26:5 c=7:4"
+    },
+    {
+      "label": "  32 B  t0 L26/C9",
+      "tune": "l1=26:5 c=9:4"
+    },
+    {
+      "label": "  36 B  t0 L29/C11",
+      "tune": "l1=29:5 c=11:4"
+    },
+    {
+      "label": "  40 B  t0 L34/C12",
+      "tune": "l1=34:5 c=12:4"
+    },
+    {
+      "label": "  44 B  t0 L37/C14",
+      "tune": "l1=37:5 c=14:4"
+    },
+    {
+      "label": "  48 B  t0 L42/C15",
+      "tune": "l1=42:5 c=15:4"
+    },
+    {
+      "label": "  56 B  t0 L50/C18",
+      "tune": "l1=50:5 c=18:4"
+    },
+    {
+      "label": "  64 B  t0 L58/C21",
+      "tune": "l1=58:5 c=21:4"
+    },
+    {
+      "label": "  80 B  t0 L74/C27",
+      "tune": "l1=74:5 c=27:4"
+    },
+    {
+      "label": " 108 B  t1 L104/C36",
+      "tier": 2,
+      "tune": "l1=26:5 c=9:4"
+    },
+    {
+      "label": " 129 B  t1 L124/C44",
+      "tier": 2,
+      "tune": "l1=31:5 c=11:4"
+    },
+    {
+      "label": " 161 B  t1 L156/C56",
+      "tier": 2,
+      "tune": "l1=39:5 c=14:4"
+    },
+    {
+      "label": " 189 B  t1 L188/C64",
+      "tier": 2,
+      "tune": "l1=47:5 c=16:4"
+    },
+    {
+      "label": " 246 B  t1 L248/C84",
+      "tier": 2,
+      "tune": "l1=62:5 c=21:4"
+    },
+    {
+      "label": " 310 B  t1 L312/C108",
+      "tier": 2,
+      "tune": "l1=78:5 c=27:4"
+    },
+    {
+      "label": " 411 B  t1 L416/C144",
+      "tier": 2,
+      "tune": "l1=104:5 c=36:4"
+    },
+    {
+      "label": " 512 B  t1 L520/C180",
+      "tier": 2,
+      "tune": "l1=130:5 c=45:4"
+    },
+    {
+      "label": " 767 B  t1 L780/C272",
+      "tier": 2,
+      "tune": "l1=195:5 c=68:4"
+    },
+    {
+      "label": "1017 B  t1 L1040/C360",
+      "tier": 2,
+      "tune": "l1=260:5 c=90:4"
+    },
+    {
+      "label": "1623 B  t1 L1664/C576",
+      "tier": 2,
+      "tune": "l1=416:5 c=144:4"
+    }
+  ]
+}

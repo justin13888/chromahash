@@ -8,31 +8,31 @@ default:
 
 # Format all implementations
 [parallel]
-format: format-rust format-c format-wasm format-ts format-jvm format-swift format-go format-python format-csharp format-android format-compare format-thumbhash format-gamutref
+format: format-rust format-c format-wasm format-ts format-jvm format-swift format-go format-python format-csharp format-android format-compare format-thumbhash format-gamutref format-benchmark
 
 # Lint all implementations
 [parallel]
-lint: lint-rust lint-c lint-wasm lint-ts lint-jvm lint-swift lint-go lint-python lint-csharp lint-android lint-compare lint-thumbhash lint-gamutref
+lint: lint-rust lint-c lint-wasm lint-ts lint-jvm lint-swift lint-go lint-python lint-csharp lint-android lint-compare lint-thumbhash lint-gamutref lint-benchmark
 
 # Auto-fix formatting in all implementations
 [parallel]
-format-fix: format-fix-rust format-fix-c format-fix-wasm format-fix-ts format-fix-jvm format-fix-swift format-fix-go format-fix-python format-fix-csharp format-fix-android format-fix-compare format-fix-thumbhash format-fix-gamutref
+format-fix: format-fix-rust format-fix-c format-fix-wasm format-fix-ts format-fix-jvm format-fix-swift format-fix-go format-fix-python format-fix-csharp format-fix-android format-fix-compare format-fix-thumbhash format-fix-gamutref format-fix-benchmark
 
 # Auto-fix linting in all implementations
 [parallel]
-lint-fix: lint-fix-rust lint-fix-c lint-fix-wasm lint-fix-ts lint-fix-jvm lint-fix-swift lint-fix-go lint-fix-python lint-fix-csharp lint-fix-android lint-fix-compare lint-fix-thumbhash lint-fix-gamutref
+lint-fix: lint-fix-rust lint-fix-c lint-fix-wasm lint-fix-ts lint-fix-jvm lint-fix-swift lint-fix-go lint-fix-python lint-fix-csharp lint-fix-android lint-fix-compare lint-fix-thumbhash lint-fix-gamutref lint-fix-benchmark
 
 # Run all tests
 [parallel]
-test: test-rust test-c test-wasm test-ts test-jvm test-swift test-go test-python test-csharp test-android
+test: test-rust test-c test-wasm test-ts test-jvm test-swift test-go test-python test-csharp test-android test-thumbhash test-gamutref
 
 # Build all implementations
 [parallel]
-build: build-rust build-c build-wasm build-ts build-jvm build-swift build-go build-python build-csharp build-android-crate
+build: build-rust build-c build-wasm build-ts build-jvm build-swift build-go build-python build-csharp build-android-crate build-thumbhash build-gamutref
 
 # Check formatting (no writes) across all implementations
 [parallel]
-format-check: format-check-rust format-check-c format-check-wasm format-check-ts format-check-jvm format-check-swift format-check-go format-check-python format-check-csharp format-check-android format-check-compare format-check-thumbhash format-check-gamutref
+format-check: format-check-rust format-check-c format-check-wasm format-check-ts format-check-jvm format-check-swift format-check-go format-check-python format-check-csharp format-check-android format-check-compare format-check-thumbhash format-check-gamutref format-check-benchmark
 
 # ─── Comparison tool ────────────────────────────────────────────────────────
 
@@ -50,6 +50,25 @@ lint-compare:
 lint-fix-compare:
     mise exec -- pnpm --prefix tools/comparison run lint:fix
 
+# ─── Benchmark driver (Python) ────────────────────────────────────────────────
+# The cross-language performance harness. Not published, but every benchmark
+# number quoted in the docs comes out of it, so it is held to the same lint and
+# format contract as the `python/` package (see tools/benchmark/pyproject.toml).
+
+format-benchmark:
+    mise exec -- uvx ruff format tools/benchmark
+
+format-fix-benchmark: format-benchmark
+
+format-check-benchmark:
+    mise exec -- uvx ruff format --check tools/benchmark
+
+lint-benchmark:
+    mise exec -- uvx ruff check tools/benchmark
+
+lint-fix-benchmark:
+    mise exec -- uvx ruff check --fix tools/benchmark
+
 # ─── ThumbHash baseline (native Rust) ─────────────────────────────────────────
 # Standalone benchmark harness crate (keeps the core chromahash crate zero-dep).
 
@@ -62,11 +81,17 @@ format-check-thumbhash:
     cargo fmt --manifest-path tools/thumbhash-rs/Cargo.toml --check
 
 lint-thumbhash:
-    cargo clippy --manifest-path tools/thumbhash-rs/Cargo.toml -- -D warnings
+    cargo clippy --manifest-path tools/thumbhash-rs/Cargo.toml --all-targets -- -D warnings
+
+build-thumbhash:
+    cargo build --manifest-path tools/thumbhash-rs/Cargo.toml
+
+test-thumbhash:
+    cargo test --manifest-path tools/thumbhash-rs/Cargo.toml
 
 lint-fix-thumbhash:
-    cargo clippy --manifest-path tools/thumbhash-rs/Cargo.toml --fix --allow-staged --allow-dirty
-    cargo clippy --manifest-path tools/thumbhash-rs/Cargo.toml -- -D warnings
+    cargo clippy --manifest-path tools/thumbhash-rs/Cargo.toml --all-targets --fix --allow-staged --allow-dirty
+    cargo clippy --manifest-path tools/thumbhash-rs/Cargo.toml --all-targets -- -D warnings
 
 # ─── Gamut → sRGB reference (delegates to gamut-color) ────────────────────────
 # Standalone crate (keeps the core chromahash crate zero-dep). Wraps gamut's
@@ -81,21 +106,28 @@ format-check-gamutref:
     cargo fmt --manifest-path tools/gamut-ref-stdin/Cargo.toml --check
 
 lint-gamutref:
-    cargo clippy --manifest-path tools/gamut-ref-stdin/Cargo.toml -- -D warnings
+    cargo clippy --manifest-path tools/gamut-ref-stdin/Cargo.toml --all-targets -- -D warnings
+
+build-gamutref:
+    cargo build --manifest-path tools/gamut-ref-stdin/Cargo.toml
+
+test-gamutref:
+    cargo test --manifest-path tools/gamut-ref-stdin/Cargo.toml
 
 lint-fix-gamutref:
-    cargo clippy --manifest-path tools/gamut-ref-stdin/Cargo.toml --fix --allow-staged --allow-dirty
-    cargo clippy --manifest-path tools/gamut-ref-stdin/Cargo.toml -- -D warnings
+    cargo clippy --manifest-path tools/gamut-ref-stdin/Cargo.toml --all-targets --fix --allow-staged --allow-dirty
+    cargo clippy --manifest-path tools/gamut-ref-stdin/Cargo.toml --all-targets -- -D warnings
 
-# Build the comparison tool
+# Build the comparison tool (installs node deps first so a clean checkout works)
 build-compare:
+    mise exec -- pnpm --prefix tools/comparison install --frozen-lockfile
     mise exec -- pnpm --prefix tools/comparison run build
 
 # Install iqa-cli (the iqa-rs metrics CLI) — prerequisite for `compare`'s quality
 # metrics. Pulls in ssimulacra2/butteraugli, which build vendored C++ (needs a C/C++
 # toolchain). Without it the report still builds, but metrics show as N/A.
 install-iqa:
-    cargo install iqa-cli --locked --version 0.2.0
+    cargo install iqa-cli --locked --version 1.2.1
 
 # Run the visual comparison. Emits output/report.html, output/report.json, and
 # standalone images under output/images/ (the HTML and JSON both reference them).
@@ -105,13 +137,67 @@ install-iqa:
 compare: build-compare go-cbuild swift-cbuild ts-cbuild python-cbuild csharp-cbuild
     mise exec -- pnpm --prefix tools/comparison run compare
 
-# Local-only: compare chromahash's own format versions (v0.2–v0.5 + the current
+# Local-only: compare chromahash's own format versions (v0.2–v0.6 + the current
 # working tree, the primary variant) to gauge whether current changes improve
-# quality. Each tag is built as a release encode_stdin in a cached git worktree
-# under tools/comparison/.versions/ (gitignored). Not run in CI. Requires iqa-cli
-# on PATH (run `just install-iqa` once). Writes output/versions-report.{html,json}.
+# quality. v0.6 is the immediate predecessor and the one baseline that matters
+# for an A/B — it and a default-tier working tree are both exactly 32 bytes, so the
+# comparison is equal-budget. Each tag is built as a release encode_stdin in a
+# cached git worktree under tools/comparison/.versions/ (gitignored). Not run in
+# CI. Requires iqa-cli on PATH (run `just install-iqa` once). Writes
+# output/versions-report.{html,json}.
 compare-versions: build-compare
-    mise exec -- node tools/comparison/dist/main.js --versions v0.2,v0.3,v0.4,v0.5,current
+    mise exec -- node tools/comparison/dist/main.js --versions v0.2,v0.3,v0.4,v0.5,v0.6,current
+
+# Rate–distortion comparison: sweep every format's quality knob (ChromaHash
+# codes 1–4, BlurHash components, lqip-modern sizes) plus equal-byte WebP/JPEG/
+# AVIF (+JXL when cjxl/djxl are on PATH) and raw-RGB565 baselines at the four
+# ChromaHash tier byte anchors (32/108/411/1623 B), on the photographic corpus
+# only. Requires iqa-cli on PATH (run `just install-iqa` once). Writes
+# output/rd-report.{html,json} — never clobbers the standard report.
+compare-rd: build-compare
+    cargo build --manifest-path rust/Cargo.toml --release --example encode_stdin
+    mise exec -- node tools/comparison/dist/main.js --rd
+
+# Score CHROMAHASH_TUNE variants over the tune split and emit a decision table
+# (config = a name under tools/comparison/sweeps/, e.g. `just sweep companding-family`;
+# results → output/sweeps/<name>.json). Pass `--split holdout` only to validate a
+# finished winner against the pre-registered rule — never to tune.
+sweep config *args: build-compare
+    cargo build --manifest-path rust/Cargo.toml --release --example encode_stdin
+    mise exec -- node tools/comparison/dist/sweep.js tools/comparison/sweeps/{{config}}.json {{args}}
+
+# Cross-format rate-distortion at arbitrary byte budgets, on the same corpus
+# split as `just sweep` — so a ladder row and a ThumbHash row are directly
+# comparable. Emits a guard-aware winner-per-metric summary alongside the curve.
+# Long: it re-encodes WebP/JPEG/AVIF at every budget (~1h per split).
+rd-budget *args: build-compare
+    cargo build --manifest-path rust/Cargo.toml --release --example encode_stdin
+    mise exec -- node tools/comparison/dist/rd-budget.js {{args}}
+
+# Chroma-from-luma sizing probe: how linearly predictable is each chroma AC
+# coefficient from the luma coefficient at the same selection index.
+cfl-probe *args: build-compare
+    cargo build --manifest-path rust/Cargo.toml --release --example encode_stdin
+    mise exec -- node tools/comparison/dist/cfl-probe.js {{args}}
+
+# Coefficient statistics: entropy headroom of the AC code stream, and how much
+# luma energy the l2-ball prefix captures against the best fixed/oracle set.
+coeff-stats *args: build-compare
+    cargo build --manifest-path rust/Cargo.toml --release --example encode_stdin
+    mise exec -- node tools/comparison/dist/coeff-stats.js {{args}}
+
+# What entropy-coding the AC payload would actually buy, costed with a real
+# coder and scored leave-one-image-out rather than as an in-sample entropy.
+entropy-budget *args: build-compare
+    cargo build --manifest-path rust/Cargo.toml --release --example encode_stdin
+    mise exec -- node tools/comparison/dist/entropy-budget.js {{args}}
+
+# Train Lloyd-Max codebooks and run the chroma VQ probe on the tune split's
+# dumped coefficients (→ output/sweeps/tables.json with ready-to-paste
+# CHROMAHASH_TUNE fragments for the companding-family sweep).
+train-tables *args: build-compare
+    cargo build --manifest-path rust/Cargo.toml --release --example encode_stdin
+    mise exec -- node tools/comparison/dist/train-tables.js {{args}}
 
 # ─── Benchmark ──────────────────────────────────────────────────────────────
 
@@ -128,7 +214,7 @@ build-benchmark: go-cbuild swift-cbuild ts-cbuild python-cbuild csharp-cbuild
 
 # Run performance benchmark (encode/decode × single/bulk, chromahash vs ThumbHash)
 benchmark: build-benchmark
-    cd tools/benchmark && uv run benchmark.py --skip-build
+    cd tools/benchmark && uv run benchmark.py --skip-build --tiers all
 
 # ─── Batch benchmarks ─────────────────────────────────────────────────────────
 
@@ -169,12 +255,15 @@ format-fix-rust: format-rust
 format-check-rust:
     cargo fmt --manifest-path rust/Cargo.toml --check
 
+# --all-targets: plain `cargo clippy` checks the lib and bins only, so test and
+# example code is never linted. That is how an MSRV violation in an example and
+# a lint error in a #[cfg(test)] block both survived in-tree.
 lint-rust:
-    cargo clippy --manifest-path rust/Cargo.toml -- -D warnings
+    cargo clippy --manifest-path rust/Cargo.toml --all-targets --features full -- -D warnings
 
 lint-fix-rust:
-    cargo clippy --manifest-path rust/Cargo.toml --fix --allow-staged --allow-dirty
-    cargo clippy --manifest-path rust/Cargo.toml -- -D warnings
+    cargo clippy --manifest-path rust/Cargo.toml --all-targets --features full --fix --allow-staged --allow-dirty
+    cargo clippy --manifest-path rust/Cargo.toml --all-targets --features full -- -D warnings
 
 test-rust:
     cargo test --manifest-path rust/Cargo.toml
@@ -258,11 +347,11 @@ format-check-c:
     cargo fmt --manifest-path bindings/c/Cargo.toml --check
 
 lint-c:
-    cargo clippy --manifest-path bindings/c/Cargo.toml -- -D warnings
+    cargo clippy --manifest-path bindings/c/Cargo.toml --all-targets -- -D warnings
 
 lint-fix-c:
-    cargo clippy --manifest-path bindings/c/Cargo.toml --fix --allow-staged --allow-dirty
-    cargo clippy --manifest-path bindings/c/Cargo.toml -- -D warnings
+    cargo clippy --manifest-path bindings/c/Cargo.toml --all-targets --fix --allow-staged --allow-dirty
+    cargo clippy --manifest-path bindings/c/Cargo.toml --all-targets -- -D warnings
 
 # Build the staticlib + cdylib (also regenerates include/chromahash.h via build.rs)
 build-c:
@@ -300,11 +389,11 @@ format-check-wasm:
     cargo fmt --manifest-path bindings/wasm/Cargo.toml --check
 
 lint-wasm:
-    cargo clippy --manifest-path bindings/wasm/Cargo.toml --target wasm32-unknown-unknown -- -D warnings
+    cargo clippy --manifest-path bindings/wasm/Cargo.toml --target wasm32-unknown-unknown --all-targets -- -D warnings
 
 lint-fix-wasm:
-    cargo clippy --manifest-path bindings/wasm/Cargo.toml --target wasm32-unknown-unknown --fix --allow-staged --allow-dirty
-    cargo clippy --manifest-path bindings/wasm/Cargo.toml --target wasm32-unknown-unknown -- -D warnings
+    cargo clippy --manifest-path bindings/wasm/Cargo.toml --target wasm32-unknown-unknown --all-targets --fix --allow-staged --allow-dirty
+    cargo clippy --manifest-path bindings/wasm/Cargo.toml --target wasm32-unknown-unknown --all-targets -- -D warnings
 
 # Build the web + nodejs packages (.wasm + JS glue + .d.ts) under bindings/wasm/pkg*
 build-wasm:
@@ -329,11 +418,11 @@ format-check-android:
     cargo fmt --manifest-path bindings/uniffi/Cargo.toml --check
 
 lint-android:
-    cargo clippy --manifest-path bindings/uniffi/Cargo.toml -- -D warnings
+    cargo clippy --manifest-path bindings/uniffi/Cargo.toml --all-targets -- -D warnings
 
 lint-fix-android:
-    cargo clippy --manifest-path bindings/uniffi/Cargo.toml --fix --allow-staged --allow-dirty
-    cargo clippy --manifest-path bindings/uniffi/Cargo.toml -- -D warnings
+    cargo clippy --manifest-path bindings/uniffi/Cargo.toml --all-targets --fix --allow-staged --allow-dirty
+    cargo clippy --manifest-path bindings/uniffi/Cargo.toml --all-targets -- -D warnings
 
 # Runs the spec test vectors through the binding (the enforced correctness gate)
 test-android:
@@ -467,22 +556,44 @@ build-jvm:
 # ─── Swift ───────────────────────────────────────────────────────────────────
 
 format-swift:
-    @command -v swift-format >/dev/null 2>&1 && (cd swift && swift-format format -i -r Sources Tests) || echo "swift-format not found, skipping"
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v swift-format >/dev/null 2>&1; then
+        echo "format-swift: SKIPPED — swift-format not on PATH." >&2
+        exit 0
+    fi
+    cd swift && swift-format format -i -r Sources Tests
 
 format-fix-swift: format-swift
 
+# `command -v` guards the *absence* of the tool; a lint failure must still fail
+# the recipe. The old `A && B || echo` form sent a non-zero exit from B to the
+# `||` branch too, so the only Swift gate that runs off macOS could not fail.
 format-check-swift:
-    @command -v swift-format >/dev/null 2>&1 && (cd swift && swift-format lint -r Sources Tests) || echo "swift-format not found, skipping"
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v swift-format >/dev/null 2>&1; then
+        echo "format-check-swift: SKIPPED — swift-format not on PATH." >&2
+        exit 0
+    fi
+    cd swift && swift-format lint -r Sources Tests
 
 lint-swift: format-check-swift
 
 lint-fix-swift: format-swift
 
 # Build the UniFFI static lib, generate Swift bindings, and assemble the
-# ChromaHashFFI.xcframework the Swift package consumes. macOS-only (xcframework).
+# ChromaHashFFI.xcframework the Swift package consumes. The xcframework step is
+# macOS-only (xcodebuild); on other platforms this skips with a warning so the
+# recipes that depend on it (compare, build-benchmark) still run — the Swift
+# harness is simply absent there.
 swift-cbuild:
     #!/usr/bin/env bash
     set -euo pipefail
+    if [ "$(uname)" != "Darwin" ]; then
+        echo "swift-cbuild: skipping — the xcframework build needs macOS/xcodebuild." >&2
+        exit 0
+    fi
     cargo build --release --manifest-path bindings/uniffi/Cargo.toml
     gen="$(mktemp -d)"
     ( cd bindings/uniffi && cargo run --release --quiet --bin uniffi-bindgen -- \
@@ -498,15 +609,31 @@ swift-cbuild:
         -library bindings/uniffi/target/release/libchromahash_uniffi.a \
         -headers "$hdr" -output swift/ChromaHashFFI.xcframework
 
-# Run the Swift spec-vector tests. --no-parallel: the blocking OperationQueue in
+# Run the Swift spec-vector tests. Skips off macOS for the same reason
+# swift-cbuild does — SwiftPM consumes an xcframework, which only xcodebuild
+# can assemble — so `just test` is runnable on Linux. ci-swift.yml is the
+# enforcing gate. --no-parallel: the blocking OperationQueue in
 # BatchEncoder deadlocks Swift Testing's parallel pool on low-core machines (see
 # ci-swift.yml); the suite runs in ~0.05s, so serial costs nothing. Package.swift
 # is at the repo root; CHROMAHASH_LOCAL_XCFRAMEWORK selects the locally built
 # xcframework over the released remote one.
 test-swift: swift-cbuild
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ "$(uname)" != "Darwin" ]; then
+        echo "test-swift: SKIPPED — no xcframework off macOS (see swift-cbuild)." >&2
+        echo "test-swift: the Swift binding is gated by ci-swift.yml on macos-latest." >&2
+        exit 0
+    fi
     CHROMAHASH_LOCAL_XCFRAMEWORK=1 mise exec swift@6.2.4 -- swift test --no-parallel
 
 build-swift: swift-cbuild
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ "$(uname)" != "Darwin" ]; then
+        echo "build-swift: SKIPPED — no xcframework off macOS (see swift-cbuild)." >&2
+        exit 0
+    fi
     CHROMAHASH_LOCAL_XCFRAMEWORK=1 mise exec swift@6.2.4 -- swift build
 
 # Assemble the multi-platform release xcframework (macOS + iOS device/simulator)
@@ -687,3 +814,46 @@ release version:
     echo "       [{{version}}]: .../compare/<prev>...v{{version}}"
     echo "  2. Bump the version to {{version}} across all implementations and tools."
     echo "  3. Commit, then: git tag -a v{{version}} -m 'v{{version}}' && git push --tags"
+
+# Every publishable manifest must carry the core crate's version. Each
+# release-*.yml checks the pushed tag against its own manifest and fails only
+# that pipeline, so a stale manifest leaves one registry a version behind
+# without announcing it. Run before tagging (RELEASING.md step 2).
+check-versions:
+    ./tools/ci/check-versions.sh
+
+# Independently re-derive the spec constants and check them against
+# spec/constants.py. Documented in TESTING.md since the beginning but wired to
+# nothing — no recipe and no workflow ran it until ci-repo.yml.
+validate-spec:
+    mise exec -- python3 spec/validate.py
+
+# ─── Quality gate ───────────────────────────────────────────────────────────
+
+# Tier-0 R-D regression gate: encode a fixed handful of content-pinned corpus
+# photos, score mean ΔE00, and compare it against the checked-in baseline
+# tools/comparison/baselines/rd-gate.json. Deliberately small — a few images, no
+# codec baselines — so CI can run it on every push; `compare-rd` and the sweeps
+# remain the full picture. Two-sided: an improvement past tolerance also fails,
+# because a stale baseline gates nothing. Requires iqa-cli (`just install-iqa`).
+rd-gate *args: build-compare
+    cargo build --manifest-path rust/Cargo.toml --release --example encode_stdin
+    mise exec -- node tools/comparison/dist/rd-gate.js {{args}}
+
+# Check every table in spec/EXPERIMENTS.md against the sweep results in
+# tools/comparison/output/sweeps/. The document is transcribed by hand, so a
+# re-run of a sweep silently invalidates it; this is the only thing that
+# notices. Needs the sweep outputs on disk (they are gitignored), so it reports
+# what it could not check rather than failing on a missing file.
+#   --list-unbound   tables with no binding, and why
+#   --section 11.5   just one section
+#   --fix            rewrite disagreeing cells from the measured values
+verify-experiments *args: build-compare
+    mise exec -- node tools/comparison/dist/verify-experiments.js {{args}}
+
+# Refresh the R-D gate baseline after an intended encoder change. Every number
+# moving is the point — but review the diff and say in the commit message which
+# change moved it.
+rd-gate-update: build-compare
+    cargo build --manifest-path rust/Cargo.toml --release --example encode_stdin
+    mise exec -- node tools/comparison/dist/rd-gate.js --update

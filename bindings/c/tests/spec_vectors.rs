@@ -7,10 +7,12 @@ use std::ptr;
 
 use chromahash_c::{
     chromahash_as_bytes, chromahash_average_color, chromahash_batch_encode,
-    chromahash_batch_encoder_free, chromahash_batch_encoder_new, chromahash_decode,
-    chromahash_decode_capped, chromahash_encode, chromahash_free, chromahash_from_bytes,
-    chromahash_image_free, chromahash_is_version_supported, ChromaHash, ChromaHashColor,
+    chromahash_batch_encoder_free, chromahash_batch_encoder_new, chromahash_byte_len,
+    chromahash_decode, chromahash_decode_capped, chromahash_encode, chromahash_encode_with_quality,
+    chromahash_free, chromahash_from_bytes, chromahash_image_free, ChromaHash, ChromaHashColor,
     ChromaHashGamut, ChromaHashImage, ChromaHashImageInput, ChromaHashStatus,
+    CHROMAHASH_COMPACT_TIER, CHROMAHASH_DEFAULT_TIER, CHROMAHASH_FORMAT_VERSION,
+    CHROMAHASH_MAX_TIER,
 };
 use serde_json::Value;
 
@@ -46,17 +48,21 @@ fn bytes(v: &Value) -> Vec<u8> {
         .collect()
 }
 
-/// Encode through the C ABI and return the resulting handle (caller frees).
-fn encode(w: u32, h: u32, rgba: &[u8], gamut: ChromaHashGamut) -> *mut ChromaHash {
+/// Encode through the C ABI at the given quality tier and return the resulting
+/// handle (caller frees).
+fn encode(w: u32, h: u32, rgba: &[u8], gamut: ChromaHashGamut, tier: u8) -> *mut ChromaHash {
     let mut handle: *mut ChromaHash = ptr::null_mut();
-    let status = unsafe { chromahash_encode(w, h, rgba.as_ptr(), rgba.len(), gamut, &mut handle) };
+    let status = unsafe {
+        chromahash_encode_with_quality(w, h, rgba.as_ptr(), rgba.len(), gamut, tier, &mut handle)
+    };
     assert_eq!(status, ChromaHashStatus::Ok, "encode returned an error");
     assert!(!handle.is_null(), "encode produced a null handle");
     handle
 }
 
-fn hash_bytes(handle: *mut ChromaHash) -> [u8; 32] {
-    let mut out = [0u8; 32];
+fn hash_bytes(handle: *mut ChromaHash) -> Vec<u8> {
+    let len = unsafe { chromahash_byte_len(handle) };
+    let mut out = vec![0u8; len];
     let status = unsafe { chromahash_as_bytes(handle, out.as_mut_ptr(), out.len()) };
     assert_eq!(status, ChromaHashStatus::Ok, "as_bytes returned an error");
     out
@@ -74,12 +80,13 @@ fn integration_encode_vectors() {
         let w = input["width"].as_u64().expect("width") as u32;
         let h = input["height"].as_u64().expect("height") as u32;
         let gamut = gamut_from_str(input["gamut"].as_str().expect("gamut"));
+        let tier = input["tier"].as_u64().expect("tier") as u8;
         let rgba = bytes(&input["rgba"]);
 
-        let handle = encode(w, h, &rgba, gamut);
+        let handle = encode(w, h, &rgba, gamut, tier);
 
         assert_eq!(
-            hash_bytes(handle).to_vec(),
+            hash_bytes(handle),
             bytes(&case["expected"]["hash"]),
             "{name}: hash mismatch"
         );
@@ -99,11 +106,6 @@ fn integration_encode_vectors() {
                 "{name}: average_color mismatch"
             );
         }
-
-        assert!(
-            unsafe { chromahash_is_version_supported(handle) },
-            "{name}: freshly encoded hash must report v0.6 supported"
-        );
 
         unsafe { chromahash_free(handle) };
     }
@@ -208,17 +210,21 @@ fn integration_decode_capped_vectors() {
 
 #[test]
 fn from_bytes_rejects_wrong_length() {
+    // v1 self-describing validation: the header fixes the exact byte length, so
+    // any other length is InvalidData. A zeroed byte 0 is tier *0* — the 21-byte
+    // compact tier, not the 32-byte default — which is why the buffers below are
+    // 16 and 33 rather than a fixed 32.
     let mut handle: *mut ChromaHash = ptr::null_mut();
     let buf = [0u8; 16];
     assert_eq!(
         unsafe { chromahash_from_bytes(buf.as_ptr(), buf.len(), &mut handle) },
-        ChromaHashStatus::InvalidLength,
+        ChromaHashStatus::InvalidData,
         "from_bytes should reject a 16-byte buffer"
     );
     let buf = [0u8; 33];
     assert_eq!(
         unsafe { chromahash_from_bytes(buf.as_ptr(), buf.len(), &mut handle) },
-        ChromaHashStatus::InvalidLength,
+        ChromaHashStatus::InvalidData,
         "from_bytes should reject a 33-byte buffer"
     );
 }
@@ -284,14 +290,20 @@ fn batch_encode_matches_single_encode() {
         })
         .collect();
 
+    // Cycle through every tier so the test would fail if `quality` were ignored
+    // and every item silently encoded at the default.
+    let tier_of = |i: usize| (i % (chromahash::MAX_TIER as usize + 1)) as u8;
+
     let items: Vec<ChromaHashImageInput> = owned
         .iter()
-        .map(|(w, h, rgba, gamut)| ChromaHashImageInput {
+        .enumerate()
+        .map(|(i, (w, h, rgba, gamut))| ChromaHashImageInput {
             width: *w,
             height: *h,
             rgba: rgba.as_ptr(),
             rgba_len: rgba.len(),
             gamut: *gamut,
+            quality: tier_of(i),
         })
         .collect();
 
@@ -304,15 +316,126 @@ fn batch_encode_matches_single_encode() {
     assert_eq!(status, ChromaHashStatus::Ok, "batch_encode error");
 
     for (i, (w, h, rgba, gamut)) in owned.iter().enumerate() {
-        let single = encode(*w, *h, rgba, *gamut);
+        let single = encode(*w, *h, rgba, *gamut, tier_of(i));
         assert_eq!(
             hash_bytes(out[i]),
             hash_bytes(single),
-            "batch item {i} diverges from single encode"
+            "batch item {i} diverges from single encode at tier {}",
+            tier_of(i)
         );
         unsafe { chromahash_free(single) };
         unsafe { chromahash_free(out[i]) };
     }
 
     unsafe { chromahash_batch_encoder_free(encoder) };
+}
+
+#[test]
+fn batch_encode_rejects_a_reserved_tier() {
+    // The batch path validates every item up front, exactly like the single
+    // encode: one bad tier fails the whole call and allocates no handle.
+    let rgba = [128u8; 4 * 4 * 4];
+    let items = [ChromaHashImageInput {
+        width: 4,
+        height: 4,
+        rgba: rgba.as_ptr(),
+        rgba_len: rgba.len(),
+        gamut: ChromaHashGamut::Srgb,
+        quality: chromahash::MAX_TIER + 1,
+    }];
+
+    let encoder = chromahash_batch_encoder_new();
+    assert!(!encoder.is_null(), "batch encoder creation failed");
+    let mut out: Vec<*mut ChromaHash> = vec![ptr::null_mut(); items.len()];
+    let status =
+        unsafe { chromahash_batch_encode(encoder, items.as_ptr(), items.len(), out.as_mut_ptr()) };
+    assert_eq!(status, ChromaHashStatus::InvalidData);
+    assert!(out[0].is_null(), "no handle may be allocated on error");
+    unsafe { chromahash_batch_encoder_free(encoder) };
+}
+
+/// The byte length is a function of the tier alone, so assert all five rather
+/// than only the default — a `len == 32` check is true of exactly one tier and
+/// says nothing about the other four. Same for the decoded raster, where a
+/// range check wide enough to pass at every tier cannot tell them apart.
+/// The reserved bit is how v1 reserves room for a future extension: a decoder
+/// that ignored it would accept a hash written by a later format and render
+/// garbage. Neither it nor a reserved tier code was exercised through this ABI.
+#[test]
+fn from_bytes_rejects_a_malformed_header() {
+    let rgba = [128u8; 4 * 4 * 4];
+    let valid = {
+        let h = encode(4, 4, &rgba, ChromaHashGamut::Srgb, chromahash::DEFAULT_TIER);
+        let bytes = hash_bytes(h).to_vec();
+        unsafe { chromahash_free(h) };
+        bytes
+    };
+
+    let reject = |bytes: &[u8], what: &str| {
+        let mut handle: *mut ChromaHash = ptr::null_mut();
+        let status = unsafe { chromahash_from_bytes(bytes.as_ptr(), bytes.len(), &mut handle) };
+        assert_eq!(status, ChromaHashStatus::InvalidData, "{what}");
+        assert!(handle.is_null(), "{what}: a handle was allocated");
+    };
+
+    let mut reserved_bit = valid.clone();
+    reserved_bit[0] |= 0b1000_0000;
+    reject(&reserved_bit, "reserved bit set");
+
+    let mut reserved_tier = valid.clone();
+    reserved_tier[0] = (reserved_tier[0] & !0b0011_1000) | ((chromahash::MAX_TIER + 1) << 3);
+    reject(&reserved_tier, "reserved tier code");
+
+    let mut bad_version = valid.clone();
+    bad_version[0] |= 0b0000_0001;
+    reject(&bad_version, "unsupported version");
+}
+
+#[test]
+fn each_tier_has_its_documented_length_and_raster() {
+    // Opaque: alpha < 255 selects the alpha layouts, whose lengths differ.
+    let rgba: Vec<u8> = std::iter::repeat_n([128u8, 128, 128, 255], 4 * 4)
+        .flatten()
+        .collect();
+    let lengths = [21usize, 32, 108, 411, 1623];
+    let edges = [32u32, 32, 64, 128, 256];
+
+    for tier in 0..=chromahash::MAX_TIER {
+        let hash = encode(4, 4, &rgba, ChromaHashGamut::Srgb, tier);
+        assert_eq!(
+            hash_bytes(hash).len(),
+            lengths[tier as usize],
+            "tier {tier} byte length"
+        );
+
+        let mut image = ChromaHashImage {
+            width: 0,
+            height: 0,
+            rgba: ptr::null_mut(),
+            rgba_len: 0,
+        };
+        assert_eq!(
+            unsafe { chromahash_decode(hash, &mut image) },
+            ChromaHashStatus::Ok
+        );
+        assert_eq!(image.width, edges[tier as usize], "tier {tier} width");
+        assert_eq!(image.height, edges[tier as usize], "tier {tier} height");
+        assert_eq!(image.rgba_len, (image.width * image.height * 4) as usize);
+        unsafe { chromahash_image_free(&mut image) };
+        unsafe { chromahash_free(hash) };
+    }
+}
+
+#[test]
+fn exported_tier_constants_match_the_core() {
+    // The C# and Go bindings link these symbols instead of restating the codes.
+    // If the core renumbers a tier, this is where the ABI notices.
+    assert_eq!(CHROMAHASH_COMPACT_TIER, chromahash::COMPACT_TIER);
+    assert_eq!(CHROMAHASH_DEFAULT_TIER, chromahash::DEFAULT_TIER);
+    assert_eq!(CHROMAHASH_MAX_TIER, chromahash::MAX_TIER);
+    assert_eq!(CHROMAHASH_FORMAT_VERSION, chromahash::FORMAT_VERSION);
+
+    // And the codes are ordered by quality, with the default not at zero.
+    assert!(CHROMAHASH_COMPACT_TIER < CHROMAHASH_DEFAULT_TIER);
+    assert!(CHROMAHASH_DEFAULT_TIER < CHROMAHASH_MAX_TIER);
 }

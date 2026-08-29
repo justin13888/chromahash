@@ -1,0 +1,18 @@
+{
+  "name": "adopted-defaults",
+  "description": "Verification that Tunables::DEFAULT now IS the §8 recipe. Arm A is the shipped default with no overrides at all; arm B reconstructs the pre-adoption v0.6-derived constants by hand. Arm A must reproduce the '32B L28C15 stack' row of final-candidates and arm B the '32B shipped' row — if they do, the default change is exactly the measured change and nothing else moved.",
+  "photoOnly": true,
+  "variants": [
+    { "label": "t0 DEFAULT (post-adoption)" },
+    {
+      "label": "t0 pre-adoption constants",
+      "tune": "l1=26:5 c=9:4 aniso=0 sel_hv=0 scale_fit=0 ac_nearest=0"
+    },
+    { "label": "t1 DEFAULT (post-adoption)", "tier": 2 },
+    {
+      "label": "t1 pre-adoption constants",
+      "tier": 2,
+      "tune": "aniso=0 sel_hv=0 scale_fit=0 ac_nearest=0"
+    }
+  ]
+}

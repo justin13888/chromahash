@@ -20,6 +20,7 @@ internal static partial class Native
         InvalidLength = 2,
         InvalidDimensions = 3,
         Internal = 4,
+        InvalidData = 5,
     }
 
     /// <summary>Mirror of the C <c>ChromaHashImage</c> (library-owned RGBA buffer).</summary>
@@ -53,6 +54,17 @@ internal static partial class Native
     );
 
     [LibraryImport(Lib)]
+    internal static partial Status chromahash_encode_with_quality(
+        uint width,
+        uint height,
+        [In] byte[] rgba,
+        nuint rgbaLen,
+        Gamut gamut,
+        byte quality,
+        out IntPtr outHash
+    );
+
+    [LibraryImport(Lib)]
     internal static partial Status chromahash_from_bytes(
         [In] byte[] bytes,
         nuint len,
@@ -63,11 +75,10 @@ internal static partial class Native
     internal static partial void chromahash_free(IntPtr hash);
 
     [LibraryImport(Lib)]
-    internal static partial Status chromahash_as_bytes(IntPtr hash, [Out] byte[] outBuf, nuint outCap);
+    internal static partial nuint chromahash_byte_len(IntPtr hash);
 
     [LibraryImport(Lib)]
-    [return: MarshalAs(UnmanagedType.U1)]
-    internal static partial bool chromahash_is_version_supported(IntPtr hash);
+    internal static partial Status chromahash_as_bytes(IntPtr hash, [Out] byte[] outBuf, nuint outCap);
 
     [LibraryImport(Lib)]
     internal static partial Status chromahash_average_color(IntPtr hash, out Color outColor);
@@ -97,4 +108,21 @@ internal static partial class Native
 
     [LibraryImport(Lib)]
     internal static partial void chromahash_image_free(ref Image image);
+
+    /// <summary>
+    /// Read one of the C ABI's exported <c>uint8_t</c> constants
+    /// (<c>CHROMAHASH_COMPACT_TIER</c> and friends) by name.
+    /// </summary>
+    /// <remarks>
+    /// The tier codes are declared as C# <c>const</c>s on <see cref="ChromaHash"/>
+    /// so they can be used in constant expressions, but the format owns them and
+    /// the native ABI exports them. This is how the test suite proves the two
+    /// agree; <c>LibraryImport</c> binds functions only, so the symbol is
+    /// resolved by hand.
+    /// </remarks>
+    internal static byte ReadExportedByte(string symbol)
+    {
+        IntPtr lib = NativeLibrary.Load(Lib, typeof(Native).Assembly, null);
+        return Marshal.ReadByte(NativeLibrary.GetExport(lib, symbol));
+    }
 }

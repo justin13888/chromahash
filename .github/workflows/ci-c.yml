@@ -3,9 +3,9 @@ name: CI (C)
 on:
   push:
     branches: [master]
-    paths: ["bindings/c/**", "rust/**", ".github/workflows/ci-c.yml"]
+    paths: ["bindings/c/**", "rust/**", "spec/test-vectors/**", ".github/workflows/ci-c.yml"]
   pull_request:
-    paths: ["bindings/c/**", "rust/**", ".github/workflows/ci-c.yml"]
+    paths: ["bindings/c/**", "rust/**", "spec/test-vectors/**", ".github/workflows/ci-c.yml"]
 
 jobs:
   # Format, lint, run the spec vectors through the C ABI, prove the generated
@@ -37,7 +37,7 @@ jobs:
         run: cargo fmt --check
 
       - name: Lint
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --all-targets -- -D warnings
 
       - name: Test (spec vectors through the C ABI)
         run: cargo test

@@ -1,6 +1,7 @@
 import sharp from "sharp";
 import type { MetricResult } from "./types.ts";
 import { computeIqaMetrics, NULL_IQA_METRICS } from "./metrics/iqa.ts";
+import { upscaleRgba, type UpscalePolicy } from "./upscale.ts";
 
 /**
  * Time a function over N iterations, returning average time in milliseconds.
@@ -21,55 +22,281 @@ export async function timeMs(
   return elapsed / iterations;
 }
 
+/** An opaque RGB backdrop that translucent pixels are composited over. */
+export type Backdrop = readonly [number, number, number];
+
 /**
- * Resample RGBA pixel data to a target resolution using Lanczos-3 filtering.
- * Returns the input unchanged if dimensions already match.
+ * Backdrop both sides are composited over before scoring. RGBA PNGs handed to
+ * iqa-cli have undefined alpha semantics, so alpha is resolved here: white, the
+ * dominant page background placeholders sit on.
  */
-export async function resampleTo(
+export const ALPHA_BACKDROP: Backdrop = [255, 255, 255];
+
+/**
+ * Backdrop sets for {@link ScoringConfig.backdrops}.
+ *
+ * Scoring over white alone is the right default — it is where placeholders
+ * actually sit — but it cannot measure the alpha channel. A decode whose alpha
+ * is wrong wherever the colour happens to be near-white scores as though it
+ * were right, so an alpha-layout experiment scored on one backdrop is largely
+ * measuring colour. Compositing over white, black and mid-grey and averaging
+ * makes an alpha error visible on at least one of them regardless of the
+ * underlying colour.
+ */
+export const BACKDROP_SETS = {
+  white: [[255, 255, 255]],
+  "white-black-grey": [
+    [255, 255, 255],
+    [0, 0, 0],
+    [128, 128, 128],
+  ],
+} as const satisfies Record<string, readonly Backdrop[]>;
+
+/** Name of a backdrop set. */
+export type BackdropSetName = keyof typeof BACKDROP_SETS;
+
+/**
+ * Blur sigma rule for the "as-rendered" metric set: LQIPs are shown with a
+ * blur-up of roughly this strength relative to their display size. Floored at
+ * 1.0 — libvips truncates the Gaussian kernel by amplitude, so sigma below
+ * ~0.6 is a byte-identical no-op that would silently duplicate the sharp set.
+ */
+export const BLUR_SIGMA_RULE = "max(1, longEdge / 32)";
+
+/** Scoring configuration, set once by the orchestrator before processing. */
+export interface ScoringConfig {
+  upscalePolicy: UpscalePolicy;
+  blurredScoring: boolean;
+  /**
+   * Backdrops to composite over and average across. A single backdrop is the
+   * historical path and is bit-identical to it; see {@link BACKDROP_SETS}.
+   */
+  backdrops?: readonly Backdrop[];
+  /**
+   * Also score the alpha plane directly (see {@link MetricScores.alphaMae}).
+   * Off by default: it is meaningless for the opaque corpora and would only
+   * add a null column.
+   */
+  alphaFidelity?: boolean;
+}
+
+let scoringConfig: ScoringConfig = {
+  upscalePolicy: "browser-gamma",
+  blurredScoring: false,
+  backdrops: [ALPHA_BACKDROP],
+  alphaFidelity: false,
+};
+
+export function setScoringConfig(config: ScoringConfig): void {
+  scoringConfig = config;
+}
+
+export function getScoringConfig(): ScoringConfig {
+  return scoringConfig;
+}
+
+/** Composite RGBA over a backdrop (source-over), yielding opaque RGBA. */
+export function flattenOverBackdrop(
   rgba: Uint8Array,
-  srcW: number,
-  srcH: number,
-  targetW: number,
-  targetH: number,
-): Promise<Uint8Array> {
-  if (srcW === targetW && srcH === targetH) {
-    return rgba;
+  backdrop: Backdrop = ALPHA_BACKDROP,
+): Uint8Array {
+  // Fast path: fully opaque input stays untouched.
+  let opaque = true;
+  for (let i = 3; i < rgba.length; i += 4) {
+    if (rgba[i] !== 255) {
+      opaque = false;
+      break;
+    }
   }
+  if (opaque) return rgba;
+
+  const [br, bg, bb] = backdrop;
+  const out = new Uint8Array(rgba.length);
+  for (let p = 0; p < rgba.length; p += 4) {
+    const a = (rgba[p + 3] ?? 0) / 255;
+    out[p] = Math.round((rgba[p] ?? 0) * a + br * (1 - a));
+    out[p + 1] = Math.round((rgba[p + 1] ?? 0) * a + bg * (1 - a));
+    out[p + 2] = Math.round((rgba[p + 2] ?? 0) * a + bb * (1 - a));
+    out[p + 3] = 255;
+  }
+  return out;
+}
+
+/** Gaussian-blur opaque RGBA in place-equivalent fashion via sharp. */
+async function blurRgba(
+  rgba: Uint8Array,
+  width: number,
+  height: number,
+  sigma: number,
+): Promise<Uint8Array> {
   const { data } = await sharp(Buffer.from(rgba), {
-    raw: { width: srcW, height: srcH, channels: 4 },
+    raw: { width, height, channels: 4 },
   })
-    .resize(targetW, targetH, { kernel: "lanczos3", fit: "fill" })
+    .blur(Math.max(0.3, sigma))
     .ensureAlpha()
     .raw()
     .toBuffer({ resolveWithObject: true });
   return new Uint8Array(data);
 }
 
+/** Primary + optional blurred "as-rendered" metric sets for one decode. */
+export interface MetricScores {
+  metrics: MetricResult;
+  metricsBlurred: MetricResult | null;
+  /**
+   * Mean absolute alpha error on [0, 1], scored on the alpha plane alone at
+   * reference resolution, or null when alpha fidelity is not being scored.
+   *
+   * This is deliberately *not* a `MetricResult` field: `MetricResult` is what
+   * iqa-cli returns, and conflating a locally-computed number with those would
+   * make the report's provenance claim false.
+   */
+  alphaMae: number | null;
+}
+
+/** Mean of the finite values, or null if there are none. */
+function meanOrNull(xs: (number | null)[]): number | null {
+  const ys = xs.filter((v): v is number => v !== null && Number.isFinite(v));
+  return ys.length > 0 ? ys.reduce((a, b) => a + b, 0) / ys.length : null;
+}
+
+/** Average a set of metric results field by field, dropping nulls per field. */
+function averageMetrics(sets: MetricResult[]): MetricResult {
+  const keys = Object.keys(
+    sets[0] ?? NULL_IQA_METRICS,
+  ) as (keyof MetricResult)[];
+  const out = {} as MetricResult;
+  for (const k of keys) out[k] = meanOrNull(sets.map((m) => m[k]));
+  return out;
+}
+
 /**
- * Compute all quality metrics for a decoded LQIP against the encoder input.
+ * Mean absolute error between the reference alpha plane and the decode's,
+ * both at reference resolution.
  *
- * The issue requires every format to be scored at identical dimensions: the decoded
- * preview is resampled to the encoder-input (source) resolution and compared against
- * that input, so ChromaHash/ThumbHash/BlurHash/lqip-modern are all measured at the
- * same W×H per image. Metrics themselves are computed by iqa-cli (CIEDE2000 primary).
+ * The alpha plane is upscaled as an opaque greyscale image (R=G=B=alpha) under
+ * the same policy as the colour, rather than by resampling RGBA directly:
+ * resamplers disagree on whether to premultiply, and that disagreement would
+ * land squarely in the number this is meant to measure.
  */
-export async function computeAllMetrics(
-  inputRgba: Uint8Array,
-  inputW: number,
-  inputH: number,
+async function alphaPlaneMae(
+  referenceRgba: Uint8Array,
+  referenceW: number,
+  referenceH: number,
   decodedRgba: Uint8Array,
   decodedW: number,
   decodedH: number,
-): Promise<MetricResult> {
-  // Canonical comparison resolution = encoder-input (source) dims.
-  const decodedAtSource = await resampleTo(
-    decodedRgba,
+): Promise<number> {
+  const asGrey = (rgba: Uint8Array): Uint8Array => {
+    const out = new Uint8Array(rgba.length);
+    for (let p = 0; p < rgba.length; p += 4) {
+      const a = rgba[p + 3] ?? 255;
+      out[p] = a;
+      out[p + 1] = a;
+      out[p + 2] = a;
+      out[p + 3] = 255;
+    }
+    return out;
+  };
+
+  const decAlphaAtRef = await upscaleRgba(
+    asGrey(decodedRgba),
     decodedW,
     decodedH,
-    inputW,
-    inputH,
+    referenceW,
+    referenceH,
+    scoringConfig.upscalePolicy,
   );
-  return computeIqaMetrics(inputRgba, decodedAtSource, inputW, inputH);
+
+  let sum = 0;
+  let n = 0;
+  for (let p = 0; p < referenceRgba.length; p += 4) {
+    const refA = referenceRgba[p + 3] ?? 255;
+    const decA = decAlphaAtRef[p] ?? 255;
+    sum += Math.abs(refA - decA);
+    n++;
+  }
+  return n > 0 ? sum / n / 255 : 0;
+}
+
+/**
+ * Score a decoded LQIP against the display-resolution reference.
+ *
+ * Both sides are composited over the scoring backdrop, then the decode is
+ * upscaled to reference dimensions under the configured policy (placeholders
+ * are judged at the size they are displayed, stretched to the display aspect
+ * the way a browser stretches an `<img>`). With blurred scoring enabled, a
+ * second metric set is computed after Gaussian-blurring both sides
+ * (sigma = longEdge/32), modeling the blur-up presentation.
+ */
+export async function computeAllMetrics(
+  referenceRgba: Uint8Array,
+  referenceW: number,
+  referenceH: number,
+  decodedRgba: Uint8Array,
+  decodedW: number,
+  decodedH: number,
+): Promise<MetricScores> {
+  const backdrops = scoringConfig.backdrops ?? [ALPHA_BACKDROP];
+  const perBackdrop: MetricResult[] = [];
+  const perBackdropBlurred: MetricResult[] = [];
+
+  for (const backdrop of backdrops) {
+    const reference = flattenOverBackdrop(referenceRgba, backdrop);
+    const decodedFlat = flattenOverBackdrop(decodedRgba, backdrop);
+
+    // Composite first, then upscale: the backdrop is part of what is resampled,
+    // so hoisting the upscale out of this loop would change the result.
+    const decodedAtRef = await upscaleRgba(
+      decodedFlat,
+      decodedW,
+      decodedH,
+      referenceW,
+      referenceH,
+      scoringConfig.upscalePolicy,
+    );
+
+    perBackdrop.push(
+      await computeIqaMetrics(reference, decodedAtRef, referenceW, referenceH),
+    );
+
+    if (scoringConfig.blurredScoring) {
+      const sigma = Math.max(1, Math.max(referenceW, referenceH) / 32);
+      const [refBlur, decBlur] = await Promise.all([
+        blurRgba(reference, referenceW, referenceH, sigma),
+        blurRgba(decodedAtRef, referenceW, referenceH, sigma),
+      ]);
+      perBackdropBlurred.push(
+        await computeIqaMetrics(refBlur, decBlur, referenceW, referenceH),
+      );
+    }
+  }
+
+  // One backdrop is the historical path: return its result untouched rather
+  // than round-tripping it through the averaging code.
+  const metrics =
+    perBackdrop.length === 1
+      ? (perBackdrop[0] as MetricResult)
+      : averageMetrics(perBackdrop);
+  const metricsBlurred =
+    perBackdropBlurred.length === 0
+      ? null
+      : perBackdropBlurred.length === 1
+        ? (perBackdropBlurred[0] as MetricResult)
+        : averageMetrics(perBackdropBlurred);
+
+  const alphaMae = scoringConfig.alphaFidelity
+    ? await alphaPlaneMae(
+        referenceRgba,
+        referenceW,
+        referenceH,
+        decodedRgba,
+        decodedW,
+        decodedH,
+      )
+    : null;
+
+  return { metrics, metricsBlurred, alphaMae };
 }
 
 /** MetricResult with all fields null — for CSS-only formats that produce no raster output. */

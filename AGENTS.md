@@ -45,6 +45,11 @@ architecture and the full set of build commands, and `spec/` for the format.
 
 ## Conventions
 
+- **Fail fast; validate at the boundary.** The hash is variable-length and
+  self-describing, so `ChromaHash::from_bytes` validates the version, quality
+  tier, reserved bits, and exact byte length, returning an error rather than
+  decoding a malformed input — a hash that validates is guaranteed to decode.
+  Prefer surfacing a precise error early over producing garbage downstream.
 - **Rust is the reference;** the non-Rust packages are thin bindings with no
   native algorithm. Their tests are the shared spec-vector parity gate plus a
   small smoke test — not a re-implementation of the Rust suite.

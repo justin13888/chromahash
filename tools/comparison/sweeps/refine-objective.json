@@ -1,0 +1,65 @@
+{
+  "name": "refine-objective",
+  "description": "U5 isolated: with the pixel-domain search fixed, the only thing that matters is what error means. refine_obj=3 weights the clipped-OKLAB L term by refine_wl and the chroma terms by refine_wc, so this walks the objective from pixel-accurate (wc low) to colour-accurate (wc high) and finds where dE00 stops improving. Run on the shipped 32 B layout and on the retuned 4-bit one.",
+  "photoOnly": true,
+  "variants": [
+    { "label": "32B shipped" },
+    {
+      "label": "obj3 wc=1",
+      "tune": "refine_passes=2 refine_grid=1 refine_obj=3 refine_wc=1"
+    },
+    {
+      "label": "obj3 wc=2",
+      "tune": "refine_passes=2 refine_grid=1 refine_obj=3 refine_wc=2"
+    },
+    {
+      "label": "obj3 wc=3",
+      "tune": "refine_passes=2 refine_grid=1 refine_obj=3 refine_wc=3"
+    },
+    {
+      "label": "obj3 wc=4",
+      "tune": "refine_passes=2 refine_grid=1 refine_obj=3 refine_wc=4"
+    },
+    {
+      "label": "obj3 wc=6",
+      "tune": "refine_passes=2 refine_grid=1 refine_obj=3 refine_wc=6"
+    },
+    {
+      "label": "obj3 wc=10",
+      "tune": "refine_passes=2 refine_grid=1 refine_obj=3 refine_wc=10"
+    },
+    {
+      "label": "obj3 wc=3 +dc+scale",
+      "tune": "refine_passes=2 refine_grid=1 refine_obj=3 refine_wc=3 refine_dc=1 refine_scale=1"
+    },
+    {
+      "label": "obj3 wc=4 +dc+scale",
+      "tune": "refine_passes=2 refine_grid=1 refine_obj=3 refine_wc=4 refine_dc=1 refine_scale=1"
+    },
+    {
+      "label": "obj3 wc=3 p4 +dc+scale",
+      "tune": "refine_passes=4 refine_grid=1 refine_obj=3 refine_wc=3 refine_dc=1 refine_scale=1"
+    },
+    {
+      "label": "obj3 wc=3 d2 +dc+scale",
+      "tune": "refine_passes=2 refine_delta=2 refine_grid=1 refine_obj=3 refine_wc=3 refine_dc=1 refine_scale=1"
+    },
+    {
+      "label": "4b L28C15 wc=3 +dc+scale",
+      "tune": "l1=28:4 c=15:3 refine_passes=2 refine_grid=1 refine_obj=3 refine_wc=3 refine_dc=1 refine_scale=1"
+    },
+    {
+      "label": "4b L28C15 wc=4 +dc+scale",
+      "tune": "l1=28:4 c=15:3 refine_passes=2 refine_grid=1 refine_obj=3 refine_wc=4 refine_dc=1 refine_scale=1"
+    },
+    {
+      "label": "4b L28C15 wc=6 +dc+scale",
+      "tune": "l1=28:4 c=15:3 refine_passes=2 refine_grid=1 refine_obj=3 refine_wc=6 refine_dc=1 refine_scale=1"
+    },
+    {
+      "label": "t1 wc=3 +dc+scale",
+      "tier": 2,
+      "tune": "refine_passes=2 refine_grid=1 refine_obj=3 refine_wc=3 refine_dc=1 refine_scale=1"
+    }
+  ]
+}

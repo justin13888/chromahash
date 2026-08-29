@@ -6,11 +6,19 @@ on:
     paths:
       - "tools/comparison/**"
       - "typescript/**"
+      # The R-D gate exists to catch encoder quality regressions, and the
+      # encoder is in rust/. Without this the gate never fired on the changes
+      # it was built for.
+      - "rust/**"
       - ".github/workflows/ci-comparison.yml"
   pull_request:
     paths:
       - "tools/comparison/**"
       - "typescript/**"
+      # The R-D gate exists to catch encoder quality regressions, and the
+      # encoder is in rust/. Without this the gate never fired on the changes
+      # it was built for.
+      - "rust/**"
       - ".github/workflows/ci-comparison.yml"
 
 jobs:
@@ -83,14 +91,26 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/bin/iqa-cli
-          key: iqa-cli-0.2.0-${{ runner.os }}
+          key: iqa-cli-1.2.1-${{ runner.os }}
 
       - name: Install iqa-cli
         if: steps.cache-iqa.outputs.cache-hit != 'true'
-        run: cargo install iqa-cli --locked --version 0.2.0
+        run: cargo install iqa-cli --locked --version 1.2.1
 
       - name: Build Rust harness
         run: cargo build --manifest-path rust/Cargo.toml --example encode_stdin
+
+      # The comparison report below proves the harness still runs; it does not
+      # prove the format still performs. This gate (spec/EXPERIMENTS.md U18)
+      # encodes a handful of content-pinned corpus photos at tier 0 and fails if
+      # mean ΔE00 has drifted from tools/comparison/baselines/rd-gate.json, so a
+      # silent rate-distortion regression cannot land unnoticed. It needs a
+      # release build — the debug encoder is the same bytes but far slower.
+      - name: Build Rust harness (release, for the R-D gate)
+        run: cargo build --manifest-path rust/Cargo.toml --release --example encode_stdin
+
+      - name: R-D regression gate (tier 0)
+        run: node tools/comparison/dist/rd-gate.js
 
       - uses: actions/setup-go@v5
         with:

@@ -1,0 +1,14 @@
+{
+  "name": "capped-tier1-vs-tier0",
+  "description": "Embedded-tiers preview: a tier-1 hash rendered at the tier-0 natural size vs a native tier-0 encode. The gap bounds what byte-embedded/progressive tiers (v0.8 roadmap) would preserve when truncating.",
+  "photoOnly": true,
+  "variants": [
+    { "label": "tier 0 native (32 B)" },
+    {
+      "label": "tier 1 capped to t0 size (108 B)",
+      "tier": 2,
+      "capToTier0": true
+    },
+    { "label": "tier 1 natural (108 B)", "tier": 2 }
+  ]
+}

@@ -3,9 +3,9 @@ name: CI (Rust)
 on:
   push:
     branches: [master]
-    paths: ["rust/**", ".github/workflows/ci-rust.yml"]
+    paths: ["rust/**", "spec/test-vectors/**", ".github/workflows/ci-rust.yml"]
   pull_request:
-    paths: ["rust/**", ".github/workflows/ci-rust.yml"]
+    paths: ["rust/**", "spec/test-vectors/**", ".github/workflows/ci-rust.yml"]
 
 jobs:
   ci:
@@ -28,19 +28,76 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             rust/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('rust/Cargo.lock') }}
+          # Cargo.lock is gitignored repo-wide, so hashFiles() on it returns the
+          # empty string and the key never changes — key off the manifest, as the
+          # other workflows do.
+          key: ${{ runner.os }}-cargo-${{ hashFiles('rust/Cargo.toml') }}
 
       - name: Format check
         run: cargo fmt --check
 
       - name: Lint
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --all-targets --features full -- -D warnings
 
       # `--features full` adds `simd-diff-tests`, so the AVX2 + SSE2 backends are
       # differentially validated here on the x86_64 runner (GitHub's runners have
       # AVX2). The remaining backends are covered by the `simd-diff` matrix below.
       - name: Test
         run: cargo test --features full
+
+      # The crate advertises a pure-scalar, no-default-features build (the scalar
+      # WASM artifact and any consumer that does not want `core::arch`). Nothing
+      # else in CI compiles that configuration, so a `simd`-only item could land
+      # and break it silently.
+      - name: Build without default features
+        run: cargo build --no-default-features
+
+      - name: Test without default features
+        run: cargo test --no-default-features
+
+  # The crate declares `rust-version = "1.85"`. Nothing verified it: an API
+  # stabilized after that would compile fine on `stable` and break every consumer
+  # pinned to the advertised minimum. (That is not hypothetical — `is_multiple_of`
+  # in an example was stable-from-1.87 and went unnoticed until the lint recipes
+  # started checking test and example targets.)
+  msrv:
+    name: MSRV (declared minimum)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read rust-version from the manifest
+        id: msrv
+        run: |
+          v=$(grep -m1 '^rust-version' Cargo.toml | sed 's/.*"\(.*\)"/\1/')
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "declared MSRV: $v"
+
+      - name: Install the declared toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+
+      # `rust/rust-toolchain.toml` pins `channel = "stable"`, and a toolchain
+      # file beats the rustup default that the action sets — so a plain `cargo
+      # build` in this directory silently runs on stable and the job proves
+      # nothing. `cargo +<version>` overrides the file explicitly.
+      #
+      # Examples and tests are included: an MSRV violation in an example is
+      # exactly what went unnoticed before (`is_multiple_of`, stable from 1.87),
+      # and both dev-dependencies do compile on 1.85.
+      - name: Build on the declared MSRV
+        env:
+          MSRV: ${{ steps.msrv.outputs.version }}
+        run: |
+          # Fail loudly if the pin ever stops taking effect.
+          cargo "+$MSRV" --version
+          cargo "+$MSRV" build --all-targets
+          cargo "+$MSRV" build --no-default-features
+          cargo "+$MSRV" test --no-run
 
   # Each SIMD backend only compiles for its own target, so "test every backend"
   # means running the differential suite on (or under emulation of) every target.
@@ -99,7 +156,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             rust/target
-          key: ${{ runner.os }}-${{ matrix.kind }}-${{ matrix.target }}-cargo-${{ hashFiles('rust/Cargo.lock') }}
+          key: ${{ runner.os }}-${{ matrix.kind }}-${{ matrix.target }}-cargo-${{ hashFiles('rust/Cargo.toml') }}
 
       - name: Differential tests
         shell: bash

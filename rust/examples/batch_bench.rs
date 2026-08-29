@@ -13,7 +13,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use chromahash::{BatchEncoder, ChromaHash, Gamut, ImageInput};
+use chromahash::{BatchEncoder, ChromaHash, DEFAULT_TIER, Gamut, ImageInput};
 
 /// Number of images per run.
 const N: usize = 2_000;
@@ -36,20 +36,29 @@ fn make_image(seed: usize) -> ImageInput {
         chunk[0] = ((i * 3 + seed) % 256) as u8;
         chunk[1] = ((i * 5 + seed * 2) % 256) as u8;
         chunk[2] = ((i * 7 + seed * 3) % 256) as u8;
-        chunk[3] = if seed.is_multiple_of(3) { 200 } else { 255 };
+        // `%` rather than `is_multiple_of`, which is stable only from 1.87 —
+        // above this crate's declared MSRV (rust-version = 1.85).
+        chunk[3] = if seed % 3 == 0 { 200 } else { 255 };
     }
     ImageInput {
         w,
         h,
         rgba: Arc::from(rgba),
         gamut,
+        // Not a bare `0`: the tier codes are ordered by quality, so 0 is the
+        // 21-byte compact tier. This literal was the 32-byte default before the
+        // renumbering and silently became compact after it, which made the
+        // serial-vs-batch equality check below compare two different tiers.
+        quality: DEFAULT_TIER,
     }
 }
 
 fn encode_serial(items: &[ImageInput]) -> Vec<ChromaHash> {
+    // Honour each item's tier, so the equality check below stays a comparison of
+    // the two code paths rather than of two tiers.
     items
         .iter()
-        .map(|it| ChromaHash::encode(it.w, it.h, &it.rgba, it.gamut))
+        .map(|it| ChromaHash::encode_with_quality(it.w, it.h, &it.rgba, it.gamut, it.quality))
         .collect()
 }
 

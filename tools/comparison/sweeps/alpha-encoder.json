@@ -1,0 +1,42 @@
+{
+  "name": "alpha-encoder",
+  "corpus": "alpha",
+  "backdrops": "white-black-grey",
+  "alphaFidelity": true,
+  "description": "\u00a711.2 \u2014 bringing the alpha channel's quantizer up to the same generation as L/a/b. `alpha_ac_fit=1` routes alpha through `quantize_ac_channel`, so `scale_fit` (search the scale code by reconstruction SSE) and `ac_nearest` (pick the code nearest in reconstruction, not in the companded domain) apply to it. Both were adopted for the colour channels and were worth \u22120.43% and \u22120.05% there; alpha has never had either. The arms separate the two effects and check that neither depends on the layout. Every arm pins `alpha_ac_count` and `alpha_ac_bits` explicitly. A config that overrides only part of a layout inherits the rest from Tunables::DEFAULT, so when the default alpha allocation changed in \u00a711.3 these arms silently stopped being 32 bytes \u2014 the same class of drift the corpus pins exist to prevent, in the knob space rather than the corpus.",
+  "variants": [
+    {
+      "label": "DEFAULT (legacy alpha path)",
+      "tune": "la1=20:5 ca=9:4 alpha_ac_count=5 alpha_ac_bits=4"
+    },
+    {
+      "label": "alpha_ac_fit=1",
+      "tune": "la1=20:5 ca=9:4 alpha_ac_count=5 alpha_ac_bits=4 alpha_ac_fit=1"
+    },
+    {
+      "label": "alpha_ac_fit, scale_fit=1",
+      "tune": "la1=20:5 ca=9:4 alpha_ac_count=5 alpha_ac_bits=4 alpha_ac_fit=1 scale_fit=1"
+    },
+    {
+      "label": "alpha_ac_fit, no nearest",
+      "tune": "la1=20:5 ca=9:4 alpha_ac_count=5 alpha_ac_bits=4 alpha_ac_fit=1 ac_nearest=0"
+    },
+    {
+      "label": "alpha_ac_fit, no fit no near",
+      "tune": "la1=20:5 ca=9:4 alpha_ac_count=5 alpha_ac_bits=4 alpha_ac_fit=1 scale_fit=0 ac_nearest=0"
+    },
+    {
+      "label": "legacy, no fit no near",
+      "tune": "la1=20:5 ca=9:4 alpha_ac_count=5 alpha_ac_bits=4 scale_fit=0 ac_nearest=0"
+    },
+    {
+      "label": "alpha_ac_fit @ L22@4 C14@3",
+      "tune": "alpha_ac_fit=1 la1=22:4 ca=14:3 alpha_ac_count=5 alpha_ac_bits=4"
+    },
+    {
+      "label": "legacy @ L22@4 C14@3",
+      "tune": "la1=22:4 ca=14:3 alpha_ac_count=5 alpha_ac_bits=4"
+    }
+  ],
+  "expectBytes": 32
+}

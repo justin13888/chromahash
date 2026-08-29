@@ -1,0 +1,66 @@
+{
+  "name": "budget-ladder-optimized",
+  "description": "The byte ladder under the optimized recipe: per-budget luma precision (3 b at <=18 B, 4 b to 56 B, 5 b above) with chroma one bit under, plus aniso=1.2, sel_hv=0.15, scale_fit=2 and ac_nearest. Constants only - no extra encode compute. Compare against budget-ladder.json (shipped constants) and budget-ladder-tuned.json (the previous round's recipe).",
+  "photoOnly": true,
+  "variants": [
+    {
+      "label": "32B shipped (ref)"
+    },
+    {
+      "label": "  12B opt L9@3 C3@2",
+      "tune": "l1=9:3 c=3:2 aniso=1.2 sel_hv=0.15 scale_fit=2 ac_nearest=1"
+    },
+    {
+      "label": "  16B opt L16@3 C6@2",
+      "tune": "l1=16:3 c=6:2 aniso=1.2 sel_hv=0.15 scale_fit=2 ac_nearest=1"
+    },
+    {
+      "label": "  21B opt L19@4 C6@3",
+      "tune": "l1=19:4 c=6:3 aniso=1.2 sel_hv=0.15 scale_fit=2 ac_nearest=1"
+    },
+    {
+      "label": "  24B opt L22@4 C8@3",
+      "tune": "l1=22:4 c=8:3 aniso=1.2 sel_hv=0.15 scale_fit=2 ac_nearest=1"
+    },
+    {
+      "label": "  28B opt L27@4 C10@3",
+      "tune": "l1=27:4 c=10:3 aniso=1.2 sel_hv=0.15 scale_fit=2 ac_nearest=1"
+    },
+    {
+      "label": "  32B opt L33@4 C11@3",
+      "tune": "l1=33:4 c=11:3 aniso=1.2 sel_hv=0.15 scale_fit=2 ac_nearest=1"
+    },
+    {
+      "label": "  40B opt L43@4 C15@3",
+      "tune": "l1=43:4 c=15:3 aniso=1.2 sel_hv=0.15 scale_fit=2 ac_nearest=1"
+    },
+    {
+      "label": "  48B opt L54@4 C19@3",
+      "tune": "l1=54:4 c=19:3 aniso=1.2 sel_hv=0.15 scale_fit=2 ac_nearest=1"
+    },
+    {
+      "label": "  64B opt L59@5 C20@4",
+      "tune": "l1=59:5 c=20:4 aniso=1.2 sel_hv=0.15 scale_fit=2 ac_nearest=1"
+    },
+    {
+      "label": "  80B opt L75@5 C26@4",
+      "tune": "l1=75:5 c=26:4 aniso=1.2 sel_hv=0.15 scale_fit=2 ac_nearest=1"
+    },
+    {
+      "label": " 108B opt L104@5 C36@4",
+      "tune": "l1=104:5 c=36:4 aniso=1.2 sel_hv=0.15 scale_fit=2 ac_nearest=1"
+    },
+    {
+      "label": " 161B opt L158@5 C55@4",
+      "tune": "l1=158:5 c=55:4 aniso=1.2 sel_hv=0.15 scale_fit=2 ac_nearest=1"
+    },
+    {
+      "label": " 246B opt L246@5 C85@4",
+      "tune": "l1=246:5 c=85:4 aniso=1.2 sel_hv=0.15 scale_fit=2 ac_nearest=1"
+    },
+    {
+      "label": " 411B opt L416@5 C144@4",
+      "tune": "l1=416:5 c=144:4 aniso=1.2 sel_hv=0.15 scale_fit=2 ac_nearest=1"
+    }
+  ]
+}

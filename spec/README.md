@@ -1,13 +1,36 @@
 # ChromaHash Format Specification
 
-**Version:** 0.6.0
-**Status:** Draft
-**Date:** 2026-06-10
+**Release:** 0.7.0
+**Wire-format generation:** v1 (`version` field = 0)
+**Status:** Stable
+**Date:** 2026-08-23
 
-> ChromaHash is a fixed-size, 32-byte Low Quality Image Placeholder (LQIP) format
-> designed for professional photo management at scale. It encodes a perceptually
-> accurate thumbnail representation of an image using OKLAB color space, DCT-based
-> frequency decomposition, and µ-law companded quantization.
+> **What "Stable" means here.** Every constant this format ships has a measurement behind
+> it on the current corpora, taken on a tune split and validated once on a never-tuned
+> holdout (`EXPERIMENTS.md` §11). The wire format freezes **at the 0.7.0 release**: from
+> that tag on, a change to it increments the `version` field. 0.7.0 has not been tagged,
+> so v1 has never been published and the bitstream is still open to correction (§13). It
+> does **not** mean every language binding has caught up — the Rust core is the reference
+> and the bindings follow it.
+
+> ChromaHash is a compact, self-describing Low Quality Image Placeholder (LQIP)
+> format designed for professional photo management at scale. It encodes a
+> perceptually accurate thumbnail of an image using the OKLAB color space,
+> DCT-based frequency decomposition, and µ-law companded quantization. The default
+> code is **32 bytes**; an optional **quality multiplier** (a 3-bit tier in the
+> header) trades size for detail, roughly quadrupling the byte length per tier
+> while doubling the rendered resolution on each axis.
+>
+> The release version (`0.7.0`, semver) and the **wire-format generation** (`v1`,
+> the 3-bit `version` field, value `0`) are independent axes: the release follows
+> semver, while the on-wire `version` field increments only on an incompatible
+> format break (`1`→v2, `2`→v3, …). This generation is a clean break with **no
+> backward compatibility** with the older v0.6 bitstream.
+>
+> **Design rationale:** [`RATIONALE.md`](RATIONALE.md) records why each decision
+> is what it is — the alternatives considered (including the audio-codec and
+> AVIF/JPEG-XL technique audits), the measured sweep evidence behind the
+> constants, and the explicitly open questions.
 
 ---
 
@@ -25,9 +48,10 @@
 10. [Encoding Algorithm](#10-encoding-algorithm)
 11. [Decoding Algorithm](#11-decoding-algorithm)
 12. [Constants & Matrices](#12-constants--matrices)
-13. [Changes from v0.4/v0.5 to v0.6](#13-changes-from-v04v05-to-v06)
+13. [Changes to v1 (0.7.0)](#13-changes-to-v1-070)
 14. [Trade-offs & Limitations](#14-trade-offs--limitations)
-15. [Appendix A: ThumbHash Comparison](#appendix-a-thumbhash-comparison--acknowledgment)
+15. [Future Directions: JPEG XL VarDCT Evaluation](#15-future-directions-jpeg-xl-vardct-evaluation)
+16. [Appendix A: ThumbHash Comparison](#appendix-a-thumbhash-comparison--acknowledgment)
 
 ---
 
@@ -38,7 +62,9 @@ layout precision, and wide-gamut support matter more than minimizing byte count.
 
 | Goal | Rationale |
 |------|-----------|
-| Fixed 32 bytes | Memory-aligned, cache-friendly, predictable storage. Zero-overhead database column or cache key. |
+| 32 bytes at the default tier | Memory-aligned, cache-friendly, predictable storage. Zero-overhead database column or cache key; equal-budget comparison with prior LQIP formats. |
+| Quality multiplier (3-bit tier) | Opt into more detail when wanted: long edge `32·2^tier`, byte length ≈ `4^tier`× the base. The common case stays 32 bytes. |
+| Self-describing + fail-fast | Byte 0 carries version, tier, and flags; the byte length follows deterministically, so a parser validates a hash in O(1) and a validated hash always decodes. No checksum needed. |
 | OKLAB color space | Perceptually uniform — quantization levels are maximally efficient. |
 | 8-bit log₂ aspect ratio | ~1.09% max error for all photographic ratios. Covers 1:16 to 16:1. |
 | Top-K coefficient selection | The K lowest spatial frequencies for the image's aspect ratio — a single deterministic rule, no grid machinery, no aliasing. |
@@ -47,8 +73,8 @@ layout precision, and wide-gamut support matter more than minimizing byte count.
 | µ-law companding with exact zero | Non-linear quantization matching natural image DCT coefficient distributions; zero coefficients decode exactly. |
 | Decode-aware DC selection | The encoder picks the DC codes whose *decoded* color is closest to the true average — gamut-corner solids round-trip nearly exactly. |
 | Multi-gamut encode | Accepts sRGB, Display P3, Adobe RGB, BT.2020, or ProPhoto RGB sources. |
-| Single decode target | Always sRGB output. One set of matrices, zero ambiguity. |
-| Alpha support | Transparent images supported within the fixed 32-byte size. |
+| Display-gamut decode | sRGB by default; decoders MAY render to Display P3 or Adobe RGB (§11). OKLAB is absolute, so no gamut flag is stored. |
+| Alpha support | Transparent images supported within the same tier byte budget (32 bytes at the default tier). |
 
 ### Design Priorities (ordered)
 
@@ -56,7 +82,7 @@ layout precision, and wide-gamut support matter more than minimizing byte count.
 2. **Layout precision** — decoded aspect ratio must closely match the original.
 3. **Wide-gamut correctness** — colors from P3/Adobe RGB/BT.2020 sources preserved accurately.
 4. **Decode simplicity and speed** — trivially implementable, fast (<1ms in JavaScript).
-5. **Fixed size** — predictable storage and zero parsing complexity.
+5. **Predictable size** — the byte length is deterministic from byte 0 (§3.5); no length framing to parse.
 
 ---
 
@@ -100,36 +126,59 @@ cbrt(x) = sign(x) × |x|^(1/3)
 Implementations MUST NOT use `pow(x, 1.0/3.0)`, which is undefined for negative `x` in
 many languages. See §12.6 for the recommended IEEE 754 bit-seed implementation.
 
-### 2.5 Version Bit (Bit 47)
+### 2.5 Descriptor Byte (Byte 0): Version, Tier, Flags
 
-Bit 47 in the header serves as a version discriminator:
+Byte 0 fully describes the hash. It is read directly (not as part of the little-endian
+field group):
 
-| Version | Bit 47 | Notes |
-|---------|--------|-------|
-| v0.1 | 0 | Original spec — never publicly released |
-| v0.2–v0.5 | 1 | Adaptive grids (`deriveGrid`), triangular selection, even-level µ-law, constant-L gamut clamp |
-| **v0.6** | **0** | **This spec.** Top-K selection, exact-zero µ-law, decode-aware DC, relative-colorimetric gamut clip |
+| Bits | Field | Width | Meaning |
+|------|-------|-------|---------|
+| 0–2 | `version` | 3 | Wire-format generation. `0` = **v1** (this spec). |
+| 3–5 | `tier` | 3 | Tier code, ordered by quality. `0` is the **compact tier**, `1` is the default, `2..=4` are the higher quality tiers; `5..=7` reserved. |
+| 6 | `hasAlpha` | 1 | Alpha channel present. |
+| 7 | reserved | 1 | MUST be 0. |
 
-Encoders MUST set bit 47 to 0. Because v0.1 was never released, bit 47 = 0 unambiguously
-identifies a v0.6 hash, and bit 47 = 1 identifies a legacy v0.2–v0.5 hash — the first
-version break that is detectable from the hash bytes alone.
+**The tier code is a quality ordinal.** Codes are ordered smallest-first, so a larger
+code is never a smaller hash. Code `0` is the **compact tier**: 21 bytes, the lowest
+fidelity, rendered at the same resolution as code 1. Code `1` is the default and is
+exactly 32 bytes. Codes `2..=4` each double the natural render size and roughly quadruple
+the byte length.
 
-Decoders MUST treat bit 47 = 1 as an **unsupported version**: the legacy bitstreams use a
-different coefficient selection, quantizer, and (in alpha mode) layout, so decoding them
-with v0.6 logic produces garbage, not a degraded image. Where the API has an error path
-(e.g. a fallible constructor or a `try_decode`), the hash SHOULD be rejected; otherwise
-implementations MUST expose a version check (e.g. `is_version_supported()`) and document
-that decode output for unsupported hashes is unspecified.
+Codes `0` and `1` share a render size, so the quantity that scales with quality is the
+tier's **render level** (§3.5, §8.2), not the code itself:
 
-> **Pre-1.0 compatibility note:** v0.6 consumes the last in-band version value. Any
-> post-v0.6 bitstream break would again require out-of-band version tracking (e.g. a
-> database column or file-format tag). The v0.6 bitstream is intended to be carried
-> forward to 1.0.
+```
+renderLevel(tier) = max(0, tier − 1)
+```
 
-### 2.6 Padding Bits
+Codes `5..=7` are reserved and MUST be rejected (§2.6).
 
-In no-alpha mode, bit 255 is padding. Encoders MUST set it to 0; decoders MUST ignore it.
-Alpha mode has no padding.
+`FORMAT_VERSION = 0` is the first generation of this self-describing scheme. Future
+incompatible breaks increment the field (`1`→v2, `2`→v3, …); a decoder MUST reject a
+`version` it does not implement.
+
+This is a **clean break**: there is no backward compatibility with the older v0.6
+bitstream (whose byte 0 was the `L_dc` value, not a version field). The two are not
+co-detectable from bytes alone, so an application storing a mix of generations must track
+which is which out of band. A v1 decoder validates the descriptor + length (§2.6, §3.5)
+and rejects anything that is not a well-formed v1 hash.
+
+### 2.6 Self-Describing Length, Validation, and Padding
+
+A v1 hash is **variable length**, fully determined by `(tier, hasAlpha)` via the length
+formula in §3.5. Decodability is established by **structure, not a checksum**:
+`from_bytes` (the validating constructor) checks the `version`, the `tier` range, the
+reserved bit, and that the byte length exactly equals the formula — and **fails early** on
+any mismatch. A byte string that passes these checks is guaranteed to decode.
+
+There is deliberately **no CRC or checksum**. A checksum verifies *integrity*, not
+*decodability*: a bit-flip that happens to land on a still-valid hash would decode to a
+wrong-but-readable image, which is acceptable for a placeholder, while a flip that breaks
+structure is already caught by the length/version/tier checks. The reserved flag bit is
+left free for a future opt-in extension.
+
+Trailing bits in the final byte beyond the AC payload are padding; encoders MUST set them
+to 0 and decoders MUST ignore them.
 
 ### 2.7 Authoritative Constants
 
@@ -140,89 +189,188 @@ file is the single source of truth. Run `spec/validate.py` to verify.
 
 ## 3. Binary Format
 
-A ChromaHash is exactly **32 bytes (256 bits)**: a 6-byte header followed by a 26-byte
-AC coefficient block.
+A ChromaHash is a variable-length byte string: a fixed prefix, a per-tier AC payload, and
+trailing zero padding to the next byte boundary. At the default tier it is exactly **32 bytes** (the
+v0.6 footprint, for equal-budget comparison); each higher tier roughly quadruples the
+length. All field offsets, widths, and counts are named constants in `spec/constants.py`.
 
-### 3.1 Header (48 bits)
+### 3.1 Header
 
-All multi-bit fields are packed little-endian:
+**Byte 0 — descriptor** (read directly; see §2.5): `version` (bits 0–2), `tier`
+(bits 3–5), `hasAlpha` (bit 6), reserved (bit 7).
+
+**Byte 1 — `aspect`**: the 8-bit log₂ aspect ratio (see §8).
+
+**Bits 16–53 — DC + scale prefix**, packed little-endian via `writeBits` in this order:
+
+| Bit offset | Field | Width | Range | Description |
+|------------|-------|-------|-------|-------------|
+| 16–22 | `L_dc`    | 7 | 0–127 | OKLAB L (lightness) |
+| 23–29 | `a_dc`    | 7 | 1–127 | OKLAB a (green–red), centered |
+| 30–36 | `b_dc`    | 7 | 1–127 | OKLAB b (blue–yellow), centered |
+| 37–42 | `L_scale` | 6 | 0–63  | Luminance AC max amplitude |
+| 43–48 | `a_scale` | 6 | 0–63  | Chroma-a AC max amplitude |
+| 49–53 | `b_scale` | 5 | 0–31  | Chroma-b AC max amplitude |
+
+The fixed prefix is **54 bits** (bytes 0–1 plus the 38-bit DC/scale group). In alpha mode
+an additional `alpha_dc` (5 bits) + `alpha_scale` (4 bits) = 9 bits immediately follow the
+prefix, before the AC payload.
+
+### 3.2 AC Payload
+
+AC coefficients follow the prefix (and the alpha DC/scale in alpha mode), in **selection
+order** (§6.2): the j-th value in each channel's field is the j-th selected `(cx, cy)`
+pair.
+
+The per-channel split is a **three-row table, not one base scaled by `4^tier`**: codes 0
+and 1 each have their own row, and codes 2–4 scale the code-2 base by `4^(tier−2)`. Bits
+per coefficient are constant within a row. The split exists because the count-vs-precision
+optimum moves with the budget — at 32 bytes the format is measurably better off with more,
+coarser coefficients than the code-2 row scaled down would give it (`EXPERIMENTS.md` §4.2,
+§8.1), and the compact tier's smaller budget moves it again (§11.10).
+
+**Compact tier (code 0, 21 bytes):**
 
 ```
-header48 = hash[0] | (hash[1] << 8) | (hash[2] << 16) | (hash[3] << 24) | (hash[4] << 32) | (hash[5] << 40)
+                no-alpha                     alpha
+Field           Coeff  Bits  Total    Field         Coeff  Bits  Total
+──────────────────────────────────    ─────────────────────────────────
+L AC            19     4     76       alpha_dc      1      5       5
+a AC (chroma)   6      3     18       alpha_scale   1      4       4
+b AC (chroma)   6      3     18       L AC          12     4      48
+                            ────      a AC          1      3       3
+                            112       b AC          1      3       3
+                                      A AC (alpha)  16     3      48
+                                                           ────────
+                                                                 111
 ```
 
-| Bits | Field | Width | Range | Description |
-|------|-------|-------|-------|-------------|
-| 0–6 | `L_dc` | 7 | 0–127 | OKLAB L (lightness) |
-| 7–13 | `a_dc` | 7 | 1–127 | OKLAB a (green–red), centered |
-| 14–20 | `b_dc` | 7 | 1–127 | OKLAB b (blue–yellow), centered |
-| 21–26 | `L_scale` | 6 | 0–63 | Luminance AC max amplitude |
-| 27–32 | `a_scale` | 6 | 0–63 | Chroma-a AC max amplitude |
-| 33–37 | `b_scale` | 5 | 0–31 | Chroma-b AC max amplitude |
-| 38–45 | `aspect` | 8 | 0–255 | Log₂ aspect ratio (see §8) |
-| 46 | `hasAlpha` | 1 | 0/1 | Alpha channel present |
-| 47 | `version` | 1 | 0 | Version bit (0 = v0.6; 1 = legacy v0.2–v0.5, unsupported) |
+54 + 112 = **166 bits → 21 bytes**; 54 + 111 = **165 bits → 21 bytes**. ✓
 
-### 3.2 AC Block (26 bytes = 208 bits)
-
-#### No-alpha mode (`hasAlpha = 0`)
+**Default tier (code 1, 32 bytes):**
 
 ```
-Field           Coefficients   Bits/coeff   Total bits
-────────────────────────────────────────────────────────
-L AC            27             5            135
-a AC (chroma)   9              4             36
-b AC (chroma)   9              4             36
-Padding         —              —              1
-                                            ─────
-                                            208
+                no-alpha                     alpha
+Field           Coeff  Bits  Total    Field         Coeff  Bits  Total
+──────────────────────────────────    ─────────────────────────────────
+L AC            28     4     112      alpha_dc      1      5       5
+a AC (chroma)   15     3     45       alpha_scale   1      4       4
+b AC (chroma)   15     3     45       L AC          22     4      88
+                            ────      a AC          3      3       9
+                            202       b AC          3      3       9
+                                      A AC (alpha)  28     3      84
+                                                           ────────
+                                                                 199
 ```
 
-#### Alpha mode (`hasAlpha = 1`)
+54 + 202 = **256 bits = 32 bytes**; 54 + 199 = **253 bits → 32 bytes** (3 padding bits). ✓
+
+**Code-2 base (the row codes 2–4 scale):**
 
 ```
-Field           Coefficients   Bits/coeff   Total bits
-────────────────────────────────────────────────────────
-alpha_dc        1              5              5
-alpha_scale     1              4              4
-L AC            20             mixed*       107
-a AC (chroma)   9              4             36
-b AC (chroma)   9              4             36
-A AC (alpha)    5              4             20
-                                            ─────
-                                            208
-
-* L AC mixed: first 7 at 6 bits (42), remaining 13 at 5 bits (65) = 107.
+Field           no-alpha          alpha
+──────────────────────────────────────────
+L AC            104 @ 5           88 @ 4
+a AC (chroma)   36 @ 4            12 @ 3
+b AC (chroma)   36 @ 4            12 @ 3
+A AC (alpha)    —                 112 @ 3
 ```
 
-Both modes: 48 + 208 = **256 bits = 32 bytes**. ✓
+At tier `m ≥ 2`, every coefficient count in that row is multiplied by `4^(m−2)`; see §3.5.
 
-Coefficients are written in **selection order** (§6.2): the j-th value in each channel's
-field corresponds to the j-th selected `(cx, cy)` frequency pair.
+**On the alpha rows.** They are not the opaque rows with luma trimmed. The alpha channel
+carries a silhouette, which is high-frequency and is most of what a cut-out placeholder
+communicates; chroma spent inside transparent regions is composited away and buys nothing.
+So the alpha rows spend far more on the alpha plane and far less on chroma than the opaque
+rows do — 28 alpha coefficients against 3 chroma at code 1. This is measured, not derived:
+`EXPERIMENTS.md` §11.3 and §11.11.
+
+The alpha AC **count and bit width are per row**, like every other count in this table.
+They must not be hoisted into a single constant: code 1 wants 28 coefficients where the
+compact tier's smaller budget wants 16. An implementation MUST also keep the alpha count
+non-decreasing as the tier rises — 16 / 28 / 112 / 448 / 1792 for codes 0 / 1 / 2 / 3 / 4
+— since a higher tier with fewer alpha coefficients is a higher quality tier that renders
+a worse silhouette.
 
 ### 3.3 Layout Diagram
 
 ```
-No-alpha:
-┌──────────────────────────────────────────────┬───────────────────────────────────────────────────┐
-│              Header (6 bytes, 48 bits)        │           AC Block (26 bytes, 208 bits)           │
-│ L_dc|a_dc|b_dc|L_scl|a_scl|b_scl|aspect|α|v │ L_ac×27(5b) | a_ac×9(4b) | b_ac×9(4b) | pad(1b)│
-└──────────────────────────────────────────────┴───────────────────────────────────────────────────┘
+Default tier (code 1), no-alpha (32 bytes):
+┌────────┬────────┬────────────────────────────────┬───────────────────────────────────────┐
+│ byte 0 │ byte 1 │   DC + scale prefix (38 bits)  │            AC payload + pad            │
+│ descr  │ aspect │ L_dc|a_dc|b_dc|L_scl|a_scl|b_scl│ L_ac×28(4b) | a_ac×15(3b)| b_ac×15(3b)│
+└────────┴────────┴────────────────────────────────┴───────────────────────────────────────┘
 
-Alpha:
-┌──────────────────────────────────────────────┬───────────────────────────────────────────────────┐
-│              Header (6 bytes, 48 bits)        │           AC Block (26 bytes, 208 bits)           │
-│ L_dc|a_dc|b_dc|L_scl|a_scl|b_scl|aspect|α|v │ A_dc(5b)|A_scl(4b)|L_ac×7(6b)+13(5b)|           │
-│                                              │ a_ac×9(4b)|b_ac×9(4b)|A_ac×5(4b)                 │
-└──────────────────────────────────────────────┴───────────────────────────────────────────────────┘
+Default tier (code 1), alpha (32 bytes):
+┌────────┬────────┬────────────────────────────────┬──────────────────────────────────────────────────────┐
+│ descr  │ aspect │ L_dc|a_dc|b_dc|L_scl|a_scl|b_scl│ A_dc(5b)|A_scl(4b)|L_ac×22(4b)|a_ac×3|b_ac×3|A_ac×28(3b)│
+└────────┴────────┴────────────────────────────────┴──────────────────────────────────────────────────────┘
+
+Compact tier (code 0), no-alpha (21 bytes):
+┌────────┬────────┬────────────────────────────────┬──────────────────────────────────────┐
+│ descr  │ aspect │ L_dc|a_dc|b_dc|L_scl|a_scl|b_scl│ L_ac×19(4b) | a_ac×6(3b) | b_ac×6(3b)│
+└────────┴────────┴────────────────────────────────┴──────────────────────────────────────┘
+
+Higher tiers use identical framing and the code-2 row (no-alpha L 104 @ 5b, a/b 36 @ 4b;
+alpha L 88 @ 4b, a/b 12 @ 3b, A 112 @ 3b), with every AC coefficient count multiplied by
+4^(tier−2). The compact tier is NOT part of that scaling — it is its own row at the
+default tier's render size.
 ```
+
+### 3.5 Quality Multiplier (Tier) & Length Formula
+
+The 3-bit `tier` (byte 0, bits 3–5) selects a row of the §3.2 layout table and a render
+size. Both derive from the tier's **render level**, not from the code itself:
+
+```
+renderLevel(tier) = max(0, tier − 1)
+countScale(tier)  = 4^renderLevel(tier)
+```
+
+- **Render grid** — the natural decode size is `decodeOutputSize(aspect, tier)` =
+  `decodeOutputSize(aspect, 1)` with each axis shifted left by `renderLevel(tier)` (long
+  edge `32·2^level`: 32 / 64 / 128 / 256 px). This MUST be a bit-shift of the rounded
+  base size, not a re-rounding of `32·2^level / ratio` (the two diverge — see §8.2).
+- **Coefficient budget** — codes 0 and 1 each read their own row of §3.2 directly; tier
+  `m ≥ 2` reads the code-2 row with each per-channel count multiplied by `4^(m−2)`. The
+  candidate frequency pool grows with the grid, so every `K(tier)` remains satisfiable.
+
+Valid tier codes are `0..=4` (`MAX_TIER = 4`); `5..=7` are reserved and MUST be rejected.
+Codes 0 and 1 share a render level, so shifting by the raw code rather than by
+`renderLevel` gives the compact tier a 64 px grid and 4× the coefficients — what the
+`valid_compact` test vectors exist to catch.
+
+**Length formula** — the total byte length is determined entirely by `(tier, hasAlpha)`:
+
+```
+ac_bits   = K_L(tier)·B_L(tier) + 2·K_c(tier)·B_c(tier)
+          + K_alpha(tier)·B_alpha(tier)
+body_bits = 54 + (9 if hasAlpha else 0) + ac_bits     # alpha terms 0 when opaque
+length    = ceil(body_bits / 8)    bytes
+```
+
+where `K_*`/`B_*` come from the §3.2 row for that tier: codes 0 and 1 read their own rows
+directly, and tier `m ≥ 2` reads the code-2 row with every count times `4^(m−2)`. Note
+`B_alpha` is read from the row like every other width — it is 3 bits in v0.7, not the 4 it
+was before §11.3.
+
+| tier code | no-alpha | alpha |
+|---|---|---|
+| 0 (compact) | 21 B | 21 B |
+| 1 (default) | 32 B | 32 B |
+| 2 | 108 B | 103 B |
+| 3 | 411 B | 388 B |
+| 4 | 1623 B | 1528 B |
+
+A decoder recomputes `length` from the descriptor and MUST reject a hash whose byte
+length differs (§2.6).
 
 ### 3.4 String Representation
 
 ChromaHash is a binary format. This specification does not define a canonical UTF-8 string
 encoding; the reference implementation does not provide one. Applications are responsible
 for choosing an encoding appropriate to their context (e.g. base64url per RFC 4648 §5 for
-web and API use, hex for debugging). Because the binary layout is fixed at 32 bytes, any
+web and API use, hex for debugging). Because the byte length is self-describing (§3.5), any
 consistently applied encoding is unambiguous without additional framing.
 
 ---
@@ -281,7 +429,7 @@ The resulting OKLAB values are **absolute** — the same physical color produces
 absolute OKLAB to a caller-chosen **output gamut** (§11), so the same hash can be shown
 correctly on an sRGB, Display P3, or Adobe RGB display.
 
-> **Note (v0.6):** DC chroma quantization ranges are sized to the OKLAB hull of the
+> **Note:** DC chroma quantization ranges are sized to the OKLAB hull of the
 > display-output gamuts — the union of sRGB, Display P3 and Adobe RGB (§7.1) — so colors
 > within any of those gamuts are stored faithfully and render at full saturation on a
 > matching display. Source colors more saturated than that union (e.g. some BT.2020 /
@@ -292,10 +440,12 @@ correctly on an sRGB, Display P3, or Adobe RGB display.
 ### 5.2 Decoding Pipeline
 
 ```
-OKLAB → LMS_cbrt (M2_inv) → LMS (cube) → sRGB linear (M1_inv[sRGB]) → sRGB gamma → clamp → 8-bit RGBA
+OKLAB → LMS_cbrt (M2_inv) → LMS (cube) → linear RGB (M1_inv[output gamut]) → clamp → gamma → 8-bit RGBA
 ```
 
-Decode target is always sRGB.
+The default decode target is sRGB. Decoders MAY render to Display P3 or Adobe RGB on
+request (§11); requests for BT.2020 or ProPhoto output fall back to sRGB, and
+`averageColor` (§11.2) is always sRGB.
 
 ### 5.3 Transfer Functions
 
@@ -320,8 +470,30 @@ The decoder always applies the **sRGB inverse EOTF** (linear → gamma):
 gamma(x) = x ≤ 0.0031308 ? 12.92 × x : 1.055 × x^(1/2.4) − 0.055
 ```
 
-For HDR PQ content, the encoder MUST tone-map to SDR before OKLAB conversion. The
-specific tone-mapping algorithm is implementation-defined.
+For HDR PQ content, the encoder MUST tone-map to SDR before OKLAB conversion,
+using the canonical Reinhard operator below. An implementation-defined tone map
+would contradict the byte-identical cross-implementation requirement (§2.3) —
+two conforming encoders MUST produce the same hash for the same PQ input.
+
+```
+pqToSdr(x):                       // x = PQ-encoded channel value in [0, 1]
+    m1 = 0.1593017578125          // ST 2084 constants
+    m2 = 78.84375
+    c1 = 0.8359375
+    c2 = 18.8515625
+    c3 = 18.6875
+    n = x^(1/m2)
+    yLinear = (max(n − c1, 0) / (c2 − c3·n))^(1/m1)
+    yNits = yLinear × 10000       // PQ codes absolute luminance up to 10000 cd/m²
+    l = yNits / 203               // SDR reference white = 203 cd/m² (BT.2408)
+    return l / (1 + l)            // Reinhard: compresses highlights, preserves midtones
+```
+
+Reinhard at a 203-nit reference white is deliberately simple: a placeholder needs
+a stable, deterministic SDR appearance, not a display-adaptive HDR rendering.
+Fancier operators (BT.2390 EETF, ACES) produce different bytes per parameterization
+and would need their parameters pinned in the spec for no perceptual benefit at
+placeholder fidelity.
 
 ---
 
@@ -353,59 +525,111 @@ Which K frequency pairs each channel transmits is derived deterministically from
 aspect byte — no grid machinery, no mode flags:
 
 ```
-function selectCoefficients(aspect_byte, K):
-    (W, H) = decodeOutputSize(aspect_byte)         // §8.2; long side 32, short side ≥ 2
+ANISO = 1.2      // oblique-effect weight   (§12.1)
+HV    = 0.15     // horizontal/vertical weight
+
+function selectCoefficients(aspect_byte, tier, K):
+    (W, H) = decodeOutputSize(aspect_byte, tier)   // §8.2; long side 32·2^tier, short side ≥ 2·2^tier
     entries = []
     for cy in 0 .. H−1:
         for cx in 0 .. W−1:
             if cx == 0 and cy == 0: continue       // DC is stored separately
-            priority = (cx × H)² + (cy × W)²       // integer, fits in uint32
-            entries.append((priority, cx, cy))
-    sort entries ascending by (priority, cx, cy)   // lex tiebreak for determinism
+            key = selectionKey(cx × H, cy × W, ANISO, HV)   // integer, below
+            entries.append((key, cx, cy))
+    sort entries ascending by (key, cx, cy)        // lex tiebreak for determinism
     truncate entries to first K
-    p_k = priority of the last (K-th) entry
+    (cx, cy) = last (K-th) entry
+    p_k = (cx × H)² + (cy × W)²                    // the UNWEIGHTED priority
     return ([(cx, cy) for (_, cx, cy) in entries], p_k)
 ```
+
+**Selection key.** The transmission order is the candidate frequencies sorted by
+
+```
+priority = (cx × H)² + (cy × W)²                              // integer
+key      = priority × (1 + ANISO × sin²2θ) × (1 + HV × cos2θ)
+```
+
+where θ is the frequency's angle: `sin²2θ = 0` on the axes and `1` on the diagonal, and
+`cos2θ = +1` for a purely horizontal frequency and `−1` for a purely vertical one. Human
+contrast sensitivity is lower for diagonal detail (the *oblique effect*), so `ANISO > 0`
+spends the budget on axis-aligned structure first; `HV > 0` then prefers vertical detail
+to horizontal. Both are corpus-measured, not assumed — see `EXPERIMENTS.md` §7.4, §8.1.
+
+The key MUST be evaluated as an **exact integer**. Writing `s = (cx·H)²`, `t = (cy·W)²`,
+`p = s + t` and `d = s − t`, the identities `cos2θ = d/p` and `sin²2θ = 1 − (d/p)²`
+collapse both factors into polynomials in the single ratio `d/p`:
+
+```
+function selectionKey(px, py, aniso, hv):
+    s = px²;  t = py²;  p = s + t;  d = s − t
+    A = round(aniso × 4096);  H = round(hv × 4096)          // Q12
+    if A == 0 and H == 0: return p << 16                    // the bare priority order
+    X = trunc(d × 4096 / p)                 // Q12,  −4096 ≤ X ≤ 4096, toward zero
+    U = (4096 + A) × 4096 − ((A × X × X) >> 12)             // Q24, ≥ 2²⁴
+    V = 4096 × 4096 + H × X                                 // Q24, > 0
+    return p × ((U × V) >> 32)                              // Q16 weight × priority
+```
+
+`>>` is an arithmetic (floor) shift; `/` truncates toward zero. Every intermediate stays
+below `2⁵¹` at every tier for the ranges the format allows (`aniso ∈ [0, 8]`, `|hv| < 1`),
+so an implementation with exact 53-bit integers — a JavaScript `number` — evaluates this
+without a bignum, and the order is **bit-exact across languages**. With both weights zero
+the key is `priority << 16`, so the unweighted order is the same code path.
+
+`p_k` is always the **unweighted** priority: the synthesis window and any
+frequency-normalized extension are defined on the true spatial frequency, not on the
+perceptual sort key.
 
 **Candidate domain.** Candidates are exactly the frequencies representable at the
 natural decode raster `[0, W) × [0, H)`. `cos(π/W × cx × (x+0.5))` with `cx = W`
 evaluates to zero at every sample, and `cx > W` aliases to a lower frequency — the
 bound makes selecting an unrepresentable frequency structurally impossible. The
-candidate count is at least `2×32 − 1 = 63` for every aspect byte (short side ≥ 2),
-so every K the format uses is always fully satisfied.
+candidate count is at least `64·4^tier − 1` for every aspect byte (short side ≥ 2·2^tier),
+so every `K(tier)` the format uses is always fully satisfied.
+
+**Tier scaling.** Doubling the grid scales `(W, H)`, and hence every priority, by `4^tier`
+uniformly. The weight depends only on the *ratio* `d/p`, which is unchanged, so the whole
+key scales by `4^tier` and the *ordering* is tier-independent: a higher tier reuses the
+same low-frequency ordering on a larger grid, which admits more (and higher) frequencies
+and lets `K` grow as `4^tier` (§3.5).
 
 **Priority.** `(cx·H)² + (cy·W)²` is the squared isotropic per-pixel spatial frequency
 scaled by `(W·H)²`: sorting ascending takes the K lowest spatial frequencies — an ℓ2
 ball in frequency space, the ideal low-pass set for the radially decaying spectra of
 natural images. Properties:
 
-- **Square** (W = H = 32): priority ∝ `cx² + cy²` — radial order. First slots:
+- **Square** (W = H = 32): priority ∝ `cx² + cy²` — radial order. Unweighted first slots:
   `(0,1), (1,0)` (tied; lex tiebreak), then `(1,1)`, `(0,2)`, `(2,0)`, … At K = 27 the
   ball includes diagonals like `(3,4)/(4,3)` and excludes axis extremes like
   `(6,0)/(0,6)` — the opposite of v0.4's ℓ1 triangle, and the reason v0.6 does not
-  produce v0.4's sparse high-frequency striping.
+  produce v0.4's sparse high-frequency striping. The weights then reorder *within* that
+  ball: `(1,1)` (priority 2048, key 4506) falls behind `(0,2)` (priority 4096, key 3482)
+  and ahead of `(2,0)` (key 4710).
 - **Extreme landscape** (byte 255: W = 32, H = 2): one `cy` step costs `(1×32)² = 1024`
   while one `cx` step costs `(1×2)² = 4` — the selection fills the long axis first, and
   no `cy ≥ 2` frequency can ever be selected.
-- All arithmetic is integer (`priority ≤ 2×(31×32)² < 2³¹`); the sort is total via the
-  `(priority, cx, cy)` key. Bit-exact across languages by construction.
-- **Mirror symmetry caveat:** byte `b` and byte `255−b` have mirrored `(W, H)` and
-  identical priority multisets, but when K cuts an equal-priority tie group the lex
-  tiebreak may choose non-mirrored members (5 of 512 (byte, K) pairs). This is benign
-  and pinned by the test vectors.
+- All arithmetic is integer; the sort is total via the `(key, cx, cy)` tiebreak.
+  Bit-exact across languages by construction.
+- **Mirror asymmetry.** Under the unweighted order, byte `b` and byte `255−b` have
+  mirrored `(W, H)` and identical priority multisets (when K cuts an equal-priority tie
+  group the lex tiebreak may pick non-mirrored members — benign, and pinned by the test
+  vectors). `HV ≠ 0` breaks that symmetry **on purpose**: `cos2θ` changes sign under the
+  transpose, so a landscape image and its portrait mirror do not select mirrored sets.
 
-`p_k` (the K-th priority) is deterministic from the selection and is reserved for
-frequency-normalized decoder extensions; it is pinned by the test vectors.
+`p_k` (the unweighted priority of the K-th selected pair) is deterministic from the
+selection and is reserved for frequency-normalized decoder extensions; it is pinned by
+the test vectors.
 
-**K per channel:**
+**K per channel** (per §3.2: the code-1 row, then the code-2 row scaled ×`4^(tier−2)`):
 
-| Channel | Mode | K | Bits |
-|---|---|---|---|
-| L luminance | no-alpha | 27 | 5 each |
-| L luminance | alpha | 20 | first 7 × 6, remaining 13 × 5 |
-| a chroma | both | 9 | 4 each |
-| b chroma | both | 9 | 4 each |
-| Alpha | alpha | 5 | 4 each |
+| Channel | Mode | K (code 1) | Bits | K (code 2) | Bits |
+|---|---|---|---|---|---|
+| L luminance | no-alpha | 28 | 4 each | 104 | 5 each |
+| L luminance | alpha | 20 | 5 each | 80 | 5 each |
+| a chroma | both | 15 / 9 (alpha) | 3 / 4 each | 36 | 4 each |
+| b chroma | both | 15 / 9 (alpha) | 3 / 4 each | 36 | 4 each |
+| Alpha | alpha | 5 | 4 each | 20 | 4 each |
 
 Run `python3 spec/selection.py --json` for all unique selections (one per `(W, H, K)`).
 
@@ -460,21 +684,41 @@ clip, since no supported display can show beyond this hull.
 
 ### 7.2 Scale Factor Quantization
 
-Each channel's scale is the maximum |AC| over its **non-clamped** coefficients (§6.3).
-
-| Channel | Bits | Encode | Decode |
-|---------|------|--------|--------|
+| Channel | Bits | Nominal encode | Decode |
+|---------|------|----------------|--------|
 | L scale | 6 | `round(63 × clamp(L_scale/MAX_L_SCALE, 0, 1))` | `raw / 63.0 × MAX_L_SCALE` |
 | a scale | 6 | `round(63 × clamp(a_scale/MAX_A_SCALE, 0, 1))` | `raw / 63.0 × MAX_A_SCALE` |
 | b scale | 5 | `round(31 × clamp(b_scale/MAX_B_SCALE, 0, 1))` | `raw / 31.0 × MAX_B_SCALE` |
 | Alpha scale | 4 | `round(15 × clamp(A_scale/MAX_A_ALPHA_SCALE, 0, 1))` | `raw / 15.0 × MAX_A_ALPHA_SCALE` |
+
+`X_scale` above is the maximum |AC| over the channel's **non-clamped** coefficients
+(§6.3), and the nominal column is the code that value rounds to.
+
+**Scale selection is a search, not that rounding.** The decoder dequantizes with the
+*rounded* code, so normalizing the coefficients by the unrounded maximum encodes against
+a scale the decoder never uses; and rounding the maximum is not the code that minimizes
+the channel's error, because clipping one outlier can buy back resolution for every other
+coefficient. Encoders MUST therefore choose the scale code as:
+
+```
+if X_scale == 0:  scale_code = 0                       // silent channel; all AC = zero code
+else:
+    scale_code = argmin over code in 1 ..= (2^bits − 1) of
+                     Σ_j ( dequantAC(quantAC(AC_j, dequantScale(code)), dequantScale(code))
+                           − AC_j )²
+                 // ties resolved by the lowest code; quantAC/dequantAC per §7.3
+```
+
+and MUST then normalize every coefficient by `dequantScale(scale_code)` — the exact
+value the decoder will use — not by `X_scale`. This costs no bits, changes no decoder,
+and is worth −0.43% mean ΔE00 at 32 bytes and −1.8% at 411 (`EXPERIMENTS.md` §7.11).
 
 `MAX_A_SCALE = MAX_B_SCALE = 0.125`: across the reference corpus the chroma AC scale
 never exceeds 0.113. v0.5's 0.5 range wasted two bits of every chroma coefficient and
 was the dominant cause of chroma banding and visible desaturation. `MAX_L_SCALE = 0.5`
 is retained — luminance scales genuinely span the full range on synthetic content.
 
-### 7.3 AC Coefficient Quantization: µ-law Companding (v0.6)
+### 7.3 AC Coefficient Quantization: µ-law Companding
 
 All AC coefficients use **µ-law companding** with a per-channel-group µ:
 
@@ -492,9 +736,24 @@ coefficients very near zero.
 **Quantize (odd level count):**
 
 ```
-max_idx = 2^bits − 2
-index   = clamp(round((compressed + 1) / 2 × max_idx), 0, max_idx)
+max_idx  = 2^bits − 2
+nominal  = clamp(round((compressed + 1) / 2 × max_idx), 0, max_idx)
 ```
+
+**Nearest-reconstruction refinement.** µ-law levels are unevenly spaced, so the level
+nearest in the *compressed* domain is not always the one that reconstructs closest to the
+coefficient. Encoders MUST score the ±2 neighbourhood of `nominal` by reconstruction
+error and take the best:
+
+```
+index = argmin over d in [0, −1, +1, −2, +2] of
+            | dequantize(clamp(nominal + d, 0, max_idx)) × scale − v |
+        // strictly-better wins, so d = 0 (the nominal code) holds every tie
+```
+
+This costs no bits and leaves the decoder untouched. The `[0, −1, +1, −2, +2]` order and
+the strict-improvement rule are normative: they are what makes the tie-breaking — and
+hence the emitted bytes — identical across implementations.
 
 **Dequantize:**
 
@@ -505,8 +764,8 @@ compressed = index / (2^bits − 2) × 2 − 1
 
 **Expand:** `v = sign(compressed) × ((1 + µ)^|compressed| − 1) / µ`
 
-v0.6 uses `2^bits − 1` levels (indices `0 ..= 2^bits − 2`) so the center index
-(`2^(bits−1) − 1`) represents **exactly 0.0**. This removes v0.5's systematic zero bias
+The quantizer uses `2^bits − 1` levels (indices `0 ..= 2^bits − 2`) so the center index
+(`2^(bits−1) − 1`) represents **exactly 0.0**. This removes the earlier systematic zero bias
 (+0.012·scale at 5 bits): solid colors, frequency-clamped slots (§6.3), and genuinely
 zero coefficients decode exactly. The top code `2^bits − 1` is never produced by
 encoders; decoders MUST clamp it down to `2^bits − 2` for robustness.
@@ -516,15 +775,30 @@ every coefficient.
 
 ### 7.4 AC Bit Depths
 
-| Channel | No-alpha | Alpha |
-|---------|----------|-------|
-| L AC | 5 bits (all 27) | 6 bits (first 7) + 5 bits (remaining 13) |
-| a AC | 4 bits (all 9) | 4 bits (all 9) |
-| b AC | 4 bits (all 9) | 4 bits (all 9) |
-| Alpha AC | — | 4 bits (all 5) |
+Bit depths are constant within a §3.2 row; the tier multiplies the coefficient *count*
+(§3.5), not the precision. Codes 0 and 1 have their own rows, so their bit depths differ
+from the code-2 row that codes 2–4 scale.
 
-In alpha mode, the first 7 L AC coefficients (lowest frequencies, highest perceptual
-impact) are promoted to 6 bits to partially compensate for the reduced K.
+| Channel | Compact, no-α | Compact, α | Code 1, no-α | Code 1, α | Code-2 base, no-α | Code-2 base, α |
+|---------|---------------|------------|--------------|-----------|-------------------|----------------|
+| L AC | 4 b (all 19) | 4 b (all 12) | 4 b (all 28) | 4 b (all 22) | 5 b (all 104) | 4 b (all 88) |
+| a AC | 3 b (all 6) | 3 b (all 1) | 3 b (all 15) | 3 b (all 3) | 4 b (all 36) | 3 b (all 12) |
+| b AC | 3 b (all 6) | 3 b (all 1) | 3 b (all 15) | 3 b (all 3) | 4 b (all 36) | 3 b (all 12) |
+| Alpha AC | — | 3 b (all 16) | — | 3 b (all 28) | — | 3 b (all 112) |
+
+Code 1 trades precision for count because at 32 bytes that is measurably the better
+buy — 28 luma coefficients at 4 bits beat 26 at 5 by 3.5% mean ΔE00 on the never-tuned
+holdout split, with every guard metric improving (`EXPERIMENTS.md` §4.2, §8.3). By code 2
+the budget is loose enough that the 5-bit split wins again for the opaque row.
+
+The alpha rows do not follow the opaque ones. Alpha AC is 3 bits at every tier — 2 bits
+fails the Butteraugli guard at any count — and it takes the largest share of the alpha
+budget, because a silhouette is high-frequency and is most of what a cut-out placeholder
+communicates. Chroma correspondingly collapses to 3 coefficients at code 1: chroma spent
+inside a transparent region is composited away. `EXPERIMENTS.md` §11.3.
+
+The `AcLayout` supports a two-tier L precision split (a low-frequency band at higher bit
+depth) as a tuning knob, but every shipped row uses a single L tier.
 
 ---
 
@@ -546,18 +820,31 @@ Maximum error: `2^(8/255/2) − 1 ≈ 1.09%`. Notable values: 1:1 → byte 128, 
 
 ### 8.2 Decode Output Size
 
-The longer side is 32 pixels by convention:
+The base render size has its longer side at `BASE_LONG_EDGE = 32` pixels by convention:
 
 ```
-if ratio > 1:
-    w = 32; h = max(round(32 / ratio), 1)
-else:
-    w = max(round(32 × ratio), 1); h = 32
+baseOutputSize(byte):
+    if ratio > 1:
+        w = 32; h = max(round(32 / ratio), 1)
+    else:
+        w = max(round(32 × ratio), 1); h = 32
+
+decodeOutputSize(byte, tier):
+    (w, h)  = baseOutputSize(byte)
+    level   = renderLevel(tier)          // max(0, tier − 1)
+    return (w << level, h << level)      // long edge 32·2^level
 ```
 
-Over the byte range this yields a short side of at least 2 pixels (byte 0 → 2×32;
-byte 255 → 32×2), which the selection domain (§6.2) relies on. Implementations MAY
-render at other sizes; see §6.4 and §11.3.
+Shifting by `renderLevel(tier)` rather than by `tier` is what places the compact tier at
+the default tier's size (§3.5). Shifting by the raw code would render it at 64 px.
+
+Over the byte range the base short side is at least 2 pixels (byte 0 → 2×32;
+byte 255 → 32×2), which the selection domain (§6.2) relies on; at render level `m` it is
+`2·2^m`. The tier scaling is a **bit shift of the rounded base size** — it MUST NOT be
+re-derived as `round(32·2^tier / ratio)`, which disagrees for non-power-of-two ratios
+(e.g. ratio 3, level 1: `round(64/3) = 21` vs `round(32/3) << 1 = 22`) and would
+desynchronize the encoder and decoder grids. Implementations MAY render at other sizes;
+see §6.4 and §11.3.
 
 ---
 
@@ -585,9 +872,10 @@ separately.
 
 ### 9.3 Alpha Channel Encoding
 
-When `hasAlpha = 1`: DC (5 bits), scale (4 bits), 5 AC coefficients (selection with
-K = 5, 4 bits each, µ-law companded with `MU_ALPHA`). The luminance K shrinks from 27
-to 20, with freed bits accommodating the alpha channel (29 bits total).
+When `hasAlpha = 1`: DC (5 bits), scale (4 bits), and `5·4^tier` AC coefficients (4 bits
+each, µ-law companded with `MU_ALPHA`). At the default tier the luminance K shrinks from 26 to 20,
+with the freed bits accommodating the alpha channel (29 bits of alpha overhead), keeping
+the default-tier hash at 32 bytes.
 
 ---
 
@@ -602,7 +890,7 @@ to 20, with freed bits accommodating the alpha channel (29 bits total).
 ### 10.2 Pseudocode
 
 ```
-function encode(W, H, rgba, gamut) -> byte[32]:
+function encode(W, H, rgba, gamut, tier) -> byte[]:   // tier in 0..=MAX_TIER (4)
     // 1. Precompute EOTF lookup table (256 entries per 8-bit input value)
     lut = precompute_eotf_lut(gamut)
 
@@ -637,12 +925,13 @@ function encode(W, H, rgba, gamut) -> byte[32]:
         a_chan[i] = avg_a*(1-a) + a*oklab[i*3+1]
         b_chan[i] = avg_b*(1-a) + a*oklab[i*3+2]
 
-    // 5. Select coefficients (§6.2)
+    // 5. Select coefficients (§6.2). Counts and bit widths come from the §3.2
+    //    row for this tier — codes 0 and 1 have their own, codes 2–4 scale the code-2 row.
     aspect_byte = clamp(round((log2(W/H) + 4) / 8 * 255), 0, 255)
-    L_K = 20 if hasAlpha else 27
-    (L_sel, _) = selectCoefficients(aspect_byte, L_K)
-    (C_sel, _) = selectCoefficients(aspect_byte, 9)
-    if hasAlpha: (A_sel, _) = selectCoefficients(aspect_byte, 5)
+    (L_K, L_B, C_K, C_B, A_K) = acShape(tier, hasAlpha)   // §3.2
+    (L_sel, _) = selectCoefficients(aspect_byte, tier, L_K)
+    (C_sel, _) = selectCoefficients(aspect_byte, tier, C_K)
+    if hasAlpha: (A_sel, _) = selectCoefficients(aspect_byte, tier, A_K)
 
     // 6. Precompute cosine tables over the source dims, covering every selected
     //    frequency. Rows for frequencies ≥ source dims exist but are never read
@@ -658,44 +947,49 @@ function encode(W, H, rgba, gamut) -> byte[32]:
     if hasAlpha:
         (A_dc, A_ac, A_scale) = dctEncode(alphas, W, H, A_sel, cos_x, cos_y)
 
-    // 8. Quantize header (decode-aware DC selection, §10.3)
+    // 8. Quantize header (decode-aware DC selection, §10.3). The scale codes
+    //    are chosen by the reconstruction-SSE search of §7.2, not by rounding
+    //    the raw maximum, and every AC value is then normalized by the
+    //    dequantized scale the decoder will use.
     (L_dc_q, a_dc_q, b_dc_q) = selectDcCodes(L_dc, a_dc, b_dc)
-    L_scl_q = round(63 * clamp(L_scale / MAX_L_SCALE, 0, 1))
-    a_scl_q = round(63 * clamp(a_scale / MAX_A_SCALE, 0, 1))
-    b_scl_q = round(31 * clamp(b_scale / MAX_B_SCALE, 0, 1))
+    (L_scl_q, L_norm) = fitScale(L_ac, L_scale, MAX_L_SCALE, 6, MU_L, L_B)
+    (a_scl_q, a_norm) = fitScale(a_ac, a_scale, MAX_A_SCALE, 6, MU_C, C_B)
+    (b_scl_q, b_norm) = fitScale(b_ac, b_scale, MAX_B_SCALE, 5, MU_C, C_B)
 
-    // 9. Pack header (48 bits, little-endian); bit 47 stays 0 (v0.6)
-    header = L_dc_q | (a_dc_q << 7) | (b_dc_q << 14)
-           | (L_scl_q << 21) | (a_scl_q << 27) | (b_scl_q << 33)
-           | (aspect_byte << 38)
-           | ((1 if hasAlpha else 0) << 46)
-    hash = new byte[32]
-    for i in 0..5: hash[i] = (header >> (i*8)) & 0xFF
+    // 9. Pack descriptor + prefix. Byte 0 = version|tier|hasAlpha|reserved;
+    //    byte 1 = aspect; bits 16..54 = DC + scales (little-endian writeBits).
+    length = bodyLenBytes(hasAlpha, tier)           // §3.5
+    hash = new byte[length]
+    hash[0] = FORMAT_VERSION | (tier << 3) | ((1 if hasAlpha else 0) << 6)
+    hash[1] = aspect_byte
+    bitpos = 16
+    writeBits(hash, bitpos, 7, L_dc_q);  bitpos += 7
+    writeBits(hash, bitpos, 7, a_dc_q);  bitpos += 7
+    writeBits(hash, bitpos, 7, b_dc_q);  bitpos += 7
+    writeBits(hash, bitpos, 6, L_scl_q); bitpos += 6
+    writeBits(hash, bitpos, 6, a_scl_q); bitpos += 6
+    writeBits(hash, bitpos, 5, b_scl_q); bitpos += 5
+    assert bitpos == 54
 
-    // 10. Pack AC with µ-law companding (§7.3)
+    // 10. Pack AC with µ-law companding (§7.3). Counts and widths come from the
+    //    §3.2 row (step 5); `qAC` is the nearest-reconstruction quantizer of
+    //    §7.3 and normalizes by the fitted scale from step 8.
     function qAC(value, scale, bits, mu):
         if scale == 0: return muLawQuantize(0, bits, mu)
-        return muLawQuantize(value / scale, bits, mu)
+        return muLawQuantizeNearest(value, scale, bits, mu)      // §7.3
 
-    bitpos = 48
     if hasAlpha:
         writeBits(hash, bitpos, 5, round(31*clamp(A_dc,0,1))); bitpos += 5
-        writeBits(hash, bitpos, 4, round(15*clamp(A_scale/MAX_A_ALPHA_SCALE,0,1))); bitpos += 4
-        for i in 0..6:  writeBits(hash, bitpos, 6, qAC(L_ac[i],L_scale,6,MU_L)); bitpos += 6
-        for i in 7..19: writeBits(hash, bitpos, 5, qAC(L_ac[i],L_scale,5,MU_L)); bitpos += 5
-    else:
-        for i in 0..26: writeBits(hash, bitpos, 5, qAC(L_ac[i],L_scale,5,MU_L)); bitpos += 5
-
-    for i in 0..8: writeBits(hash, bitpos, 4, qAC(a_ac[i],a_scale,4,MU_C)); bitpos += 4
-    for i in 0..8: writeBits(hash, bitpos, 4, qAC(b_ac[i],b_scale,4,MU_C)); bitpos += 4
-
+        (A_scl_q, A_norm) = fitScale(A_ac, A_scale, MAX_A_ALPHA_SCALE, 4, MU_ALPHA, 4)
+        writeBits(hash, bitpos, 4, A_scl_q); bitpos += 4
+    for i in 0 .. L_K-1: writeBits(hash, bitpos, L_B, qAC(L_ac[i],L_norm,L_B,MU_L)); bitpos += L_B
+    for i in 0 .. C_K-1: writeBits(hash, bitpos, C_B, qAC(a_ac[i],a_norm,C_B,MU_C)); bitpos += C_B
+    for i in 0 .. C_K-1: writeBits(hash, bitpos, C_B, qAC(b_ac[i],b_norm,C_B,MU_C)); bitpos += C_B
     if hasAlpha:
-        for i in 0..4: writeBits(hash, bitpos, 4, qAC(A_ac[i],A_scale,4,MU_ALPHA)); bitpos += 4
+        for i in 0 .. A_K-1: writeBits(hash, bitpos, 4, qAC(A_ac[i],A_norm,4,MU_ALPHA)); bitpos += 4
 
-    if not hasAlpha:
-        assert bitpos == 255    // bit 255 is padding (§2.6), implicit zero
-    else:
-        assert bitpos == 256
+    // Trailing bits to the byte boundary are padding (§2.6), implicit zero.
+    assert ceil(bitpos / 8) == length
     return hash
 ```
 
@@ -767,21 +1061,21 @@ function decode(hash, output_gamut = sRGB) -> (w, h, rgba):
     // output_gamut ∈ {sRGB, Display P3, Adobe RGB}; others fall back to sRGB.
     // M1_inv[output_gamut] and gamma_lut (built from the gamut's transfer) are
     // selected once here and used in the per-pixel loop below (§11 intro, §12.5).
-    // 1. Unpack header
-    header = 0
-    for i in 0..5: header |= hash[i] << (i*8)
+    // 1. Read descriptor (byte 0) + aspect (byte 1), then the DC/scale prefix.
+    version  = hash[0] & 0x07
+    tier     = (hash[0] >> 3) & 0x07
+    hasAlpha = (hash[0] >> 6) & 1
+    aspect   = hash[1]
+    // A validating parser rejects version != FORMAT_VERSION, tier > MAX_TIER, a
+    // set reserved bit, or len(hash) != bodyLenBytes(hasAlpha, tier) (§2.6, §3.5).
 
-    L_dc_q  = header & 0x7F
-    a_dc_q  = (header >> 7) & 0x7F
-    b_dc_q  = (header >> 14) & 0x7F
-    L_scl_q = (header >> 21) & 0x3F
-    a_scl_q = (header >> 27) & 0x3F
-    b_scl_q = (header >> 33) & 0x1F
-    aspect  = (header >> 38) & 0xFF
-    hasAlpha = (header >> 46) & 1
-    version  = (header >> 47) & 1
-    // version MUST be 0 for v0.6; 1 identifies a legacy v0.2–v0.5 hash (§2.5).
-    // Reject where the API allows; otherwise output is unspecified.
+    bitpos = 16
+    L_dc_q  = readBits(hash, bitpos, 7); bitpos += 7
+    a_dc_q  = readBits(hash, bitpos, 7); bitpos += 7
+    b_dc_q  = readBits(hash, bitpos, 7); bitpos += 7
+    L_scl_q = readBits(hash, bitpos, 6); bitpos += 6
+    a_scl_q = readBits(hash, bitpos, 6); bitpos += 6
+    b_scl_q = readBits(hash, bitpos, 5); bitpos += 5    // bitpos == 54
 
     // 2. Decode DC and scale factors
     L_dc    = L_dc_q / 127.0
@@ -791,34 +1085,27 @@ function decode(hash, output_gamut = sRGB) -> (w, h, rgba):
     a_scale = a_scl_q / 63.0 * MAX_A_SCALE
     b_scale = b_scl_q / 31.0 * MAX_B_SCALE
 
-    // 3. Coefficient selection (mirrors the encoder exactly, §6.2)
-    L_K = 20 if hasAlpha else 27
-    (L_sel, _) = selectCoefficients(aspect, L_K)
-    (C_sel, _) = selectCoefficients(aspect, 9)
+    // 3. Coefficient selection (mirrors the encoder exactly, §6.2). Counts and
+    //    bit widths come from the §3.2 row for this tier: code 1 reads its own
+    //    row, tier m ≥ 2 reads the code-2 row scaled by 4^(m−2).
+    (L_K, L_B, C_K, C_B, A_K) = acShape(tier, hasAlpha)   // §3.2
+    (L_sel, _) = selectCoefficients(aspect, tier, L_K)
+    (C_sel, _) = selectCoefficients(aspect, tier, C_K)
 
-    // 4. Decode output size (§8.2)
-    ratio = 2^(aspect / 255.0 * 8 - 4)
-    if ratio > 1: w = 32; h = max(round(32 / ratio), 1)
-    else: w = max(round(32 * ratio), 1); h = 32
+    // 4. Decode output size (§8.2): base size shifted left by renderLevel(tier)
+    (w, h) = decodeOutputSize(aspect, tier)
 
     // 5. Dequantize AC from bitstream (read exactly K values per channel)
-    bitpos = 48
     if hasAlpha:
         A_dc    = readBits(hash, bitpos, 5) / 31.0; bitpos += 5
         A_scale = readBits(hash, bitpos, 4) / 15.0 * MAX_A_ALPHA_SCALE; bitpos += 4
-        (A_sel, _) = selectCoefficients(aspect, 5)
-
-        L_ac = []
-        for i in 0..6:  L_ac.append(muLawDequantize(readBits(hash,bitpos,6),6,MU_L)*L_scale); bitpos += 6
-        for i in 7..19: L_ac.append(muLawDequantize(readBits(hash,bitpos,5),5,MU_L)*L_scale); bitpos += 5
-    else:
-        L_ac = []
-        for i in 0..26: L_ac.append(muLawDequantize(readBits(hash,bitpos,5),5,MU_L)*L_scale); bitpos += 5
-
-    a_ac = []; for i in 0..8: a_ac.append(muLawDequantize(readBits(hash,bitpos,4),4,MU_C)*a_scale); bitpos += 4
-    b_ac = []; for i in 0..8: b_ac.append(muLawDequantize(readBits(hash,bitpos,4),4,MU_C)*b_scale); bitpos += 4
+        (A_sel, _) = selectCoefficients(aspect, tier, A_K)
+    L_ac = []
+    for i in 0 .. L_K-1: L_ac.append(muLawDequantize(readBits(hash,bitpos,L_B),L_B,MU_L)*L_scale); bitpos += L_B
+    a_ac = []; for i in 0 .. C_K-1: a_ac.append(muLawDequantize(readBits(hash,bitpos,C_B),C_B,MU_C)*a_scale); bitpos += C_B
+    b_ac = []; for i in 0 .. C_K-1: b_ac.append(muLawDequantize(readBits(hash,bitpos,C_B),C_B,MU_C)*b_scale); bitpos += C_B
     if hasAlpha:
-        A_ac = []; for i in 0..4: A_ac.append(muLawDequantize(readBits(hash,bitpos,4),4,MU_ALPHA)*A_scale); bitpos += 4
+        A_ac = []; for i in 0 .. A_K-1: A_ac.append(muLawDequantize(readBits(hash,bitpos,4),4,MU_ALPHA)*A_scale); bitpos += 4
 
     // 6. Frequency filter for the render raster (§6.4). At the natural size
     //    this removes nothing; for capped renders it removes frequencies the
@@ -913,11 +1200,18 @@ MAX_A_ALPHA_SCALE  = 0.5     # Max alpha AC amplitude
 MU_L               = 5       # µ-law parameter, luminance AC
 MU_C               = 8       # µ-law parameter, chroma AC
 MU_ALPHA           = 5       # µ-law parameter, alpha AC
+
+ANISO_OBLIQUE      = 1.2     # Selection weight: oblique-effect penalty  (§6.2)
+SEL_HV             = 0.15    # Selection weight: horizontal/vertical bias (§6.2)
+SEL_Q              = 12      # Fixed-point shift the selection order is defined on
 ```
 
-These values were locked by a coordinate-descent sweep against the reference comparison
-corpus (52 images: natural photographs plus synthetic dimension/alpha/color/gamut
-fixtures), optimizing mean CIEDE2000 with SSIMULACRA2/Butteraugli/DSSIM as guards.
+These values were locked by coordinate-descent sweeps against the reference comparison
+corpus (74 images: 43 synthetic dimension/alpha/color/gamut fixtures plus 31 curated
+photographs), optimizing mean CIEDE2000 with SSIMULACRA2/Butteraugli/DSSIM as guards,
+and validated on a never-tuned 32-image holdout split (Kodak24 plus held-out curated
+photographs). `spec/EXPERIMENTS.md` records the measurements, including the ones that
+were rejected.
 
 ### 12.2 M2 — LMS (cube-root) → OKLAB
 
@@ -1150,19 +1444,68 @@ readBits(hash, bitpos, count):
 
 ---
 
-## 13. Changes from v0.4/v0.5 to v0.6
+## 13. Changes to v1 (0.7.0)
 
-v0.6 is bitstream-incompatible with v0.4/v0.5 (which shared a bitstream). Header bit 47
-flips from 1 to 0, so the break is detectable in-band (§2.5) — unlike the v0.3 → v0.4
-break. The redesign fixed four diagnosed quality failures, measured on the reference
-comparison corpus (52 images, color-managed metrics):
+Release 0.7.0 introduces wire-format generation **v1**, a clean break with **no backward
+compatibility** with the v0.6 bitstream. The framing changes are:
 
-| Mean ΔE00 (lower = better) | v0.6 | v0.5 | ThumbHash |
+- **Self-describing descriptor byte (§2.5, §3.1).** Byte 0 now carries a 3-bit `version`
+  (replacing the single v0.6 version bit, which was exhausted), a 3-bit quality `tier`, the
+  `hasAlpha` flag, and a reserved bit. Byte 1 is the aspect. The DC/scale prefix moves to
+  bits 16–53.
+- **Quality multiplier / variable length (§3.5).** A 3-bit tier scales the render grid
+  (`32·2^level`) and the coefficient budget (`×4^level`), making the format variable length
+  (≈21 / 32 / 108 / 411 / 1623 bytes for codes 0–4). Code 1, the default, stays exactly
+  32 bytes.
+- **Compact tier (§3.2, §3.5).** Tier code `0` is a 21-byte tier at the default tier's
+  render resolution. It fills the gap the format could not previously express —
+  ThumbHash's size, inside the range where no real codec exists (WebP's floor is ~48 B,
+  AVIF's ~465 B) — and beats ThumbHash on ΔE00, SSIMULACRA2, Butteraugli *and* DSSIM on
+  the never-tuned holdout split. Codes `5..=7` remain reserved.
+- **Structural validation, no checksum (§2.6).** Decodability is established by validating
+  version, tier, reserved bit, and the deterministic length — failing fast — rather than by
+  a CRC.
+- **Per-tier AC layout (§3.2, §7.4).** The layout is a three-row table rather than one
+  base scaled by `4^tier`. Code 1 spends its 202 AC bits on 28 luma coefficients at 4 bits
+  and 15 chroma at 3 (was 26 @ 5 and 9 @ 4); codes 2–4 scale the 5-bit/4-bit code-2 row;
+  the compact tier has its own row again.
+- **Alpha allocation (§3.2, §7.4).** The alpha rows are rebuilt. The alpha channel had 5
+  AC coefficients, inherited from v0.6 and never measured — five cannot describe a
+  silhouette, which is most of what a cut-out placeholder communicates. It now takes 28 at
+  code 1, paid for out of chroma (which transparent regions composite away) rather than
+  luma, and alpha AC is 3 bits at every tier. Worth **−16.2% mean ΔE00** on a never-tuned
+  alpha holdout with every guard improving. Alpha-mode byte lengths above code 1 change
+  slightly as a result (code 2: 104 → 103 B).
+- **Weighted selection order (§6.2).** The transmission order is the priority order scaled
+  by `(1 + 1.2·sin²2θ)(1 + 0.15·cos2θ)` — a perceptual reordering that spends the budget
+  on axis-aligned detail first. It is evaluated as an exact integer key, so it stays
+  bit-exact across languages and costs nothing at decode.
+- **Encoder-side quantization (§7.2, §7.3).** The AC scale code is chosen by a
+  reconstruction-SSE search over every representable code (and coefficients normalized by
+  the dequantized scale the decoder will use), and each AC code is the nearest in
+  *reconstruction* rather than in the companded domain. Both are encoder-only: the decoder
+  and the wire layout are untouched.
+
+Together the four constants-level and encoder-side changes above are worth **−3.50% mean
+ΔE00** at the default tier on a never-tuned holdout split, with SSIMULACRA2, Butteraugli and DSSIM
+all improving; the optimized 32-byte encode matches the v0.6 constants at 40 bytes.
+`spec/EXPERIMENTS.md` §8 records the measurements and what was rejected.
+
+The DCT, OKLAB color pipeline, ℓ2-ball candidate set, µ-law quantizer, decode-aware DC
+search, and gamut handling are **inherited from the v0.6 algorithm** (now parameterized by
+tier). The subsections below document that algorithm lineage; the quality figures were
+measured on the older reference corpus (52 images, color-managed metrics) for the v0.6
+algorithm that v1 carries forward, and predate both the corpus revision and the tuning
+above — see `spec/EXPERIMENTS.md` for current numbers:
+
+| Mean ΔE00 (lower = better) | algorithm | v0.5 | ThumbHash |
 |---|---|---|---|
 | All images | **4.62** | 8.38 | 7.56 |
 | Natural photographs | **8.75** | 9.52 | 10.60 |
 | Degenerate dimensions | **1.81** | 18.10 | 10.09 |
 | Wide-gamut fixtures | **2.67** | 4.71 | 5.23 |
+
+### Algorithm lineage (inherited from the v0.6 redesign)
 
 ### Change 1 — Top-K coefficient selection (§6.2) replaces deriveGrid + triangle + scan order
 
@@ -1256,14 +1599,71 @@ frequency-normalized decoding.
 
 | Trade-off | Details |
 |-----------|---------|
-| **Larger size** | Always 32 bytes vs 5–25 for variable-length formats. At 1B photos: 32 GB vs ~17 GB. Fixed size enables memory alignment and cache-friendly access. |
+| **Larger size** | 32 bytes at the default tier vs 5–25 for variable-length formats. At 1B photos: 32 GB vs ~17 GB. Fixed size enables memory alignment and cache-friendly access; the compact tier (21 B) trades that fixed width for ThumbHash's footprint. |
 | **Encode cost** | Full-resolution encoding: ~400ms for 12MP in Rust (single-threaded). The v0.6 DC search adds ~10 µs (27 DC simulations) — negligible. |
 | **Decode cost** | ~36µs native / ~182µs JS. OKLAB is 18× costlier per pixel than linear color, but both are <1ms. |
 | **Solid images** | 26 bytes of zero AC coefficients wasted. Irrelevant for photographs. |
 | **Extreme ratios** | Ratios beyond 16:1 clamp to 16:1. Rare in photography. |
 | **Wide-gamut DC clipping** | DC chroma beyond the sRGB hull clips at encode (§5.1). Invisible at decode (the decoder clips to sRGB regardless); a future P3-decode profile would be a format break. |
 | **Gamut clip** | Out-of-sRGB OKLAB values are clipped per-channel in linear sRGB (relative-colorimetric, §12.6) — the same mapping a display applies, so saturated wide-gamut solids render at full in-gamut saturation rather than desaturated. |
-| **No progressive decode** | All 32 bytes must be received first. Never a practical bottleneck. |
+| **No progressive decode** | The whole hash must be received before decoding. Never a practical bottleneck at these sizes; embedded/progressive tiers are a future direction (§15). |
+| **Tiers 2–3 are not a rate–distortion claim** | See below. |
+
+### 14.1 What tiers 2–3 are for
+
+Tiers 0 and 1 (32–108 bytes) are where this format is competitive on quality: it leads
+every other LQIP and every size-matched codec on ΔE00 by 8–25%, and at 108 B it takes
+SSIMULACRA2 off size-matched WebP. Below 48 bytes no general codec can produce output at
+all, which is the compact and default tiers' whole argument.
+
+Tiers 2 and 3 are **not** justified that way, and this specification does not claim they
+are. Measured at equal bytes on the same corpus, WebP overtakes ChromaHash somewhere
+around 300 bytes, and by ~1.6 kB even uncoded RGB565 pixels score better than code 4
+(`EXPERIMENTS.md` §2, §3). Entropy coding would recover roughly 4% — nowhere near the
+20–40% gap, and it would cost the O(1) length check that *is* this format's validity
+check (§2.6).
+
+They are kept for the operational properties they share with the rest of the format, and
+those are real: no codec dependency, no decoder CVE surface, no container or metadata
+parsing, byte-exact reproducibility across languages and platforms, O(1) validation from
+byte 0, and one code path from 21 bytes to 1.6 kB. Choose code 3 or 4 when those matter
+more than bytes-per-quality. When they do not, a real codec is the better tool and this
+specification would rather say so than argue otherwise.
+
+---
+
+## 15. Future Directions: JPEG XL VarDCT Evaluation
+
+The v1 quality multiplier (§3.5) buys "more detail" the simplest correct way — more DCT
+coefficients on a larger grid at fixed per-coefficient precision. JPEG XL's VarDCT (lossy)
+path is the natural reference for going further. Each of its coding tools is evaluated below
+**for the ultra-low-bitrate LQIP regime** (sub-2 KB, smooth blurred placeholder); a
+technique that pays for itself in a full-image codec often does not when the entire payload
+is a few hundred bytes and the target is intentionally low-pass.
+
+| JPEG XL VarDCT tool | What it does | Verdict for chromahash |
+|---|---|---|
+| XYB opsin color | Perceptual LMS-based color space | **Already covered** — OKLAB is the modern peer; no change. |
+| Variable DCT block sizes (2×2…32×32, incl. rectangular) | Per-block adaptive transform size | **N/A** — a single global DCT is correct at this bitrate; the *tier* is our "variable" axis. Per-block side-info is unaffordable here. |
+| Adaptive (spatial) quantization | Per-region quant field from a perceptual heuristic | **Defer** — a per-region quant map is too much side-info for a sub-2 KB payload; possibly justified only at code 4. |
+| **Chroma-from-luma (CfL)** | Predict X/B chroma from Y luma with per-group multipliers | **Strong v0.8 candidate** — chroma AC is a large share of the budget; a per-image Y→a/b correlation coefficient is a few bits of side-info that could free budget for luma detail. Evaluate the rate–distortion gain on the corpus. |
+| Gaborish | Small post-decode smoothing convolution | **Analog already present** — the decode-side synthesis window (`window_weights`, a Hann taper, disabled by default). Worth re-evaluating enabling it at high tiers to suppress ringing. |
+| Edge-preserving filter (EPF) | Adaptive deringing loop filter | **Reject** — a blurred placeholder has few edges to preserve. |
+| DC image + DC predictors | Separate DC plane with spatial predictors | **N/A** — chromahash has a single average-color DC per channel, already chosen by the decode-aware DC search (§10.3). |
+| **Quantization weighting matrices (HVS/CSF)** | Frequency-dependent quant step | **Evaluate / adopt** — a frequency-shaped bit allocation generalizes the existing two-tier `AcLayout` L split; cheap and on-trend with HVS sensitivity. |
+| **Entropy coding (rANS + context modeling + clustering, HybridUint tokens)** | Adaptive entropy coding of quantized coefficients | **Highest-impact v0.8+** — fixed-width µ-law leaves the most on the table; many high-frequency coefficients quantize to zero and would cost almost nothing under an entropy coder, raising the quality ceiling per byte. Heaviest to make bit-exact across all language bindings (incl. the hand-written TS decoder) and it trades away the fixed-per-tier length, so it is deferred deliberately. |
+| Coefficient ordering / scan + nonzero context | Frequency-ordered scan, run/EOB modeling | **Already frequency-ordered** — the top-K isotropic selection is exactly this; pairs naturally with entropy coding when added. |
+| Patches / splines / dots | Reference repeated elements / smooth gradients / point sources | **Reject** — no repeated elements or point sources in a placeholder; the DCT already models smooth gradients compactly. |
+| Noise synthesis | Add a per-image perceptual noise model at decode | **Low-priority option** — a few bits of noise amplitude could add cheap perceptual texture; minor. |
+| **Progressive / responsive passes** | DC-first, then refinement passes (embedded scalability) | **Compelling v0.8 direction** — make higher tiers *embedded* (the default-tier bytes are a prefix of code 2, etc.) so one stored hash serves both an instant preview and an on-demand detailed render. Constrains the layout but is very LQIP-appropriate. |
+| Upsampling (2×/4×/8×) | Store small, upsample at decode with a fixed kernel | **Already covered** — the DCT renders at any target size and `decodeCapped` band-limits (§6.4, §11.3). |
+
+**Summary of the roadmap.** The most promising directions, in rough priority order, are
+(1) **entropy coding** of the quantized coefficients (largest quality-per-byte gain),
+(2) **chroma-from-luma** (cheap side-info, large chroma budget), (3) **frequency-weighted
+quantization** (generalizes the existing tier split), and (4) **embedded/progressive
+tiers** (one hash, preview→detail). All four are deliberately out of scope for v1, which
+establishes the self-describing, tiered container they would build on.
 
 ---
 
@@ -1273,25 +1673,26 @@ ChromaHash is directly inspired by [ThumbHash](https://evanw.github.io/thumbhash
 Evan Wallace. Key inherited ideas: DCT-based placeholder encoding, alpha compositing
 over average color, and average color extraction from the header.
 
-| Feature | ThumbHash | ChromaHash v0.6 |
+| Feature | ThumbHash | ChromaHash v1 (default tier) |
 |---------|-----------|------------|
-| **Size** | 5–25 bytes (variable) | 32 bytes (fixed) |
+| **Size** | 5–25 bytes (variable, length must be probed) | 32 bytes at the default tier; opt-in tiers to ~108/411/1623 bytes (self-describing length) |
 | **Color space** | LPQA (gamma sRGB) | OKLAB (perceptually uniform) |
 | **L DC / Chroma DC** | 6 / 6 bits | 7 / 7 bits |
 | **Coefficient selection** | ℓ1 triangle over adaptive grid | Top-K ℓ2 ball over the decode raster |
-| **L AC budget** | up to 27 coeff, 4-bit linear | 27 coeff, 5-bit µ-law (exact zero) |
-| **Chroma AC budget** | 5 coeff × 4-bit each | 9 coeff × 4-bit µ-law (µ=8) each |
+| **L AC budget** | up to 27 coeff, 4-bit linear | 28 coeff, 4-bit µ-law (exact zero) |
+| **Chroma AC budget** | 5 coeff × 4-bit each | 15 coeff × 3-bit µ-law (µ=8) each |
 | **DC fidelity** | rounded | decode-aware search (gamut-corner solids near-exact) |
 | **Aspect ratio** | 3-bit (~7% error) | 8-bit log₂ (~1.1% error) |
 | **Aspect range** | up to ~7:1 | up to 16:1 |
 | **Source gamuts** | sRGB only | sRGB, P3, Adobe RGB, BT.2020, ProPhoto |
-| **Gamut clamping** | Hard per-channel | Soft segment bisection (hue-preserving, L-blended) |
+| **Gamut clamping** | Hard per-channel | Relative-colorimetric per-channel clip in the output gamut (§12.6) |
 | **Input dimensions** | Any (library resizes) | Any (full-resolution DCT) |
-| **Memory alignment** | No (variable length) | 32-byte aligned |
+| **Quality scaling** | None | 3-bit tier: ×4^tier coefficients, 2^tier render resolution |
 
-On the reference corpus (52 images, identical color-managed metrics), ChromaHash v0.6
-leads ThumbHash on every metric — mean ΔE00 4.62 vs 7.56, SSIMULACRA2 56.6 vs 47.6,
-Butteraugli 9.78 vs 14.90 — in exchange for the larger fixed size.
+On the reference corpus (52 images, identical color-managed metrics), ChromaHash v0.6 —
+whose default-tier layout differs from v1 only in the smaller pre-tier header and a 27th L
+coefficient — led ThumbHash on every metric: mean ΔE00 4.62 vs 7.56, SSIMULACRA2 56.6
+vs 47.6, Butteraugli 9.78 vs 14.90, in exchange for the larger size.
 
 ---
 

@@ -13,10 +13,13 @@ Exit code 0 on success, 1 on any validation failure.
 import math
 import sys
 
+import selection
 from constants import (
     M1_ADOBE_RGB,
     M1_BT2020,
     M1_DISPLAY_P3,
+    M1_INV_ADOBE_RGB,
+    M1_INV_DISPLAY_P3,
     M1_INV_SRGB,
     M1_PROPHOTO_RGB,
     M1_SRGB,
@@ -35,18 +38,33 @@ from constants import (
     MU_ALPHA,
     MU_C,
     MU_L,
-    ALPHA_AC_BITS,
-    ALPHA_AC_COUNT,
-    C_AC_BITS,
-    C_AC_COUNT,
-    L_AC_BITS,
-    L_AC_COUNT,
-    LA_TIER1_BITS,
-    LA_TIER1_COUNT,
-    LA_TIER2_BITS,
-    LA_TIER2_COUNT,
+    ANISO_OBLIQUE,
+    DEFAULT_LAYOUT,
+    SEL_HV,
+    tier_layout,
+    FORMAT_VERSION,
+    MAX_TIER,
+    DESCRIPTOR_BITS,
+    DC_SCALE_BITS,
+    PREFIX_BITS,
+    ALPHA_PREFIX_BITS,
+    ac_shape,
+    ac_payload_bits,
+    body_len_bytes,
+    tier_count_scale,
+    COMPACT_TIER,
+    DEFAULT_TIER,
+    is_valid_tier,
+    render_level,
+    ALPHA_FLAG_BIT,)
+from selection import (
+    FORMAT_KS,
+    decode_output_size,
+    format_ks,
+    q12,
+    select_coefficients,
+    selection_key,
 )
-from selection import FORMAT_KS, decode_output_size, select_coefficients
 
 # Mapping from gamut name → stored M1 matrix
 STORED_M1 = {
@@ -185,21 +203,29 @@ def derive_m1(gamut_name: str) -> list:
 # =========================================================================
 
 def validate_matrix_inverses():
-    """Check M2 × M2_inv ≈ I and M1[sRGB] × M1_inv[sRGB] ≈ I."""
+    """Check M2 × M2_inv ≈ I and M1[g] × M1_inv[g] ≈ I for each output gamut."""
     print("\n1. Matrix inverse relationships")
 
     product = matmul(M2, M2_INV)
     err = identity_error(product)
     check(err < IDENTITY_TOL, f"M2 × M2_inv ≈ I (err={err:.2e})")
 
-    product = matmul(M1_SRGB, M1_INV_SRGB)
-    err = identity_error(product)
-    check(err < IDENTITY_TOL, f"M1[sRGB] × M1_inv[sRGB] ≈ I (err={err:.2e})")
+    # Every display-output gamut the decoder supports (§11.1) must ship a
+    # stored inverse that (a) multiplies with its M1 to identity and
+    # (b) matches the inverse computed from M1 from first principles.
+    output_gamuts = [
+        ("sRGB", M1_SRGB, M1_INV_SRGB),
+        ("Display P3", M1_DISPLAY_P3, M1_INV_DISPLAY_P3),
+        ("Adobe RGB", M1_ADOBE_RGB, M1_INV_ADOBE_RGB),
+    ]
+    for name, m1, m1_inv in output_gamuts:
+        product = matmul(m1, m1_inv)
+        err = identity_error(product)
+        check(err < IDENTITY_TOL, f"M1[{name}] × M1_inv[{name}] ≈ I (err={err:.2e})")
 
-    # Also check the inverse computed from M1[sRGB] matches the stored one
-    M1_inv_computed = mat_inv_3x3(M1_SRGB)
-    diff = mat_max_diff(M1_inv_computed, M1_INV_SRGB)
-    check(diff < 1e-8, f"M1_inv[sRGB] matches inv(M1[sRGB]) (diff={diff:.2e})")
+        m1_inv_computed = mat_inv_3x3(m1)
+        diff = mat_max_diff(m1_inv_computed, m1_inv)
+        check(diff < 1e-8, f"M1_inv[{name}] matches inv(M1[{name}]) (diff={diff:.2e})")
 
 
 def validate_white_point():
@@ -316,8 +342,9 @@ def validate_mu_law():
         check(abs(c_max - 1.0) < 1e-12, f"{mu_name}: µ-law(1.0) ≈ 1.0")
         check(abs(c_min + 1.0) < 1e-12, f"{mu_name}: µ-law(-1.0) ≈ -1.0")
 
-        # v0.6 exact-zero property: with 2^bits − 1 levels, the center index
-        # dequantizes to exactly 0.0 at every bit width the format uses.
+        # Exact-zero property (v1, unchanged from v0.6): with 2^bits − 1 levels,
+        # the center index dequantizes to exactly 0.0 at every AC bit width the
+        # format uses (4-bit chroma/alpha, 5-bit luma) plus 6-bit headroom.
         for bits in [4, 5, 6]:
             max_idx = (1 << bits) - 2
             center = max_idx // 2
@@ -357,99 +384,365 @@ def validate_aspect_ratio():
 
 
 def validate_selection():
-    """Check top-K coefficient selection properties for all aspect bytes. Per spec §6.2 (v0.6)."""
-    print("\n9. Coefficient selection (top-K per-pixel frequency)")
+    """Check coefficient selection properties across tiers. Per spec §6 (v1)."""
+    print("\n9. Coefficient selection (weighted top-K frequency order, all tiers)")
 
-    # Structural invariants over every aspect byte and every format K
-    all_ok = True
-    min_candidates = 1 << 30
-    for byte in range(256):
-        w, h = decode_output_size(byte)
-        min_candidates = min(min_candidates, w * h - 1)
-        for k in FORMAT_KS:
-            coeffs, p_k = select_coefficients(byte, k)
-            if len(coeffs) != k:
-                all_ok = False
-            if (0, 0) in coeffs:
-                all_ok = False
-            if any(cx >= w or cy >= h for cx, cy in coeffs):
-                all_ok = False
-            priorities = [(cx * h) ** 2 + (cy * w) ** 2 for cx, cy in coeffs]
-            if priorities != sorted(priorities):
-                all_ok = False
-            if p_k != priorities[-1] or p_k <= 0:
-                all_ok = False
-    check(all_ok, "All 256 bytes × all K: count, DC excluded, in-bounds, "
-                  "ascending priority, p_k consistent")
-    check(min_candidates >= max(FORMAT_KS),
-          f"Min candidate count {min_candidates} ≥ max K {max(FORMAT_KS)} "
-          "(selection always fully satisfied)")
+    representative = [0, 64, 100, 128, 159, 191, 255]
+    a_q, h_q = q12(ANISO_OBLIQUE), q12(SEL_HV)
 
+    def check_invariants(byte_iter, tier):
+        """Return (invariants_ok, fully_satisfied) for the bytes at this tier."""
+        ok = True
+        satisfied = True
+        for byte in byte_iter:
+            w, h = decode_output_size(byte, tier)
+            candidates = w * h - 1
+            for k in format_ks(tier):
+                if k > candidates:
+                    satisfied = False
+                coeffs, p_k = select_coefficients(byte, tier, k)
+                if len(coeffs) != k:
+                    ok = False
+                if (0, 0) in coeffs:
+                    ok = False
+                if any(cx >= w or cy >= h for cx, cy in coeffs):
+                    ok = False
+                # Transmission order is ascending in the §6.2 key, not in the
+                # bare priority — the weights are exactly what reorders it.
+                keys = [selection_key(cx * h, cy * w, a_q, h_q) for cx, cy in coeffs]
+                if keys != sorted(keys):
+                    ok = False
+                last_cx, last_cy = coeffs[-1]
+                if p_k != (last_cx * h) ** 2 + (last_cy * w) ** 2 or p_k <= 0:
+                    ok = False
+        return ok, satisfied
+
+    # Default tier: exhaustive over all 256 aspect bytes (preserves v0.6 coverage).
+    ok0, sat0 = check_invariants(range(256), DEFAULT_TIER)
+    check(ok0, "Default tier, all 256 bytes × all K: count, DC excluded, in-bounds, "
+               "ascending priority, p_k consistent")
+    check(sat0, "Default tier: every K ≤ candidate count (selection fully satisfied)")
+
+    # Every other code: representative aspect bytes, K scaled by 4^level.
+    okN, satN = True, True
+    others = [t for t in range(MAX_TIER + 1) if t != DEFAULT_TIER]
+    for tier in others:
+        o, s = check_invariants(representative, tier)
+        okN = okN and o
+        satN = satN and s
+    check(okN, f"Codes {others} (representative bytes): same invariants with "
+               "K(tier) = K·4^level")
+    check(satN, f"Codes {others}: every K(tier) ≤ candidate count")
+
+    # ── The bare order (both weights zeroed) ─────────────────────────────
     # Square at byte=128 (W=H=32): radial order, ℓ2 ball
-    coeffs_9, _ = select_coefficients(128, 9)
+    def bare(byte, tier, k):
+        return select_coefficients(byte, tier, k, 0.0, 0.0)
+
+    coeffs_9, _ = bare(128, 0, 9)
     check(coeffs_9[0] == (0, 1) and coeffs_9[1] == (1, 0),
           "Square K=9: first two slots are (0,1),(1,0) — tied priority, lex tiebreak")
     check(coeffs_9[2] == (1, 1), "Square K=9: third slot is (1,1)")
 
-    coeffs_27, _ = select_coefficients(128, 27)
-    check((3, 4) in coeffs_27 and (4, 3) in coeffs_27,
-          "Square K=27: ℓ2 ball includes diagonals (3,4)/(4,3)")
-    check((6, 0) not in coeffs_27 and (0, 6) not in coeffs_27,
-          "Square K=27: ℓ2 ball excludes axis extremes (6,0)/(0,6)")
+    coeffs_26, _ = bare(128, 0, 26)
+    check((3, 4) in coeffs_26 and (4, 3) in coeffs_26,
+          "Square K=26: ℓ2 ball includes diagonals (3,4)/(4,3)")
+    check((6, 0) not in coeffs_26 and (0, 6) not in coeffs_26,
+          "Square K=26: ℓ2 ball excludes axis extremes (6,0)/(0,6)")
+
+    # Zeroing both weights must reproduce the bare priority order exactly — the
+    # key is then `priority << 16`, which is order-identical to `priority`.
+    zero_ok = True
+    for byte in representative:
+        w, h = decode_output_size(byte, 0)
+        pri = sorted(
+            ((cx * h) ** 2 + (cy * w) ** 2, cx, cy)
+            for cy in range(h) for cx in range(w) if (cx, cy) != (0, 0)
+        )
+        if bare(byte, 0, 28)[0] != [(cx, cy) for _, cx, cy in pri[:28]]:
+            zero_ok = False
+    check(zero_ok, "aniso = hv = 0 ⇒ key is priority << 16 ⇒ the bare priority order")
+
+    # ── The shipped weighted order (§6.2) ─────────────────────────────────
+    # Same K returns the same low frequencies at any tier: the key is
+    # homogeneous, so doubling the grid scales every key by 4 and leaves the
+    # order untouched. Per spec §6.2.
+    coeffs_w26, _ = select_coefficients(128, DEFAULT_TIER, 26)
+    same_across_tiers = all(
+        select_coefficients(128, t, 26)[0] == coeffs_w26 for t in range(MAX_TIER + 1)
+    )
+    check(same_across_tiers,
+          f"Same K=26 ⇒ identical low frequencies across codes 0..{MAX_TIER}")
+    # The larger high-tier grid is what lets K itself scale to reach genuinely
+    # higher frequencies (always satisfiable).
+    max0 = max(max(cx, cy) for cx, cy in coeffs_w26)
+    top_level = render_level(MAX_TIER)
+    coeffs_hi, _ = select_coefficients(128, MAX_TIER, 26 << (2 * top_level))
+    max_hi = max(max(cx, cy) for cx, cy in coeffs_hi)
+    check(max_hi > max0,
+          f"code {MAX_TIER} with K·4^level reaches higher frequencies "
+          f"({max_hi} > {max0})")
+
+    # Both weights must be observable on the square grid (W = H = 32), where
+    # the diagonal (1,1) has priority 2048 and the axis pair (2,0)/(0,2) 4096:
+    #   (1,1) → 2048·(1 + 1.2·1)·(1 + 0.15·0)  = 4506   (oblique penalty)
+    #   (0,2) → 4096·(1 + 1.2·0)·(1 − 0.15·1)  = 3482   (hv favours vertical)
+    #   (2,0) → 4096·(1 + 1.2·0)·(1 + 0.15·1)  = 4710
+    # so the bare order (1,1) < (0,2) = (2,0) becomes (0,2) < (1,1) < (2,0).
+    first4 = select_coefficients(128, 0, 4)[0]
+    check(first4.index((0, 2)) < first4.index((1, 1)),
+          f"aniso = {ANISO_OBLIQUE}: the oblique penalty demotes the diagonal "
+          f"(1,1) behind the axis frequency (0,2) (K=4 → {first4})")
+    check(bare(128, 0, 4)[0].index((1, 1)) < 3,
+          "…which the bare order does not: it puts (1,1) third")
+    first6 = select_coefficients(128, 0, 6)[0]
+    check(first6.index((0, 2)) < first6.index((2, 0)),
+          f"hv = {SEL_HV}: the tied axis pair splits in favour of the vertical "
+          f"frequency (0,2) over (2,0)")
 
     # Extreme landscape at byte=255 (W=32, H=2): long axis dominates
-    coeffs_land, _ = select_coefficients(255, 27)
+    coeffs_land, _ = select_coefficients(255, 0, 26)
     cy0 = sum(1 for _, cy in coeffs_land if cy == 0)
-    check(cy0 >= 15, f"16:1 landscape K=27: {cy0} ≥ 15 slots on the long axis")
+    check(cy0 >= 15, f"16:1 landscape K=26: {cy0} ≥ 15 slots on the long axis")
     check(all(cy < 2 for _, cy in coeffs_land),
           "16:1 landscape: no cy ≥ H=2 frequency ever selected")
 
     # Portrait/landscape symmetry: byte b and byte (255−b) have mirrored
-    # (W, H), so the selected priority multisets are identical. The exact
-    # coefficient sets may differ within an equal-priority tie group cut at
-    # the K boundary (the (priority, cx, cy) tiebreak is not swap-invariant);
-    # this is benign and affects 5 of 512 (byte, K) mirror pairs.
+    # (W, H), so under the BARE order the selected priority multisets are
+    # identical. The exact coefficient sets may differ within an equal-priority
+    # tie group cut at the K boundary (the (key, cx, cy) tiebreak is not
+    # swap-invariant); this is benign — the multiset and p_k stay invariant.
     sym_ok = True
     for b in range(128):
-        w_lo, h_lo = decode_output_size(b)
-        w_hi, h_hi = decode_output_size(255 - b)
+        w_lo, h_lo = decode_output_size(b, 0)
+        w_hi, h_hi = decode_output_size(255 - b, 0)
         if (w_lo, h_lo) != (h_hi, w_hi):
             sym_ok = False
         for k in FORMAT_KS:
-            lo, pk_lo = select_coefficients(b, k)
-            hi, pk_hi = select_coefficients(255 - b, k)
+            lo, pk_lo = bare(b, 0, k)
+            hi, pk_hi = bare(255 - b, 0, k)
             pri_lo = sorted((cx * h_lo) ** 2 + (cy * w_lo) ** 2 for cx, cy in lo)
             pri_hi = sorted((cx * h_hi) ** 2 + (cy * w_hi) ** 2 for cx, cy in hi)
             if pri_lo != pri_hi or pk_lo != pk_hi:
                 sym_ok = False
-    check(sym_ok, "Portrait/landscape symmetry: mirrored dims, equal priority "
-                  "multisets and p_k across all K")
+    check(sym_ok, "Bare priority order: portrait/landscape symmetry — mirrored dims, "
+                  "equal priority multisets and p_k across all K")
+
+    # hv ≠ 0 BREAKS that symmetry on purpose: cos2θ flips sign under the
+    # transpose, so a landscape image and its portrait mirror do not select
+    # mirrored frequency sets. Assert the asymmetry so it can never be
+    # reintroduced as a "fix".
+    asym = False
+    for b in range(128):
+        w_lo, h_lo = decode_output_size(b, 0)
+        if (w_lo, h_lo) == (h_lo, w_lo):
+            continue
+        lo, _ = select_coefficients(b, 0, 28)
+        hi, _ = select_coefficients(255 - b, 0, 28)
+        if sorted(lo) != sorted((cy, cx) for cx, cy in hi):
+            asym = True
+            break
+    check(asym, f"hv = {SEL_HV} deliberately breaks portrait/landscape symmetry "
+                "(vertical detail is favoured over horizontal)")
 
 
-def validate_bit_budget():
-    """Check the AC layout fits the 208-bit block exactly. Per spec §3.2 (v0.6)."""
-    print("\n10. AC bit budget")
+def validate_length_formula():
+    """Check the v1 deterministic length formula and tier scaling. Per spec §3 (v1).
 
-    no_alpha = L_AC_COUNT * L_AC_BITS + 2 * C_AC_COUNT * C_AC_BITS
-    check(no_alpha <= 208, f"No-alpha AC payload {no_alpha} ≤ 208 bits")
-    check(208 - no_alpha == 1, f"No-alpha padding = {208 - no_alpha} bit (spec §2.6)")
+    v1 drops v0.6's fixed 256-bit/32-byte frame. The encoded length is
+    body_len_bytes(layout, has_alpha, tier) =
+        ceil((PREFIX_BITS [+ ALPHA_PREFIX_BITS] + ac_payload_bits) / 8).
+    Tier 0 is 32 bytes for BOTH alpha modes (the v0.6 footprint, for equal-budget
+    comparison); each higher tier scales every AC count by 4^tier and grows the
+    body toward 4× as the fixed prefix becomes negligible. There is no CRC.
+    """
+    print("\n10. v1 length formula and tier scaling")
 
-    alpha = (
-        5 + 4  # alpha DC + alpha scale
-        + LA_TIER1_COUNT * LA_TIER1_BITS
-        + LA_TIER2_COUNT * LA_TIER2_BITS
-        + 2 * C_AC_COUNT * C_AC_BITS
-        + ALPHA_AC_COUNT * ALPHA_AC_BITS
-    )
-    check(alpha == 208, f"Alpha-mode AC payload {alpha} = 208 bits (no padding)")
+    layout = DEFAULT_LAYOUT  # the default tier; other codes use tier_layout(tier)
 
-    check(LA_TIER1_COUNT + LA_TIER2_COUNT == 20,
-          "Alpha-mode L coefficient count = 20")
+    # Version / tier descriptor constants are consistent.
+    check(FORMAT_VERSION == 0, f"FORMAT_VERSION = {FORMAT_VERSION} (format v1)")
+    check(MAX_TIER == 4,
+          f"MAX_TIER = {MAX_TIER} (highest tier code, and highest quality)")
+    # The codes are ordered by quality: compact is the smallest code as well as
+    # the smallest hash, and the default is one above it. Pin both, and pin that
+    # the two share a render level — the only place the ordering is not 1:1.
+    check(COMPACT_TIER == 0, f"COMPACT_TIER = {COMPACT_TIER} (code 0)")
+    check(DEFAULT_TIER == 1, f"DEFAULT_TIER = {DEFAULT_TIER} (code 1)")
+    check(COMPACT_TIER < DEFAULT_TIER < MAX_TIER,
+          "tier codes are ordered by quality")
+    check(all(is_valid_tier(t) for t in range(MAX_TIER + 1)),
+          f"codes 0..={MAX_TIER} are all valid")
+    check(all(not is_valid_tier(t) for t in (5, 6, 7)),
+          "codes 5..=7 remain reserved and are rejected")
+    check(render_level(COMPACT_TIER) == 0,
+          "compact tier renders at level 0 (the default tier's resolution)")
+    check(render_level(DEFAULT_TIER) == 0,
+          "the default tier renders at level 0 too")
+    check(tier_count_scale(COMPACT_TIER) == 1,
+          "compact tier scales coefficient counts by 1")
+    check(all(render_level(t) == max(0, t - 1) for t in range(MAX_TIER + 1)),
+          "renderLevel(tier) = max(0, tier - 1) for every code")
+    # It must be genuinely smaller than the default in both alpha modes, or it
+    # is not a compact tier at all.
+    for has_alpha in (False, True):
+        label = "alpha" if has_alpha else "no-alpha"
+        nc = body_len_bytes(tier_layout(COMPACT_TIER), has_alpha, COMPACT_TIER)
+        n0 = body_len_bytes(tier_layout(DEFAULT_TIER), has_alpha, DEFAULT_TIER)
+        check(nc == 21, f"compact {label} length = {nc} bytes (= 21)")
+        check(nc < n0, f"compact {label} ({nc} B) is smaller than the default ({n0} B)")
+
+    # Fixed prefix framing: 16-bit descriptor/aspect + 38-bit DC/scale = 54 bits.
+    check(PREFIX_BITS == 54, f"PREFIX_BITS = {PREFIX_BITS} (= 54)")
+    check(PREFIX_BITS == DESCRIPTOR_BITS + DC_SCALE_BITS,
+          f"PREFIX_BITS = DESCRIPTOR_BITS({DESCRIPTOR_BITS}) + "
+          f"DC_SCALE_BITS({DC_SCALE_BITS})")
+    check(ALPHA_PREFIX_BITS == 9,
+          f"ALPHA_PREFIX_BITS = {ALPHA_PREFIX_BITS} (= 9: alpha DC 5 + scale 4)")
+
+    # The default tier is exactly 32 bytes for both alpha modes.
+    for has_alpha in (False, True):
+        label = "alpha" if has_alpha else "no-alpha"
+        n = body_len_bytes(layout, has_alpha, DEFAULT_TIER)
+        check(n == 32, f"default-tier {label} length = {n} bytes (= 32)")
+
+    # Default-tier bit accounting matches the spec's stated split.
+    no_alpha_bits = PREFIX_BITS + ac_payload_bits(ac_shape(layout, False, DEFAULT_TIER))
+    check(no_alpha_bits == 256,
+          f"default-tier no-alpha = {no_alpha_bits} bits (54 prefix + 112 L + 90 chroma)")
+    alpha_bits = (PREFIX_BITS + ALPHA_PREFIX_BITS
+                  + ac_payload_bits(ac_shape(layout, True, DEFAULT_TIER)))
+    check(alpha_bits == 253,
+          f"default-tier alpha = {alpha_bits} bits (54 + 9 + 88 L + 18 chroma + 84 alpha)")
+    # The alpha channel must never have fewer coefficients at a higher tier than
+    # at a lower one — the failure the per-row allocation of §11.3 introduces if
+    # a row is updated in isolation.
+    prev_a = 0
+    for tier in range(MAX_TIER + 1):
+        n = ac_shape(tier_layout(tier), True, tier).alpha_ac_count
+        check(n >= prev_a,
+              f"alpha AC count at code {tier} is {n} (>= {prev_a} at the code below)")
+        prev_a = n
+
+    # Higher tiers: positive, strictly growing, and approaching 4× per level.
+    for has_alpha in (False, True):
+        label = "alpha" if has_alpha else "no-alpha"
+        prev = body_len_bytes(layout, has_alpha, DEFAULT_TIER)
+        for tier in range(DEFAULT_TIER + 1, MAX_TIER + 1):
+            n = body_len_bytes(tier_layout(tier), has_alpha, tier)
+            ratio = n / prev
+            check(n > 0 and n > prev,
+                  f"{label} code {tier} length {n} bytes > code {tier - 1} ({prev})")
+            check(3.0 <= ratio <= 4.0,
+                  f"{label} code {tier}/{tier - 1} length ratio {ratio:.3f} ≈ 4×")
+            prev = n
+
+    # The whole ladder is strictly increasing in byte length, which is what
+    # "the codes are ordered by quality" means on the wire.
+    for has_alpha in (False, True):
+        label = "alpha" if has_alpha else "no-alpha"
+        lengths = [body_len_bytes(tier_layout(t), has_alpha, t)
+                   for t in range(MAX_TIER + 1)]
+        check(all(a < b for a, b in zip(lengths, lengths[1:])),
+              f"{label} byte length is strictly increasing in the tier code: {lengths}")
+
+    # Within the codes-2..=4 band the AC payload scales by EXACTLY 4^level and
+    # bit widths stay constant. Codes 0 and 1 are excluded on purpose: each has
+    # its own layout (§3.2), so neither is the code-2 base scaled down.
+    for has_alpha in (False, True):
+        label = "alpha" if has_alpha else "no-alpha"
+        upper = tier_layout(DEFAULT_TIER + 1)
+        base = ac_shape(upper, has_alpha, DEFAULT_TIER)
+        base_payload = ac_payload_bits(base)
+        for tier in range(DEFAULT_TIER + 1, MAX_TIER + 1):
+            s = tier_count_scale(tier)
+            level = render_level(tier)
+            check(s == 4 ** level, f"tier_count_scale({tier}) = {s} (= 4^{level})")
+            shape = ac_shape(upper, has_alpha, tier)
+            check(ac_payload_bits(shape) == base_payload * s,
+                  f"{label} tier {tier} AC payload scales ×{s} "
+                  f"(= {base_payload * s} bits)")
+            check(shape.l_count() == base.l_count() * s,
+                  f"{label} code {tier} L count {shape.l_count()} "
+                  f"= {base.l_count()}·4^{level}")
+            check(shape.c_count == base.c_count * s,
+                  f"{label} code {tier} chroma count {shape.c_count} "
+                  f"= {base.c_count}·4^{level}")
+            check(shape.alpha_ac_count == base.alpha_ac_count * s,
+                  f"{label} tier {tier} alpha-AC count = {shape.alpha_ac_count}")
+            check(shape.c_bits == base.c_bits
+                  and shape.l_tiers[0][1] == base.l_tiers[0][1],
+                  f"{label} tier {tier} bit widths constant "
+                  f"(L={shape.l_tiers[0][1]}, C={shape.c_bits})")
 
 
 # =========================================================================
 # Main
 # =========================================================================
+
+def validate_against_vectors():
+    """Check this reference against the shared test vectors. Per spec §2.
+
+    The other checks in this file are self-consistent: they verify the constants
+    against each other and against arithmetic. That is not enough. A reference
+    implementation can be internally coherent and still disagree with the
+    normative bytes — which is exactly what happened to `decode_output_size`,
+    where shifting by the tier code rather than the render level gave the
+    compact tier a 512 px grid while every self-consistent check still passed.
+
+    The vectors are the only thing that can catch that class of error, so the
+    Python reference is now measured against them like any other port.
+    """
+    import json
+    import os
+
+    print("\n11. Reference vs shared test vectors")
+    vec_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "test-vectors")
+
+    # Render size: the half of the render-level rule no length check can see.
+    with open(os.path.join(vec_dir, "unit-aspect.json")) as f:
+        aspect_cases = json.load(f)
+    bad = []
+    for c in aspect_cases:
+        i, e = c["input"], c["expected"]
+        got = selection.decode_output_size(e["byte"], i["tier"])
+        if got != (e["output_width"], e["output_height"]):
+            bad.append((c["name"], got, (e["output_width"], e["output_height"])))
+    check(not bad,
+          f"decode_output_size matches all {len(aspect_cases)} unit-aspect vectors"
+          + (f" — MISMATCH: {bad[:3]}" if bad else ""))
+
+    # Selection order and p_k, including the weighted form.
+    with open(os.path.join(vec_dir, "unit-selection.json")) as f:
+        sel_cases = json.load(f)
+    bad = []
+    for c in sel_cases:
+        i, e = c["input"], c["expected"]
+        coeffs, p_k = selection.select_coefficients(
+            i["aspect_byte"], i["tier"], i["k"], i.get("aniso", 0.0), i.get("hv", 0.0)
+        )
+        if [list(x) for x in coeffs] != e["coeffs"] or p_k != e["p_k"]:
+            bad.append(c["name"])
+    check(not bad,
+          f"select_coefficients matches all {len(sel_cases)} unit-selection vectors"
+          + (f" — {len(bad)} MISMATCHED: {bad[:3]}" if bad else ""))
+
+    # Byte length, across every tier code and both alpha modes.
+    with open(os.path.join(vec_dir, "integration-encode.json")) as f:
+        enc_cases = json.load(f)
+    bad = []
+    for c in enc_cases:
+        e = c["expected"]
+        raw = e["hash"]
+        tier = (raw[0] >> 3) & 0b111
+        has_alpha = bool((raw[0] >> ALPHA_FLAG_BIT) & 1)
+        want = body_len_bytes(tier_layout(tier), has_alpha, tier)
+        if want != len(raw):
+            bad.append((c["name"], want, len(raw)))
+    check(not bad,
+          f"body_len_bytes matches all {len(enc_cases)} integration-encode vectors"
+          + (f" — MISMATCH: {bad[:3]}" if bad else ""))
+
 
 if __name__ == "__main__":
     print("ChromaHash Constants Validation")
@@ -464,7 +757,8 @@ if __name__ == "__main__":
     validate_mu_law()
     validate_aspect_ratio()
     validate_selection()
-    validate_bit_budget()
+    validate_length_formula()
+    validate_against_vectors()
 
     print(f"\n{'=' * 60}")
     print(f"Results: {passed} passed, {failed} failed")

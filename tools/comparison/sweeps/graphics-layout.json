@@ -1,0 +1,123 @@
+{
+  "name": "graphics-layout",
+  "corpus": "graphic",
+  "description": "SS11.4 - does the tier-0 layout chosen on photographs hold on non-photographic content? This is the same 32-byte allocation grid that chose it (SS4.2), re-run on screenshots, charts, diagrams and text graphics, with the adopted default as the incumbent. No constant in the format has ever been chosen against this content, so the question is whether the photo-derived optimum is also the graphics optimum or merely tolerable there. Run with forceOpaque: two images in this corpus carry an alpha channel and would otherwise encode in alpha mode, where none of the arms' opaque-layout overrides apply \u2014 they would contribute an identical constant to every arm, diluting every delta and biasing the test toward 'no difference'.",
+  "variants": [
+    {
+      "label": "DEFAULT L28@4 C15@3 (photo winner)"
+    },
+    {
+      "label": "pre-adoption L26@5 C9@4",
+      "tune": "l1=26:5 c=9:4"
+    },
+    {
+      "label": "L24@4 C17@3",
+      "tune": "l1=24:4 c=17:3"
+    },
+    {
+      "label": "L26@4 C16@3",
+      "tune": "l1=26:4 c=16:3"
+    },
+    {
+      "label": "L30@4 C13@3",
+      "tune": "l1=30:4 c=13:3"
+    },
+    {
+      "label": "L32@4 C12@3",
+      "tune": "l1=32:4 c=12:3"
+    },
+    {
+      "label": "L34@4 C11@3",
+      "tune": "l1=34:4 c=11:3"
+    },
+    {
+      "label": "L36@4 C9@3",
+      "tune": "l1=36:4 c=9:3"
+    },
+    {
+      "label": "L38@4 C8@3",
+      "tune": "l1=38:4 c=8:3"
+    },
+    {
+      "label": "L40@4 C7@3",
+      "tune": "l1=40:4 c=7:3"
+    },
+    {
+      "label": "L28@4 C11@4",
+      "tune": "l1=28:4 c=11:4"
+    },
+    {
+      "label": "L30@4 C10@4",
+      "tune": "l1=30:4 c=10:4"
+    },
+    {
+      "label": "L32@4 C9@4",
+      "tune": "l1=32:4 c=9:4"
+    },
+    {
+      "label": "L34@4 C8@4",
+      "tune": "l1=34:4 c=8:4"
+    },
+    {
+      "label": "L36@4 C7@4",
+      "tune": "l1=36:4 c=7:4"
+    },
+    {
+      "label": "L38@3 C14@3",
+      "tune": "l1=38:3 c=14:3"
+    },
+    {
+      "label": "L40@3 C13@3",
+      "tune": "l1=40:3 c=13:3"
+    },
+    {
+      "label": "L42@3 C12@3",
+      "tune": "l1=42:3 c=12:3"
+    },
+    {
+      "label": "L44@3 C11@3",
+      "tune": "l1=44:3 c=11:3"
+    },
+    {
+      "label": "L46@3 C10@3",
+      "tune": "l1=46:3 c=10:3"
+    },
+    {
+      "label": "L48@3 C9@3",
+      "tune": "l1=48:3 c=9:3"
+    },
+    {
+      "label": "L40@3 C10@4",
+      "tune": "l1=40:3 c=10:4"
+    },
+    {
+      "label": "L44@3 C8@4",
+      "tune": "l1=44:3 c=8:4"
+    },
+    {
+      "label": "L46@3 C8@4",
+      "tune": "l1=46:3 c=8:4"
+    },
+    {
+      "label": "L26@5 C9@4",
+      "tune": "l1=26:5 c=9:4"
+    },
+    {
+      "label": "L29@5 C9@3",
+      "tune": "l1=29:5 c=9:3"
+    },
+    {
+      "label": "L8@5+20@4 C10@4",
+      "tune": "l1=8:5 c=10:4 l2=20:4"
+    },
+    {
+      "label": "L8@5+24@4 C8@4",
+      "tune": "l1=8:5 c=8:4 l2=24:4"
+    },
+    {
+      "label": "L8@5+28@4 C6@4",
+      "tune": "l1=8:5 c=6:4 l2=28:4"
+    }
+  ],
+  "forceOpaque": true
+}

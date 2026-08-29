@@ -1,0 +1,138 @@
+{
+  "name": "prefix-shrink",
+  "description": "U8/U9 materialized: the 54-bit prefix is 21% of a 32-byte hash. Every field width is now tunable, so this measures (a) the pure quality COST of a coarser aspect / DC / scale field at an unchanged AC layout, and (b) the NET effect of shrinking the prefix and spending the recovered bits on more AC coefficients at the same 32 bytes. scale_mu companded the scale grid logarithmically, which is what lets a narrower scale field keep its accuracy. b_scale_from_a drops the b-scale field entirely and shares the a code.",
+  "photoOnly": true,
+  "variants": [
+    {
+      "label": "32B shipped L26@5 C9@4"
+    },
+    {
+      "label": "cost aspect 5b (-3)",
+      "tune": "aspect_bits=5"
+    },
+    {
+      "label": "cost aspect 4b (-4)",
+      "tune": "aspect_bits=4"
+    },
+    {
+      "label": "cost scales 5/4/4 (-4)",
+      "tune": "l_scale_bits=5 a_scale_bits=4 b_scale_bits=4"
+    },
+    {
+      "label": "cost scales 5/4/4 +mu8 (-4)",
+      "tune": "l_scale_bits=5 a_scale_bits=4 b_scale_bits=4 scale_mu=8"
+    },
+    {
+      "label": "cost b_from_a (-5)",
+      "tune": "b_scale_from_a=1"
+    },
+    {
+      "label": "cost b_from_a +mu8 (-5)",
+      "tune": "b_scale_from_a=1 scale_mu=8"
+    },
+    {
+      "label": "cost dc 6/6/6 (-3)",
+      "tune": "l_dc_bits=6 a_dc_bits=6 b_dc_bits=6"
+    },
+    {
+      "label": "cost aspect5+scales5/4+bfa+mu8 (-11)",
+      "tune": "aspect_bits=5 l_scale_bits=5 a_scale_bits=4 b_scale_from_a=1 scale_mu=8"
+    },
+    {
+      "label": "cost aspect5+scales4/4+bfa+mu8 (-12)",
+      "tune": "aspect_bits=5 l_scale_bits=4 a_scale_bits=4 b_scale_from_a=1 scale_mu=8"
+    },
+    {
+      "label": "cost all-in: +dc6/6/6 (-15)",
+      "tune": "aspect_bits=5 l_dc_bits=6 a_dc_bits=6 b_dc_bits=6 l_scale_bits=4 a_scale_bits=4 b_scale_from_a=1 scale_mu=8"
+    },
+    {
+      "label": "spend5b shipped prefix 54b L26C9",
+      "tune": "l1=26:5 c=9:4"
+    },
+    {
+      "label": "spend5b aspect 5b (-3) L25C10",
+      "tune": "aspect_bits=5 l1=25:5 c=10:4"
+    },
+    {
+      "label": "spend5b aspect 4b (-4) L25C10",
+      "tune": "aspect_bits=4 l1=25:5 c=10:4"
+    },
+    {
+      "label": "spend5b scales 5/4/4 (-4) L25C10",
+      "tune": "l_scale_bits=5 a_scale_bits=4 b_scale_bits=4 l1=25:5 c=10:4"
+    },
+    {
+      "label": "spend5b scales 5/4/4 +mu8 (-4) L25C10",
+      "tune": "l_scale_bits=5 a_scale_bits=4 b_scale_bits=4 scale_mu=8 l1=25:5 c=10:4"
+    },
+    {
+      "label": "spend5b b_from_a (-5) L27C9",
+      "tune": "b_scale_from_a=1 l1=27:5 c=9:4"
+    },
+    {
+      "label": "spend5b b_from_a +mu8 (-5) L27C9",
+      "tune": "b_scale_from_a=1 scale_mu=8 l1=27:5 c=9:4"
+    },
+    {
+      "label": "spend5b dc 6/6/6 (-3) L25C10",
+      "tune": "l_dc_bits=6 a_dc_bits=6 b_dc_bits=6 l1=25:5 c=10:4"
+    },
+    {
+      "label": "spend5b aspect5+scales5/4+bfa+mu8 (-11) L28C9",
+      "tune": "aspect_bits=5 l_scale_bits=5 a_scale_bits=4 b_scale_from_a=1 scale_mu=8 l1=28:5 c=9:4"
+    },
+    {
+      "label": "spend5b aspect5+scales4/4+bfa+mu8 (-12) L28C9",
+      "tune": "aspect_bits=5 l_scale_bits=4 a_scale_bits=4 b_scale_from_a=1 scale_mu=8 l1=28:5 c=9:4"
+    },
+    {
+      "label": "spend5b all-in: +dc6/6/6 (-15) L29C9",
+      "tune": "aspect_bits=5 l_dc_bits=6 a_dc_bits=6 b_dc_bits=6 l_scale_bits=4 a_scale_bits=4 b_scale_from_a=1 scale_mu=8 l1=29:5 c=9:4"
+    },
+    {
+      "label": "spend4b shipped prefix 54b L28C15",
+      "tune": "l1=28:4 c=15:3"
+    },
+    {
+      "label": "spend4b aspect 5b (-3) L30C14",
+      "tune": "aspect_bits=5 l1=30:4 c=14:3"
+    },
+    {
+      "label": "spend4b aspect 4b (-4) L29C15",
+      "tune": "aspect_bits=4 l1=29:4 c=15:3"
+    },
+    {
+      "label": "spend4b scales 5/4/4 (-4) L29C15",
+      "tune": "l_scale_bits=5 a_scale_bits=4 b_scale_bits=4 l1=29:4 c=15:3"
+    },
+    {
+      "label": "spend4b scales 5/4/4 +mu8 (-4) L29C15",
+      "tune": "l_scale_bits=5 a_scale_bits=4 b_scale_bits=4 scale_mu=8 l1=29:4 c=15:3"
+    },
+    {
+      "label": "spend4b b_from_a (-5) L29C15",
+      "tune": "b_scale_from_a=1 l1=29:4 c=15:3"
+    },
+    {
+      "label": "spend4b b_from_a +mu8 (-5) L29C15",
+      "tune": "b_scale_from_a=1 scale_mu=8 l1=29:4 c=15:3"
+    },
+    {
+      "label": "spend4b dc 6/6/6 (-3) L30C14",
+      "tune": "l_dc_bits=6 a_dc_bits=6 b_dc_bits=6 l1=30:4 c=14:3"
+    },
+    {
+      "label": "spend4b aspect5+scales5/4+bfa+mu8 (-11) L29C16",
+      "tune": "aspect_bits=5 l_scale_bits=5 a_scale_bits=4 b_scale_from_a=1 scale_mu=8 l1=29:4 c=16:3"
+    },
+    {
+      "label": "spend4b aspect5+scales4/4+bfa+mu8 (-12) L31C15",
+      "tune": "aspect_bits=5 l_scale_bits=4 a_scale_bits=4 b_scale_from_a=1 scale_mu=8 l1=31:4 c=15:3"
+    },
+    {
+      "label": "spend4b all-in: +dc6/6/6 (-15) L30C16",
+      "tune": "aspect_bits=5 l_dc_bits=6 a_dc_bits=6 b_dc_bits=6 l_scale_bits=4 a_scale_bits=4 b_scale_from_a=1 scale_mu=8 l1=30:4 c=16:3"
+    }
+  ]
+}

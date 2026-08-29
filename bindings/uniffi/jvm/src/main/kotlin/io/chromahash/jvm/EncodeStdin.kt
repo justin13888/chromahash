@@ -4,11 +4,35 @@ import io.chromahash.ffi.BatchEncoder
 import io.chromahash.ffi.ChromaHash
 import io.chromahash.ffi.Gamut
 import io.chromahash.ffi.ImageInput
+import io.chromahash.ffi.defaultTier
+import io.chromahash.ffi.maxTier
 
 /**
  * stdin/stdout CLI used by the cross-language comparison harness, mirroring the
  * other languages' `encode-stdin`. Backed by the UniFFI binding (`io.chromahash.ffi`).
+ *
+ * Tier codes are ordered by quality (spec §2.5) and come from the core across
+ * the FFI, so a renumbering cannot leave a stale literal here.
  */
+
+private val DEFAULT_TIER: UByte = defaultTier()
+private val MAX_TIER: UByte = maxTier()
+
+/**
+ * Quality tier from CHROMAHASH_TIER, matching the Rust harness so the
+ * cross-language benchmark measures the same workload in every language.
+ * Defaults to the 32-byte tier.
+ */
+private fun tierFromEnv(): UByte {
+    val raw = System.getenv("CHROMAHASH_TIER")
+    if (raw.isNullOrEmpty()) return DEFAULT_TIER
+    val tier = raw.toUByteOrNull()
+    if (tier == null || tier > MAX_TIER) {
+        System.err.println("CHROMAHASH_TIER: '$raw' is not a valid tier code (0..=$MAX_TIER)")
+        System.exit(1)
+    }
+    return tier!!
+}
 
 private fun parseGamut(s: String): Gamut =
     when (s) {
@@ -52,26 +76,19 @@ fun main(args: Array<String>) {
                 System.exit(1)
             }
 
-            val hash = ChromaHash.encode(w.toUInt(), h.toUInt(), rgba, gamut)
+            val hash =
+                ChromaHash.encodeWithQuality(w.toUInt(), h.toUInt(), rgba, gamut, tierFromEnv())
             System.out.write(hash.asBytes())
             System.out.flush()
         }
         "decode" -> {
-            val hashBytes = System.`in`.readNBytes(32)
-            if (hashBytes.size != 32) {
-                System.err.println("expected 32 bytes, got ${hashBytes.size}")
-                System.exit(1)
-            }
+            val hashBytes = System.`in`.readBytes()
             val result = ChromaHash.fromBytes(hashBytes).decode()
             System.out.write(result.rgba)
             System.out.flush()
         }
         "average-color" -> {
-            val hashBytes = System.`in`.readNBytes(32)
-            if (hashBytes.size != 32) {
-                System.err.println("expected 32 bytes, got ${hashBytes.size}")
-                System.exit(1)
-            }
+            val hashBytes = System.`in`.readBytes()
             val color = ChromaHash.fromBytes(hashBytes).averageColor()
             System.out.write(
                 byteArrayOf(color.r.toByte(), color.g.toByte(), color.b.toByte(), color.a.toByte()),
@@ -91,7 +108,8 @@ fun main(args: Array<String>) {
             val count = args[4].toInt()
 
             val rgba = System.`in`.readNBytes(w * h * 4)
-            val items = List(count) { ImageInput(w.toUInt(), h.toUInt(), rgba, gamut) }
+            val tier = tierFromEnv()
+            val items = List(count) { ImageInput(w.toUInt(), h.toUInt(), rgba, gamut, tier) }
             val firstByte = BatchEncoder().use { it.encodeBatch(items)[0].asBytes()[0] }
             // Write one result-derived byte so the work cannot be optimized away.
             System.out.write(byteArrayOf(firstByte))
@@ -104,7 +122,7 @@ fun main(args: Array<String>) {
                 System.exit(1)
             }
             val count = args[1].toInt()
-            val hashBytes = System.`in`.readNBytes(32)
+            val hashBytes = System.`in`.readBytes()
             val ch = ChromaHash.fromBytes(hashBytes)
             var acc = 0
             repeat(count) { acc = acc xor (ch.decode().rgba[0].toInt() and 0xFF) }

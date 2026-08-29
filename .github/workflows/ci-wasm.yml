@@ -3,9 +3,9 @@ name: CI (WASM)
 on:
   push:
     branches: [master]
-    paths: ["bindings/wasm/**", "rust/**", ".github/workflows/ci-wasm.yml"]
+    paths: ["bindings/wasm/**", "rust/**", "spec/test-vectors/**", ".github/workflows/ci-wasm.yml"]
   pull_request:
-    paths: ["bindings/wasm/**", "rust/**", ".github/workflows/ci-wasm.yml"]
+    paths: ["bindings/wasm/**", "rust/**", "spec/test-vectors/**", ".github/workflows/ci-wasm.yml"]
 
 jobs:
   # Format, lint (wasm32 target), run the spec vectors through the wasm-bindgen
@@ -41,7 +41,7 @@ jobs:
         run: cargo fmt --check
 
       - name: Lint
-        run: cargo clippy --target wasm32-unknown-unknown -- -D warnings
+        run: cargo clippy --target wasm32-unknown-unknown --all-targets -- -D warnings
 
       - name: Test (spec vectors through wasm, in Node)
         run: wasm-pack test --node .

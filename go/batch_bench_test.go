@@ -27,7 +27,13 @@ func benchImages(n int) []ImageInput {
 				rgba[p*4+3] = 255
 			}
 		}
-		items[i] = ImageInput{W: w, H: h, Rgba: rgba, Gamut: gamuts[i%len(gamuts)]}
+		// Explicit: Go has no way to leave a struct field unset, and the tier
+		// codes are ordered by quality — so an omitted Quality is CompactTier,
+		// and this benchmark would compare a 21-byte batch against the 32-byte
+		// serial encode below.
+		items[i] = ImageInput{
+			W: w, H: h, Rgba: rgba, Gamut: gamuts[i%len(gamuts)], Quality: DefaultTier,
+		}
 	}
 	return items
 }
@@ -38,7 +44,7 @@ func BenchmarkSerialEncode(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for _, it := range items {
-			_ = Encode(it.W, it.H, it.Rgba, it.Gamut)
+			_ = EncodeWithQuality(it.W, it.H, it.Rgba, it.Gamut, it.Quality)
 		}
 	}
 	b.ReportMetric(float64(benchN*b.N)/b.Elapsed().Seconds(), "img/s")

@@ -6,13 +6,162 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ChromaHash is a **Draft** format. While pre-1.0, the bitstream is not guaranteed to be
-stable between minor versions. v0.2, v0.3, and v0.4 all share header bit 47 = 1; a decoder
-from an older minor version applied to a newer hash will silently produce garbled output.
-Applications that need to distinguish versions MUST track the format version via
-producer-side metadata. See `spec/README.md` §2.5 for details.
+stable between minor versions. From 0.7.0 the wire format carries a 3-bit `version` field
+in byte 0 and a decoder rejects a generation it does not implement; before it, v0.2, v0.3
+and v0.4 all shared header bit 47 = 1, so an older decoder applied to a newer hash
+silently produced garbled output. Applications spanning the 0.6/0.7 boundary MUST track
+the format version via producer-side metadata. See `spec/README.md` §2.5 for details.
+
+**Package coordinates change in 0.7.0.** The `justin13888` → `visualcommons` move
+renames two of them, and neither is picked up automatically by a dependency
+update — the old coordinates keep resolving to 0.6.0 forever:
+
+| | 0.6.0 | 0.7.0 |
+| --- | --- | --- |
+| npm | *(never published)* | `@visualcommons/chromahash` |
+| Maven (JVM) | `io.github.justin13888:chromahash-jvm` | `io.github.visualcommons:chromahash-jvm` |
+| Maven (Android) | `io.github.justin13888:chromahash-android` | `io.github.visualcommons:chromahash-android` |
+
+crates.io, PyPI, NuGet, Go and SwiftPM coordinates are unchanged.
 
 <!-- git-cliff-unreleased-start -->
 ## [Unreleased]
+
+### ⚠ Breaking changes
+
+- **spec**: V1 wire format — quality-multiplier tiers + self-describing validation
+- **rust**: Implement v1 format — quality tiers, variable-length hashes, fallible from_bytes
+- **c**: Sync C binding to v1 wire format
+- **go**: Sync Go binding to v1 variable-length hashes
+- **csharp**: Sync C# binding to v1 variable-length hashes
+- **uniffi**: Sync UniFFI binding crate to v1 wire format
+- **jvm**: Sync JVM harness + Kotlin tests to v1
+- **py**: Sync Python binding to v1 variable-length hashes
+- **swift**: Sync Swift binding to v1 variable-length hashes
+- **wasm**: Sync WASM binding to v1 wire format
+- **rust**: Tier-0 output moves. Hashes produced by earlier v1 builds decode to different pixels; regenerate any stored placeholder.
+- **rust**: Add the compact tier (code 4, 21 bytes)
+- **rust**: Alpha-mode output moves at every tier, and alpha-mode byte lengths change above tier 0. Regenerate any stored alpha placeholder.
+- **spec**: Normative compact tier, alpha allocation, and v0.7 stable
+- **spec**: The Python reference rendered the compact tier at 512 px
+- **spec**: Order the tier codes by quality
+- Renumber the tier codes across every implementation
+- **ts**: Port the pure-TS decoder to v1 and expose tiers
+- **c**: `ChromaHashImageInput` gains a `quality` field; Go's `FromBytes` returns `(ChromaHash, error)`; C#'s `FromBytes` throws on malformed input.
+- **uniffi**: `encode`, `encodeWithQuality` and `encodeBatch` are fallible in Python, Kotlin, Swift, and TypeScript's WASM layer; Swift's `fromBytes` and Python's `from_bytes` now raise on malformed input; `ImageInput` gains a `quality` field.
+- **ts**: The npm package is `@visualcommons/chromahash`, not `@chromahash/typescript`, and the Maven coordinates move from `io.github.justin13888` to `io.github.visualcommons`. The old coordinates keep resolving to 0.6.0; consumers must change them by hand.
+
+
+### Added
+
+- **spec**: V1 wire format — quality-multiplier tiers + self-describing validation
+- **rust**: Implement v1 format — quality tiers, variable-length hashes, fallible from_bytes
+- **tools**: Evaluate higher-fidelity tiers in benchmark and comparison
+- **c**: Sync C binding to v1 wire format
+- **go**: Sync Go binding to v1 variable-length hashes
+- **csharp**: Sync C# binding to v1 variable-length hashes
+- **uniffi**: Sync UniFFI binding crate to v1 wire format
+- **jvm**: Sync JVM harness + Kotlin tests to v1
+- **py**: Sync Python binding to v1 variable-length hashes
+- **swift**: Sync Swift binding to v1 variable-length hashes
+- **wasm**: Sync WASM binding to v1 wire format
+- **tools**: Score against a display-resolution reference
+- **rust**: Experimental quantizer and selection knobs
+- **spec**: Pin the canonical BT.2020 tone mapping
+- **tools**: Corpus expansion and tune/holdout split
+- **tools**: Rate-distortion baselines at matched byte budgets
+- **tools**: Quantizer-family and allocation sweep runner
+- **tools**: Follow-up sweep configs from first results
+- **tools**: Paired per-image deltas for version comparison
+- **tools**: V0.6 baseline point in the R-D lineup
+- **tools**: Allow a released tag as the sweep incumbent
+- **rust**: Encoder-only scale fitting and nearest-reconstruction AC codes
+- **tools**: Byte-budget R-D, CfL and coefficient-statistics probes
+- **tools**: Content-pin the corpus and extend it to 39 photographs
+- **tools**: Guard-aware cross-format scoring in the R-D ladder
+- **tools**: Entropy-coding budget probe with an honest coder
+- **rust**: Adopt the optimized v1 recipe as the default
+- **spec**: Mirror the adopted constants in the Python reference
+- **comparison**: Sweep configs for the round-2 roadmap items
+- **tools**: Tier-0 R-D quality gate in CI
+- **comparison**: Select the corpus a sweep measures against
+- **rust**: Scope raw layout overrides to one row of the table
+- **rust**: Make the alpha field widths and AC count tunable
+- **comparison**: Score alpha over multiple backdrops and on its own
+- **comparison**: Sweep configs for the v0.7 stabilization experiments
+- **rust**: Quantize the alpha AC plane through the channel quantizer
+- **comparison**: Sweep config for the alpha-channel quantizer
+- **comparison**: Size-matched codecs and all four metrics in the report
+- **comparison**: Show real codecs at their byte floor, not as N/A
+- **comparison**: Alpha and graphics evaluation corpora
+- **tools**: Just recipes for the four standalone probes
+- **comparison**: ForceOpaque control, alpha AC ladder, tie-break configs
+- **rust**: Add the compact tier (code 4, 21 bytes)
+- **spec**: Mirror the compact tier in the Python reference
+- **rust**: Fix the alpha-mode allocation
+- **comparison**: Tier-1 alpha allocation sweep
+- **comparison**: Declare a sweep's byte budget and enforce it
+- **comparison**: Categorize the alpha and graphics corpora in the report
+- Renumber the tier codes across every implementation
+- **ts**: Port the pure-TS decoder to v1 and expose tiers
+- **comparison**: Show every tier in the cross-format report
+- **comparison**: Add the compact tier to the R-D lineup
+- **tools**: Read CHROMAHASH_TIER in every encode-stdin harness
+- **tools**: Benchmark every tier
+- Implement preview normalization with row-based box scaling
+- **tools**: Check EXPERIMENTS.md against the sweeps that produced it
+- **comparison**: Report paired CIs and win counts from the sweep itself
+- **c**: Finalize the v1 C-ABI surface — tier constants, batch tiers, eager from_bytes
+- **uniffi**: Validate at the FFI boundary and let a batch item pick its tier
+
+### Changed
+
+- **rust**: Stop publishing wire constants nothing consumes
+- **ts**: Rename the npm package to @visualcommons/chromahash
+
+### Fixed
+
+- **tools**: Fail without metrics and measure timing fairly
+- **tools**: Add the codec-thumb and raw-pixels R-D adapters
+- **tools**: Include v0.6 in the version-comparison lineup
+- **tools**: Reject a quality tier for pre-v1 version builds
+- **tools**: Exclude achromatic channels from the CfL probe means
+- **rust**: Let the deadzone survive the nearest-reconstruction search
+- **comparison**: Pin the alpha allocation in the alpha sweep configs
+- **comparison**: Run the shipped tiers at the R-D byte anchors
+- **spec**: The Python reference rendered the compact tier at 512 px
+- **comparison**: The codec "floor" row was the codec's largest 4px output
+- **tools**: Follow the tier renumbering
+- **spec**: Pin the reference's K set to the default tier
+- **comparison**: Bound previews to their cell
+- **wasm**: The length test still assumed the pre-renumbering tier codes
+- **rust**: The sweep harness defaulted to the compact tier
+- **tools**: Satisfy clippy's chunks_exact_to_as_chunks in gamut-ref-stdin
+- **tools**: Let `just test` run off macOS
+- Bring every manifest to the core crate's 0.7.0
+- **rust**: Keep the example within the declared MSRV
+- **rust**: Repair what the adversarial review found, and make the claims true
+
+### Documentation
+
+- **spec**: Fix v1 documentation drift
+- **spec**: Design rationale record and future work
+- **spec**: Record the measured v0.6 to v1 tier-0 cost
+- **spec**: Record the v0.7 byte-budget rate-distortion study
+- **spec**: Normative two-row layout, Q12 selection and encoder rules
+- **spec**: Rationale for the adopted constants
+- **spec**: The byte-budget study, the roadmap results and the adoption
+- **spec**: The v0.7 stabilization experiments (§11)
+- **spec**: Normative compact tier, alpha allocation, and v0.7 stable
+- **spec**: Close the resolved rationale open questions
+- **spec**: Re-measured cross-format positioning (§11.14)
+- **spec**: Correct §11 against an adversarial re-check of the raw data
+- **spec**: Order the tier codes by quality
+- Name tiers by code, not byte budget
+- **spec**: Correct EXPERIMENTS.md against the sweeps that produced it
+- Correct TESTING.md against reality and surface the release blockers
+- Record what the mutation sweep taught about its own configuration
+
 <!-- git-cliff-unreleased-end -->
 
 ## [0.6.0] - 2026-06-13

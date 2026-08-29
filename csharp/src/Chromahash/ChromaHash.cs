@@ -1,14 +1,29 @@
 namespace ChromaHash;
 
-/// <summary>ChromaHash: a 32-byte LQIP (Low Quality Image Placeholder).</summary>
+/// <summary>ChromaHash: a compact LQIP (Low Quality Image Placeholder).</summary>
 /// <remarks>
 /// A thin managed wrapper over the chromahash-c C ABI (which exposes the Rust
 /// core via P/Invoke). Output is byte-identical to every other ChromaHash
-/// implementation. The hash is held as a 32-byte value; native handles are
-/// created transiently per operation.
+/// implementation. The hash is variable length (32 bytes at the default quality tier);
+/// native handles are created transiently per operation.
 /// </remarks>
 public sealed class ChromaHash : IEquatable<ChromaHash>
 {
+    /// <summary>
+    /// The 21-byte compact tier — the smallest and lowest fidelity, rendered at
+    /// <see cref="DefaultTier"/>'s resolution. Tier codes are ordered by quality.
+    /// </summary>
+    public const byte CompactTier = 0;
+
+    /// <summary>
+    /// The 32-byte tier <see cref="Encode"/> produces. Pass this rather than a
+    /// literal — a bare 0 is the compact tier.
+    /// </summary>
+    public const byte DefaultTier = 1;
+
+    /// <summary>The highest valid tier code; codes 5..=7 are reserved.</summary>
+    public const byte MaxTier = 4;
+
     private readonly byte[] _hash;
 
     private ChromaHash(byte[] hash)
@@ -23,25 +38,43 @@ public sealed class ChromaHash : IEquatable<ChromaHash>
     /// <param name="height">Image height (>= 1).</param>
     /// <param name="rgba">Pixel data in RGBA format (4 bytes per pixel, row-major).</param>
     /// <param name="gamut">Source color space.</param>
-    public static ChromaHash Encode(uint width, uint height, byte[] rgba, Gamut gamut)
+    public static ChromaHash Encode(uint width, uint height, byte[] rgba, Gamut gamut) =>
+        EncodeWithQuality(width, height, rgba, gamut, DefaultTier);
+
+    /// <summary>
+    /// Encode an image at an explicit quality tier (0..=MaxTier, ordered by
+    /// quality). <see cref="DefaultTier"/> is the 32-byte tier and
+    /// <see cref="CompactTier"/> the 21-byte one — pass those rather than a
+    /// literal, since a bare 0 is the compact tier.
+    /// </summary>
+    /// <param name="width">Image width (>= 1).</param>
+    /// <param name="height">Image height (>= 1).</param>
+    /// <param name="rgba">Pixel data in RGBA format (4 bytes per pixel, row-major).</param>
+    /// <param name="gamut">Source color space.</param>
+    /// <param name="quality">Quality tier (0..=<see cref="MaxTier"/>).</param>
+    public static ChromaHash EncodeWithQuality(uint width, uint height, byte[] rgba, Gamut gamut, byte quality)
     {
         ArgumentNullException.ThrowIfNull(rgba);
-        var status = Native.chromahash_encode(
+        // Rejected natively too, but as a status code that carries no parameter
+        // name; check here so the caller gets the argument that was wrong.
+        if (quality > MaxTier)
+            throw new ArgumentOutOfRangeException(
+                nameof(quality),
+                $"quality tier must be 0..={MaxTier}"
+            );
+        var status = Native.chromahash_encode_with_quality(
             width,
             height,
             rgba,
             (nuint)rgba.Length,
             gamut,
+            quality,
             out IntPtr handle
         );
         ThrowOnEncodeError(status, nameof(width));
         try
         {
-            byte[] hash = new byte[32];
-            var st = Native.chromahash_as_bytes(handle, hash, 32);
-            if (st != Native.Status.Ok)
-                throw new InvalidOperationException($"chromahash as_bytes failed: {st}");
-            return new ChromaHash(hash);
+            return new ChromaHash(ReadHash(handle));
         }
         finally
         {
@@ -109,43 +142,54 @@ public sealed class ChromaHash : IEquatable<ChromaHash>
     }
 
     /// <summary>
-    /// Whether this hash uses the v0.6 bitstream this library implements. Decoding
-    /// an unsupported (legacy) hash produces garbage, not an error — check this
-    /// first for hashes of unknown provenance.
+    /// Create a ChromaHash from raw hash bytes, validating them up front.
     /// </summary>
-    public bool IsVersionSupported()
-    {
-        IntPtr handle = CreateHandle();
-        try
-        {
-            return Native.chromahash_is_version_supported(handle);
-        }
-        finally
-        {
-            Native.chromahash_free(handle);
-        }
-    }
-
-    /// <summary>Create a ChromaHash from raw 32-byte data.</summary>
+    /// <remarks>
+    /// The format is self-describing, so the header determines the exact byte
+    /// length; a ChromaHash that constructs is guaranteed to decode. Bad
+    /// version, reserved tier code, set reserved bit, or a length that
+    /// disagrees with the header all throw here rather than at first use.
+    /// </remarks>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="data"/> is not a valid v1 ChromaHash.
+    /// </exception>
     public static ChromaHash FromBytes(byte[] data)
     {
         ArgumentNullException.ThrowIfNull(data);
-        if (data.Length != 32)
-            throw new ArgumentException("ChromaHash requires exactly 32 bytes", nameof(data));
-        byte[] copy = new byte[32];
+        byte[] copy = new byte[data.Length];
         data.CopyTo(copy, 0);
+
+        var status = Native.chromahash_from_bytes(copy, (nuint)copy.Length, out IntPtr handle);
+        if (status != Native.Status.Ok || handle == IntPtr.Zero)
+            throw new ArgumentException(
+                $"not a valid ChromaHash ({status})",
+                nameof(data)
+            );
+        Native.chromahash_free(handle);
+
         return new ChromaHash(copy);
     }
 
-    /// <summary>Get the raw 32-byte hash data.</summary>
+    /// <summary>Get the raw hash bytes (32 at the default tier, more at higher tiers).</summary>
     public byte[] AsBytes()
     {
-        byte[] copy = new byte[32];
+        byte[] copy = new byte[_hash.Length];
         _hash.CopyTo(copy, 0);
         return copy;
     }
 
     // ── internals ──────────────────────────────────────────────────────────────
+
+    /// <summary>Copy a native handle's variable-length bytes into a managed array.</summary>
+    private static byte[] ReadHash(IntPtr handle)
+    {
+        int n = (int)Native.chromahash_byte_len(handle);
+        byte[] hash = new byte[n];
+        var st = Native.chromahash_as_bytes(handle, hash, (nuint)n);
+        if (st != Native.Status.Ok)
+            throw new InvalidOperationException($"chromahash as_bytes failed: {st}");
+        return hash;
+    }
 
     private IntPtr CreateHandle()
     {

@@ -4,7 +4,7 @@ import type { HarnessResult, ImageInput } from "./types.ts";
 import { rgbaToDataUri } from "./image-loader.ts";
 
 const ROOT = path.resolve(import.meta.dirname, "../../..");
-const RUST_CLI = path.join(ROOT, "rust/target/debug/examples/encode_stdin");
+const RUST_CLI = path.join(ROOT, "rust/target/release/examples/encode_stdin");
 // The C harness links the chromahash-c cdylib, which must be on the loader path.
 const C_LIB_DIR = path.join(ROOT, "bindings/c/target/debug");
 const C_HARNESS = path.join(ROOT, "bindings/c/target/encode_stdin");
@@ -40,7 +40,7 @@ function getHarnesses(): HarnessConfig[] {
   return [
     {
       language: "Rust",
-      command: path.join(ROOT, "rust/target/debug/examples/encode_stdin"),
+      command: path.join(ROOT, "rust/target/release/examples/encode_stdin"),
       args: [],
       cwd: ROOT,
     },
@@ -69,9 +69,9 @@ function getHarnesses(): HarnessConfig[] {
     },
     {
       language: "Swift",
-      command: path.join(ROOT, "swift/.build/debug/ChromaHashCLI"),
+      command: path.join(ROOT, ".build/debug/ChromaHashCLI"),
       args: [],
-      cwd: path.join(ROOT, "swift"),
+      cwd: ROOT,
     },
     {
       language: "Go",
@@ -102,6 +102,12 @@ function getHarnesses(): HarnessConfig[] {
 
 interface BuildStep {
   label: string;
+  /**
+   * Harness language this step produces, when it maps to one. A step whose
+   * build fails marks that language unavailable so it is skipped rather than
+   * invoked once per image. Steps that build no harness (gamut-ref) omit it.
+   */
+  language?: string;
   command: string;
   args: string[];
   cwd: string;
@@ -111,19 +117,22 @@ interface BuildStep {
  * Build all harness binaries once before running comparisons.
  * This avoids per-invocation build overhead (especially for Gradle and dotnet).
  */
-export function buildHarnesses(): void {
+export function buildHarnesses(): Set<string> {
   const steps: BuildStep[] = [
     {
       label: "TypeScript",
+      language: "TypeScript",
       command: "pnpm",
       args: ["--prefix", path.join(ROOT, "typescript"), "run", "build"],
       cwd: ROOT,
     },
     {
       label: "Rust",
+      language: "Rust",
       command: "cargo",
       args: [
         "build",
+        "--release",
         "--manifest-path",
         path.join(ROOT, "rust/Cargo.toml"),
         "--example",
@@ -133,6 +142,7 @@ export function buildHarnesses(): void {
     },
     {
       label: "C (lib)",
+      language: "C",
       command: "cargo",
       args: [
         "build",
@@ -143,6 +153,7 @@ export function buildHarnesses(): void {
     },
     {
       label: "C (harness)",
+      language: "C",
       command: "cc",
       args: [
         path.join(ROOT, "bindings/c/examples/encode_stdin.c"),
@@ -158,12 +169,14 @@ export function buildHarnesses(): void {
     },
     {
       label: "Kotlin",
+      language: "Kotlin",
       command: path.join(ROOT, "bindings/uniffi/jvm/gradlew"),
       args: ["-p", path.join(ROOT, "bindings/uniffi/jvm"), "installDist", "-q"],
       cwd: path.join(ROOT, "bindings/uniffi/jvm"),
     },
     {
       label: "Go",
+      language: "Go",
       command: "go",
       args: [
         "build",
@@ -175,12 +188,14 @@ export function buildHarnesses(): void {
     },
     {
       label: "Swift",
+      language: "Swift",
       command: "swift",
       args: ["build"],
-      cwd: path.join(ROOT, "swift"),
+      cwd: ROOT,
     },
     {
       label: "C#",
+      language: "C#",
       command: "dotnet",
       args: ["build", path.join(ROOT, "csharp/src/Chromahash.Cli")],
       cwd: ROOT,
@@ -198,6 +213,7 @@ export function buildHarnesses(): void {
     },
   ];
 
+  const unavailable = new Set<string>();
   for (const step of steps) {
     console.log(`  Building ${step.label} harness...`);
     try {
@@ -209,8 +225,16 @@ export function buildHarnesses(): void {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.warn(`  WARNING: ${step.label} build failed: ${msg}`);
+      if (step.language) unavailable.add(step.language);
     }
   }
+
+  if (unavailable.size > 0) {
+    console.warn(
+      `  Harnesses unavailable (build failed): ${[...unavailable].join(", ")}`,
+    );
+  }
+  return unavailable;
 }
 
 function runHarness(
@@ -264,8 +288,9 @@ function runHarness(
 export async function runAllHarnesses(
   input: ImageInput,
   gamut = "srgb",
+  unavailable: ReadonlySet<string> = new Set(),
 ): Promise<HarnessResult[]> {
-  const harnesses = getHarnesses();
+  const harnesses = getHarnesses().filter((c) => !unavailable.has(c.language));
   const { smallWidth: w, smallHeight: h, smallRgba: rgba } = input;
 
   const results: HarnessResult[] = [];
@@ -275,15 +300,16 @@ export async function runAllHarnesses(
     try {
       const output = await runHarness(config, w, h, gamut, rgba);
 
-      if (output.length !== 32) {
-        console.warn(
-          `${config.language}: expected 32 bytes, got ${output.length}`,
-        );
+      // v1 hashes are variable-length (tier-driven); just require non-empty.
+      if (output.length === 0) {
+        console.warn(`${config.language}: encode returned no bytes`);
         results.push({
           language: config.language,
-          hash: new Uint8Array(32),
+          hash: new Uint8Array(),
           matches: false,
           dataUri: "",
+          decodedWidth: 0,
+          decodedHeight: 0,
         });
         continue;
       }
@@ -303,6 +329,8 @@ export async function runAllHarnesses(
         hash,
         matches: true, // Will be updated after all complete
         dataUri,
+        decodedWidth: decoded.w,
+        decodedHeight: decoded.h,
       });
     } catch (error) {
       console.warn(
@@ -311,19 +339,22 @@ export async function runAllHarnesses(
       );
       results.push({
         language: config.language,
-        hash: new Uint8Array(32),
+        hash: new Uint8Array(),
         matches: false,
         dataUri: "",
+        decodedWidth: 0,
+        decodedHeight: 0,
       });
     }
   }
 
-  // Compare all hashes against reference (Rust)
+  // Compare all hashes against reference (Rust) — byte-identical at any length.
   if (referenceHash) {
+    const ref = referenceHash;
     for (const result of results) {
       result.matches =
-        result.hash.length === 32 &&
-        referenceHash.every((b, i) => b === result.hash[i]);
+        result.hash.length === ref.length &&
+        ref.every((b, i) => b === result.hash[i]);
     }
   } else {
     // No reference hash available — mark all as non-matching

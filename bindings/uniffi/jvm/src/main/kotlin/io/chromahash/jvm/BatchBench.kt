@@ -35,7 +35,9 @@ private fun benchImages(n: Int): List<ImageInput> {
 
 // UniFFI objects use reference equality, so compare on the 32-byte payloads.
 private fun encodeSerial(items: List<ImageInput>): List<List<Byte>> =
-    items.map { ChromaHash.encode(it.w, it.h, it.rgba, it.gamut).asBytes().toList() }
+    items.map {
+        ChromaHash.encodeWithQuality(it.w, it.h, it.rgba, it.gamut, it.quality).asBytes().toList()
+    }
 
 private fun encodeBatch(
     encoder: BatchEncoder,

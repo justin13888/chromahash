@@ -2,33 +2,41 @@
 
 > Modern, high-quality image placeholder representation for professional formats (LQIP)
 
-chromahash is a multi-language library implementing a compact, high-fidelity Low Quality Image Placeholder (LQIP) format. All seven implementations are spec-compatible — identical input produces identical output across languages.
+chromahash is a multi-language library implementing a compact, high-fidelity Low Quality Image Placeholder (LQIP) format. All nine implementations are spec-compatible — identical input produces identical output across languages.
 
 ## Packages
 
 | Language | Package | Registry |
 | -------- | ------- | -------- |
 | Rust | `chromahash` | [crates.io](https://crates.io/crates/chromahash) |
-| TypeScript | `@chromahash/typescript` | [npm](https://www.npmjs.com/package/@chromahash/typescript) |
+| TypeScript | `@visualcommons/chromahash` | [npm](https://www.npmjs.com/package/@visualcommons/chromahash) |
 | Python | `chromahash` | [PyPI](https://pypi.org/project/chromahash/) |
 | C# | `ChromaHash` | [NuGet](https://www.nuget.org/packages/ChromaHash) |
-| Java / Kotlin (JVM) | `io.github.visualcommons:chromahash-jvm` | [Maven Central](https://central.sonatype.com/artifact/io.github.visualcommons/chromahash-jvm) |
-| Android | `io.github.visualcommons:chromahash-android` | [Maven Central](https://central.sonatype.com/artifact/io.github.visualcommons/chromahash-android) |
+| Java / Kotlin (JVM) | `io.github.visualcommons:chromahash-jvm` | [Maven Central](https://central.sonatype.com/artifact/io.github.visualcommons/chromahash-jvm) † |
+| Android | `io.github.visualcommons:chromahash-android` | [Maven Central](https://central.sonatype.com/artifact/io.github.visualcommons/chromahash-android) † |
 | Go | `github.com/visualcommons/chromahash/go` | [pkg.go.dev](https://pkg.go.dev/github.com/visualcommons/chromahash/go) |
 | Swift | SwiftPM (`https://github.com/visualcommons/chromahash`) | [Swift Package Index](https://swiftpackageindex.com/visualcommons/chromahash) |
 | C | `chromahash-c` | [source](bindings/c) (C ABI — the FFI foundation, no registry) |
 
 > Every package is published to its registry automatically on each tagged release — see [`RELEASING.md`](RELEASING.md).
+>
+> The table lists where each package *publishes*, which is not the same as what
+> is live today. As of 0.6.0: crates.io, PyPI, NuGet and the Go proxy are live;
+> npm has not published yet (0.7.0 is the first release under the
+> `@visualcommons` scope); and † the JVM/Android artifacts are still on Maven
+> Central under the pre-rename `io.github.justin13888` coordinates —
+> `io.github.visualcommons` takes over from 0.7.0. See
+> [`RELEASING.md`](RELEASING.md#one-time-registry-bootstrap).
 
 ## Why ChromaHash?
 
 ChromaHash is built for professional photo management at scale, where perceptual quality, layout precision, and wide-gamut correctness matter. Every claim below is defined and quantified in the [format specification](spec/).
 
-- **Perceptual, human-centric quality.** Color is encoded in the [OKLAB](https://bottosson.github.io/posts/oklab/) perceptually-uniform color space (the same model adopted by CSS Color 4), so quantization steps map to evenly-perceived changes. AC coefficients use µ-law companding (µ=5) to spend precision where DCT energy actually clusters, a per-pixel frequency-priority scan order weights vertical and diagonal detail the way the eye does instead of biasing horizontal frequencies, and out-of-gamut colors are mapped back into the display gamut with a relative-colorimetric per-channel clip rather than hard-clipped in linear RGB.
+- **Perceptual, human-centric quality.** Color is encoded in the [OKLAB](https://bottosson.github.io/posts/oklab/) perceptually-uniform color space (the same model adopted by CSS Color 4), so quantization steps map to evenly-perceived changes. AC coefficients use µ-law companding (µ=5 luma, µ=8 chroma) to spend precision where DCT energy actually clusters, a per-pixel frequency-priority scan order weights vertical and diagonal detail the way the eye does instead of biasing horizontal frequencies, and out-of-gamut colors are mapped back into the display gamut with a relative-colorimetric per-channel clip rather than hard-clipped in linear RGB.
 - **Wide-gamut aware.** Encodes from sRGB, Display P3, Adobe RGB, BT.2020, or ProPhoto RGB sources into absolute OKLAB coordinates and decodes to a caller-chosen display gamut — sRGB, Display P3, or Adobe RGB — so wide-gamut color is preserved end-to-end instead of being flattened to sRGB-only like most LQIP formats.
 - **Precise layout.** An 8-bit log₂ aspect ratio keeps placeholder dimensions within ~1.09% of the original across ratios up to 16:1 (vs ThumbHash's 3-bit ~7% and ~7:1). The DCT grid adaptively reshapes to the aspect ratio, so no coefficients are wasted on non-square images.
-- **Fixed 32 bytes.** Every hash is exactly 32 bytes — memory-aligned, cache-friendly, and a zero-overhead database column or cache key with no length framing to parse.
-- **Fast decode with alpha.** Decoding runs in ~36µs native / ~182µs JS (well under 1ms), and transparent images are supported within the same fixed 32 bytes.
+- **32 bytes by default, five tiers when you want more or less.** The default hash (tier code 1) is exactly 32 bytes — memory-aligned, cache-friendly, and a zero-overhead database column or cache key. Tier codes are ordered by quality: code 0 is a 21-byte **compact** tier at ThumbHash's footprint, and codes 2–4 quadruple the coefficient budget per step (~108/411/1623 bytes) while doubling the render resolution. The byte length is self-describing from the first byte, so there is no length framing to parse at any tier.
+- **Fast decode with alpha.** Default-tier decoding runs in ~36µs native / ~182µs JS (well under 1ms), and transparent images are supported within the same 32-byte budget.
 - **One core, first-class everywhere.** A single zero-dependency Rust core is exposed to every other language through thin FFI bindings (C, WebAssembly, and UniFFI), so a spec change lands once and every language stays **bit-exact** against the shared [`spec/`](spec/) test vectors. See [Appendix A of the spec](spec/README.md#appendix-a-thumbhash-comparison--acknowledgment) for the full ThumbHash comparison.
 
 ## Guides

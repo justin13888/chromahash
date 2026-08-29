@@ -59,8 +59,8 @@ enum ChromaHashStatus
      */
     CHROMA_HASH_STATUS_NULL_POINTER = 1,
     /**
-     * A buffer length was wrong (rgba != width*height*4, or hash != 32 bytes,
-     * or an output capacity was too small).
+     * A buffer length was wrong (rgba != width*height*4, or an output capacity
+     * was smaller than the hash's byte length).
      */
     CHROMA_HASH_STATUS_INVALID_LENGTH = 2,
     /**
@@ -71,15 +71,21 @@ enum ChromaHashStatus
      * The core panicked or an allocation failed — caught at the boundary.
      */
     CHROMA_HASH_STATUS_INTERNAL = 4,
+    /**
+     * The bytes are not a valid v1 ChromaHash (bad version, tier, reserved bit,
+     * or the length does not match the self-describing header).
+     */
+    CHROMA_HASH_STATUS_INVALID_DATA = 5,
 };
 #ifndef __cplusplus
 typedef int32_t ChromaHashStatus;
 #endif // __cplusplus
 
 /**
- * A 32-byte ChromaHash placeholder. Opaque handle; create with
- * [`chromahash_encode`] or [`chromahash_from_bytes`], release with
- * [`chromahash_free`].
+ * A ChromaHash placeholder. Opaque handle; create with [`chromahash_encode`]
+ * or [`chromahash_from_bytes`], release with [`chromahash_free`]. The encoded
+ * form is variable length (32 bytes at the default tier); query it with
+ * [`chromahash_byte_len`].
  */
 typedef struct ChromaHash ChromaHash;
 
@@ -121,6 +127,12 @@ typedef struct {
     const uint8_t *rgba;
     size_t rgba_len;
     ChromaHashGamut gamut;
+    /**
+     * Quality tier (`0..=CHROMAHASH_MAX_TIER`, ordered by quality). Set it to
+     * `CHROMAHASH_DEFAULT_TIER` for the 32-byte default; a zeroed struct
+     * selects the 21-byte compact tier, not the default.
+     */
+    uint8_t quality;
 } ChromaHashImageInput;
 
 #ifdef __cplusplus
@@ -128,8 +140,30 @@ extern "C" {
 #endif // __cplusplus
 
 /**
- * Encode an RGBA image (4 bytes/pixel) into a 32-byte ChromaHash. On success
- * `*out_hash` receives a new handle to free with [`chromahash_free`].
+ * The lowest quality tier: a 21-byte hash. Tier codes are ordered by quality.
+ */
+extern const uint8_t CHROMAHASH_COMPACT_TIER;
+
+/**
+ * The default quality tier: a 32-byte hash. What [`chromahash_encode`] uses.
+ */
+extern const uint8_t CHROMAHASH_DEFAULT_TIER;
+
+/**
+ * The highest quality tier this build implements. Codes above it are reserved
+ * and rejected with [`ChromaHashStatus::InvalidData`].
+ */
+extern const uint8_t CHROMAHASH_MAX_TIER;
+
+/**
+ * The format generation this build writes and accepts (the `version` field of
+ * byte 0).
+ */
+extern const uint8_t CHROMAHASH_FORMAT_VERSION;
+
+/**
+ * Encode an RGBA image (4 bytes/pixel) into a default-tier (32-byte) ChromaHash. On
+ * success `*out_hash` receives a new handle to free with [`chromahash_free`].
  */
 ChromaHashStatus chromahash_encode(uint32_t width,
                                    uint32_t height,
@@ -139,8 +173,25 @@ ChromaHashStatus chromahash_encode(uint32_t width,
                                    ChromaHash **out_hash);
 
 /**
- * Reconstruct a handle from a raw 32-byte hash. `bytes` must be exactly 32 bytes.
- * On success `*out_hash` receives a new handle to free with [`chromahash_free`].
+ * Encode an RGBA image at an explicit quality tier (`0..=4`, ordered by
+ * quality; `1` is the 32-byte default and `0` the 21-byte compact tier, each
+ * higher code ~4× larger). Rejects an out-of-range tier with
+ * [`ChromaHashStatus::InvalidData`]. On success `*out_hash` receives a new
+ * handle to free with [`chromahash_free`].
+ */
+ChromaHashStatus chromahash_encode_with_quality(uint32_t width,
+                                                uint32_t height,
+                                                const uint8_t *rgba,
+                                                size_t rgba_len,
+                                                ChromaHashGamut gamut,
+                                                uint8_t quality,
+                                                ChromaHash **out_hash);
+
+/**
+ * Reconstruct a handle from a raw v1 hash of `len` bytes. The header is
+ * self-describing, so `len` may be any tier's byte length; malformed bytes are
+ * rejected with [`ChromaHashStatus::InvalidData`]. On success `*out_hash`
+ * receives a new handle to free with [`chromahash_free`].
  */
 ChromaHashStatus chromahash_from_bytes(const uint8_t *bytes, size_t len, ChromaHash **out_hash);
 
@@ -151,16 +202,17 @@ ChromaHashStatus chromahash_from_bytes(const uint8_t *bytes, size_t len, ChromaH
 void chromahash_free(ChromaHash *hash);
 
 /**
- * Copy the raw 32-byte hash into `out_buf`. `out_cap` must be ≥ 32.
+ * The length in bytes of this hash's encoded form (32 at the default tier, more at higher
+ * tiers or when an alpha channel is present). Returns 0 for a NULL handle. Use
+ * it to size the buffer for [`chromahash_as_bytes`].
  */
-ChromaHashStatus chromahash_as_bytes(const ChromaHash *hash, uint8_t *out_buf, size_t out_cap);
+size_t chromahash_byte_len(const ChromaHash *hash);
 
 /**
- * Whether this hash uses the v0.6 bitstream this library implements. Decoding an
- * unsupported hash produces garbage, not an error — check this for hashes of
- * unknown provenance. Returns `false` for a NULL handle.
+ * Copy the raw hash bytes into `out_buf`. `out_cap` must be ≥ the hash's byte
+ * length ([`chromahash_byte_len`]); otherwise [`ChromaHashStatus::InvalidLength`].
  */
-bool chromahash_is_version_supported(const ChromaHash *hash);
+ChromaHashStatus chromahash_as_bytes(const ChromaHash *hash, uint8_t *out_buf, size_t out_cap);
 
 /**
  * Extract the average color without a full decode.
@@ -231,7 +283,8 @@ void chromahash_batch_encoder_free(ChromaHashBatchEncoder *enc);
  * Encode `count` images in parallel. `out_hashes` must point to an array of
  * `count` handle slots; on success each is set to a new handle to free
  * individually with [`chromahash_free`]. On any error no handle is allocated.
- * Output is byte-identical to calling [`chromahash_encode`] on each image.
+ * Output is byte-identical to calling [`chromahash_encode_with_quality`] on
+ * each image at that image's `quality` tier.
  */
 ChromaHashStatus chromahash_batch_encode(ChromaHashBatchEncoder *enc,
                                          const ChromaHashImageInput *items,

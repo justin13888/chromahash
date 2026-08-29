@@ -1,11 +1,17 @@
 import { execFileSync } from "node:child_process";
 import path from "node:path";
-import type { FormatAdapter, FormatResult, ImageInput } from "../types.ts";
 import { rgbaToDataUri } from "../image-loader.ts";
 import { computeAllMetrics, timeMs } from "../metrics.ts";
+import type { FormatAdapter, FormatResult, ImageInput } from "../types.ts";
 
 const ROOT = path.resolve(import.meta.dirname, "../../../..");
-const RUST_CLI = path.join(ROOT, "rust/target/debug/examples/encode_stdin");
+// Release build: published timings must not measure debug-profile overhead.
+// Exported for the sweep runner and codebook trainer, which drive the same
+// binary with CHROMAHASH_TUNE overrides.
+export const RUST_CLI = path.join(
+  ROOT,
+  "rust/target/release/examples/encode_stdin",
+);
 
 const GAMUT_MAP: Record<string, string> = {
   srgb: "srgb",
@@ -15,19 +21,104 @@ const GAMUT_MAP: Record<string, string> = {
   prophoto: "prophoto",
 };
 
-function encodeViaRust(
+/** Env for a chromahash subprocess: quality tier + optional TUNE overrides. */
+function rustEnv(tier: number, tune?: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    CHROMAHASH_TIER: String(tier),
+  };
+  // Never inherit a stray TUNE from the shell — a silent override would
+  // corrupt every non-sweep result. (undefined-valued keys are dropped by
+  // child_process.)
+  env.CHROMAHASH_TUNE = tune;
+  return env;
+}
+
+export function encodeViaRust(
   binary: string,
   w: number,
   h: number,
   rgba: Uint8Array,
   gamut: string,
+  tier: number,
+  tune?: string,
 ): Uint8Array {
   const output = execFileSync(binary, ["encode", String(w), String(h), gamut], {
     input: Buffer.from(rgba),
     encoding: "buffer",
     timeout: 30_000,
+    // The quality tier is read from the environment (decode recovers it from the
+    // hash, so only encode needs it).
+    env: rustEnv(tier, tune),
   });
   return new Uint8Array(output);
+}
+
+/**
+ * Dump the encoder's scale-normalized AC coefficients per channel group
+ * (`dump-coeffs` subcommand). Used by the codebook trainer on the tune split.
+ */
+export function dumpCoefficientsViaRust(
+  binary: string,
+  w: number,
+  h: number,
+  rgba: Uint8Array,
+  gamut: string,
+  tier: number,
+): { l: number[]; a: number[]; b: number[]; alpha: number[] } {
+  const output = execFileSync(
+    binary,
+    ["dump-coeffs", String(w), String(h), gamut],
+    {
+      input: Buffer.from(rgba),
+      encoding: "utf8",
+      timeout: 60_000,
+      maxBuffer: 64 * 1024 * 1024,
+      env: rustEnv(tier),
+    },
+  );
+  const dump: { l: number[]; a: number[]; b: number[]; alpha: number[] } = {
+    l: [],
+    a: [],
+    b: [],
+    alpha: [],
+  };
+  for (const line of output.split("\n")) {
+    if (!line) continue;
+    const space = line.indexOf(" ");
+    const group = line.slice(0, space) as keyof typeof dump;
+    const value = Number.parseFloat(line.slice(space + 1));
+    if (dump[group] && Number.isFinite(value)) {
+      dump[group].push(value);
+    }
+  }
+  return dump;
+}
+
+/**
+ * In-process timing via the `bench-encode`/`bench-decode` subcommands: one spawn
+ * runs `iters` iterations inside the binary and prints mean ns/op, so the
+ * measurement excludes process-spawn overhead and is comparable to the npm
+ * formats that run in-process. Requires a current binary (old version tags lack
+ * the subcommands — those adapters use spawn-loop timing instead).
+ */
+function benchViaRust(
+  binary: string,
+  args: string[],
+  input: Uint8Array,
+  tier: number,
+): number {
+  const output = execFileSync(binary, args, {
+    input: Buffer.from(input),
+    encoding: "utf8",
+    timeout: 120_000,
+    env: rustEnv(tier),
+  });
+  const nsPerOp = Number.parseInt(output.trim(), 10);
+  if (!Number.isFinite(nsPerOp)) {
+    throw new Error(`bench subcommand returned non-numeric output: ${output}`);
+  }
+  return nsPerOp / 1e6; // ns → ms
 }
 
 /**
@@ -40,12 +131,13 @@ const PREVIEW_OUTPUT: Record<string, { out: string; icc?: string }> = {
   displayp3: { out: "displayp3", icc: "p3" },
 };
 
-function decodeViaRust(
+export function decodeViaRust(
   binary: string,
   hash: Uint8Array,
   outGamut: string,
   maxW?: number,
   maxH?: number,
+  tune?: string,
 ): {
   w: number;
   h: number;
@@ -59,7 +151,7 @@ function decodeViaRust(
     input: Buffer.from(hash),
     encoding: "buffer",
     timeout: 30_000,
-    env: { ...process.env, CHROMAHASH_OUT: outGamut },
+    env: { ...rustEnv(0, tune), CHROMAHASH_OUT: outGamut },
   });
   const newline = output.indexOf(0x0a);
   const header = output.subarray(0, newline).toString("ascii");
@@ -76,24 +168,36 @@ export class ChromaHashAdapter implements FormatAdapter {
   private readonly binaryPath: string;
   /** Cap the decode to source dims (true), or decode uncapped (false). */
   private readonly capToSource: boolean;
+  /** Quality tier (0..=3); higher tiers carry more detail in more bytes. */
+  private readonly tier: number;
+  /** Time via in-process bench subcommands (true) or spawn loops (false). */
+  private readonly benchTiming: boolean;
 
   /**
    * @param opts.name        Display name (default "ChromaHash").
    * @param opts.binaryPath  Version-specific `encode_stdin` binary (default: the
-   *   working tree's debug build). A version must encode and decode with the same
+   *   working tree's release build). A version must encode and decode with the same
    *   binary — hashes are not portable across format versions (header bit 47).
    * @param opts.capToSource Cap decode to source dims (default true). The version
    *   report decodes uncapped (false) so every build is framed identically — the
    *   oldest tags lack capped-decode support, and metrics resample to source anyway.
+   * @param opts.benchTiming Time via the binary's in-process bench subcommands
+   *   (default true; spawn overhead excluded). The version report passes false —
+   *   old tag binaries predate the subcommands, and cross-column comparability
+   *   matters more there than absolute numbers.
    */
   constructor(opts?: {
     name?: string;
     binaryPath?: string;
     capToSource?: boolean;
+    tier?: number;
+    benchTiming?: boolean;
   }) {
     this.name = opts?.name ?? "ChromaHash";
     this.binaryPath = opts?.binaryPath ?? RUST_CLI;
     this.capToSource = opts?.capToSource ?? true;
+    this.tier = opts?.tier ?? 0;
+    this.benchTiming = opts?.benchTiming ?? true;
   }
 
   async process(input: ImageInput, iterations: number): Promise<FormatResult> {
@@ -101,25 +205,43 @@ export class ChromaHashAdapter implements FormatAdapter {
     const gamut = GAMUT_MAP[input.gamut ?? "srgb"] ?? "srgb";
     const bin = this.binaryPath;
 
-    // Encode once to get result, then time the operation
-    const encoded = encodeViaRust(bin, w, h, rgba, gamut);
-    const encodeTimeMs = await timeMs(() => {
-      encodeViaRust(bin, w, h, rgba, gamut);
-    }, iterations);
+    // Encode once to get the result bytes, then time the operation.
+    const encoded = encodeViaRust(bin, w, h, rgba, gamut, this.tier);
+    const encodeTimeMs = this.benchTiming
+      ? benchViaRust(
+          bin,
+          ["bench-encode", String(w), String(h), gamut, String(iterations)],
+          rgba,
+          this.tier,
+        )
+      : await timeMs(() => {
+          encodeViaRust(bin, w, h, rgba, gamut, this.tier);
+        }, iterations);
 
     const encodedSizeBytes = encoded.length;
 
-    // Decode (capped to source dims so metrics are computed at source resolution,
-    // which avoids penalising ChromaHash for synthesising detail beyond the source).
-    // `computeAllMetrics` resamples the decode to source either way.
+    // Decode capped to the encoder-input dims (never upscaling past the source,
+    // and never synthesising detail beyond it); `computeAllMetrics` upscales
+    // every format's decode to the display-resolution reference for scoring.
     const capW = this.capToSource ? w : undefined;
     const capH = this.capToSource ? h : undefined;
     // Metrics are always scored in sRGB against the color-managed sRGB reference,
     // so the cross-format comparison stays apples-to-apples.
     const decoded = decodeViaRust(bin, encoded, "srgb", capW, capH);
-    const decodeTimeMs = await timeMs(() => {
-      decodeViaRust(bin, encoded, "srgb", capW, capH);
-    }, iterations);
+    const capArgs =
+      capW !== undefined && capH !== undefined
+        ? [String(capW), String(capH)]
+        : [];
+    const decodeTimeMs = this.benchTiming
+      ? benchViaRust(
+          bin,
+          ["bench-decode", String(iterations), ...capArgs],
+          encoded,
+          this.tier,
+        )
+      : await timeMs(() => {
+          decodeViaRust(bin, encoded, "srgb", capW, capH);
+        }, iterations);
 
     const { w: dw, h: dh, rgba: decodedRgba } = decoded;
 
@@ -137,11 +259,11 @@ export class ChromaHashAdapter implements FormatAdapter {
       preview?.icc,
     );
 
-    const reference = input.metricReferenceRgba ?? rgba;
-    const metrics = await computeAllMetrics(
+    const reference = input.metricReferenceRgba ?? input.referenceRgba;
+    const scores = await computeAllMetrics(
       reference,
-      w,
-      h,
+      input.referenceWidth,
+      input.referenceHeight,
       decodedRgba,
       dw,
       dh,
@@ -155,7 +277,7 @@ export class ChromaHashAdapter implements FormatAdapter {
       encodeTimeMs,
       decodeTimeMs,
       dataUri,
-      metrics,
+      ...scores,
     };
   }
 }

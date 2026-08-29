@@ -37,6 +37,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 
 	chromahash "github.com/visualcommons/chromahash/go"
 )
@@ -51,9 +52,14 @@ func main() {
 	hash := chromahash.Encode(2, 2, rgba, chromahash.GamutSRGB)
 	fmt.Printf("hash: %x\n", hash.Hash) // 32 bytes
 
-	// Reconstruct a preview. Decode() targets sRGB; DecodeTo() can render to
-	// Display P3 or Adobe RGB instead.
-	w, h, preview := chromahash.FromBytes(hash.Hash).Decode()
+	// Reconstruct a preview. FromBytes validates the header up front, so a
+	// ChromaHash that comes back is guaranteed to decode. Decode() targets
+	// sRGB; DecodeTo() can render to Display P3 or Adobe RGB instead.
+	decoded, err := chromahash.FromBytes(hash.Hash)
+	if err != nil {
+		log.Fatal(err)
+	}
+	w, h, preview := decoded.Decode()
 	fmt.Printf("decoded %dx%d, %d bytes\n", w, h, len(preview))
 }
 ```

@@ -2,14 +2,14 @@
 /// Run with: cargo test --manifest-path rust/Cargo.toml -- generate_test_vectors --nocapture --ignored
 #[cfg(test)]
 mod tests {
-    use crate::ChromaHash;
     use crate::aspect::{decode_aspect, decode_output_size, encode_aspect};
     use crate::bitpack::{read_bits, write_bits};
     use crate::color::{gamma_rgb_to_oklab, linear_rgb_to_oklab, oklab_to_linear_srgb};
-    use crate::constants::{Gamut, Tunables};
-    use crate::dct::select_coefficients;
+    use crate::constants::{COMPACT_TIER, DEFAULT_TIER, Gamut, Tunables, ac_shape};
+    use crate::dct::SelectionOrder;
     use crate::math_utils::{cbrt_halley, cbrt_signed};
     use crate::mulaw::{mu_compress, mu_expand, mu_law_dequantize, mu_law_quantize};
+    use crate::{ChromaHash, MAX_TIER};
 
     fn solid_image(w: u32, h: u32, r: u8, g: u8, b: u8, a: u8) -> Vec<u8> {
         let n = (w * h) as usize;
@@ -175,18 +175,28 @@ mod tests {
             std::fs::write(spec_dir.join("unit-mulaw.json"), json).unwrap();
         }
 
-        // --- unit-selection.json (v0.6: replaces deriveGrid + scan order) ---
-        // Enumerate unique (W, H, K) selections across all 256 aspect bytes for
-        // every K the format uses, derived from the shipped layout so the list
-        // cannot drift: chroma (9), alpha (5), L alpha-mode (20), L (27).
+        // --- unit-selection.json (v1: top-K isotropic selection) ---
+        // Enumerate unique (W, H, K) selections across all 256 aspect bytes at
+        // tier 0 for every K the format uses, derived from the tier-0 shape so
+        // the list cannot drift: chroma (15), alpha (5), L alpha-mode (20),
+        // L (28). Higher tiers reuse the same ordering on a larger grid; that
+        // grid scaling is pinned by unit-aspect, and higher-tier selection is
+        // exercised end-to-end by the integration-decode-capped vectors.
+        //
+        // Each (W, H, K) is emitted twice: once with the weights zeroed (the
+        // bare priority order) and once with the shipped weights of §6.2,
+        // which is the order the format actually transmits in. The two together
+        // pin both halves of `selection_key`.
         {
-            let lay = Tunables::DEFAULT.layout;
+            let t0 = Tunables::DEFAULT;
+            let s0 = ac_shape(&t0, false, DEFAULT_TIER);
+            let sa = ac_shape(&t0, true, DEFAULT_TIER);
             let mut ks: Vec<usize> = vec![
-                crate::constants::ALPHA_AC_COUNT,
-                lay.c_count,
-                lay.ca_count,
-                lay.la_tiers[0].0 + lay.la_tiers[1].0,
-                lay.l_tiers[0].0 + lay.l_tiers[1].0,
+                sa.alpha_ac_count,
+                s0.c_count,
+                sa.c_count,
+                sa.l_count(),
+                s0.l_count(),
             ];
             ks.sort_unstable();
             ks.dedup();
@@ -195,25 +205,29 @@ mod tests {
             let mut seen = std::collections::BTreeSet::new();
 
             for byte in 0u8..=255 {
-                let (dw, dh) = decode_output_size(byte);
+                let (dw, dh) = decode_output_size(byte, DEFAULT_TIER);
                 for &k in &ks {
                     let key = (dw, dh, k);
                     if seen.insert(key) {
-                        let sel = select_coefficients(byte, k);
-                        let pairs: Vec<String> = sel
-                            .coeffs
-                            .iter()
-                            .map(|&(cx, cy)| format!("[{cx},{cy}]"))
-                            .collect();
-                        cases.push(format!(
-                            r#"  {{
-    "name": "selection_w{dw}h{dh}_k{k}",
-    "input": {{ "aspect_byte": {byte}, "k": {k} }},
+                        for (suffix, aniso, hv) in
+                            [("", 0.0, 0.0), ("_w", t0.aniso_oblique, t0.sel_hv)]
+                        {
+                            let sel = SelectionOrder::new(byte, DEFAULT_TIER, aniso, hv).take(k);
+                            let pairs: Vec<String> = sel
+                                .coeffs
+                                .iter()
+                                .map(|&(cx, cy)| format!("[{cx},{cy}]"))
+                                .collect();
+                            cases.push(format!(
+                                r#"  {{
+    "name": "selection_w{dw}h{dh}_k{k}{suffix}",
+    "input": {{ "aspect_byte": {byte}, "tier": {DEFAULT_TIER}, "k": {k}, "aniso": {aniso}, "hv": {hv} }},
     "expected": {{ "coeffs": [{}], "p_k": {} }}
   }}"#,
-                            pairs.join(","),
-                            sel.p_k,
-                        ));
+                                pairs.join(","),
+                                sel.p_k,
+                            ));
+                        }
                     }
                 }
             }
@@ -237,11 +251,17 @@ mod tests {
             ] {
                 let byte = encode_aspect(w, h);
                 let decoded_ratio = decode_aspect(byte);
-                let (dw, dh) = decode_output_size(byte);
-                cases.push(format!(
-                    r#"  {{
-    "name": "aspect_{label}",
-    "input": {{ "width": {w}, "height": {h} }},
+                // Natural size scales by 2^level on each axis (long edge 32·2^level),
+                // where level is the tier's *render level*. The compact tier is
+                // included deliberately: its size is the half of the render-level
+                // rule that no length check can catch, because the byte length
+                // depends only on the coefficient counts.
+                for tier in 0..=MAX_TIER {
+                    let (dw, dh) = decode_output_size(byte, tier);
+                    cases.push(format!(
+                        r#"  {{
+    "name": "aspect_{label}_t{tier}",
+    "input": {{ "width": {w}, "height": {h}, "tier": {tier} }},
     "expected": {{
       "byte": {byte},
       "decoded_ratio": {decoded_ratio},
@@ -249,7 +269,8 @@ mod tests {
       "output_height": {dh}
     }}
   }}"#,
-                ));
+                    ));
+                }
             }
             let json = format!("[\n{}\n]\n", cases.join(",\n"));
             std::fs::write(spec_dir.join("unit-aspect.json"), json).unwrap();
@@ -449,10 +470,22 @@ mod tests {
                 ),
             ];
 
+            // Every image is pinned at tier 0; a representative subset (gradients,
+            // alpha, a solid) is also pinned at tiers 1..=3 so the quality
+            // multiplier's encode path is exercised end to end. The subset uses
+            // only small sources — the hash size is tier-driven, so there is no
+            // need to re-emit a large RGBA input once per tier.
+            let higher_tier_images = [
+                "gradient_16x16",
+                "gradient_8x4",
+                "checkerboard_alpha_8x8",
+                "solid_red_4x4",
+            ];
             for (name, w, h, rgba, gamut) in &test_images {
-                let hash = ChromaHash::encode(*w, *h, rgba, *gamut);
-                let bytes: Vec<String> = hash.as_bytes().iter().map(|b| b.to_string()).collect();
-                let avg = hash.average_color();
+                let mut tiers = vec![COMPACT_TIER, DEFAULT_TIER];
+                if higher_tier_images.contains(name) {
+                    tiers.extend((DEFAULT_TIER + 1)..=MAX_TIER);
+                }
                 let rgba_str: Vec<String> = rgba.iter().map(|b| b.to_string()).collect();
                 let gamut_name = match gamut {
                     Gamut::Srgb => "sRGB",
@@ -461,19 +494,25 @@ mod tests {
                     Gamut::Bt2020 => "BT.2020",
                     Gamut::ProPhotoRgb => "ProPhoto RGB",
                 };
-                cases.push(format!(
-                    r#"  {{
-    "name": "{name}",
-    "input": {{ "width": {w}, "height": {h}, "gamut": "{gamut_name}", "rgba": [{rgba_list}] }},
+                for tier in tiers {
+                    let hash = ChromaHash::encode_with_quality(*w, *h, rgba, *gamut, tier);
+                    let bytes: Vec<String> =
+                        hash.as_bytes().iter().map(|b| b.to_string()).collect();
+                    let avg = hash.average_color();
+                    cases.push(format!(
+                        r#"  {{
+    "name": "{name}_t{tier}",
+    "input": {{ "width": {w}, "height": {h}, "gamut": "{gamut_name}", "tier": {tier}, "rgba": [{rgba_list}] }},
     "expected": {{ "hash": [{hash_list}], "average_color": [{},{},{},{}] }}
   }}"#,
-                    avg[0],
-                    avg[1],
-                    avg[2],
-                    avg[3],
-                    rgba_list = rgba_str.join(","),
-                    hash_list = bytes.join(","),
-                ));
+                        avg[0],
+                        avg[1],
+                        avg[2],
+                        avg[3],
+                        rgba_list = rgba_str.join(","),
+                        hash_list = bytes.join(","),
+                    ));
+                }
             }
             let json = format!("[\n{}\n]\n", cases.join(",\n"));
             std::fs::write(spec_dir.join("integration-encode.json"), json).unwrap();
@@ -565,13 +604,19 @@ mod tests {
         {
             let mut cases = Vec::new();
 
-            let capped_cases: Vec<(&str, u32, u32, Vec<u8>, Gamut, u32, u32)> = vec![
+            // (name, w, h, rgba, gamut, tier, max_w, max_h). Higher-tier hashes
+            // are capped to small rasters: the decode still reads the whole
+            // tier-scaled AC payload (pinning higher-tier selection + bit offsets
+            // cross-language) while keeping the pixel output small.
+            #[allow(clippy::type_complexity)]
+            let capped_cases: Vec<(&str, u32, u32, Vec<u8>, Gamut, u8, u32, u32)> = vec![
                 (
                     "strip_1x100_capped_1x100",
                     1,
                     100,
                     strip_gradient(1, 100),
                     Gamut::Srgb,
+                    0,
                     1,
                     100,
                 ),
@@ -581,6 +626,7 @@ mod tests {
                     1,
                     strip_gradient(100, 1),
                     Gamut::Srgb,
+                    0,
                     100,
                     1,
                 ),
@@ -590,6 +636,7 @@ mod tests {
                     1,
                     solid_image(1, 1, 200, 100, 50, 255),
                     Gamut::Srgb,
+                    0,
                     1,
                     1,
                 ),
@@ -599,6 +646,7 @@ mod tests {
                     16,
                     gradient_image(16, 16),
                     Gamut::Srgb,
+                    0,
                     8,
                     8,
                 ),
@@ -608,6 +656,7 @@ mod tests {
                     50,
                     gradient_image(200, 50),
                     Gamut::Srgb,
+                    0,
                     16,
                     4,
                 ),
@@ -618,13 +667,45 @@ mod tests {
                     16,
                     gradient_image(16, 16),
                     Gamut::Srgb,
+                    0,
                     64,
                     64,
                 ),
+                // Higher tiers, capped small: exercise the tier-scaled AC read.
+                (
+                    "gradient_16x16_t2_capped_16x16",
+                    16,
+                    16,
+                    gradient_image(16, 16),
+                    Gamut::Srgb,
+                    2,
+                    16,
+                    16,
+                ),
+                (
+                    "checkerboard_alpha_8x8_t1_capped_16x16",
+                    8,
+                    8,
+                    checkerboard_alpha(8, 8),
+                    Gamut::Srgb,
+                    1,
+                    16,
+                    16,
+                ),
+                (
+                    "gradient_200x50_t3_capped_16x4",
+                    200,
+                    50,
+                    gradient_image(200, 50),
+                    Gamut::Srgb,
+                    3,
+                    16,
+                    4,
+                ),
             ];
 
-            for (name, w, h, rgba, gamut, max_w, max_h) in &capped_cases {
-                let hash = ChromaHash::encode(*w, *h, rgba, *gamut);
+            for (name, w, h, rgba, gamut, tier, max_w, max_h) in &capped_cases {
+                let hash = ChromaHash::encode_with_quality(*w, *h, rgba, *gamut, *tier);
                 let (dw, dh, decoded_rgba) = hash.decode_capped(*max_w, *max_h);
                 let bytes: Vec<String> = hash.as_bytes().iter().map(|b| b.to_string()).collect();
                 let decoded_str: Vec<String> = decoded_rgba.iter().map(|b| b.to_string()).collect();
@@ -642,6 +723,298 @@ mod tests {
             std::fs::write(spec_dir.join("integration-decode-capped.json"), json).unwrap();
         }
 
+        // --- unit-validate.json (v1: from_bytes is the decodability check) ---
+        // A structurally valid hash is guaranteed decodable; from_bytes rejects
+        // anything malformed early. Pin the accept/reject decision (the Debug name
+        // of ChromaHashError, or "ok") for representative valid and corrupt inputs
+        // so every language's validation agrees.
+        {
+            let mut cases = Vec::new();
+            let valid =
+                ChromaHash::encode(4, 4, &solid_image(4, 4, 128, 128, 128, 255), Gamut::Srgb);
+            let valid_alpha =
+                ChromaHash::encode(4, 4, &solid_image(4, 4, 200, 60, 40, 128), Gamut::Srgb);
+            let valid_t2 =
+                ChromaHash::encode_with_quality(16, 16, &gradient_image(16, 16), Gamut::Srgb, 3);
+            // Both compact modes are pinned: the compact tier is code 0, so a
+            // decoder that treats 0 as the 32-byte default mis-reads its length
+            // instead of rejecting it, and must be caught here.
+            let valid_compact = ChromaHash::encode_with_quality(
+                4,
+                4,
+                &solid_image(4, 4, 128, 128, 128, 255),
+                Gamut::Srgb,
+                COMPACT_TIER,
+            );
+            let valid_compact_alpha = ChromaHash::encode_with_quality(
+                4,
+                4,
+                &solid_image(4, 4, 200, 60, 40, 128),
+                Gamut::Srgb,
+                COMPACT_TIER,
+            );
+
+            let base: Vec<u8> = valid.as_bytes().to_vec();
+            let mut bad_version = base.clone();
+            bad_version[0] = (bad_version[0] & !0b111) | 1; // version 1 (unsupported)
+            // The first code that is still reserved. The codes are ordered by
+            // quality, so `MAX_TIER + 1` is exactly that code.
+            let mut bad_tier = base.clone();
+            bad_tier[0] = (bad_tier[0] & !(0b111 << 3)) | ((MAX_TIER + 1) << 3);
+            let mut reserved = base.clone();
+            reserved[0] |= 1 << 7; // reserved bit set
+            let mut too_long = base.clone();
+            too_long.push(0); // one byte too many
+            let truncated = base[..base.len() - 1].to_vec(); // one byte short
+            let tiny = base[..3].to_vec(); // shorter than the fixed header
+
+            let inputs: Vec<(&str, Vec<u8>)> = vec![
+                ("valid_default", base.clone()),
+                ("valid_default_alpha", valid_alpha.as_bytes().to_vec()),
+                ("valid_tier3", valid_t2.as_bytes().to_vec()),
+                ("valid_compact", valid_compact.as_bytes().to_vec()),
+                (
+                    "valid_compact_alpha",
+                    valid_compact_alpha.as_bytes().to_vec(),
+                ),
+                ("empty", Vec::new()),
+                ("tiny", tiny),
+                ("truncated_by_one", truncated),
+                ("one_byte_too_long", too_long),
+                ("bad_version", bad_version),
+                ("bad_tier", bad_tier),
+                ("reserved_bit_set", reserved),
+            ];
+
+            for (name, bytes) in &inputs {
+                let result = match ChromaHash::from_bytes(bytes) {
+                    Ok(_) => "ok".to_string(),
+                    Err(e) => format!("{e:?}"),
+                };
+                let list: Vec<String> = bytes.iter().map(|b| b.to_string()).collect();
+                cases.push(format!(
+                    r#"  {{
+    "name": "{name}",
+    "input": {{ "bytes": [{}] }},
+    "expected": {{ "result": "{result}" }}
+  }}"#,
+                    list.join(","),
+                ));
+            }
+            let json = format!("[\n{}\n]\n", cases.join(",\n"));
+            std::fs::write(spec_dir.join("unit-validate.json"), json).unwrap();
+        }
+
         eprintln!("Test vectors generated in {:?}", spec_dir);
+    }
+
+    // ── Read the generated vectors back ───────────────────────────────────────
+    //
+    // Four of the unit vector files — bitpack, cbrt, color, mulaw — were written
+    // by the generator above and then read by nothing: not this crate, not
+    // `spec/validate.py`, not any binding. (`unit-aspect` and `unit-selection`
+    // are consumed by `spec/validate.py`; `unit-validate` by
+    // `tests/spec_vectors.rs`.) A committed file nobody asserts against is not a
+    // test — it is a snapshot that regenerates silently.
+    //
+    // These read them back through the same kernels. That does not make the
+    // vectors an independent oracle — the crate is the reference — but it does
+    // turn "someone regenerated the vectors" from an invisible event into a
+    // failing test, which is exactly the guarantee `tests/spec_vectors.rs`
+    // already gives the integration vectors.
+    //
+    // Gated on `spec-vectors` for the same reason that test target is: the
+    // cargo-mutants sweep builds this crate in isolation, without the sibling
+    // `spec/` directory, so `include_str!` could not resolve there.
+    #[cfg(feature = "spec-vectors")]
+    mod read_back {
+        use super::*;
+        use serde_json::Value;
+
+        macro_rules! vectors {
+            ($name:literal) => {{
+                let raw = include_str!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../spec/test-vectors/",
+                    $name
+                ));
+                let parsed: Value = serde_json::from_str(raw)
+                    .unwrap_or_else(|e| panic!("{} is not valid JSON: {e}", $name));
+                let cases = parsed
+                    .as_array()
+                    .unwrap_or_else(|| panic!("{} should be a JSON array", $name))
+                    .clone();
+                assert!(!cases.is_empty(), "{} is empty", $name);
+                cases
+            }};
+        }
+
+        fn f64_at(v: &Value) -> f64 {
+            v.as_f64().expect("expected a JSON number")
+        }
+
+        /// Bit fields must round-trip at every position and width the format
+        /// uses, including the ones that straddle a byte boundary.
+        ///
+        /// Every vector has `read_back == value`, so replaying them alone would
+        /// only assert `read(write(x)) == x` — true of any self-consistent pair
+        /// of functions, including one that packed bits in the wrong order.
+        /// The *placement* is asserted separately below, against the byte
+        /// layout the format defines.
+        #[test]
+        fn unit_bitpack_vectors() {
+            let cases = vectors!("unit-bitpack.json");
+            for case in &cases {
+                let name = case["name"].as_str().unwrap_or("<unnamed>");
+                let pos = case["input"]["bitpos"].as_u64().expect("bitpos") as usize;
+                let count = case["input"]["count"].as_u64().expect("count") as u32;
+                let value = case["input"]["value"].as_u64().expect("value") as u32;
+                let expected = case["expected"]["read_back"].as_u64().expect("read_back") as u32;
+
+                let mut buf = [0u8; 32];
+                write_bits(&mut buf, pos, count, value);
+                assert_eq!(read_bits(&buf, pos, count), expected, "{name}");
+
+                // The written bits must land where the *spec* says, not merely
+                // where `read_bits` looks for them. §12.6 is explicit: bit `i`
+                // of the value goes to bit `(bitpos + i) % 8` of byte
+                // `(bitpos + i) / 8` — LSB-first within each byte. This is
+                // transcribed from the spec pseudocode, deliberately not from
+                // `bitpack.rs`, so it is a second opinion rather than an echo.
+                let mut expected_buf = [0u8; 32];
+                for i in 0..count as usize {
+                    if (value >> i) & 1 == 1 {
+                        expected_buf[(pos + i) / 8] |= 1 << ((pos + i) % 8);
+                    }
+                }
+                assert_eq!(buf, expected_buf, "{name}: byte layout");
+            }
+        }
+
+        /// The Halley cube root is the hot path in the Oklab transform. The
+        /// vectors carry the ULP distance to the reference at generation time;
+        /// reproduce the value exactly and stay within that distance.
+        #[test]
+        fn unit_cbrt_vectors() {
+            let cases = vectors!("unit-cbrt.json");
+            for case in &cases {
+                let name = case["name"].as_str().unwrap_or("<unnamed>");
+                let x = f64_at(&case["input"]);
+                let expected = f64_at(&case["expected"]);
+                let max_ulp = case["max_ulp_error"].as_u64().expect("max_ulp_error");
+
+                let got = cbrt_halley(x);
+                assert_eq!(
+                    got.to_bits(),
+                    expected.to_bits(),
+                    "{name}: cbrt_halley({x})"
+                );
+
+                let reference = cbrt_signed(x);
+                if x != 0.0 && got.is_sign_negative() == reference.is_sign_negative() {
+                    assert!(
+                        got.to_bits().abs_diff(reference.to_bits()) <= max_ulp.max(1),
+                        "{name}: {got} is more than {max_ulp} ULP from {reference}"
+                    );
+                }
+            }
+        }
+
+        /// The Oklab transform and its inverse, per gamut. Bit-exact: these are
+        /// the numbers every other implementation must reproduce.
+        #[test]
+        fn unit_color_vectors() {
+            let cases = vectors!("unit-color.json");
+            for case in &cases {
+                let name = case["name"].as_str().unwrap_or("<unnamed>");
+                let gamut = match case["input"]["gamut"].as_str().expect("gamut") {
+                    "sRGB" => Gamut::Srgb,
+                    "Display P3" => Gamut::DisplayP3,
+                    "Adobe RGB" => Gamut::AdobeRgb,
+                    "BT.2020" => Gamut::Bt2020,
+                    "ProPhoto RGB" => Gamut::ProPhotoRgb,
+                    other => panic!("{name}: unknown gamut {other:?}"),
+                };
+                let triple = |v: &Value| -> [f64; 3] {
+                    let a = v.as_array().expect("expected a 3-element array");
+                    [f64_at(&a[0]), f64_at(&a[1]), f64_at(&a[2])]
+                };
+
+                let lab = if let Some(linear) = case["input"].get("linear_rgb") {
+                    linear_rgb_to_oklab(triple(linear), gamut)
+                } else {
+                    let rgb = triple(&case["input"]["gamma_rgb"]);
+                    gamma_rgb_to_oklab(rgb[0], rgb[1], rgb[2], gamut)
+                };
+                let expected_lab = triple(&case["expected"]["oklab"]);
+                for c in 0..3 {
+                    assert_eq!(
+                        lab[c].to_bits(),
+                        expected_lab[c].to_bits(),
+                        "{name}: oklab[{c}]"
+                    );
+                }
+
+                if let Some(rt) = case["expected"].get("roundtrip_srgb") {
+                    let got = oklab_to_linear_srgb(lab);
+                    let expected_rt = triple(rt);
+                    for c in 0..3 {
+                        assert_eq!(
+                            got[c].to_bits(),
+                            expected_rt[c].to_bits(),
+                            "{name}: roundtrip_srgb[{c}]"
+                        );
+                    }
+                }
+            }
+        }
+
+        /// The µ-law companding quantizer, at both µ values the format uses and
+        /// every bit width — including the never-written top code, which must
+        /// clamp rather than run off the end of the level table.
+        #[test]
+        fn unit_mulaw_vectors() {
+            let cases = vectors!("unit-mulaw.json");
+            for case in &cases {
+                let name = case["name"].as_str().unwrap_or("<unnamed>");
+                let input = &case["input"];
+                let expected = &case["expected"];
+                let bits = input["bits"].as_u64().expect("bits") as u32;
+                let mu = f64_at(&input["mu"]);
+
+                // Top-code cases carry only an index; value cases carry the rest.
+                if let Some(index) = input.get("index") {
+                    let i = index.as_u64().expect("index") as u32;
+                    assert_eq!(
+                        mu_law_dequantize(i, bits, mu).to_bits(),
+                        f64_at(&expected["dequantized"]).to_bits(),
+                        "{name}: dequantize"
+                    );
+                    continue;
+                }
+
+                let v = f64_at(&input["value"]);
+                assert_eq!(
+                    mu_compress(v, mu).to_bits(),
+                    f64_at(&expected["compressed"]).to_bits(),
+                    "{name}: compress"
+                );
+                assert_eq!(
+                    mu_expand(mu_compress(v, mu), mu).to_bits(),
+                    f64_at(&expected["expanded"]).to_bits(),
+                    "{name}: expand"
+                );
+                assert_eq!(
+                    mu_law_quantize(v, bits, mu) as u64,
+                    expected["quantized"].as_u64().expect("quantized"),
+                    "{name}: quantize"
+                );
+                assert_eq!(
+                    mu_law_dequantize(mu_law_quantize(v, bits, mu), bits, mu).to_bits(),
+                    f64_at(&expected["dequantized"]).to_bits(),
+                    "{name}: dequantize"
+                );
+            }
+        }
     }
 }
