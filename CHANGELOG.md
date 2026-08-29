@@ -146,6 +146,7 @@ the format version via producer-side metadata. See `spec/README.md` §2.5 for de
 - Name tiers by code, not byte budget
 - **spec**: Correct EXPERIMENTS.md against the sweeps that produced it
 - Correct TESTING.md against reality and surface the release blockers
+- Record what the mutation sweep taught about its own configuration
 
 <!-- git-cliff-unreleased-end -->
 
