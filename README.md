@@ -25,8 +25,7 @@ chromahash is a multi-language library implementing a compact, high-fidelity Low
 > npm has not published yet (0.7.1 is the first release under the
 > `@visualcommons` scope); and † the JVM/Android artifacts are still on Maven
 > Central under the pre-rename `io.github.justin13888` coordinates —
-> `io.github.visualcommons` takes over from 0.7.1. See
-> [`RELEASING.md`](RELEASING.md#one-time-registry-bootstrap).
+> `io.github.visualcommons` takes over from 0.7.1.
 
 ## Why ChromaHash?
 
@@ -54,10 +53,6 @@ Install all pinned tools via [mise](https://mise.jdx.dev/):
 mise install
 ```
 
-This installs: Node 24, Gradle 9.4.0, Swift 6.2.4, Go 1.24, Python 3.13, .NET 9, plus the
-[git-cliff](https://git-cliff.org/) (changelog), [convco](https://convco.github.io/)
-(conventional-commit lint) and [hk](https://hk.jdx.dev/) (git hooks) developer tools.
-
 mise also runs the cross-language tasks — there is no separate task runner to
 install. `mise tasks` lists them.
 
@@ -81,125 +76,6 @@ Install git hooks (hk comes from `mise install` above; this registers it with gi
 
 ```bash
 hk install
-```
-
-### Tool versions
-
-All tool versions are pinned in [`.mise.toml`](.mise.toml).
-
-| Tool     | Version |
-| -------- | ------- |
-| Node.js  | 24      |
-| Gradle   | 9.4.0   |
-| Swift    | 6.2.4   |
-| Go       | 1.24    |
-| Python   | 3.13    |
-| .NET     | 9       |
-| git-cliff | 2.13.1 |
-| convco   | 0.6.4   |
-| hk       | 1.56.1  |
-
-Rust is managed via [`rust/rust-toolchain.toml`](rust/rust-toolchain.toml) (stable channel).
-
-## Development
-
-### Cross-language commands
-
-All tasks run through [mise](https://mise.jdx.dev/tasks/):
-
-```bash
-mise tasks               # list every task
-mise run format          # format all implementations
-mise run lint            # lint all implementations
-mise run test            # test all implementations
-mise run build           # build all implementations
-mise run format:check    # check formatting everywhere, without writing
-mise run lint:fix        # auto-fix lint errors everywhere
-mise run compare         # generate LQIP comparison report
-mise run compare:versions # local-only: compare chromahash format versions (v0.2–v0.6 + current)
-mise run benchmark       # run performance benchmark
-mise run mutants:rust    # mutation-test the core Rust crate (cargo-mutants; see TESTING.md)
-mise run changelog       # regenerate the [Unreleased] CHANGELOG section from commits
-mise run release X.Y.Z   # cut a release section in the CHANGELOG (see RELEASING.md)
-```
-
-### Per-language commands
-
-Task names are `<verb>[:<qualifier>]:<target>`, so a glob selects a whole verb
-or a whole language:
-
-```bash
-mise run format:check:rust  / mise run format:rust  / mise run lint:rust  / mise run test:rust  / mise run build:rust
-mise run 'test:*'           # every per-language test task
-mise run 'format:check:*'   # every per-language format check
-```
-
-`<target>` is one of `rust`, `c`, `ts`, `wasm`, `jvm`, `swift`, `go`, `python`,
-`csharp`, `android`, plus the `compare`, `benchmark`, `thumbhash` and `gamutref`
-tooling crates. Run `mise tasks` for the full list with descriptions.
-
-### Formatting & linting tools
-
-| Language   | Formatter      | Linter                    |
-| ---------- | -------------- | ------------------------- |
-| Rust       | rustfmt        | Clippy                    |
-| C / WASM   | rustfmt        | Clippy                    |
-| TypeScript | Biome          | Biome                     |
-| Java/Kotlin | ktlint        | ktlint                    |
-| Swift      | swift-format   | swift-format              |
-| Go         | gofmt          | go vet                    |
-| Python     | Ruff           | Ruff                      |
-| C#         | dotnet-format  | build -warnaserror        |
-
-## CI
-
-GitHub Actions runs a separate workflow per language, triggered only when files in that implementation's directory change. One repo-wide workflow, [ci-commits](.github/workflows/ci-commits.yml), runs on every PR and validates that each commit (and the PR title, for squash merges) is a conventional commit.
-
-| Workflow                                             | Trigger path                          |
-| ---------------------------------------------------- | ------------------------------------- |
-| [ci-commits](.github/workflows/ci-commits.yml)       | all PRs                               |
-| [ci-rust](.github/workflows/ci-rust.yml)             | `rust/**`                            |
-| [ci-c](.github/workflows/ci-c.yml)                   | `bindings/c/**`, `rust/**`           |
-| [ci-wasm](.github/workflows/ci-wasm.yml)             | `bindings/wasm/**`, `rust/**`        |
-| [ci-typescript](.github/workflows/ci-typescript.yml) | `typescript/**`, `bindings/wasm/**`, `rust/**` |
-| [ci-jvm](.github/workflows/ci-jvm.yml)               | `bindings/uniffi/**`, `rust/**`      |
-| [ci-swift](.github/workflows/ci-swift.yml)           | `swift/**`, `bindings/uniffi/**`, `rust/**` |
-| [ci-go](.github/workflows/ci-go.yml)                 | `go/**`, `bindings/c/**`, `rust/**`  |
-| [ci-python](.github/workflows/ci-python.yml)         | `python/**`, `bindings/uniffi/**`, `rust/**` |
-| [ci-csharp](.github/workflows/ci-csharp.yml)         | `csharp/**`, `bindings/c/**`, `rust/**` |
-| [ci-android](.github/workflows/ci-android.yml)       | `bindings/uniffi/**`                 |
-
-Each per-language workflow builds the binding it depends on (the C ABI, WASM, or
-UniFFI lib over the Rust core) and then runs that language's format check, lint,
-and tests. `ci-android` additionally cross-compiles the native ABIs and assembles the AAR.
-
-## Project structure
-
-```
-chromahash/
-├── rust/               # Rust core — the reference implementation (Cargo crate)
-├── bindings/
-│   ├── c/              # C ABI binding (extern "C" + cbindgen) — serves C, C#, Go
-│   ├── uniffi/         # UniFFI binding — serves Swift, Java/Kotlin (jvm/ JAR + android/ AAR), Python
-│   └── wasm/           # WebAssembly binding (wasm-bindgen) — serves TypeScript
-├── typescript/         # TypeScript binding (WASM facade + pure-TS decode; pnpm + Biome)
-├── swift/              # Swift binding (UniFFI facade; SPM)
-├── go/                 # Go binding (cgo over the C ABI)
-├── python/             # Python binding (UniFFI/ctypes; uv + Ruff)
-├── csharp/             # C# binding (P/Invoke over the C ABI; .NET 9)
-├── spec/               # Format specification and test vectors
-├── docs/               # Integration guides (e.g. Android via Rust/JNI)
-├── tools/              # Shared developer tooling (comparison, benchmarks)
-├── .github/workflows/  # Per-language GitHub Actions CI
-├── mise-tasks/         # Cross-language tasks whose body is a shell script
-├── hk.pkl              # Git hooks (commit-msg lint, pre-commit fix, pre-push check)
-├── cliff.toml          # git-cliff changelog config
-├── .mise.toml          # Pinned tool versions + the cross-language task graph
-├── CHANGELOG.md        # Keep a Changelog (Unreleased section generated by git-cliff)
-├── RELEASING.md        # Release process
-├── LICENSE             # Dual license notice
-├── LICENSE-MIT         # MIT license
-└── LICENSE-APACHE      # Apache 2.0 license
 ```
 
 ## License
