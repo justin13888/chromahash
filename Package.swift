@@ -9,7 +9,7 @@ import PackageDescription
 // sources still live under swift/ (see each target's `path:`).
 //
 // The native code ships as ChromaHashFFI.xcframework:
-//   • local dev / CI build it from the current source with `just swift-cbuild` and
+//   • local dev / CI build it from the current source with `mise run cbuild:swift` and
 //     select it by setting CHROMAHASH_LOCAL_XCFRAMEWORK (so unreleased changes are
 //     testable);
 //   • released consumers download the prebuilt, checksum-pinned xcframework attached

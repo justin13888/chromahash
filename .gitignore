@@ -2,7 +2,7 @@
 # keeps its own build/tooling ignores in its directory's .gitignore
 # (rust/, bindings/*/, typescript/, swift/, go/, python/, csharp/, tools/*/).
 
-# Local-only Maven Central signing material (just android-gen-signing-key) —
+# Local-only Maven Central signing material (mise run android:gen-signing-key) —
 # generated at the repo root; NEVER commit.
 signing-key.asc
 signing-password.txt

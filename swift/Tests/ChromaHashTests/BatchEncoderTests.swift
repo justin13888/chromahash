@@ -7,7 +7,7 @@ import Testing
 // default parallel executor, several blocking batch tests can saturate the
 // Swift-concurrency cooperative pool on low-core machines and deadlock, so the
 // suite is run with `swift test --no-parallel` (in ci-swift.yml and the
-// `test-swift` just recipe). Keep that flag if you add more batch tests.
+// `test:swift` mise task). Keep that flag if you add more batch tests.
 
 // MARK: - Batch helpers
 

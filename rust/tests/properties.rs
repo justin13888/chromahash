@@ -19,7 +19,7 @@
 //! dependency over a hand-rolled generator.
 //!
 //! **These runs are not deterministic.** proptest draws a fresh seed each time,
-//! so `just test` and the mutation sweep both sample a different corner of the
+//! so `mise run test` and the mutation sweep both sample a different corner of the
 //! input space on every invocation. That is deliberate — a fixed seed turns a
 //! property test into a slow unit test — but it has two consequences worth
 //! knowing. A failure here may not reproduce on a re-run: copy the seed

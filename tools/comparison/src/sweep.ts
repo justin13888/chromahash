@@ -78,7 +78,7 @@ interface SweepVariant {
    * actually shipped rather than against another build of the same tree.
    *
    * The tag is built through the same cached worktree + decode shim as
-   * `just compare-versions`. That shim exposes only the pre-v1 API, so it
+   * `mise run compare:versions`. That shim exposes only the pre-v1 API, so it
    * ignores CHROMAHASH_TUNE, has no quality tier, and always decodes uncapped —
    * `tune`, an explicit `tier`, and `capToTier0` are rejected rather than
    * silently dropped.

@@ -3,7 +3,7 @@
 # This config manages ONLY the generated portion of CHANGELOG.md — the
 # `[Unreleased]` section and freshly-cut release sections. The curated prose for
 # 0.1.0–0.4.0 and the Keep a Changelog preamble live in CHANGELOG.md and are
-# preserved by the `just changelog` / `just release` recipes (sentinel region).
+# preserved by the `mise run changelog` / `mise run release` recipes (sentinel region).
 # git-cliff therefore emits NO header/footer (it would duplicate the preamble).
 #
 # See RELEASING.md for the workflow. Output follows https://keepachangelog.com.

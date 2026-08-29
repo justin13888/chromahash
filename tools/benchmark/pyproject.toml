@@ -7,7 +7,7 @@ dependencies = ["matplotlib"]
 [tool.uv]
 dev-dependencies = []
 
-# The same lint/format contract as the `python/` package, so `just lint-benchmark`
+# The same lint/format contract as the `python/` package, so `mise run lint:benchmark`
 # holds this driver to the repo's standard rather than to whatever ruff's
 # defaults happen to be that release.
 [tool.ruff]

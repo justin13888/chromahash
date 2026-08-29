@@ -307,7 +307,7 @@ async function main(): Promise<void> {
   let adapters: FormatAdapter[];
   let activeFormatNames: string[];
   // chromahash quality tier (0..=4, ordered by quality) for the ChromaHash column, from the
-  // environment so `CHROMAHASH_TIER=2 just compare` evaluates a higher-fidelity
+  // environment so `CHROMAHASH_TIER=2 mise run compare` evaluates a higher-fidelity
   // build under a more generous size budget (the encoded-bytes column shows the
   // size–quality trade-off). Matches the encode_stdin / benchmark convention.
   const chromaTier = Number.parseInt(

@@ -1,13 +1,13 @@
 /**
  * Cross-format rate–distortion at arbitrary byte budgets (R&D tool).
  *
- * `just compare-rd` scores the competing formats at the four *shipped* tier
+ * `mise run compare:rd` scores the competing formats at the four *shipped* tier
  * anchors (32/108/411/1623 B). This script asks the prior question: what is the
  * right anchor at all? It scores ChromaHash across a continuous byte ladder —
  * resizing the AC layout through `CHROMAHASH_TUNE`, which the format supports
  * natively because its length is derived from the layout — against every other
  * LQIP and codec baseline at the *same* budgets, on the *same* corpus split as
- * `just sweep`, so a ladder row and a competitor row are directly comparable.
+ * `mise run sweep`, so a ladder row and a competitor row are directly comparable.
  *
  * Every run also emits the guard-aware summary (roadmap U16): a winner per
  * metric inside each byte neighbourhood, flagging where ChromaHash wins ΔE00

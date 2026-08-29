@@ -1,5 +1,5 @@
 # cargo-mutants configuration for the chromahash core crate.
-# Run the sweep with `just mutants-rust` (full) or `just mutants-rust-diff`
+# Run the sweep with `mise run mutants:rust` (full) or `mise run mutants:rust:diff`
 # (changed lines only); see TESTING.md § Mutation Testing.
 
 # Drop the default `spec-vectors` feature so the `spec_vectors` integration test

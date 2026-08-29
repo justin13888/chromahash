@@ -3,7 +3,7 @@
  * produced them.
  *
  * The document is a workbench log: its tables are transcribed by hand from
- * `just sweep` output, and a later re-run of a sweep silently invalidates the
+ * `mise run sweep` output, and a later re-run of a sweep silently invalidates the
  * transcription. Both failure modes were live before this script existed —
  * §1's tune ladder sat at a pre-adoption run while its holdout twin was
  * current, and §4.1 carried a Δ an order of magnitude off its own inputs.
@@ -21,8 +21,8 @@
  *   node dist/verify-experiments.js --section 11.5
  *   node dist/verify-experiments.js --list-unbound
  *
- * Exit status is non-zero on any disagreement, so `just verify-experiments`
- * gates a documentation change the way `just rd-gate` gates a quality change.
+ * Exit status is non-zero on any disagreement, so `mise run verify:experiments`
+ * gates a documentation change the way `mise run rd:gate` gates a quality change.
  */
 
 import { readFileSync, writeFileSync } from "node:fs";

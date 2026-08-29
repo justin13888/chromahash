@@ -138,7 +138,7 @@ async function main(): Promise<void> {
     const baseline: Baseline = {
       note:
         "Baseline for the tier-0 R-D regression gate (src/rd-gate.ts). " +
-        "Regenerate deliberately with `just rd-gate-update` after an intended " +
+        "Regenerate deliberately with `mise run rd:gate:update` after an intended " +
         "encoder change, and say so in the commit message.",
       tier: TIER,
       tolerancePct: DEFAULT_TOLERANCE_PCT,
@@ -162,7 +162,7 @@ async function main(): Promise<void> {
         `rd-gate: no baseline at ${baselinePath} (${
           err instanceof Error ? err.message : err
         }).`,
-        "  Create one with `just rd-gate-update`.",
+        "  Create one with `mise run rd:gate:update`.",
       ].join("\n"),
     );
     process.exit(1);
@@ -216,7 +216,7 @@ async function main(): Promise<void> {
     console.error(
       [
         `rd-gate: FAIL — mean ΔE00 improved ${Math.abs(deltaPct).toFixed(2)}%, past the ${tolerance}% tolerance.`,
-        "  That is good news and a stale baseline: refresh it with `just rd-gate-update`",
+        "  That is good news and a stale baseline: refresh it with `mise run rd:gate:update`",
         "  so the gate keeps measuring against what the encoder actually does.",
       ].join("\n"),
     );

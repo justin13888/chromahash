@@ -6,7 +6,7 @@
 // the zero-dependency Rust core. Output is byte-identical to every other
 // ChromaHash implementation. Because it uses cgo, builds require a C toolchain
 // (CGO_ENABLED=1) and the prebuilt static library under go/lib — run
-// `just build-go` (which builds + stages it) rather than a bare `go build`.
+// `mise run build:go` (which builds + stages it) rather than a bare `go build`.
 package chromahash
 
 /*

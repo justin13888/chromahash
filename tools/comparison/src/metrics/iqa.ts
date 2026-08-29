@@ -6,7 +6,7 @@
  * images from disk and prints a JSON object keyed by metric name; non-finite scores
  * (e.g. PSNR of identical images) come back as JSON `null`.
  *
- * Install with `just install-iqa` (or `cargo install iqa-cli`). Override the binary
+ * Install with `mise run install:iqa` (or `cargo install iqa-cli`). Override the binary
  * path with the `IQA_CLI` environment variable.
  *
  * A missing or broken iqa-cli is a hard error: a report with all-null quality
@@ -89,7 +89,7 @@ export function ensureIqaAvailable(): void {
         ? (err.message.split("\n")[0] ?? err.message)
         : String(err);
     throw new IqaError(
-      `iqa-cli is not available (${reason}). Quality metrics are required for a meaningful report — install with \`just install-iqa\` or set IQA_CLI, or pass --allow-missing-iqa for a preview-only run with N/A metrics.`,
+      `iqa-cli is not available (${reason}). Quality metrics are required for a meaningful report — install with \`mise run install:iqa\` or set IQA_CLI, or pass --allow-missing-iqa for a preview-only run with N/A metrics.`,
     );
   }
 }
@@ -112,7 +112,7 @@ function warnUnavailable(reason: string): void {
   if (warned) return;
   warned = true;
   console.warn(
-    `  iqa-cli unavailable (${reason}); quality metrics will be N/A. Install with \`just install-iqa\` or set IQA_CLI.`,
+    `  iqa-cli unavailable (${reason}); quality metrics will be N/A. Install with \`mise run install:iqa\` or set IQA_CLI.`,
   );
 }
 

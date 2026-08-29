@@ -330,7 +330,7 @@ mod tests {
     // and the host cannot execute a backend it was asked to validate, the test
     // *fails* instead of skipping — a mis-targeted run (e.g. the AVX2 suite on a
     // non-AVX2 CPU) is a misconfiguration, not a pass. Run with
-    // `just test-simd-diff` (native) or `just test-simd-emulated` (all targets).
+    // `mise run test:simd:diff` (native) or `mise run test:simd:emulated` (all targets).
 
     #[cfg(all(
         feature = "simd-diff-tests",
@@ -342,7 +342,7 @@ mod tests {
             std::is_x86_feature_detected!("sse2"),
             "simd-diff-tests: this host lacks SSE2, so the SSE2 backend cannot be \
              validated here — run the suite on an SSE2-capable target instead of \
-             skipping it (see `just test-simd-emulated`)"
+             skipping it (see `mise run test:simd:emulated`)"
         );
         assert_batch_matches("sse2", |r, g, b, gamut, out| unsafe {
             x86::oklab_forward_batch_sse2(r, g, b, gamut, out)
@@ -359,7 +359,7 @@ mod tests {
             std::is_x86_feature_detected!("avx2"),
             "simd-diff-tests: this host lacks AVX2, so the AVX2 backend cannot be \
              validated here — run the suite on an AVX2-capable target instead of \
-             skipping it (see `just test-simd-emulated`)"
+             skipping it (see `mise run test:simd:emulated`)"
         );
         assert_batch_matches("avx2", |r, g, b, gamut, out| unsafe {
             x86::oklab_forward_batch_avx2(r, g, b, gamut, out)

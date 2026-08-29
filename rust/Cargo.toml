@@ -43,12 +43,12 @@ simd = []
 # so coverage means running — or emulating — every target), and unlike a plain
 # `cargo test` it *fails* rather than skips on a host that cannot execute a
 # backend it was asked to validate, so a mis-targeted run can never pass with
-# zero coverage. CI runs it per machine target; locally use `just test-simd-diff`
-# (native) or `just test-simd-emulated` (every target via QEMU/wasmtime).
+# zero coverage. CI runs it per machine target; locally use `mise run test:simd:diff`
+# (native) or `mise run test:simd:emulated` (every target via QEMU/wasmtime).
 simd-diff-tests = ["simd"]
 
 # `full` turns on every feature — the default set plus the opt-in
-# `simd-diff-tests` — for "test everything" invocations (CI and `just`).
+# `simd-diff-tests` — for "test everything" invocations (CI and `mise run test`).
 full = ["spec-vectors", "simd", "simd-diff-tests"]
 
 [[test]]

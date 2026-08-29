@@ -17,5 +17,5 @@ fixtures/alpha/*.jpg
 fixtures/graphic/*.png
 fixtures/graphic/*.jpg
 
-# Per-version git worktrees + their build artifacts (just compare-versions).
+# Per-version git worktrees + their build artifacts (mise run compare:versions).
 .versions/
