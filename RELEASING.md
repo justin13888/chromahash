@@ -107,7 +107,7 @@ workflow first verifies the pushed tag matches its package manifest.
 
 Most publishing uses OIDC **trusted publishing** — no stored tokens — but each
 registry needs a one-time policy before its first run succeeds. State below as
-probed on 2026-08-28; ✅ means a release has actually landed there.
+probed on 2026-08-29; ✅ means a release has actually landed there.
 
 | Registry | Published | Bootstrap still needed |
 |---|---|---|
@@ -115,43 +115,62 @@ probed on 2026-08-28; ✅ means a release has actually landed there.
 | PyPI | ✅ 0.6.0 | — |
 | NuGet | ✅ 0.6.0 | — |
 | Go proxy | ✅ v0.6.0 | — |
-| Maven Central | ✅ 0.6.0, under the old `io.github.justin13888` | namespace verified 2026-08-28; first publish under `io.github.visualcommons` is 0.7.0 |
-| npm | ❌ never published | **first `npm publish` to claim `@visualcommons/chromahash`, then trusted publisher** |
+| Maven Central | ✅ 0.6.0, under the old `io.github.justin13888` | namespace verified 2026-08-28; first publish under `io.github.visualcommons` is 0.7.1 |
+| npm | ⚠️ 0.7.0 — name claimed, tarball broken (no `wasm/`) | **add the trusted publisher, and deprecate 0.7.0** |
 | Swift Package Index | — (tag-based) | submit the repo once |
 
-**One blocker before `v0.7.0` publishes everywhere**, and it needs the
+**One blocker before `v0.7.1` publishes everywhere**, and it needs the
 maintainer's npm account — it cannot be done from the repo:
 
-**npm.** The package has never published; run 28472417808 failed with
-`E404 … PUT` against the then-current name `@chromahash/typescript`, whose scope
-did not exist. It was renamed to `@visualcommons/chromahash` for 0.7.0, matching
-the GitHub org and the `io.github.visualcommons` Maven group. npm attaches a
-trusted-publisher policy to an *existing* package, so the name has to be claimed
-by one manual publish first:
+**npm.** The name is claimed but the published artifact is unusable. Run
+28472417808 first failed with `E404 … PUT` against the then-current name
+`@chromahash/typescript`, whose scope did not exist; it was renamed to
+`@visualcommons/chromahash`, matching the GitHub org and the
+`io.github.visualcommons` Maven group. The manual claim publish on 2026-08-29
+then hit the `.gitignore` trap below: **0.7.0 is on npm with no `wasm/`
+directory**, and since `dist/index.js` re-exports from `../wasm/chromahash_wasm.js`,
+every import from it fails. npm forbids republishing a version, so 0.7.0 is spent
+— hence 0.7.1.
 
-```bash
-just ts-cbuild            # wasm-pack → typescript/wasm/, exactly as the workflow does
-rm -f typescript/wasm/.gitignore   # see the warning below — NOT optional
-just build-ts
-cd typescript
-npm pack --dry-run | grep -c wasm/ # MUST be non-zero before you publish
-npm login                          # interactive; OIDC is unavailable outside CI
-npm publish --access public        # no --provenance: that needs a CI OIDC token
-```
+Two account actions, both on npmjs.com — **no second manual publish is needed**:
 
-> **Do not skip the `rm`.** `wasm-pack` writes a `.gitignore` containing `*` into
-> its out-dir, and npm's packlist honours nested `.gitignore` files. Without the
-> removal, `npm pack` silently drops the entire `wasm/` runtime — the tarball
-> builds, publishes, and is unusable — even though `wasm` is in the package.json
-> `files` list. npm does not allow republishing a version, so the mistake costs a
-> version number. `release-npm.yml` handles this at the "Drop wasm-pack's
-> .gitignore" step; a manual publish must do it by hand.
+1. Add the trusted publisher on the package's settings page: repo
+   `visualcommons/chromahash`, workflow `release-npm.yml`, no environment. This
+   is what the claim publish was for; the package now exists, so the policy will
+   attach. From 0.7.1 on, CI publishes over OIDC with provenance and no stored
+   token — and its "Drop wasm-pack's .gitignore" step avoids the trap that broke
+   the manual publish.
+2. Deprecate the broken version so consumers are steered off it:
 
-Publishing manually before tagging is safe: `release-npm.yml`'s "Skip if version
-already on npm" step makes the tag push a no-op for npm rather than a failure.
-Then add the trusted publisher on the package's npm settings page: repo
-`visualcommons/chromahash`, workflow `release-npm.yml`, no environment. From
-0.8.0 on, npm publishes over OIDC with provenance and no stored token.
+   ```bash
+   npm deprecate @visualcommons/chromahash@0.7.0 \
+     "Published without the wasm/ runtime and is unusable; use 0.7.1 or later."
+   ```
+
+Do **not** `npm unpublish` it: 0.7.0 is the package's only version, so
+unpublishing removes the package and npm blocks re-registering the name for 24
+hours, stalling the release a full day.
+
+> **The trap, for any future manual publish.** `wasm-pack` writes a `.gitignore`
+> containing `*` into its out-dir, and npm's packlist honours nested `.gitignore`
+> files. Without removing it, `npm pack` silently drops the entire `wasm/` runtime
+> — the tarball builds, publishes, and is unusable — even though `wasm` is in the
+> package.json `files` list. It costs a version number, as 0.7.0 shows. A manual
+> publish must therefore run:
+>
+> ```bash
+> just ts-cbuild                     # wasm-pack → typescript/wasm/, as the workflow does
+> rm -f typescript/wasm/.gitignore   # NOT optional
+> just build-ts
+> cd typescript
+> npm pack --dry-run | grep -c wasm/ # MUST be non-zero before you publish
+> npm login                          # interactive; OIDC is unavailable outside CI
+> npm publish --access public        # no --provenance: that needs a CI OIDC token
+> ```
+>
+> Publishing manually before tagging is safe either way: `release-npm.yml`'s "Skip
+> if version already on npm" step makes the tag push a no-op for npm rather than a
+> failure.
 
 **Sonatype** (resolved). The `justin13888` → `visualcommons` migration changed
 the Maven `groupId` to `io.github.visualcommons`; that namespace was verified at

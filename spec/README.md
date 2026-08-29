@@ -1,14 +1,14 @@
 # ChromaHash Format Specification
 
-**Release:** 0.7.0
+**Release:** 0.7.1
 **Wire-format generation:** v1 (`version` field = 0)
 **Status:** Stable
 **Date:** 2026-08-23
 
 > **What "Stable" means here.** Every constant this format ships has a measurement behind
 > it on the current corpora, taken on a tune split and validated once on a never-tuned
-> holdout (`EXPERIMENTS.md` §11). The wire format freezes **at the 0.7.0 release**: from
-> that tag on, a change to it increments the `version` field. 0.7.0 has not been tagged,
+> holdout (`EXPERIMENTS.md` §11). The wire format freezes **at the 0.7.1 release**: from
+> that tag on, a change to it increments the `version` field. 0.7.1 has not been tagged,
 > so v1 has never been published and the bitstream is still open to correction (§13). It
 > does **not** mean every language binding has caught up — the Rust core is the reference
 > and the bindings follow it.
@@ -21,7 +21,7 @@
 > header) trades size for detail, roughly quadrupling the byte length per tier
 > while doubling the rendered resolution on each axis.
 >
-> The release version (`0.7.0`, semver) and the **wire-format generation** (`v1`,
+> The release version (`0.7.1`, semver) and the **wire-format generation** (`v1`,
 > the 3-bit `version` field, value `0`) are independent axes: the release follows
 > semver, while the on-wire `version` field increments only on an incompatible
 > format break (`1`→v2, `2`→v3, …). This generation is a clean break with **no
@@ -48,7 +48,7 @@
 10. [Encoding Algorithm](#10-encoding-algorithm)
 11. [Decoding Algorithm](#11-decoding-algorithm)
 12. [Constants & Matrices](#12-constants--matrices)
-13. [Changes to v1 (0.7.0)](#13-changes-to-v1-070)
+13. [Changes to v1 (0.7.1)](#13-changes-to-v1-071)
 14. [Trade-offs & Limitations](#14-trade-offs--limitations)
 15. [Future Directions: JPEG XL VarDCT Evaluation](#15-future-directions-jpeg-xl-vardct-evaluation)
 16. [Appendix A: ThumbHash Comparison](#appendix-a-thumbhash-comparison--acknowledgment)
@@ -1444,9 +1444,9 @@ readBits(hash, bitpos, count):
 
 ---
 
-## 13. Changes to v1 (0.7.0)
+## 13. Changes to v1 (0.7.1)
 
-Release 0.7.0 introduces wire-format generation **v1**, a clean break with **no backward
+Release 0.7.1 introduces wire-format generation **v1**, a clean break with **no backward
 compatibility** with the v0.6 bitstream. The framing changes are:
 
 - **Self-describing descriptor byte (§2.5, §3.1).** Byte 0 now carries a 3-bit `version`

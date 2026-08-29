@@ -22,10 +22,10 @@ chromahash is a multi-language library implementing a compact, high-fidelity Low
 >
 > The table lists where each package *publishes*, which is not the same as what
 > is live today. As of 0.6.0: crates.io, PyPI, NuGet and the Go proxy are live;
-> npm has not published yet (0.7.0 is the first release under the
+> npm has not published yet (0.7.1 is the first release under the
 > `@visualcommons` scope); and † the JVM/Android artifacts are still on Maven
 > Central under the pre-rename `io.github.justin13888` coordinates —
-> `io.github.visualcommons` takes over from 0.7.0. See
+> `io.github.visualcommons` takes over from 0.7.1. See
 > [`RELEASING.md`](RELEASING.md#one-time-registry-bootstrap).
 
 ## Why ChromaHash?

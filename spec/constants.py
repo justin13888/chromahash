@@ -51,7 +51,7 @@ MAX_A_ALPHA_SCALE = 0.5    # Max alpha AC amplitude
 # =========================================================================
 # Wire Format v1 — Framing (§2, §3)
 # =========================================================================
-# chromahash ships as release 0.7.0, but the on-wire format carries its own
+# chromahash ships as release 0.7.1, but the on-wire format carries its own
 # generation number, independent of the package semver. This is wire-format
 # generation v1. Every framing parameter is a named constant so the encoder,
 # decoder, and this file agree without scattered literals.

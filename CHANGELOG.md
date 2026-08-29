@@ -6,17 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ChromaHash is a **Draft** format. While pre-1.0, the bitstream is not guaranteed to be
-stable between minor versions. From 0.7.0 the wire format carries a 3-bit `version` field
+stable between minor versions. From 0.7.1 the wire format carries a 3-bit `version` field
 in byte 0 and a decoder rejects a generation it does not implement; before it, v0.2, v0.3
 and v0.4 all shared header bit 47 = 1, so an older decoder applied to a newer hash
 silently produced garbled output. Applications spanning the 0.6/0.7 boundary MUST track
 the format version via producer-side metadata. See `spec/README.md` §2.5 for details.
 
-**Package coordinates change in 0.7.0.** The `justin13888` → `visualcommons` move
+**Package coordinates change in 0.7.1.** The `justin13888` → `visualcommons` move
 renames two of them, and neither is picked up automatically by a dependency
 update — the old coordinates keep resolving to 0.6.0 forever:
 
-| | 0.6.0 | 0.7.0 |
+| | 0.6.0 | 0.7.1 |
 | --- | --- | --- |
 | npm | *(never published)* | `@visualcommons/chromahash` |
 | Maven (JVM) | `io.github.justin13888:chromahash-jvm` | `io.github.visualcommons:chromahash-jvm` |
@@ -24,11 +24,16 @@ update — the old coordinates keep resolving to 0.6.0 forever:
 
 crates.io, PyPI, NuGet, Go and SwiftPM coordinates are unchanged.
 
+> **npm 0.7.0 is broken — do not use it.** It was published to claim the new
+> scope and its tarball is missing the `wasm/` runtime the package entry point
+> imports, so every import from it fails. npm forbids republishing a version,
+> so it is deprecated in place; 0.7.1 is the first usable npm release.
+
 <!-- git-cliff-unreleased-start -->
 ## [Unreleased]
 <!-- git-cliff-unreleased-end -->
 
-## [0.7.0] - 2026-08-29
+## [0.7.1] - 2026-08-29
 
 ### ⚠ Breaking changes
 
@@ -335,7 +340,8 @@ The v0.2 reference reworked the format: adaptive grids, `MAX_CHROMA` lowered fro
 - Official format specification under `spec/`.
 - Monorepo scaffolding, README, and development guide.
 
-[Unreleased]: https://github.com/visualcommons/chromahash/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/visualcommons/chromahash/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/visualcommons/chromahash/compare/v0.6.0...v0.7.1
 [0.6.0]: https://github.com/visualcommons/chromahash/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/visualcommons/chromahash/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/visualcommons/chromahash/compare/v0.3.0...v0.4.0
