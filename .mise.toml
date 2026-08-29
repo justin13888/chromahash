@@ -662,7 +662,15 @@ run = [
   "pnpm --prefix typescript run build",
   "( cd go && CGO_ENABLED=1 go build -o encode-stdin ./cmd/encode-stdin )",
   "( cd bindings/uniffi/jvm && ./gradlew installDist -q )",
-  "( cd swift && swift build -c release )",
+  # Package.swift is at the repo root (not swift/), and SwiftPM consumes the
+  # locally built xcframework, which only xcodebuild can assemble — so this
+  # skips off macOS the way cbuild:swift does, leaving the Swift harness absent
+  # rather than failing the whole build.
+  '''if [ "$(uname)" = "Darwin" ]; then
+       CHROMAHASH_LOCAL_XCFRAMEWORK=1 swift build -c release
+   else
+       echo "build:benchmark: SKIPPED Swift — no xcframework off macOS (see cbuild:swift)." >&2
+   fi''',
   "dotnet build csharp/src/Chromahash.Cli -c Release --verbosity quiet",
   "cargo build --manifest-path tools/thumbhash-rs/Cargo.toml --release",
   "pnpm --prefix tools/comparison run build",
@@ -707,7 +715,13 @@ run = "( cd bindings/uniffi/jvm && ./gradlew bench -q )"
 [tasks."benchmark:batch:swift"]
 description = "Swift BatchEncoder throughput benchmark"
 depends = ["cbuild:swift"]
-run = "( cd swift && swift run -c release ChromaHashBatchBench )"
+run = '''
+if [ "$(uname)" != "Darwin" ]; then
+    echo "benchmark:batch:swift: SKIPPED — no xcframework off macOS (see cbuild:swift)." >&2
+    exit 0
+fi
+CHROMAHASH_LOCAL_XCFRAMEWORK=1 swift run -c release ChromaHashBatchBench
+'''
 
 [tasks."benchmark:batch:go"]
 description = "Go BatchEncoder throughput benchmark"
