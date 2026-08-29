@@ -69,9 +69,9 @@ function getHarnesses(): HarnessConfig[] {
     },
     {
       language: "Swift",
-      command: path.join(ROOT, "swift/.build/debug/ChromaHashCLI"),
+      command: path.join(ROOT, ".build/debug/ChromaHashCLI"),
       args: [],
-      cwd: path.join(ROOT, "swift"),
+      cwd: ROOT,
     },
     {
       language: "Go",
@@ -177,7 +177,7 @@ export function buildHarnesses(): void {
       label: "Swift",
       command: "swift",
       args: ["build"],
-      cwd: path.join(ROOT, "swift"),
+      cwd: ROOT,
     },
     {
       label: "C#",
