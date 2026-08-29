@@ -199,10 +199,12 @@ async function main(): Promise<void> {
 
   console.log(`Found ${imagePaths.length} images.`);
 
-  // Build all harness binaries once
+  // Build all harness binaries once. A harness whose build fails is recorded
+  // here and skipped below, rather than being invoked once per image.
+  let unavailableHarnesses: ReadonlySet<string> = new Set<string>();
   if (!skipHarnesses) {
     console.log("Building harnesses...");
-    buildHarnesses();
+    unavailableHarnesses = buildHarnesses();
     console.log("Harnesses built.");
   }
 
@@ -339,7 +341,11 @@ async function main(): Promise<void> {
     let harnessResults: HarnessResult[] = [];
     if (!skipHarnesses) {
       try {
-        harnessResults = await runAllHarnesses(input, gamut);
+        harnessResults = await runAllHarnesses(
+          input,
+          gamut,
+          unavailableHarnesses,
+        );
       } catch (err) {
         console.warn(
           `  Harness runner failed: ${err instanceof Error ? err.message : err}`,
