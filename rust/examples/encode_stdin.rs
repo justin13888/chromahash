@@ -190,6 +190,9 @@ fn tunables_from_env() -> Tunables {
             "band_gain_c" => t.band_gain_c = parse_f64(),
             "aniso" => t.aniso_oblique = parse_f64(),
             "ac_nearest" => t.ac_nearest = value == "1" || value == "true",
+            // Prototype separable forward DCT. NOT byte-identical — see
+            // dct::dct_encode_selected_separable; a measurement knob only.
+            "dct_separable" => t.dct_separable = value == "1" || value == "true",
             "scale_fit" => t.scale_fit = parse_u32(),
             "refine_passes" => t.refine_passes = parse_u32(),
             "refine_delta" => t.refine_delta = parse_u32(),

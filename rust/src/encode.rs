@@ -312,12 +312,21 @@ fn analyze(w: u32, h: u32, rgba: &[u8], gamut: Gamut, t: &Tunables, tier: u8) ->
     let cos_y = precompute_cos_table(h, (max_cy + 1).min(h.max(1)));
     stage!("cos_tables");
 
-    // 7. DCT encode each channel (frequency clamp to source dims built in)
-    let l = dct_encode_selected(&l_chan, w, h, &l_sel.coeffs, &cos_x, &cos_y);
-    let a = dct_encode_selected(&a_chan, w, h, &c_sel.coeffs, &cos_x, &cos_y);
-    let b = dct_encode_selected(&b_chan, w, h, &c_sel.coeffs, &cos_x, &cos_y);
+    // 7. DCT encode each channel (frequency clamp to source dims built in).
+    //
+    // `dct_separable` selects the prototype separable transform. It is not
+    // byte-identical — see `dct::dct_encode_selected_separable` — and is false
+    // in `Tunables::DEFAULT`, so the shipped path is always the direct sum.
+    let forward = if t.dct_separable {
+        crate::dct::dct_encode_selected_separable
+    } else {
+        dct_encode_selected
+    };
+    let l = forward(&l_chan, w, h, &l_sel.coeffs, &cos_x, &cos_y);
+    let a = forward(&a_chan, w, h, &c_sel.coeffs, &cos_x, &cos_y);
+    let b = forward(&b_chan, w, h, &c_sel.coeffs, &cos_x, &cos_y);
     let alpha = if has_alpha {
-        dct_encode_selected(&alpha_pixels, w, h, &alpha_sel.coeffs, &cos_x, &cos_y)
+        forward(&alpha_pixels, w, h, &alpha_sel.coeffs, &cos_x, &cos_y)
     } else {
         (0.0, vec![], 0.0)
     };
