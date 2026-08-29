@@ -4,7 +4,7 @@ Why each v1 design decision is what it is, with the alternatives that were
 considered and rejected. Normative text lives in [`README.md`](README.md); this
 file records the *evidence*.
 
-Sweep numbers come from the decision tables produced by `just sweep <config>`
+Sweep numbers come from the decision tables produced by `mise run sweep <config>`
 (configs in `tools/comparison/sweeps/`, results in
 `tools/comparison/output/sweeps/`) on the **tune split** of the expanded corpus
 (74 images: 43 synthetic + 31 curated photos; the 32-image holdout —
@@ -18,9 +18,9 @@ quantization ranges, the scalefactor bands and the selection weights were all
 re-swept on the current corpus at the current bit depths (`EXPERIMENTS.md`
 §11.5–§11.9). Every one of them stands, so the conclusions in this file survive
 their re-derivation — but the *numbers* below are the pre-revision ones, and
-§11 is where the current figures live. Rate–distortion numbers come from `just compare-rd`
+§11 is where the current figures live. Rate–distortion numbers come from `mise run compare:rd`
 (photographic corpus, display-resolution scoring). Release A/B numbers against
-the previous format generation come from `just compare-versions`, which
+the previous format generation come from `mise run compare:versions`, which
 differences each image against the v0.6 tag *paired* and reports a bootstrap CI
 of that difference (see Evaluation methodology). Numbers marked **[v0.6]** were
 measured during the v0.6 redesign on the original 52-image corpus.
@@ -51,7 +51,7 @@ Keeping the default at exactly 32 bytes while byte 0 grew into a self-describing
 descriptor had to come from somewhere: at the v0.6 bit widths the no-alpha luma
 AC count drops 27 → 26, and alpha mode collapses v0.6's mixed-precision
 `[(7,6),(13,5)]` into a single `[(20,5)]` tier. That is ~3.7% of the luma AC
-budget spent on framing. **Measured** (`just compare-versions`, paired
+budget spent on framing. **Measured** (`mise run compare:versions`, paired
 per-image against the v0.6 tag at the same 32 bytes, holdout split, n=28).
 Signs are normalized per metric so that **positive means v1 is worse**:
 
@@ -128,7 +128,7 @@ the constant (`DEFAULT_TIER`) rather than writing the literal, and asserts that
 its default encode is exactly 32 bytes.
 
 ### The upper tiers vs "just ship a tiny real image"
-Measured by `just compare-rd` against size-targeted WebP/JPEG(mozjpeg)/AVIF
+Measured by `mise run compare:rd` against size-targeted WebP/JPEG(mozjpeg)/AVIF
 thumbnails and a raw-RGB565 control at the tier byte anchors (50 photographic
 images, display-resolution scoring, mean ΔE00 lower-better). Structural
 floors first: WebP cannot exist below ~48 B, mozjpeg ~320 B, AVIF ~466 B — so
@@ -274,7 +274,7 @@ re-tuning. **Measured** (`companding-family`, 14 variants):
 
 The trained-optimal quantizer buying only −0.17% is the strongest evidence
 available that µ-law is already at the distribution's plateau: in pure MSE the
-tables beat µ-law by just +0.33 dB (L) / +0.85 dB (C) (`just train-tables`).
+tables beat µ-law by just +0.33 dB (L) / +0.85 dB (C) (`mise run train:tables`).
 A structural detail matters here: scale = max|AC| puts a point mass at exactly
 ±1 in the normalized data (≥1/K of samples), and µ-law's endpoint level sits
 exactly there — a trained codebook must pin its top level at 1.0 to match.
@@ -338,7 +338,7 @@ color is closest to the clip-mapped target. Zero wire cost, ~10 µs.
 ### Rejected audio techniques (with reasons)
 - **Vector quantization (CELP/TwinVQ):** **measured** — a 256-codeword 2D VQ
   on chroma pairs beats scalar 4+4-bit µ-law by 3.52 dB MSE at equal
-  bits/pair (`just train-tables`). Rejected anyway: the perceptual companding
+  bits/pair (`mise run train:tables`). Rejected anyway: the perceptual companding
   sweep shows scalar quantization is not the quality bottleneck at 32 B (the
   MSE-optimal *scalar* table bought only −0.17% ΔE00), and VQ costs trained
   codebook tables in every decoder, encode-side search, and a much larger
