@@ -24,8 +24,8 @@ let ffiTarget: Target =
     } else {
         .binaryTarget(
             name: "chromahash_uniffiFFI",
-            url: "https://github.com/visualcommons/chromahash/releases/download/v0.6.0/ChromaHashFFI.xcframework.zip",
-            checksum: "0000000000000000000000000000000000000000000000000000000000000000"
+            url: "https://github.com/visualcommons/chromahash/releases/download/v0.7.1/ChromaHashFFI.xcframework.zip",
+            checksum: "4fce61d26fce40d62e83a567c328a91e8bc2b475c22b28aedae194e8f1d3a739"
         )
     }
 
