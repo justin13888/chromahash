@@ -469,6 +469,13 @@ async function main(): Promise<void> {
   const harnessesSkipped = entries.every((e) => e.harnessResults.length === 0);
   const crossLanguage = LANGUAGES.map((language) => {
     if (harnessesSkipped) return { language, pass: null as boolean | null };
+    // A language that produced no result anywhere was never run at all — its
+    // harness could not be built. That is "unavailable", not a parity failure,
+    // and reporting it as FAIL asserts a byte mismatch that was never observed.
+    const ran = entries.some((e) =>
+      e.harnessResults.some((r) => r.language === language),
+    );
+    if (!ran) return { language, pass: null as boolean | null };
     const pass = entries.every(
       (e) =>
         e.harnessResults.find((r) => r.language === language)?.matches ?? false,

@@ -183,6 +183,14 @@ export function generateReport(
     if (harnessesSkipped) {
       return { language: lang, pass: null as boolean | null };
     }
+    // No result anywhere means the harness was never run, not that it
+    // disagreed with the reference. Mirrors the JSON summary in main.ts.
+    const ran = entries.some((e) =>
+      e.harnessResults.some((r) => r.language === lang),
+    );
+    if (!ran) {
+      return { language: lang, pass: null as boolean | null };
+    }
     const allMatch = entries.every((e) => {
       const result = e.harnessResults.find((r) => r.language === lang);
       return result?.matches ?? false;
