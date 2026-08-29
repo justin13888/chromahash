@@ -2,14 +2,14 @@
 
 Complete testing procedure for the ChromaHash monorepo. Run this after any change to be confident all implementations are correct and in sync.
 
-See [README.md](README.md) for setup and prerequisites (mise, lefthook, per-language dependencies).
+See [README.md](README.md) for setup and prerequisites (mise, hk, per-language dependencies).
 
 ---
 
 ## Quick Check (run after every change)
 
 ```bash
-just test
+mise run test
 ```
 
 This runs every language's test suite: the Rust core, the C / WASM / UniFFI
@@ -32,7 +32,7 @@ Run these in order. Each step must pass before proceeding.
 ### Step 1: Validate spec constants
 
 ```bash
-just validate-spec
+mise run validate:spec
 ```
 
 `spec/validate.py` is an **independent** Python reference, not a wrapper over the
@@ -47,7 +47,7 @@ one place the golden vectors are checked by something that did not produce them.
 ### Step 2: Check the manifest versions agree
 
 ```bash
-just check-versions
+mise run check:versions
 ```
 
 Every publishable manifest must carry the core crate's version. Each
@@ -58,23 +58,23 @@ version behind while the others publish.
 ### Step 3: Format check
 
 ```bash
-just format-check
+mise run format:check
 ```
 
-Checks formatting across all implementations without modifying files. If this fails, run `just format-fix` and re-check.
+Checks formatting across all implementations without modifying files. If this fails, run `mise run format:fix` and re-check.
 
 ### Step 4: Lint
 
 ```bash
-just lint
+mise run lint
 ```
 
-Runs linters across all implementations. If this fails, run `just lint-fix` for auto-fixable issues.
+Runs linters across all implementations. If this fails, run `mise run lint:fix` for auto-fixable issues.
 
 ### Step 5: Build
 
 ```bash
-just build
+mise run build
 ```
 
 Compiles every implementation and helper crate. Catches type errors, missing imports, and compilation issues that tests alone might not surface (e.g., TypeScript type checking).
@@ -82,7 +82,7 @@ Compiles every implementation and helper crate. Catches type errors, missing imp
 ### Step 6: Test all implementations
 
 ```bash
-just test
+mise run test
 ```
 
 Runs the full test suite for each language. All implementations load the same golden test vectors from `spec/test-vectors/` and must produce identical results.
@@ -93,13 +93,13 @@ If you modified encoding/decoding logic in Rust (the reference implementation):
 
 ```bash
 cd rust && cargo test -- --ignored generate_test_vectors --nocapture && cd ..
-just test
+mise run test
 ```
 
 This regenerates all JSON test vectors from the Rust implementation, then re-runs every language's tests against the new vectors. All nine must still pass.
 
 Regenerating is a deliberate, reviewed act: the vectors are the cross-language
-contract, so a diff to them is a format change, not a test update. `just test`
+contract, so a diff to them is a format change, not a test update. `mise run test`
 fails if the committed vectors and the reference disagree — that is what
 `rust/tests/spec_vectors.rs` and the read-back tests in `rust/src/test_vectors.rs`
 are for.
@@ -109,16 +109,16 @@ are for.
 ## One-Liner for Full Verification
 
 ```bash
-just validate-spec && just check-versions && just format-check && just lint && just build && just test
+mise run validate:spec && mise run check:versions && mise run format:check && mise run lint && mise run build && mise run test
 ```
 
 Then the slower gates, which are not part of a routine change:
 
 ```bash
-just test-simd-diff     # every SIMD backend this host can execute
-just rd-gate            # encoder quality regression gate
-just verify-experiments # every number in spec/EXPERIMENTS.md vs the sweep output
-just mutants-rust       # full mutation sweep of the core (slow)
+mise run test:simd:diff     # every SIMD backend this host can execute
+mise run rd:gate            # encoder quality regression gate
+mise run verify:experiments # every number in spec/EXPERIMENTS.md vs the sweep output
+mise run mutants:rust       # full mutation sweep of the core (slow)
 ```
 
 ---
@@ -401,46 +401,52 @@ behaviour is pinned in the reference, but the shared contract does not carry it.
 1. `python3 spec/validate.py` — verify derivation still holds
 2. Update the constant in the Rust core (the other languages read it through the FFI)
 3. Regenerate test vectors from Rust: `cd rust && cargo test -- --ignored generate_test_vectors --nocapture`
-4. `just test` — every language must pass
+4. `mise run test` — every language must pass
 
 ### Changed encoding logic
 
 1. Change it in the Rust core only — every other language is a binding over it
 2. Regenerate test vectors from Rust (it is the reference)
-3. `just test` — every language must pass against the new vectors
-4. `just rd-gate` — the encoder quality gate; if it moves, say which change moved it
+3. `mise run test` — every language must pass against the new vectors
+4. `mise run rd:gate` — the encoder quality gate; if it moves, say which change moved it
 
 ### Changed decoding logic
 
 1. Change it in the Rust core only
 2. Regenerate decode test vectors from Rust
-3. `just test`
+3. `mise run test`
 
 ### Changed only one language implementation (bug fix)
 
-1. `just test-<lang>` for the changed language
-2. `just test` to confirm no regressions across all languages
+1. `mise run test-<lang>` for the changed language
+2. `mise run test` to confirm no regressions across all languages
 
 ### Changed the spec (`spec/README.md`)
 
 1. Verify the spec text matches `constants.py`: `python3 spec/validate.py`
 2. If the spec describes new behaviour, ensure the reference and the test vectors reflect it
-3. `just test`
+3. `mise run test`
 
 ---
 
 ## Git Hooks (Automated Safety Net)
 
-Lefthook enforces checks automatically:
+[hk](https://hk.jdx.dev) enforces checks automatically. The configuration is
+[`hk.pkl`](hk.pkl); every step delegates to a mise task, so the hooks and CI run
+the same commands.
 
 | Hook | What runs | Purpose |
 |------|-----------|---------|
-| `pre-commit` | `just format-fix`, `just lint-fix` | Auto-fix style issues before committing |
-| `pre-push` | `just format-check`, `just lint`, `just test`, `just mutants-rust-diff` | Block push if anything fails |
+| `commit-msg` | `convco check` | Reject a non-conventional commit message at commit time |
+| `pre-commit` | `mise run format`, `mise run lint:fix`, then `git diff --exit-code` | Auto-fix style, then fail if the fixers changed anything |
+| `pre-push` | `convco check` on the outgoing commits, `mise run format:check`, `mise run lint`, `mise run test`, `mise run mutants:rust:diff` | Block push if anything fails |
 
-These hooks are installed via `lefthook install`. The pre-push hook runs the full test suite, so a successful `git push` implies all checks passed.
+Install them once with `hk install` (hk itself comes from `mise install`). The
+pre-push hook runs the full test suite, so a successful `git push` implies all
+checks passed. Steps run one at a time — they all drive cargo against the same
+target directories.
 
-The `mutants-rust-diff` pre-push step is gated on `rust/src/**/*.rs` edits, so non-Rust pushes skip it. It mutation-tests only the core lines the push changes (see [Mutation Testing](#mutation-testing)). Skip it explicitly with `LEFTHOOK_EXCLUDE=mutants-rust git push`.
+The `mutants-rust` pre-push step is gated on `rust/src/**/*.rs` edits, so non-Rust pushes skip it. It mutation-tests only the core lines the push changes (see [Mutation Testing](#mutation-testing)). Skip it explicitly with `HK_SKIP_STEPS=mutants-rust git push`.
 
 ---
 
@@ -469,9 +475,9 @@ edit ran nothing but the commit linter.
 | `ci-mutants.yml` | `rust/**` (PRs) | mutation-test the changed core lines (`--in-diff`), with an empty-diff guard; full sweep weekly and on demand |
 | `ci-commits.yml` | *all* | conventional-commit format (convco) |
 
-CI mirrors the local `just` commands. If local checks pass, CI should pass — with
+CI mirrors the local `mise run` tasks. If local checks pass, CI should pass — with
 two exceptions that cannot run on a Linux workstation: the Swift suite (needs
-macOS for the xcframework, so `just test-swift` skips with a message rather than
+macOS for the xcframework, so `mise run test:swift` skips with a message rather than
 passing silently) and `test-simd-emulated` (needs `qemu-user` and `wasmtime`).
 
 ---
@@ -538,9 +544,9 @@ misconfiguration — usually a mis-targeted CI job — so it panics with a clear
 message instead of passing green with zero coverage.
 
 ```bash
-just test-simd-diff        # native host: every backend this CPU/arch provides
-just setup-simd-targets    # add the rustup targets the emulated sweep needs
-just test-simd-emulated    # every target via QEMU (x86_64 AVX2 + SSE2-only,
+mise run test:simd:diff        # native host: every backend this CPU/arch provides
+mise run setup:simd-targets    # add the rustup targets the emulated sweep needs
+mise run test:simd:emulated    # every target via QEMU (x86_64 AVX2 + SSE2-only,
                            # aarch64 NEON) and wasmtime (wasm32 simd128)
 ```
 
@@ -568,9 +574,9 @@ Scope is the core only (per issue #41); the FFI bindings are thin wrappers and
 are exercised by their own spec-vector tests.
 
 ```bash
-just mutants-rust                     # full sweep of rust/src (~2000 mutants, ~hours)
-just mutants-rust-diff                # only the lines changed vs origin/master (fast)
-just mutants-rust --file src/dct.rs   # extra args pass straight to cargo-mutants
+mise run mutants:rust                     # full sweep of rust/src (~2000 mutants, ~hours)
+mise run mutants:rust:diff                # only the lines changed vs origin/master (fast)
+mise run mutants:rust --file src/dct.rs   # extra args pass straight to cargo-mutants
 ```
 
 **How the sweep sees the golden vectors.** cargo-mutants builds the crate in an
@@ -614,7 +620,7 @@ mutant would be measuring the profile rather than the tests.
 survive the next. A single missed mutant in `tests/properties.rs`'s blast radius
 is worth re-running before acting on; a repeatable one is a real gap.
 
-**Where it runs.** The `mutants-rust-diff` lefthook pre-push step gates pushes
+**Where it runs.** The `mutants:rust:diff` hk pre-push step gates pushes
 that touch `rust/src` on the changed lines being covered; `ci-mutants.yml` runs
 the same incremental check on pull requests. The full sweep is too slow for a PR
 gate, so it runs weekly on a schedule (and on demand via workflow_dispatch): a

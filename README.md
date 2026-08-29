@@ -55,8 +55,11 @@ mise install
 ```
 
 This installs: Node 24, Gradle 9.4.0, Swift 6.2.4, Go 1.24, Python 3.13, .NET 9, plus the
-[git-cliff](https://git-cliff.org/) (changelog) and [convco](https://convco.github.io/)
-(conventional-commit lint) developer tools.
+[git-cliff](https://git-cliff.org/) (changelog), [convco](https://convco.github.io/)
+(conventional-commit lint) and [hk](https://hk.jdx.dev/) (git hooks) developer tools.
+
+mise also runs the cross-language tasks — there is no separate task runner to
+install. `mise tasks` lists them.
 
 Then install per-language dependencies:
 
@@ -74,10 +77,10 @@ cd python && uv sync
 cd csharp && dotnet restore
 ```
 
-Install git hooks:
+Install git hooks (hk comes from `mise install` above; this registers it with git):
 
 ```bash
-lefthook install
+hk install
 ```
 
 ### Tool versions
@@ -94,6 +97,7 @@ All tool versions are pinned in [`.mise.toml`](.mise.toml).
 | .NET     | 9       |
 | git-cliff | 2.13.1 |
 | convco   | 0.6.4   |
+| hk       | 1.56.1  |
 
 Rust is managed via [`rust/rust-toolchain.toml`](rust/rust-toolchain.toml) (stable channel).
 
@@ -101,37 +105,38 @@ Rust is managed via [`rust/rust-toolchain.toml`](rust/rust-toolchain.toml) (stab
 
 ### Cross-language commands
 
-All commands are available via [`just`](https://github.com/casey/just):
+All tasks run through [mise](https://mise.jdx.dev/tasks/):
 
 ```bash
-just            # list all recipes
-just format     # format all implementations
-just lint       # lint all implementations
-just test       # test all implementations
-just build      # build all implementations
-just format-fix # auto-fix formatting everywhere
-just lint-fix   # auto-fix lint errors everywhere
-just compare    # generate LQIP comparison report
-just compare-versions # local-only: compare chromahash format versions (v0.2–v0.5 + current)
-just benchmark  # run performance benchmark
-just mutants-rust # mutation-test the core Rust crate (cargo-mutants; see TESTING.md)
-just changelog  # regenerate the [Unreleased] CHANGELOG section from commits
-just release X.Y.Z # cut a release section in the CHANGELOG (see RELEASING.md)
+mise tasks               # list every task
+mise run format          # format all implementations
+mise run lint            # lint all implementations
+mise run test            # test all implementations
+mise run build           # build all implementations
+mise run format:check    # check formatting everywhere, without writing
+mise run lint:fix        # auto-fix lint errors everywhere
+mise run compare         # generate LQIP comparison report
+mise run compare:versions # local-only: compare chromahash format versions (v0.2–v0.6 + current)
+mise run benchmark       # run performance benchmark
+mise run mutants:rust    # mutation-test the core Rust crate (cargo-mutants; see TESTING.md)
+mise run changelog       # regenerate the [Unreleased] CHANGELOG section from commits
+mise run release X.Y.Z   # cut a release section in the CHANGELOG (see RELEASING.md)
 ```
 
 ### Per-language commands
 
+Task names are `<verb>[:<qualifier>]:<target>`, so a glob selects a whole verb
+or a whole language:
+
 ```bash
-just format-check-rust   / just format-fix-rust   / just lint-rust   / just test-rust   / just build-rust
-just format-check-c      / just format-fix-c      / just lint-c      / just test-c      / just build-c
-just format-check-ts     / just format-fix-ts     / just lint-ts     / just test-ts     / just build-ts
-just format-check-wasm   / just format-fix-wasm   / just lint-wasm   / just test-wasm   / just build-wasm
-just format-check-jvm    / just format-fix-jvm    / just lint-jvm    / just test-jvm    / just build-jvm
-just format-check-swift  / just format-fix-swift  / just lint-swift  / just test-swift  / just build-swift
-just format-check-go     / just format-fix-go     / just lint-go     / just test-go     / just build-go
-just format-check-python / just format-fix-python / just lint-python / just test-python / just build-python
-just format-check-csharp / just format-fix-csharp / just lint-csharp / just test-csharp / just build-csharp
+mise run format:check:rust  / mise run format:rust  / mise run lint:rust  / mise run test:rust  / mise run build:rust
+mise run 'test:*'           # every per-language test task
+mise run 'format:check:*'   # every per-language format check
 ```
+
+`<target>` is one of `rust`, `c`, `ts`, `wasm`, `jvm`, `swift`, `go`, `python`,
+`csharp`, `android`, plus the `compare`, `benchmark`, `thumbhash` and `gamutref`
+tooling crates. Run `mise tasks` for the full list with descriptions.
 
 ### Formatting & linting tools
 
@@ -186,10 +191,10 @@ chromahash/
 ├── docs/               # Integration guides (e.g. Android via Rust/JNI)
 ├── tools/              # Shared developer tooling (comparison, benchmarks)
 ├── .github/workflows/  # Per-language GitHub Actions CI
-├── justfile            # Cross-language task runner
-├── lefthook.yml        # Git hooks (commit-msg lint, pre-commit fix, pre-push check)
+├── mise-tasks/         # Cross-language tasks whose body is a shell script
+├── hk.pkl              # Git hooks (commit-msg lint, pre-commit fix, pre-push check)
 ├── cliff.toml          # git-cliff changelog config
-├── .mise.toml          # Pinned tool versions
+├── .mise.toml          # Pinned tool versions + the cross-language task graph
 ├── CHANGELOG.md        # Keep a Changelog (Unreleased section generated by git-cliff)
 ├── RELEASING.md        # Release process
 ├── LICENSE             # Dual license notice

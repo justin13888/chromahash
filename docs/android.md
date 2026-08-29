@@ -78,21 +78,21 @@ Two deliberate differences from a naïve 1:1 mapping, both at the FFI boundary:
 
 ## 4. Build, test, and publish
 
-All commands live in the root `justfile`; full details in
+All commands are mise tasks (`mise tasks` lists them); full details in
 [`bindings/uniffi/README.md`](../bindings/uniffi/README.md).
 
 **Host-only (no Android toolchain) — the enforced correctness gate:**
 
 ```bash
-just test-android          # spec vectors through the binding (byte-exact)
-just lint-android          # clippy -D warnings
-just build-android-crate   # host build of the crate
+mise run test:android          # spec vectors through the binding (byte-exact)
+mise run lint:android          # clippy -D warnings
+mise run build:android:crate   # host build of the crate
 ```
 
 **The AAR (requires the Android NDK + `cargo-ndk` + Rust Android targets):**
 
 ```bash
-just build-android-aar     # cargo ndk (all ABIs) → uniffi-bindgen → gradle assembleRelease
+mise run build:android:aar     # cargo ndk (all ABIs) → uniffi-bindgen → gradle assembleRelease
 ```
 
 `assembleRelease`'s `preBuild` depends on the `cargoNdkBuild` → `generateUniffiBindings` Gradle
@@ -164,7 +164,7 @@ Swapping the import (`chromahash.ChromaHash` → `io.chromahash.ffi.ChromaHash`)
 The binding is bit-exact with every other implementation. The enforced gate is a Rust integration
 test, [`bindings/uniffi/tests/spec_vectors.rs`](../bindings/uniffi/tests/spec_vectors.rs), which
 runs the spec test vectors in [`spec/test-vectors/`](../spec/test-vectors/) through the **binding
-wrappers** and asserts exact output — no NDK/SDK required, so it runs in `just test` (lefthook
+wrappers** and asserts exact output — no NDK/SDK required, so it runs in `mise run test` (hk
 pre-push) and the `ci-android` `check` job:
 
 - `integration-encode.json` — encode pixels at each tier, compare the hash (+ average color).

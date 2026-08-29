@@ -1,10 +1,10 @@
 # Chromahash Benchmark
 
-Output generated with `just benchmark` on Apple M3 Pro.
+Output generated with `mise run benchmark` on Apple M3 Pro.
 
-> **These numbers are the default tier (code 1, 32 bytes) only.** `just benchmark`
+> **These numbers are the default tier (code 1, 32 bytes) only.** `mise run benchmark`
 > now sweeps every tier and emits a table per tier, but the run below predates
-> that and has not been re-measured — regenerate with `just benchmark` on the
+> that and has not been re-measured — regenerate with `mise run benchmark` on the
 > reference machine and paste `tools/benchmark/output/benchmark-summary.md` over
 > the section below.
 

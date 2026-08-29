@@ -8,8 +8,8 @@ output is byte-identical to every other ChromaHash implementation.
 ## Build
 
 ```sh
-just build-wasm   # → bindings/wasm/pkg (web) and bindings/wasm/pkg-node (nodejs)
-just test-wasm    # spec-vector parity gate, compiled to wasm and run in Node
+mise run build:wasm   # → bindings/wasm/pkg (web) and bindings/wasm/pkg-node (nodejs)
+mise run test:wasm    # spec-vector parity gate, compiled to wasm and run in Node
 ```
 
 Both outputs are gitignored build artifacts. The TypeScript package (`typescript/`)

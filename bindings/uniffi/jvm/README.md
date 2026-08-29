@@ -36,9 +36,9 @@ library; the cross-platform native matrix is wired up at release time.
 ## Usage
 
 ```sh
-just test-jvm      # spec-vector parity gate through the binding (builds the host lib)
-just build-jvm     # assemble the JAR
-just bench-batch-jvm
+mise run test:jvm      # spec-vector parity gate through the binding (builds the host lib)
+mise run build:jvm     # assemble the JAR
+mise run benchmark:batch:jvm
 ```
 
 ```kotlin

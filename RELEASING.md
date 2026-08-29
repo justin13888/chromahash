@@ -16,7 +16,7 @@ lives between two sentinels:
 Refresh it at any time (idempotent):
 
 ```bash
-just changelog
+mise run changelog
 ```
 
 ## Cutting a release
@@ -24,14 +24,14 @@ just changelog
 1. **Refresh the changelog** and add any `Removed` entries by hand:
 
    ```bash
-   just changelog
+   mise run changelog
    ```
 
 2. **Cut the version section.** Turns `[Unreleased]` into `[X.Y.Z] - <date>` and
    re-seeds an empty `[Unreleased]`:
 
    ```bash
-   just release X.Y.Z
+   mise run release X.Y.Z
    ```
 
 3. **Update the link references** at the bottom of `CHANGELOG.md`:
@@ -164,9 +164,9 @@ republished either way, so removal buys nothing a deprecation notice does not.
 > publish must therefore run:
 >
 > ```bash
-> just ts-cbuild                     # wasm-pack → typescript/wasm/, as the workflow does
+> mise run cbuild:ts                     # wasm-pack → typescript/wasm/, as the workflow does
 > rm -f typescript/wasm/.gitignore   # NOT optional
-> just build-ts
+> mise run build:ts
 > cd typescript
 > npm pack --dry-run | grep -c wasm/ # MUST be non-zero before you publish
 > npm login                          # interactive; OIDC is unavailable outside CI
@@ -201,12 +201,12 @@ The rest:
   note the error's own hint — the secret must be the policy *creator*, not the
   policy owner.
 - **JVM/Android** — GPG signing plus `MAVEN_CENTRAL_USERNAME`/`PASSWORD`
-  (see the `just android-*` recipes), on top of the namespace above.
+  (see the `android:*` tasks), on top of the namespace above.
 - **Swift Package Index** — submit the repo once at
   `swiftpackageindex.com/add-a-package`. Also ensure no tag-protection rule blocks
   the workflow's `GITHUB_TOKEN` from moving the `vX.Y.Z` tag.
 
-`just check-versions` (and the `versions` job in `ci-repo.yml` / `ci-tools.yml`)
+`mise run check:versions` (and the `versions` job in `ci-repo.yml` / `ci-tools.yml`)
 asserts every publishable manifest carries the core crate's version. Each
 `release-*.yml` verifies the pushed tag against *its own* manifest, so without
 that check a single stale file fails one pipeline quietly and leaves one registry
