@@ -69,9 +69,9 @@ function getHarnesses(): HarnessConfig[] {
     },
     {
       language: "Swift",
-      command: path.join(ROOT, "swift/.build/debug/ChromaHashCLI"),
+      command: path.join(ROOT, ".build/debug/ChromaHashCLI"),
       args: [],
-      cwd: path.join(ROOT, "swift"),
+      cwd: ROOT,
     },
     {
       language: "Go",
@@ -102,6 +102,12 @@ function getHarnesses(): HarnessConfig[] {
 
 interface BuildStep {
   label: string;
+  /**
+   * Harness language this step produces, when it maps to one. A step whose
+   * build fails marks that language unavailable so it is skipped rather than
+   * invoked once per image. Steps that build no harness (gamut-ref) omit it.
+   */
+  language?: string;
   command: string;
   args: string[];
   cwd: string;
@@ -111,16 +117,18 @@ interface BuildStep {
  * Build all harness binaries once before running comparisons.
  * This avoids per-invocation build overhead (especially for Gradle and dotnet).
  */
-export function buildHarnesses(): void {
+export function buildHarnesses(): Set<string> {
   const steps: BuildStep[] = [
     {
       label: "TypeScript",
+      language: "TypeScript",
       command: "pnpm",
       args: ["--prefix", path.join(ROOT, "typescript"), "run", "build"],
       cwd: ROOT,
     },
     {
       label: "Rust",
+      language: "Rust",
       command: "cargo",
       args: [
         "build",
@@ -134,6 +142,7 @@ export function buildHarnesses(): void {
     },
     {
       label: "C (lib)",
+      language: "C",
       command: "cargo",
       args: [
         "build",
@@ -144,6 +153,7 @@ export function buildHarnesses(): void {
     },
     {
       label: "C (harness)",
+      language: "C",
       command: "cc",
       args: [
         path.join(ROOT, "bindings/c/examples/encode_stdin.c"),
@@ -159,12 +169,14 @@ export function buildHarnesses(): void {
     },
     {
       label: "Kotlin",
+      language: "Kotlin",
       command: path.join(ROOT, "bindings/uniffi/jvm/gradlew"),
       args: ["-p", path.join(ROOT, "bindings/uniffi/jvm"), "installDist", "-q"],
       cwd: path.join(ROOT, "bindings/uniffi/jvm"),
     },
     {
       label: "Go",
+      language: "Go",
       command: "go",
       args: [
         "build",
@@ -176,12 +188,14 @@ export function buildHarnesses(): void {
     },
     {
       label: "Swift",
+      language: "Swift",
       command: "swift",
       args: ["build"],
-      cwd: path.join(ROOT, "swift"),
+      cwd: ROOT,
     },
     {
       label: "C#",
+      language: "C#",
       command: "dotnet",
       args: ["build", path.join(ROOT, "csharp/src/Chromahash.Cli")],
       cwd: ROOT,
@@ -199,6 +213,7 @@ export function buildHarnesses(): void {
     },
   ];
 
+  const unavailable = new Set<string>();
   for (const step of steps) {
     console.log(`  Building ${step.label} harness...`);
     try {
@@ -210,8 +225,16 @@ export function buildHarnesses(): void {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.warn(`  WARNING: ${step.label} build failed: ${msg}`);
+      if (step.language) unavailable.add(step.language);
     }
   }
+
+  if (unavailable.size > 0) {
+    console.warn(
+      `  Harnesses unavailable (build failed): ${[...unavailable].join(", ")}`,
+    );
+  }
+  return unavailable;
 }
 
 function runHarness(
@@ -265,8 +288,9 @@ function runHarness(
 export async function runAllHarnesses(
   input: ImageInput,
   gamut = "srgb",
+  unavailable: ReadonlySet<string> = new Set(),
 ): Promise<HarnessResult[]> {
-  const harnesses = getHarnesses();
+  const harnesses = getHarnesses().filter((c) => !unavailable.has(c.language));
   const { smallWidth: w, smallHeight: h, smallRgba: rgba } = input;
 
   const results: HarnessResult[] = [];

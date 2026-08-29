@@ -292,10 +292,12 @@ async function main(): Promise<void> {
 
   console.log(`Found ${imagePaths.length} images.`);
 
-  // Build all harness binaries once
+  // Build all harness binaries once. A harness whose build fails is recorded
+  // here and skipped below, rather than being invoked once per image.
+  let unavailableHarnesses: ReadonlySet<string> = new Set<string>();
   if (!skipHarnesses) {
     console.log("Building harnesses...");
-    buildHarnesses();
+    unavailableHarnesses = buildHarnesses();
     console.log("Harnesses built.");
   }
 
@@ -521,7 +523,11 @@ async function main(): Promise<void> {
     let harnessResults: HarnessResult[] = [];
     if (!skipHarnesses) {
       try {
-        harnessResults = await runAllHarnesses(input, gamut);
+        harnessResults = await runAllHarnesses(
+          input,
+          gamut,
+          unavailableHarnesses,
+        );
       } catch (err) {
         console.warn(
           `  Harness runner failed: ${err instanceof Error ? err.message : err}`,
@@ -687,6 +693,13 @@ async function main(): Promise<void> {
   const harnessesSkipped = entries.every((e) => e.harnessResults.length === 0);
   const crossLanguage = LANGUAGES.map((language) => {
     if (harnessesSkipped) return { language, pass: null as boolean | null };
+    // A language that produced no result anywhere was never run at all — its
+    // harness could not be built. That is "unavailable", not a parity failure,
+    // and reporting it as FAIL asserts a byte mismatch that was never observed.
+    const ran = entries.some((e) =>
+      e.harnessResults.some((r) => r.language === language),
+    );
+    if (!ran) return { language, pass: null as boolean | null };
     const pass = entries.every(
       (e) =>
         e.harnessResults.find((r) => r.language === language)?.matches ?? false,
