@@ -96,7 +96,10 @@ export function bootstrapCIOf(
 
 /** Median of a sample, sorting a copy so the caller's array is untouched. */
 export function median(sample: number[]): number {
-  return quantile([...sample].sort((a, b) => a - b), 0.5);
+  return quantile(
+    [...sample].sort((a, b) => a - b),
+    0.5,
+  );
 }
 
 /**
