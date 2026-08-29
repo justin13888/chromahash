@@ -1479,6 +1479,49 @@ mod tests {
         rgba
     }
 
+    // ── Encode preconditions ─────────────────────────────────────────────
+    //
+    // `analyze` guards four preconditions with `assert!`. Nothing pinned them:
+    // the crate's only `should_panic` was on the batch path, whose copies in
+    // `batch.rs` are textually separate, and every binding pre-validates its own
+    // arguments before calling in — so those suites pass whether or not the core
+    // check still exists. Verified by deletion: removing `assert!(w >= 1)` left
+    // all 156 tests green.
+    //
+    // cargo-mutants cannot cover this either — it emits no mutant for the inside
+    // of an `assert!` — so these are the only thing standing between the
+    // preconditions and a silent removal.
+    //
+    // Each matches on the message, not just on panicking, because a zero
+    // dimension also panics further downstream on an out-of-bounds index; a bare
+    // `should_panic` would pass for the wrong reason.
+
+    #[test]
+    #[should_panic(expected = "width must be >= 1")]
+    fn encode_rejects_zero_width() {
+        crate::ChromaHash::encode(0, 4, &[], Gamut::Srgb);
+    }
+
+    #[test]
+    #[should_panic(expected = "height must be >= 1")]
+    fn encode_rejects_zero_height() {
+        crate::ChromaHash::encode(4, 0, &[], Gamut::Srgb);
+    }
+
+    #[test]
+    #[should_panic(expected = "rgba length mismatch")]
+    fn encode_rejects_a_short_rgba_buffer() {
+        // 4x4 needs 64 bytes; hand it 60.
+        crate::ChromaHash::encode(4, 4, &[0u8; 60], Gamut::Srgb);
+    }
+
+    #[test]
+    #[should_panic(expected = "tier must be a valid code")]
+    fn encode_rejects_a_reserved_tier() {
+        let rgba = solid(4, 4, 128, 64, 32, 255);
+        crate::ChromaHash::encode_with_quality(4, 4, &rgba, Gamut::Srgb, MAX_TIER + 1);
+    }
+
     #[test]
     fn select_dc_codes_searches_l_neighbors() {
         // The decode-aware DC search must explore the L code's ±1 neighbours, not
