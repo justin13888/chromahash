@@ -812,10 +812,17 @@ mod tests {
     //
     // Four of the unit vector files — bitpack, cbrt, color, mulaw — were written
     // by the generator above and then read by nothing: not this crate, not
-    // `spec/validate.py`, not any binding. (`unit-aspect` and `unit-selection`
-    // are consumed by `spec/validate.py`; `unit-validate` by
-    // `tests/spec_vectors.rs`.) A committed file nobody asserts against is not a
-    // test — it is a snapshot that regenerates silently.
+    // `spec/validate.py`, not any binding. A committed file nobody asserts
+    // against is not a test — it is a snapshot that regenerates silently.
+    //
+    // `unit-aspect` and `unit-selection` were left out of this module on the
+    // grounds that `spec/validate.py` consumes them, which it does — and as an
+    // independent transcription it is the stronger oracle of the two. But
+    // `validate.py` runs under `mise run validate:spec`, not under
+    // `mise run test`, so a regeneration that quietly changed 45 aspect cases or
+    // 488 selection cases was invisible to `cargo test` and to CI's Rust job.
+    // They are read back here for that reason: not to replace the Python
+    // oracle, but so the Rust suite notices when the vectors move.
     //
     // These read them back through the same kernels. That does not make the
     // vectors an independent oracle — the crate is the reference — but it does
@@ -1013,6 +1020,94 @@ mod tests {
                     mu_law_dequantize(mu_law_quantize(v, bits, mu), bits, mu).to_bits(),
                     f64_at(&expected["dequantized"]).to_bits(),
                     "{name}: dequantize"
+                );
+            }
+        }
+
+        /// Aspect encode/decode and the derived render size, over every distinct
+        /// `(ratio, tier)` the format produces.
+        ///
+        /// `decoded_ratio` is compared bit-exactly: it is an `f64` written at
+        /// shortest-round-trip precision, and the whole point of pinning it is
+        /// that a decoder reconstructing the ratio one ULP differently would
+        /// pick a different render size at some aspect byte.
+        #[test]
+        fn unit_aspect_vectors() {
+            let cases = vectors!("unit-aspect.json");
+            for case in &cases {
+                let name = case["name"].as_str().unwrap_or("<unnamed>");
+                let width = case["input"]["width"].as_u64().expect("width") as u32;
+                let height = case["input"]["height"].as_u64().expect("height") as u32;
+                let tier = case["input"]["tier"].as_u64().expect("tier") as u8;
+
+                let byte = encode_aspect(width, height);
+                assert_eq!(
+                    u64::from(byte),
+                    case["expected"]["byte"].as_u64().expect("byte"),
+                    "{name}: aspect byte"
+                );
+
+                let ratio = decode_aspect(byte);
+                assert_eq!(
+                    ratio.to_bits(),
+                    f64_at(&case["expected"]["decoded_ratio"]).to_bits(),
+                    "{name}: decoded ratio (bit-exact)"
+                );
+
+                let (ow, oh) = decode_output_size(byte, tier);
+                assert_eq!(
+                    u64::from(ow),
+                    case["expected"]["output_width"]
+                        .as_u64()
+                        .expect("output_width"),
+                    "{name}: output width"
+                );
+                assert_eq!(
+                    u64::from(oh),
+                    case["expected"]["output_height"]
+                        .as_u64()
+                        .expect("output_height"),
+                    "{name}: output height"
+                );
+            }
+        }
+
+        /// Top-K coefficient selection over every distinct `(W, H, K)` the format
+        /// reaches, unweighted and at the shipped weights.
+        ///
+        /// This is what pins an implementation's *integer* selection key rather
+        /// than merely its sort: two implementations can agree on an ordering for
+        /// most inputs and diverge on the ties that the Q12 key resolves exactly.
+        #[test]
+        fn unit_selection_vectors() {
+            let cases = vectors!("unit-selection.json");
+            for case in &cases {
+                let name = case["name"].as_str().unwrap_or("<unnamed>");
+                let aspect_byte = case["input"]["aspect_byte"].as_u64().expect("aspect_byte") as u8;
+                let tier = case["input"]["tier"].as_u64().expect("tier") as u8;
+                let k = case["input"]["k"].as_u64().expect("k") as usize;
+                let aniso = f64_at(&case["input"]["aniso"]);
+                let hv = f64_at(&case["input"]["hv"]);
+
+                let sel = SelectionOrder::new(aspect_byte, tier, aniso, hv).take(k);
+
+                let expected: Vec<(usize, usize)> = case["expected"]["coeffs"]
+                    .as_array()
+                    .expect("coeffs")
+                    .iter()
+                    .map(|pair| {
+                        let p = pair.as_array().expect("coeff pair");
+                        (
+                            p[0].as_u64().expect("cx") as usize,
+                            p[1].as_u64().expect("cy") as usize,
+                        )
+                    })
+                    .collect();
+                assert_eq!(sel.coeffs, expected, "{name}: selected coefficients");
+                assert_eq!(
+                    sel.p_k,
+                    case["expected"]["p_k"].as_u64().expect("p_k"),
+                    "{name}: p_k"
                 );
             }
         }
