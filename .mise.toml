@@ -676,10 +676,30 @@ run = [
   "pnpm --prefix tools/comparison run build",
 ]
 
+# Build the scalar Rust harness alongside the default one, so the shipped `simd`
+# feature can be priced. Nested under rust/target/ so the existing gitignore
+# covers it and the default artifact every other task depends on is untouched.
+[tasks."build:benchmark:scalar"]
+description = "Build the scalar (no-SIMD) Rust bench harness"
+run = """
+CARGO_TARGET_DIR=rust/target/scalar cargo build --manifest-path rust/Cargo.toml \
+    --release --no-default-features --example encode_stdin
+"""
+
 [tasks.benchmark]
-description = "Run the performance benchmark (encode/decode × single/bulk, vs ThumbHash)"
-depends = ["build:benchmark"]
-run = "( cd tools/benchmark && uv run benchmark.py --skip-build --tiers all )"
+description = "Unified perf sweep: time x bytes across every lever and implementation"
+depends = ["build:benchmark", "build:benchmark:scalar", "build:compare"]
+run = "node tools/comparison/dist/perf/run.js"
+
+[tasks."benchmark:full"]
+description = "Unified perf sweep, exhaustive matrix (hours)"
+depends = ["build:benchmark", "build:benchmark:scalar", "build:compare"]
+run = "node tools/comparison/dist/perf/run.js --full"
+
+[tasks."benchmark:quick"]
+description = "Smoke-test the bench contract across every harness (~2 min, numbers not meaningful)"
+depends = ["build:compare"]
+run = "node tools/comparison/dist/perf/run.js --quick --reps 1"
 
 # ─── Batch benchmarks ─────────────────────────────────────────────────────────
 # Intentionally sequential — running these in parallel would skew the numbers,
