@@ -9,7 +9,7 @@ on:
 
 jobs:
   # Enforced correctness gate — runs the spec vectors through the binding.
-  # No Android NDK/SDK required; this mirrors `just {format-check,lint,test}-android`.
+  # No Android NDK/SDK required; this mirrors `mise run {format:check,lint,test}:android`.
   check:
     runs-on: ubuntu-latest
     defaults:

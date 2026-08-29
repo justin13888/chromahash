@@ -1,7 +1,7 @@
 name: Release (Android)
 
 # Publish the chromahash-android AAR when a release tag is pushed.
-# Releases are cut with `just release X.Y.Z`, which creates and pushes the
+# Releases are cut with `mise run release X.Y.Z`, which creates and pushes the
 # `vX.Y.Z` tag (see RELEASING.md). This workflow publishes the AAR to BOTH
 # Maven Central (Sonatype Central Portal) and GitHub Packages.
 #

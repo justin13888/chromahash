@@ -5,7 +5,7 @@ name: CI (Commits)
 #    squash merges, where the title becomes the commit subject).
 #  - master: validate the commits landing on master (covers direct pushes and
 #    anything that bypasses a PR).
-# Mirrors the local `commit-msg` / `pre-push` lefthook hooks (convco).
+# Mirrors the local `commit-msg` / `pre-push` hk hooks (convco).
 
 on:
   pull_request:

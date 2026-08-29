@@ -1,7 +1,7 @@
 name: Release (Rust)
 
 # Publish the `chromahash` crate to crates.io when a release tag is pushed.
-# Releases are cut with `just release X.Y.Z`, which creates and pushes the
+# Releases are cut with `mise run release X.Y.Z`, which creates and pushes the
 # `vX.Y.Z` tag (see RELEASING.md). This workflow then publishes via crates.io
 # trusted publishing (OIDC) — no stored token. It is idempotent: a version that
 # is already on crates.io (e.g. the one-time bootstrap release published

@@ -48,7 +48,7 @@ jobs:
 
       # `cargo mutants --in-diff` with an empty diff errors out rather than
       # succeeding, so a PR whose `rust/**` match came from the workflow file
-      # alone would fail for no reason. `justfile`'s mutants-rust-diff has the
+      # alone would fail for no reason. The `mutants:rust:diff` task has the
       # same guard.
       - name: Mutation-test changed lines
         run: |
