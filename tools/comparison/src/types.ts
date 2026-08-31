@@ -1,4 +1,4 @@
-import type { CorpusSplit } from "./corpus.ts";
+import type { CorpusSplit, CorpusTier } from "./corpus.ts";
 import type { PairedComparison } from "./paired.ts";
 
 /** Represents a loaded and downscaled image ready for encoding. */
@@ -331,6 +331,8 @@ export interface ComparisonImageJson {
   category: ImageCategory;
   /** Corpus split (see corpus.ts) so downstream tools never re-derive it. */
   split: CorpusSplit;
+  /** Real content or a generated capability fixture (see corpus.ts). */
+  tier: CorpusTier;
   originalWidth: number;
   originalHeight: number;
   /** Relative path to the standalone original (display-sized) image. */

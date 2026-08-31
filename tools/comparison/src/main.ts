@@ -54,7 +54,7 @@ import {
   TIER_BYTES,
 } from "./rd/lineup.ts";
 import { computeRdCurves, generateRdSection } from "./rd/report.ts";
-import { splitFor } from "./corpus.ts";
+import { splitFor, tierFor } from "./corpus.ts";
 import { aspectFidelity, REFLOW_CONTAINER_PX } from "./aspect.ts";
 import {
   computePairedComparisons,
@@ -651,6 +651,7 @@ async function main(): Promise<void> {
       name: entry.name,
       category: entry.category,
       split: splitFor(entry.name),
+      tier: tierFor(entry.name),
       originalWidth: entry.originalWidth,
       originalHeight: entry.originalHeight,
       original: entry.originalDataUri,
@@ -728,7 +729,7 @@ async function main(): Promise<void> {
   const rdJson = rdVariants ? computeRdCurves(entries, rdVariants) : null;
 
   const json: ComparisonJson = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     generatedAt: meta.generatedAt,
     scoring: {
       referenceCap: REFERENCE_CAP,

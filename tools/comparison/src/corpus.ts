@@ -62,6 +62,36 @@ export function inCorpus(imageName: string, set: CorpusSet): boolean {
   return CORPUS_PREFIXES[set].some((p) => imageName.startsWith(p));
 }
 
+/**
+ * Whether an image is real content or a generated capability fixture.
+ *
+ * This is a third axis, orthogonal to {@link CorpusSplit} (tune/holdout) and
+ * {@link CorpusSet} (photo/alpha/graphic), and it exists because averaging the
+ * two together misleads. `gamut-bt2020.png`, `dim-1x100.png` and
+ * `solid-blue.png` demonstrate that the format *can* represent a case; they say
+ * nothing about how well it serves a real placeholder, and a mean taken across
+ * both reads a capability demonstration as a quality result.
+ */
+export type CorpusTier = "real" | "synthetic";
+
+/**
+ * Resolve an image's tier from its report name.
+ *
+ * Derived from {@link CORPUS_PREFIXES} rather than restated, so the two cannot
+ * drift: anything belonging to the photo, alpha or graphic corpora is real
+ * content; everything else is a generated fixture.
+ *
+ * Deliberately *not* keyed off `ImageCategory`. `categorizeImage()`'s
+ * "Realistic" arm is a fallthrough default for unmatched filenames, so an
+ * image nobody classified would silently be counted as real evidence.
+ */
+export function tierFor(imageName: string): CorpusTier {
+  const real = (["photo", "alpha", "graphic"] as const).some((set) =>
+    inCorpus(imageName, set),
+  );
+  return real ? "real" : "synthetic";
+}
+
 /** Parse a corpus name, throwing on anything unrecognized rather than defaulting. */
 export function parseCorpusSet(value: string): CorpusSet {
   if (
