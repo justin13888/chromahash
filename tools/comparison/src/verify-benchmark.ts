@@ -25,12 +25,13 @@
  *   node dist/verify-benchmark.js                # every bound table
  *   node dist/verify-benchmark.js --list-unbound # tables with no binding, and why
  *   node dist/verify-benchmark.js --section 7
+ *   node dist/verify-benchmark.js --fix          # rewrite cells from the runs
  *
  * Exit status is non-zero on any disagreement, so `mise run verify:benchmark`
  * gates a documentation change the way `mise run rd:gate` gates a quality one.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
 
@@ -56,7 +57,11 @@ interface DocTable {
   line: number;
   header: string[];
   rows: string[][];
+  /** Source line of each row, parallel to `rows`, for --fix. */
+  rowLines: number[];
 }
+
+const clean = (s: string): string => s.replace(/[*`]/g, "").trim();
 
 function cells(line: string): string[] {
   return line
@@ -89,11 +94,13 @@ function parseTables(markdown: string): DocTable[] {
 
     const header = cells(line);
     const rows: string[][] = [];
+    const rowLines: number[] = [];
     let j = i + 2;
     for (; j < lines.length; j++) {
       const body = lines[j] ?? "";
       if (!body.trimStart().startsWith("|")) break;
       rows.push(cells(body));
+      rowLines.push(j);
     }
     tables.push({
       section,
@@ -101,6 +108,7 @@ function parseTables(markdown: string): DocTable[] {
       line: i + 1,
       header,
       rows,
+      rowLines,
     });
     i = j - 1;
   }
@@ -116,6 +124,39 @@ interface DocNumber {
   unit: Unit;
   /** Decimal places the document used, which is the precision it is held to. */
   decimals: number;
+}
+
+/**
+ * A bound cell whose number has not been measured yet. Written into the
+ * document as TBD so a rewrite can land with its tables bound but its figures
+ * pending; the gate fails on it, so the document cannot be published in that
+ * state. `--fix` against a committed run replaces them.
+ */
+const PLACEHOLDER = "TBD";
+
+/**
+ * Read a placeholder's intended format. Written as "TBD ms", "TBD µs", "TBD×"
+ * or "TBD%", so a rewrite knows the unit the column is in; the decimals default
+ * to what the document uses for that unit elsewhere.
+ */
+function parsePlaceholder(raw: string): DocNumber | null {
+  const text = clean(raw).replace(/\*\*/g, "").trim();
+  const m = /^TBD\s*(µs|us|ms|s|×|x|%)?$/i.exec(text);
+  if (!m) return null;
+  const suffix = m[1];
+  const unit: Unit =
+    suffix === "ms"
+      ? "ms"
+      : suffix === "s"
+        ? "s"
+        : suffix === "%"
+          ? "percent"
+          : suffix === "×" || suffix === "x"
+            ? "ratio"
+            : suffix === undefined
+              ? "ratio"
+              : "us";
+  return { value: Number.NaN, unit, decimals: unit === "us" ? 1 : 2 };
 }
 
 /**
@@ -275,8 +316,6 @@ interface Binding {
   /** Column header (exact) -> resolver. Unlisted columns are not checked. */
   columns: Record<string, Resolve>;
 }
-
-const clean = (s: string): string => s.replace(/[*`]/g, "").trim();
 
 /**
  * A header or row label without its parenthetical aside: the document writes
@@ -508,6 +547,13 @@ interface Failure {
   detail?: string;
 }
 
+/** One cell `--fix` will rewrite: line in the document, column, new text. */
+interface Edit {
+  line: number;
+  cellIndex: number;
+  text: string;
+}
+
 /**
  * A documented value passes when it equals the measured value rounded to the
  * precision the document used. Rounding rather than a tolerance means the
@@ -534,12 +580,33 @@ function agrees(
   };
 }
 
+/**
+ * Render a measured value the way the document writes that column: same unit,
+ * same number of decimals, same emphasis. Used by --fix so a rewritten cell is
+ * indistinguishable from a hand-written one.
+ */
+function formatLike(doc: DocNumber, measuredUs: number, raw: string): string {
+  const measured = TIME_UNITS.has(doc.unit)
+    ? measuredUs / (PER_US[doc.unit] ?? 1)
+    : measuredUs;
+  const suffix =
+    doc.unit === "ratio"
+      ? "×"
+      : doc.unit === "percent"
+        ? "%"
+        : ` ${doc.unit === "us" ? "µs" : doc.unit}`;
+  const body = `${measured.toFixed(doc.decimals)}${suffix}`;
+  // Preserve bold emphasis, which the document uses to mark a headline figure.
+  return /^\*\*.*\*\*$/.test(raw.trim()) ? `**${body}**` : body;
+}
+
 function checkTable(
   binding: Binding,
   table: DocTable,
   R: Runs,
   failures: Failure[],
-  counters: { checked: number; unbound: number },
+  counters: { checked: number; unbound: number; placeholders: number },
+  edits: Edit[],
 ): void {
   const headerIndex = new Map<string, number>();
   table.header.forEach((h, i) => {
@@ -551,18 +618,20 @@ function checkTable(
     headerIndex.get(name.toLowerCase()) ??
     headerIndex.get(bare(name).toLowerCase());
 
-  for (const cellsOfRow of table.rows) {
+  table.rows.forEach((cellsOfRow, rowIdx) => {
     const row: Row = (column) => {
       const i = columnOf(column);
       return i === undefined ? "" : (cellsOfRow[i] ?? "");
     };
     const rowLabel = clean(cellsOfRow[0] ?? "");
+    const sourceLine = table.rowLines[rowIdx] ?? table.line;
 
     for (const [column, resolve] of Object.entries(binding.columns)) {
       const i = columnOf(column);
       if (i === undefined) continue;
       const raw = cellsOfRow[i] ?? "";
-      const doc = parseDocNumber(raw);
+      const placeholder = parsePlaceholder(raw);
+      const doc = placeholder ?? parseDocNumber(raw);
       if (!doc) continue;
 
       let expected: number | null;
@@ -587,11 +656,37 @@ function checkTable(
         continue;
       }
 
+      // A placeholder is a bound cell whose number has not been measured yet.
+      // It always fails, so a document cannot be published still carrying one,
+      // and --fix knows exactly what to write in its place.
+      if (placeholder) {
+        counters.placeholders++;
+        edits.push({
+          line: sourceLine,
+          cellIndex: i,
+          text: formatLike(doc, expected, raw),
+        });
+        failures.push({
+          where: `§${binding.section} ${binding.title} (line ${sourceLine})`,
+          column,
+          row: rowLabel,
+          documented: raw,
+          measured: formatLike(doc, expected, raw),
+          detail: "placeholder — run with --fix against a committed run",
+        });
+        continue;
+      }
+
       counters.checked++;
       const verdict = agrees(doc, expected);
       if (!verdict.ok) {
+        edits.push({
+          line: sourceLine,
+          cellIndex: i,
+          text: formatLike(doc, expected, raw),
+        });
         failures.push({
-          where: `§${binding.section} ${binding.title} (line ${table.line})`,
+          where: `§${binding.section} ${binding.title} (line ${sourceLine})`,
           column,
           row: rowLabel,
           documented: raw,
@@ -599,7 +694,7 @@ function checkTable(
         });
       }
     }
-  }
+  });
 }
 
 // ─── Entry point ────────────────────────────────────────────────────────────
@@ -609,6 +704,7 @@ const { values } = parseArgs({
     section: { type: "string" },
     "list-unbound": { type: "boolean", default: false },
     "list-cells": { type: "boolean", default: false },
+    fix: { type: "boolean", default: false },
   },
 });
 
@@ -657,7 +753,8 @@ for (const r of runs.loaded) {
 console.log();
 
 const failures: Failure[] = [];
-const counters = { checked: 0, unbound: 0 };
+const counters = { checked: 0, unbound: 0, placeholders: 0 };
+const edits: Edit[] = [];
 const missingTables: string[] = [];
 
 for (const binding of BINDINGS) {
@@ -671,7 +768,7 @@ for (const binding of BINDINGS) {
     );
     continue;
   }
-  checkTable(binding, table, runs, failures, counters);
+  checkTable(binding, table, runs, failures, counters, edits);
 }
 
 // A dirty tree means the numbers cannot be traced back to a source state, which
@@ -697,9 +794,40 @@ for (const c of runs.conflicts) {
   });
 }
 
+if (values.fix) {
+  if (edits.length === 0) {
+    console.log("Nothing to rewrite — every bound value already agrees.");
+    process.exit(0);
+  }
+  const lines = doc.split("\n");
+  // Group by line so a row with several rewritten columns is rebuilt once.
+  const byLine = new Map<number, Edit[]>();
+  for (const e of edits) {
+    const list = byLine.get(e.line);
+    if (list) list.push(e);
+    else byLine.set(e.line, [e]);
+  }
+  for (const [line, group] of byLine) {
+    const raw = lines[line];
+    if (raw === undefined) continue;
+    // Keep the row's own leading whitespace and outer pipes.
+    const indent = raw.slice(0, raw.length - raw.trimStart().length);
+    const parts = cells(raw);
+    for (const e of group) parts[e.cellIndex] = e.text;
+    lines[line] = `${indent}| ${parts.join(" | ")} |`;
+  }
+  writeFileSync(DOC, lines.join("\n"));
+  console.log(
+    `Rewrote ${edits.length} cell(s) across ${byLine.size} row(s) in ${path.relative(REPO_ROOT, DOC)}.`,
+  );
+  console.log("Re-run without --fix to confirm, and review the diff.");
+  process.exit(0);
+}
+
 console.log(
   `Checked ${counters.checked} documented value(s) against the committed runs` +
-    `; ${counters.unbound} deliberately unbound.`,
+    `; ${counters.unbound} deliberately unbound` +
+    `${counters.placeholders > 0 ? `, ${counters.placeholders} placeholder(s) not yet measured` : ""}.`,
 );
 for (const m of missingTables)
   console.log(`  SKIP  ${m} — not found in the document`);
