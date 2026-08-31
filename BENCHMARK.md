@@ -56,3 +56,8 @@ carried — the official `thumbhash` crate and the JS reference — have no succ
 in `spec/PERFORMANCE.md`, so cross-format *timing* against ThumbHash is currently
 unmeasured. (`tools/comparison` still owns quality and bytes against ThumbHash;
 this gap is wall-clock only.)
+
+[`tools/benchmark/README.md`](tools/benchmark/README.md) keeps the reasoning for
+why a *native* baseline is needed at all, and its harness still runs — directly,
+not through `mise run benchmark`. Treat what it prints as a local investigation:
+publishing a figure means landing a committed run behind `spec/PERFORMANCE.md`.
