@@ -130,6 +130,18 @@ const CACHE_DIR = path.resolve(
 );
 let cacheDirReady = false;
 
+/**
+ * Bumped whenever the shape or meaning of a cached entry changes. It is part of
+ * the key, so a bump invalidates rather than reinterprets: an entry written
+ * before a field existed would otherwise deserialize with that field
+ * `undefined`, and the cache-hit path below returns the parsed object directly
+ * without passing it through `numOrNull`. That `undefined` survives into the
+ * report — `JSON.stringify` drops the key and `avgMetric`'s `Number.isFinite`
+ * filter silently excludes it — so a developer with a warm cache would get a
+ * different report than CI, with nothing to indicate why.
+ */
+const CACHE_VERSION = 1;
+
 function cacheKey(
   refRgba: Uint8Array,
   distRgba: Uint8Array,
@@ -137,17 +149,32 @@ function cacheKey(
   height: number,
 ): string {
   return createHash("sha256")
-    .update(`${width}x${height}:`)
+    .update(`v${CACHE_VERSION}:${width}x${height}:`)
     .update(refRgba)
     .update(":")
     .update(distRgba)
     .digest("hex");
 }
 
+/**
+ * Every field of {@link IqaMetrics} must be present and be a number or null.
+ * A partial entry is treated as a miss and recomputed — see {@link CACHE_VERSION}
+ * for why a missing field must never be allowed through.
+ */
+function isCachedMetrics(v: unknown): v is IqaMetrics {
+  if (typeof v !== "object" || v === null) return false;
+  const rec = v as Record<string, unknown>;
+  return Object.keys(NULL_IQA_METRICS).every((k) => {
+    const f = rec[k];
+    return f === null || typeof f === "number";
+  });
+}
+
 function cacheRead(key: string): IqaMetrics | null {
   try {
     const raw = readFileSync(path.join(CACHE_DIR, `${key}.json`), "utf8");
-    return JSON.parse(raw) as IqaMetrics;
+    const parsed: unknown = JSON.parse(raw);
+    return isCachedMetrics(parsed) ? parsed : null;
   } catch {
     return null;
   }
