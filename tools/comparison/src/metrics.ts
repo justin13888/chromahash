@@ -1,6 +1,7 @@
 import sharp from "sharp";
 import type { LocalMetrics, MetricResult } from "./types.ts";
 import { computeIqaMetrics, NULL_IQA_METRICS } from "./metrics/iqa.ts";
+import { computeRinging, NULL_RINGING } from "./metrics/local.ts";
 import { upscaleRgba, type UpscalePolicy } from "./upscale.ts";
 
 /**
@@ -78,6 +79,12 @@ export interface ScoringConfig {
    * add a null column.
    */
   alphaFidelity?: boolean;
+  /**
+   * Score ringing (see `metrics/local.ts`). Defaults to on; `--no-ringing`
+   * turns it off for preview-only runs. Optional so the sweep and gate call
+   * sites keep compiling untouched under `exactOptionalPropertyTypes`.
+   */
+  ringing?: boolean;
 }
 
 let scoringConfig: ScoringConfig = {
@@ -238,9 +245,26 @@ export async function computeAllMetrics(
   const perBackdrop: MetricResult[] = [];
   const perBackdropBlurred: MetricResult[] = [];
 
+  let ringing = NULL_RINGING;
   for (const backdrop of backdrops) {
     const reference = flattenOverBackdrop(referenceRgba, backdrop);
     const decodedFlat = flattenOverBackdrop(decodedRgba, backdrop);
+
+    // Primary backdrop only. Averaging an artifact measure across white/black/
+    // grey composites is not meaningful, and it would triple the cost. Never on
+    // the blurred set either: blurring both sides destroys the artifact by
+    // construction, which is the whole point of the blur-up presentation.
+    if ((scoringConfig.ringing ?? true) && ringing === NULL_RINGING) {
+      ringing =
+        computeRinging(
+          reference,
+          decodedFlat,
+          referenceW,
+          referenceH,
+          decodedW,
+          decodedH,
+        ) ?? NULL_RINGING;
+    }
 
     // Composite first, then upscale: the backdrop is part of what is resampled,
     // so hoisting the upscale out of this loop would change the result.
@@ -293,7 +317,7 @@ export async function computeAllMetrics(
       )
     : null;
 
-  return { metrics, metricsBlurred, local: { alphaMae } };
+  return { metrics, metricsBlurred, local: { alphaMae, ...ringing } };
 }
 
 /** MetricResult with all fields null — for CSS-only formats that produce no raster output. */

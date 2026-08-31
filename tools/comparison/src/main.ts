@@ -96,6 +96,9 @@ const { values } = parseArgs({
     // Also score both sides after a Gaussian blur (sigma = longEdge/32),
     // modeling the blur-up presentation placeholders are displayed with.
     "blurred-scoring": { type: "boolean", default: false },
+    // Skip the locally-computed ringing metric (see metrics/local.ts). It costs
+    // no subprocess but does cost CPU per pair; a preview-only run can drop it.
+    "no-ringing": { type: "boolean", default: false },
     formats: { type: "string" },
     versions: { type: "string" },
     commit: { type: "string" },
@@ -135,6 +138,7 @@ const upscalePolicy: UpscalePolicy =
     ? "linear-lanczos"
     : "browser-gamma";
 const blurredScoring = values["blurred-scoring"] ?? false;
+const ringing = !(values["no-ringing"] ?? false);
 /** Optional comma-separated format filter (case-insensitive), e.g. --formats ChromaHash,ThumbHash. */
 const formatFilter = values.formats
   ? values.formats.split(",").map((f) => f.trim().toLowerCase())
@@ -229,7 +233,7 @@ async function main(): Promise<void> {
   setAllowMissingIqa(values["allow-missing-iqa"] ?? false);
   ensureIqaAvailable();
 
-  setScoringConfig({ upscalePolicy, blurredScoring });
+  setScoringConfig({ upscalePolicy, blurredScoring, ringing });
   console.log(
     `Scoring: reference cap ${REFERENCE_CAP}px, upscale=${upscalePolicy}${blurredScoring ? ", blurred set enabled" : ""}`,
   );

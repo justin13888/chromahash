@@ -79,11 +79,38 @@ export interface LocalMetrics {
    * reference resolution. Null unless alpha fidelity is being scored.
    */
   alphaMae: number | null;
+  /**
+   * Ringing: RMS excursion beyond the reference's local range, in 8-bit sRGB
+   * levels. Lower is better; a decode that is merely a blur of the reference
+   * scores exactly 0. This is the artifact measure — see `metrics/local.ts`
+   * for why the fidelity metrics cannot answer the same question.
+   */
+  ringing: number | null;
+  /** Achromatic part of the ringing excursion (levels). */
+  ringingLuma: number | null;
+  /** Chromatic part of the ringing excursion (levels); orthogonal to the above. */
+  ringingChroma: number | null;
+  /** Fraction of pixels with any excursion at all, on [0, 1]. */
+  ringArea: number | null;
+  /** 99th percentile of the per-pixel excursion (levels). */
+  ringP99: number | null;
+  /**
+   * Envelope radius used, in reference pixels. Reported because it is derived
+   * per format per image from the decode's scale, so the score carries its own
+   * scale (see `metrics/local.ts`).
+   */
+  ringWindowRadius: number | null;
 }
 
 /** All-null local metrics — for CSS-only formats and skipped computations. */
 export const NULL_LOCAL_METRICS: LocalMetrics = {
   alphaMae: null,
+  ringing: null,
+  ringingLuma: null,
+  ringingChroma: null,
+  ringArea: null,
+  ringP99: null,
+  ringWindowRadius: null,
 };
 
 /** Result of encoding/decoding with a particular format. */
