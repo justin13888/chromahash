@@ -87,6 +87,16 @@ jobs:
       - name: Build
         run: pnpm --prefix tools/comparison run build
 
+      # Asserts the properties the harness's own metrics are built on — chiefly
+      # that a decode which is merely a low-pass of the original scores exactly
+      # zero ringing, so anything above zero is an artifact. Pure computation:
+      # no iqa-cli, no corpus, no network, under a second. Two defects that
+      # broke that property shipped past a green run once already, because the
+      # suite exercised a single upscale factor; it now sweeps the decode sizes
+      # the real lineup produces.
+      - name: The locally-computed metrics hold their defining properties
+        run: node tools/comparison/dist/metric-selftest.js
+
       # Reads spec/PERFORMANCE.md and the committed runs under baselines/ only —
       # no harness, no toolchain, so it runs before the expensive steps and
       # fails fast on a documentation drift.
