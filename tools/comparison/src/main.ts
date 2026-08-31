@@ -605,6 +605,7 @@ async function main(): Promise<void> {
           css,
           metrics: r.metrics,
           metricsBlurred: r.metricsBlurred,
+          local: r.local,
         };
       }),
     );

@@ -64,6 +64,28 @@ export interface MetricResult {
   psnrDb: number | null;
 }
 
+/**
+ * Metrics this harness computes itself, in-process, rather than reading from
+ * `iqa-cli`.
+ *
+ * Kept out of {@link MetricResult} deliberately, and for the reason `alphaMae`
+ * always was: `MetricResult` is *what iqa-cli returned*, and folding a
+ * locally-computed number into it would make the report's provenance claim
+ * false. Anything measured here belongs in this interface instead.
+ */
+export interface LocalMetrics {
+  /**
+   * Mean absolute alpha error on [0, 1], scored on the alpha plane alone at
+   * reference resolution. Null unless alpha fidelity is being scored.
+   */
+  alphaMae: number | null;
+}
+
+/** All-null local metrics — for CSS-only formats and skipped computations. */
+export const NULL_LOCAL_METRICS: LocalMetrics = {
+  alphaMae: null,
+};
+
 /** Result of encoding/decoding with a particular format. */
 export interface FormatResult {
   /** Name of the LQIP format. */
@@ -88,6 +110,8 @@ export interface FormatResult {
    * run enables --blurred-scoring.
    */
   metricsBlurred: MetricResult | null;
+  /** Metrics computed by this harness rather than by iqa-cli. */
+  local: LocalMetrics;
 }
 
 /** An adapter that processes an image through a specific LQIP format. */
@@ -180,6 +204,8 @@ export interface FormatJson {
   metrics: MetricResult;
   /** Blurred "as-rendered" metrics; null unless --blurred-scoring ran. */
   metricsBlurred: MetricResult | null;
+  /** Metrics computed by this harness rather than by iqa-cli. */
+  local: LocalMetrics;
 }
 
 /** A single language implementation's result as serialized into the JSON report. */

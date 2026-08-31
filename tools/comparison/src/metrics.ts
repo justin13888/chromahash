@@ -1,5 +1,5 @@
 import sharp from "sharp";
-import type { MetricResult } from "./types.ts";
+import type { LocalMetrics, MetricResult } from "./types.ts";
 import { computeIqaMetrics, NULL_IQA_METRICS } from "./metrics/iqa.ts";
 import { upscaleRgba, type UpscalePolicy } from "./upscale.ts";
 
@@ -73,7 +73,7 @@ export interface ScoringConfig {
    */
   backdrops?: readonly Backdrop[];
   /**
-   * Also score the alpha plane directly (see {@link MetricScores.alphaMae}).
+   * Also score the alpha plane directly (see {@link LocalMetrics.alphaMae}).
    * Off by default: it is meaningless for the opaque corpora and would only
    * add a null column.
    */
@@ -144,14 +144,11 @@ export interface MetricScores {
   metrics: MetricResult;
   metricsBlurred: MetricResult | null;
   /**
-   * Mean absolute alpha error on [0, 1], scored on the alpha plane alone at
-   * reference resolution, or null when alpha fidelity is not being scored.
-   *
-   * This is deliberately *not* a `MetricResult` field: `MetricResult` is what
-   * iqa-cli returns, and conflating a locally-computed number with those would
-   * make the report's provenance claim false.
+   * Everything this harness measured itself rather than reading from iqa-cli.
+   * Separate from {@link MetricResult} so the report's provenance claim — that
+   * those seven numbers are iqa-cli's — stays true. See {@link LocalMetrics}.
    */
-  alphaMae: number | null;
+  local: LocalMetrics;
 }
 
 /** Mean of the finite values, or null if there are none. */
@@ -296,7 +293,7 @@ export async function computeAllMetrics(
       )
     : null;
 
-  return { metrics, metricsBlurred, alphaMae };
+  return { metrics, metricsBlurred, local: { alphaMae } };
 }
 
 /** MetricResult with all fields null — for CSS-only formats that produce no raster output. */
