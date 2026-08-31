@@ -777,7 +777,12 @@ async function main(): Promise<void> {
             showImplementations: false,
             paired: paired !== null,
           }
-        : undefined,
+        : // The standard report used to fall through to FORMAT_NAMES, so the
+          // size-matched WebP/AVIF columns appeared in the galleries and in the
+          // console summary but in none of the HTML tables. They are the most
+          // useful comparison a reader has -- "how does this compare with just
+          // shipping a tiny WebP?" -- and they are already computed.
+          { formatNames: activeFormatNames },
   );
   await fs.writeFile(absOutput, html);
 
