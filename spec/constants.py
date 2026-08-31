@@ -104,10 +104,11 @@ ALPHA_PREFIX_BITS = ALPHA_DC_BITS + ALPHA_SCALE_BITS
 # =========================================================================
 # AC Layout (§3.2, §6.4)
 # =========================================================================
-# How the per-channel AC budget is split at one quality tier. v1 carries TWO
-# of these: the default tier has its own table (LAYOUT_T0) and codes 2..=4 scale a single
-# base (LAYOUT_B) by 4^m — bits per coefficient stay constant, so higher tiers
-# carry MORE coefficients, not finer ones. The split exists because the
+# How the per-channel AC budget is split at one quality tier. v1 carries THREE
+# of these: the compact tier (LAYOUT_TC) and the default tier (LAYOUT_T0) each have
+# their own row, and codes 2..=4 scale a single base (LAYOUT_B) by 4^level — bits
+# per coefficient stay constant, so higher tiers carry MORE coefficients, not
+# finer ones. The split exists because the
 # count-vs-precision optimum moves with the budget: at 32 bytes the format is
 # better off with more, coarser coefficients (§3.2). L coefficients are written in
 # selection order through up to two precision tiers (a tier with count 0 is
@@ -134,9 +135,11 @@ class AcLayout:
     a_bits: int
 
 
-# Layout B: the v1 upper-tier base (the shipped default). Sized so a default-tier hash is
-# exactly 32 bytes for both alpha modes (the v0.6 footprint, for equal-budget
-# comparison):
+# Layout B: the v1 upper-tier base, reached only at codes 2..=4 (DEFAULT_LAYOUT is
+# LAYOUT_T0, below). Its counts were sized so that, unscaled, they would fill exactly
+# 32 bytes in both alpha modes — the v0.6 footprint, kept as the equal-budget anchor
+# LAYOUT_T0 was measured against. It is never emitted at 32 bytes itself, since every
+# code that reaches it scales the counts by 4^level:
 #   no-alpha = 54 prefix + 26·5 L + 2·9·4 chroma                  = 256 bits
 #   alpha    = 54 + 9 + 22·4 L + 2·3·3 chroma + 28·3 alpha        = 253 bits
 # (both round up to 32 bytes). The alpha row is the §11.3 allocation, which
@@ -243,8 +246,8 @@ SEL_ONE = 1 << SEL_Q
 class AcShape:
     """Per-channel AC counts/bit-widths resolved for one (alpha mode, tier).
 
-    The AcLayout passed in describes the tier's base counts; tier m scales every
-    coefficient COUNT by 4^m while bit widths stay fixed.
+    The AcLayout passed in describes the tier's base counts; a tier scales every
+    coefficient COUNT by 4^render_level(tier) while bit widths stay fixed.
     """
 
     l_tiers: tuple[tuple[int, int], tuple[int, int]]   # L precision tiers (count, bits)

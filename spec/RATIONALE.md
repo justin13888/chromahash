@@ -50,9 +50,10 @@ floor.
 Keeping the default at exactly 32 bytes while byte 0 grew into a self-describing
 descriptor had to come from somewhere: at the v0.6 bit widths the no-alpha luma
 AC count drops 27 → 26, and alpha mode collapses v0.6's mixed-precision
-`[(7,6),(13,5)]` into a single `[(20,5)]` tier. That is ~3.7% of the luma AC
-budget spent on framing. **Measured** (`mise run compare:versions`, paired
-per-image against the v0.6 tag at the same 32 bytes, holdout split, n=28).
+`[(7,6),(13,5)]` into a single `[(20,5)]` tier (the pre-§11.3 alpha row; the
+shipped one is `[(22,4)]`). That is ~3.7% of the luma AC budget spent on
+framing. **Measured** (`mise run compare:versions`, paired per-image against
+the v0.6 tag at the same 32 bytes, holdout split, n=28).
 Signs are normalized per metric so that **positive means v1 is worse**:
 
 | Metric | v0.6 | v1 t0 | paired Δ% | 95% CI of paired Δ | win/loss |
@@ -321,13 +322,14 @@ At the default tier it is the wrong answer. The count-vs-precision optimum moves
 budget, and a 32-byte hash has 202 AC bits to spend: sweeping the whole
 equal-byte grid (`EXPERIMENTS.md` §4.2) puts the optimum at 28 luma
 coefficients at 4 bits plus 15 chroma at 3, worth −3.5% mean ΔE00 on the
-never-tuned holdout with every guard improving. So v1 carries a **two-row
+never-tuned holdout with every guard improving. So v1 carries a **three-row
 layout table** rather than one base scaled by `4^level` (§3.2).
 
 The optimum is broad — L30/C13 and L32/C12 are within noise of L28/C15 — which
 is itself the finding: what matters is moving *off* 26 @ 5, not the exact stop.
-Alpha mode keeps 5-bit luma at the default tier, because the photographic corpus that
-chose the rebalance contains no alpha and cannot speak to it.
+Alpha mode was left on 5-bit luma at the default tier here, because the photographic
+corpus that chose the rebalance contains no alpha and cannot speak to it. §11.3 later
+measured the alpha rows directly and moved them to `L 22 @ 4 / a·b 3 @ 3 / A 28 @ 3`.
 
 ### DC: 7/7/7 bits + decode-aware ±1 search
 The encoder simulates the decoder's DC path (dequantize → clamp → gamma) over
@@ -362,17 +364,20 @@ practice; beyond-range panoramas clamp gracefully to 16:1. Symmetric about 1:1
 (byte 128); portrait/landscape mirror symmetry is validator-enforced.
 
 ### Tier scaling by bit-shift of the rounded base
-`(w<<tier, h<<tier)` — never re-derive `round(32·2^tier/ratio)`; the two
-disagree (round(64/3)=21 vs round(32/3)<<1=22) and encoder/decoder grids MUST
-match or reconstruction desynchronizes.
+`(w<<level, h<<level)` for `level = renderLevel(tier)` — never re-derive
+`round(32·2^level/ratio)`; the two disagree (at level 1, round(64/3)=21 vs
+round(32/3)<<1=22) and encoder/decoder grids MUST match or reconstruction
+desynchronizes. Shifting by the raw tier code instead of by the level is the
+same bug one step earlier: codes 0 and 1 share level 0.
 
 ### Alpha: composite-over-average + separate channel
 Transparent pixels composite over the alpha-weighted average OKLAB (keeps the
 color channels clean of transparency edges — inherited from ThumbHash), and
-alpha is its own DCT channel (DC 5 b + scale 4 b + 5·4^level AC). Funded by
-L 26→20 so the default tier stays 32 bytes. `hasAlpha` = any pixel α<255: exact and
-predictable; a threshold would be equally arbitrary and produce
-input-dependent surprises.
+alpha is its own DCT channel (DC 5 b + scale 4 b + the row's alpha AC at 3 b —
+16 / 28 / 112 / 448 / 1792 for codes 0–4). Funded mostly out of chroma — a/b 15→3,
+L 28→22 — so the default tier stays 32 bytes.
+`hasAlpha` = any pixel α<255: exact and predictable; a threshold would be equally
+arbitrary and produce input-dependent surprises.
 
 ### Multi-gamut encode / display-gamut decode, canonical tone map
 OKLAB coordinates are absolute → no gamut flag. Out-of-hull colors clip

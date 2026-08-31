@@ -27,6 +27,12 @@ tune and validated on holdout, per the pre-registered rule in `RATIONALE.md`.
 > so on; the *byte* anchors quoted alongside them are unchanged and unambiguous.
 > §11.14 is the one table restated in the shipped codes, because it is the
 > current cross-format record rather than the log of a finished round.
+>
+> The **compact tier** is the one row that mapping does not cover, because it was
+> not on the old ladder at all. §8.1 and §11 propose it at code `4`, taken from the
+> then-reserved `4..=7` range; `f6417d3` rejected that placement and shipped it at
+> code **0** (`RATIONALE.md`, "Tier codes ordered by quality"). Read every "tier
+> code 4" below as the proposal, never as what ships.
 
 > **Status: §8 has shipped.** The recipe this file converged on is now
 > `Tunables::DEFAULT` — the tier-0 layout `L 28 @ 4 / C 15 @ 3`, the selection
@@ -1602,6 +1608,15 @@ also be asked to carry (`sweeps/compact-tier-graphics.json`).
 
 `L 19 @ 4 b, a/b 6 @ 3 b` is the most robust across both bodies of content —
 and it is the layout §8.1 chose on tune, arrived at independently.
+
+> **Superseded.** The paragraph below records the code-4 placement as it was
+> built. It did not ship that way: `f6417d3` reordered the tier codes by quality before
+> release, so the compact tier is code **0**, `MAX_TIER` is 4, and
+> `render_level(tier) = tier.saturating_sub(1)` needs no special case. The
+> reasoning below — that shifting by the raw tier code is the hazard, and that
+> `MAX_TIER` must keep meaning "highest *quality* tier" — is what carried over
+> and is why the renumbering was safe. `RATIONALE.md` ("Tier codes ordered by
+> quality") records why code 4 was rejected.
 
 **Implementation.** The compact tier is code 4, taken from the formerly-reserved
 `4..=7` range, so a v1 decoder written before it existed rejects it rather than

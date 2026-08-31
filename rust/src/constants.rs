@@ -95,13 +95,13 @@ pub const PREFIX_BITS: u32 = DESCRIPTOR_BITS + DC_SCALE_BITS;
 
 /// AC bit layout: how the per-channel AC budget is split at one quality tier.
 ///
-/// v1 carries **two** of these (see [`Tunables::layout`] and
-/// [`Tunables::layout_upper`]): the default tier has its own table, and codes 2..=4 scale
-/// a single base by `4^m` (bits per coefficient stay constant — higher tiers
-/// carry *more* coefficients, not finer ones). The split exists because the
-/// count-vs-precision optimum moves with the budget: at 32 bytes the format is
-/// better off with more, coarser coefficients than the tier-1 base scaled down
-/// would give it (spec §3.2).
+/// v1 carries **three** of these (see [`Tunables::layout`],
+/// [`Tunables::layout_upper`] and [`Tunables::layout_compact`]): the compact tier and the
+/// default tier each have their own table, and codes 2..=4 scale a single base by
+/// `4^level` (bits per coefficient stay constant — higher tiers carry *more*
+/// coefficients, not finer ones). The split exists because the count-vs-precision
+/// optimum moves with the budget: at 32 bytes the format is better off with more,
+/// coarser coefficients than the code-2 base scaled down would give it (spec §3.2).
 ///
 /// L coefficients are written in selection order through up to two precision
 /// tiers (a tier with count 0 is unused). Chroma a/b each get `c_count`
@@ -138,10 +138,18 @@ pub const LAYOUT_A: AcLayout = AcLayout {
     a_bits: 4,
 };
 
-/// Layout B: the **v1 upper-tier base** (the shipped default). Sized so a default-tier
-/// hash is exactly 32 bytes — the v0.6 footprint — for equal-budget comparison:
+/// Layout B: the **v1 upper-tier base**, reached only at codes 2..=4
+/// (`Tunables::DEFAULT.layout` is [`LAYOUT_T0`]; this is `layout_upper`). Its
+/// counts were sized so that, unscaled,
+/// they would fill exactly 32 bytes in both alpha modes — the v0.6 footprint, kept
+/// as the equal-budget anchor [`LAYOUT_T0`] was measured against. It is never
+/// emitted at 32 bytes itself, because every code that reaches it scales the counts
+/// by `4^level`:
 /// no-alpha = 54 prefix + 26·5 L + 2·9·4 chroma = 256 bits; alpha = 54 + 9 +
-/// 20·5 L + 2·9·4 chroma + 5·4 alpha = 255 bits (both → 32 bytes).
+/// 22·4 L + 2·3·3 chroma + 28·3 alpha = 253 bits (both → 32 bytes).
+///
+/// The alpha row is the §11.3 allocation, which measured essentially tied for best
+/// at code 2 as well as at the default tier.
 pub const LAYOUT_B: AcLayout = AcLayout {
     l_tiers: [(26, 5), (0, 5)],
     c_count: 9,
@@ -161,10 +169,13 @@ pub const LAYOUT_B: AcLayout = AcLayout {
 /// Sized to the same anchor: no-alpha = 54 prefix + 28·4 L + 2·15·3 chroma =
 /// 256 bits.
 ///
-/// The **alpha-mode** fields are deliberately left at the [`LAYOUT_B`] values.
-/// The rebalance was measured on a photographic corpus that contains no alpha
-/// at all, so there is no evidence for moving them; the arithmetic points at
-/// `L 22 @ 4, a/b 14 @ 3` (255 bits) and that needs its own sweep first.
+/// The **alpha-mode** fields are the §11.3 allocation, and they coincide with
+/// [`LAYOUT_B`]'s alpha row because that sweep measured the two essentially tied.
+/// The alpha channel had five AC coefficients, inherited from v0.6 and never
+/// measured, and five cannot describe a silhouette. Raising it to 28 and paying
+/// out of chroma — which transparent regions composite away — is worth −16.2% mean
+/// ΔE00 on the never-tuned alpha holdout with every guard improving:
+/// alpha = 54 + 9 + 22·4 L + 2·3·3 chroma + 28·3 alpha = 253 bits.
 pub const LAYOUT_T0: AcLayout = AcLayout {
     l_tiers: [(28, 4), (0, 4)],
     c_count: 15,
@@ -200,7 +211,7 @@ pub const LAYOUT_D: AcLayout = AcLayout {
     a_bits: 4,
 };
 
-/// Layout TC: the **compact-tier row** (tier code 4, 21 bytes).
+/// Layout TC: the **compact-tier row** (tier code 0, 21 bytes).
 ///
 /// Chosen on the photographic tune split and tie-broken on the graphics corpus:
 /// the leading 21-byte layouts are a plateau there (the top seven span 0.5% and
@@ -222,8 +233,8 @@ pub const LAYOUT_TC: AcLayout = AcLayout {
 };
 
 /// Per-channel AC counts/bit-widths resolved for one (alpha mode, tier). The
-/// base [`AcLayout`] describes the default tier; tier `m` scales every coefficient *count*
-/// by `4^m` while bit widths stay fixed.
+/// [`AcLayout`] passed in describes that tier's base counts; a tier scales every
+/// coefficient *count* by `4^render_level(tier)` while bit widths stay fixed.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct AcShape {
     /// L coefficient precision tiers (count, bits), in write order.
@@ -374,7 +385,7 @@ pub struct Tunables {
     pub layout: AcLayout,
     /// AC layout base for **codes 2..=4**, scaled by `4^level`.
     pub layout_upper: AcLayout,
-    /// AC layout of the compact tier (code 4). The third row of the table.
+    /// AC layout of the compact tier (code 0). The third row of the table.
     pub layout_compact: AcLayout,
     /// DC chroma quantization ranges. Sized to the union OKLab hull of the
     /// display-output gamuts (sRGB ∪ Display P3 ∪ Adobe RGB: max |a| ≈ 0.347,

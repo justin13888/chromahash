@@ -63,13 +63,13 @@ layout precision, and wide-gamut support matter more than minimizing byte count.
 | Goal | Rationale |
 |------|-----------|
 | 32 bytes at the default tier | Memory-aligned, cache-friendly, predictable storage. Zero-overhead database column or cache key; equal-budget comparison with prior LQIP formats. |
-| Quality multiplier (3-bit tier) | Opt into more detail when wanted: long edge `32·2^tier`, byte length ≈ `4^tier`× the base. The common case stays 32 bytes. |
+| Quality multiplier (3-bit tier) | Opt into more detail when wanted: long edge `32·2^level` and byte length growing ≈ `4^level`× from the 32-byte default, where `level = renderLevel(tier)` (§3.5). The compact tier is its own 21-byte row rather than a scaling of that. The common case stays 32 bytes. |
 | Self-describing + fail-fast | Byte 0 carries version, tier, and flags; the byte length follows deterministically, so a parser validates a hash in O(1) and a validated hash always decodes. No checksum needed. |
 | OKLAB color space | Perceptually uniform — quantization levels are maximally efficient. |
 | 8-bit log₂ aspect ratio | ~1.09% max error for all photographic ratios. Covers 1:16 to 16:1. |
 | Top-K coefficient selection | The K lowest spatial frequencies for the image's aspect ratio — a single deterministic rule, no grid machinery, no aliasing. |
 | Quantization ranges sized to signal | Chroma DC spans the sRGB OKLAB hull; AC scale ranges match measured coefficient distributions. Every code level does work. |
-| 5-bit luminance AC | 31 levels for the most perceptually important channel. |
+| Per-row luminance AC precision | 4 bits (15 levels) at the default tier, where 28 coefficients beat 26 finer ones at 32 bytes, and at the compact tier, whose own 21-byte sweep landed on 4 bits again; 5 bits (31 levels) in the opaque code-2 base row that codes 2–4 scale (§7.4). |
 | µ-law companding with exact zero | Non-linear quantization matching natural image DCT coefficient distributions; zero coefficients decode exactly. |
 | Decode-aware DC selection | The encoder picks the DC codes whose *decoded* color is closest to the true average — gamut-corner solids round-trip nearly exactly. |
 | Multi-gamut encode | Accepts sRGB, Display P3, Adobe RGB, BT.2020, or ProPhoto RGB sources. |
@@ -222,8 +222,8 @@ AC coefficients follow the prefix (and the alpha DC/scale in alpha mode), in **s
 order** (§6.2): the j-th value in each channel's field is the j-th selected `(cx, cy)`
 pair.
 
-The per-channel split is a **three-row table, not one base scaled by `4^tier`**: codes 0
-and 1 each have their own row, and codes 2–4 scale the code-2 base by `4^(tier−2)`. Bits
+The per-channel split is a **three-row table, not one base scaled by `4^(tier−2)`**: codes
+0 and 1 each have their own row, and codes 2–4 scale the code-2 base by `4^(tier−2)`. Bits
 per coefficient are constant within a row. The split exists because the count-vs-precision
 optimum moves with the budget — at 32 bytes the format is measurably better off with more,
 coarser coefficients than the code-2 row scaled down would give it (`EXPERIMENTS.md` §4.2,
@@ -337,8 +337,11 @@ countScale(tier)  = 4^renderLevel(tier)
 
 Valid tier codes are `0..=4` (`MAX_TIER = 4`); `5..=7` are reserved and MUST be rejected.
 Codes 0 and 1 share a render level, so shifting by the raw code rather than by
-`renderLevel` gives the compact tier a 64 px grid and 4× the coefficients — what the
-`valid_compact` test vectors exist to catch.
+`renderLevel` over-renders every code from 1 up. The **default tier** is where it bites
+first and hardest: a 64 px grid and 4× the coefficients for what must be a 32-byte,
+32 px hash. The compact tier is the one code the mistake leaves alone — `renderLevel(0)`
+and the raw code are both 0 — so a `valid_compact` vector passes under the bug; it is the
+code-1 vectors, whose length check fails, that catch it.
 
 **Length formula** — the total byte length is determined entirely by `(tier, hasAlpha)`:
 
@@ -528,8 +531,9 @@ aspect byte — no grid machinery, no mode flags:
 ANISO = 1.2      // oblique-effect weight   (§12.1)
 HV    = 0.15     // horizontal/vertical weight
 
+// level = renderLevel(tier) = max(0, tier − 1)  (§3.5) — NOT the raw tier code
 function selectCoefficients(aspect_byte, tier, K):
-    (W, H) = decodeOutputSize(aspect_byte, tier)   // §8.2; long side 32·2^tier, short side ≥ 2·2^tier
+    (W, H) = decodeOutputSize(aspect_byte, tier)   // §8.2; long side 32·2^level, short side ≥ 2·2^level
     entries = []
     for cy in 0 .. H−1:
         for cx in 0 .. W−1:
@@ -585,14 +589,14 @@ perceptual sort key.
 natural decode raster `[0, W) × [0, H)`. `cos(π/W × cx × (x+0.5))` with `cx = W`
 evaluates to zero at every sample, and `cx > W` aliases to a lower frequency — the
 bound makes selecting an unrepresentable frequency structurally impossible. The
-candidate count is at least `64·4^tier − 1` for every aspect byte (short side ≥ 2·2^tier),
+candidate count is at least `64·4^level − 1` for every aspect byte (short side ≥ 2·2^level),
 so every `K(tier)` the format uses is always fully satisfied.
 
-**Tier scaling.** Doubling the grid scales `(W, H)`, and hence every priority, by `4^tier`
+**Tier scaling.** Doubling the grid scales `(W, H)`, and hence every priority, by `4^level`
 uniformly. The weight depends only on the *ratio* `d/p`, which is unchanged, so the whole
-key scales by `4^tier` and the *ordering* is tier-independent: a higher tier reuses the
+key scales by `4^level` and the *ordering* is tier-independent: a higher tier reuses the
 same low-frequency ordering on a larger grid, which admits more (and higher) frequencies
-and lets `K` grow as `4^tier` (§3.5).
+and lets `K` grow as `4^level` (§3.5).
 
 **Priority.** `(cx·H)² + (cy·W)²` is the squared isotropic per-pixel spatial frequency
 scaled by `(W·H)²`: sorting ascending takes the K lowest spatial frequencies — an ℓ2
@@ -626,10 +630,12 @@ the test vectors.
 | Channel | Mode | K (code 1) | Bits | K (code 2) | Bits |
 |---|---|---|---|---|---|
 | L luminance | no-alpha | 28 | 4 each | 104 | 5 each |
-| L luminance | alpha | 20 | 5 each | 80 | 5 each |
-| a chroma | both | 15 / 9 (alpha) | 3 / 4 each | 36 | 4 each |
-| b chroma | both | 15 / 9 (alpha) | 3 / 4 each | 36 | 4 each |
-| Alpha | alpha | 5 | 4 each | 20 | 4 each |
+| L luminance | alpha | 22 | 4 each | 88 | 4 each |
+| a chroma | no-alpha | 15 | 3 each | 36 | 4 each |
+| a chroma | alpha | 3 | 3 each | 12 | 3 each |
+| b chroma | no-alpha | 15 | 3 each | 36 | 4 each |
+| b chroma | alpha | 3 | 3 each | 12 | 3 each |
+| Alpha | alpha | 28 | 3 each | 112 | 3 each |
 
 Run `python3 spec/selection.py --json` for all unique selections (one per `(W, H, K)`).
 
@@ -835,13 +841,14 @@ decodeOutputSize(byte, tier):
     return (w << level, h << level)      // long edge 32·2^level
 ```
 
-Shifting by `renderLevel(tier)` rather than by `tier` is what places the compact tier at
-the default tier's size (§3.5). Shifting by the raw code would render it at 64 px.
+Shifting by `renderLevel(tier)` rather than by `tier` is what keeps the default tier at
+the base 32 px size, which the compact tier shares (§3.5). Shifting by the raw code would
+render the default tier at 64 px; the compact tier, at code 0, is unaffected either way.
 
 Over the byte range the base short side is at least 2 pixels (byte 0 → 2×32;
 byte 255 → 32×2), which the selection domain (§6.2) relies on; at render level `m` it is
 `2·2^m`. The tier scaling is a **bit shift of the rounded base size** — it MUST NOT be
-re-derived as `round(32·2^tier / ratio)`, which disagrees for non-power-of-two ratios
+re-derived as `round(32·2^level / ratio)`, which disagrees for non-power-of-two ratios
 (e.g. ratio 3, level 1: `round(64/3) = 21` vs `round(32/3) << 1 = 22`) and would
 desynchronize the encoder and decoder grids. Implementations MAY render at other sizes;
 see §6.4 and §11.3.
@@ -872,10 +879,19 @@ separately.
 
 ### 9.3 Alpha Channel Encoding
 
-When `hasAlpha = 1`: DC (5 bits), scale (4 bits), and `5·4^tier` AC coefficients (4 bits
-each, µ-law companded with `MU_ALPHA`). At the default tier the luminance K shrinks from 26 to 20,
-with the freed bits accommodating the alpha channel (29 bits of alpha overhead), keeping
-the default-tier hash at 32 bytes.
+When `hasAlpha = 1`: DC (5 bits), scale (4 bits), and the tier row's alpha AC coefficients
+(3 bits each, µ-law companded with `MU_ALPHA`). The count is the row's own — 16 at the
+compact tier, 28 at the default tier and in the code-2 base — scaled by `4^level` above
+code 2, giving **16 / 28 / 112 / 448 / 1792** for codes 0–4 (§3.2). It is not one constant
+scaled by `4^level`: the compact tier reads its own row, so the sequence starts at 16
+rather than at a scaled 28.
+
+At the default tier that is 93 bits of alpha (`5 + 4 + 28·3`), funded almost entirely out
+of **chroma** rather than luminance: a/b shrink from 15 coefficients each to 3 (−72 bits)
+and L from 28 to 22 (−24 bits). Chroma spent inside transparent regions composites away,
+while the alpha plane carries the silhouette — see §3.2 "On the alpha rows" and
+`EXPERIMENTS.md` §11.3. The 3 bits left over are the alpha row's padding, keeping the
+default-tier hash at 32 bytes.
 
 ---
 
@@ -1466,7 +1482,7 @@ compatibility** with the v0.6 bitstream. The framing changes are:
   version, tier, reserved bit, and the deterministic length — failing fast — rather than by
   a CRC.
 - **Per-tier AC layout (§3.2, §7.4).** The layout is a three-row table rather than one
-  base scaled by `4^tier`. Code 1 spends its 202 AC bits on 28 luma coefficients at 4 bits
+  base scaled by `4^level`. Code 1 spends its 202 AC bits on 28 luma coefficients at 4 bits
   and 15 chroma at 3 (was 26 @ 5 and 9 @ 4); codes 2–4 scale the 5-bit/4-bit code-2 row;
   the compact tier has its own row again.
 - **Alpha allocation (§3.2, §7.4).** The alpha rows are rebuilt. The alpha channel had 5
@@ -1602,21 +1618,21 @@ frequency-normalized decoding.
 | **Larger size** | 32 bytes at the default tier vs 5–25 for variable-length formats. At 1B photos: 32 GB vs ~17 GB. Fixed size enables memory alignment and cache-friendly access; the compact tier (21 B) trades that fixed width for ThumbHash's footprint. |
 | **Encode cost** | Encoding is `O(K·W·H)` over the full source, with no downsample, so cost scales with the source's pixel count — a multi-megapixel original is far more expensive than a thumbnail. The DC search adds a fixed term that is negligible against it. The forward DCT dominates the total; see [`PERFORMANCE.md`](PERFORMANCE.md) §1 for the measured breakdown. |
 | **Decode cost** | Cost is `O(w·h·K)` and grows ~16× per tier level (`4^level` coefficients over a `4^level` raster), so the upper tiers are dramatically more expensive than the default — `decodeCapped` is the mitigation, and capping the raster is what makes tier 4 practical. See [`PERFORMANCE.md`](PERFORMANCE.md) §2 for measured figures. |
-| **Solid images** | 26 bytes of zero AC coefficients wasted. Irrelevant for photographs. |
+| **Solid images** | The whole AC payload is zero — 202 of the default tier's 256 bits, and a larger share at each tier above it, since only the 54-bit prefix carries signal. Irrelevant for photographs. |
 | **Extreme ratios** | Ratios beyond 16:1 clamp to 16:1. Rare in photography. |
-| **Wide-gamut DC clipping** | DC chroma beyond the sRGB hull clips at encode (§5.1). Invisible at decode (the decoder clips to sRGB regardless); a future P3-decode profile would be a format break. |
+| **Wide-gamut DC clipping** | The DC chroma range covers the OKLAB hull of sRGB ∪ Display P3 ∪ Adobe RGB (§7.1), so only sources wider than that union — some BT.2020 / ProPhoto inputs — clip at encode (§5.1), and no display can show those anyway. Decoding into Display P3 or Adobe RGB is already a caller option (§11, §12.5), not a format break. |
 | **Gamut clip** | Out-of-sRGB OKLAB values are clipped per-channel in linear sRGB (relative-colorimetric, §12.6) — the same mapping a display applies, so saturated wide-gamut solids render at full in-gamut saturation rather than desaturated. |
 | **No progressive decode** | The whole hash must be received before decoding. Never a practical bottleneck at these sizes; embedded/progressive tiers are a future direction (§15). |
-| **Tiers 2–3 are not a rate–distortion claim** | See below. |
+| **Codes 3–4 are not a rate–distortion claim** | See below. |
 
-### 14.1 What tiers 2–3 are for
+### 14.1 What codes 3 and 4 are for
 
-Tiers 0 and 1 (32–108 bytes) are where this format is competitive on quality: it leads
+Codes 1 and 2 (32–108 bytes) are where this format is competitive on quality: it leads
 every other LQIP and every size-matched codec on ΔE00 by 8–25%, and at 108 B it takes
 SSIMULACRA2 off size-matched WebP. Below 48 bytes no general codec can produce output at
 all, which is the compact and default tiers' whole argument.
 
-Tiers 2 and 3 are **not** justified that way, and this specification does not claim they
+Codes 3 and 4 are **not** justified that way, and this specification does not claim they
 are. Measured at equal bytes on the same corpus, WebP overtakes ChromaHash somewhere
 around 300 bytes, and by ~1.6 kB even uncoded RGB565 pixels score better than code 4
 (`EXPERIMENTS.md` §2, §3). Entropy coding would recover roughly 4% — nowhere near the
@@ -1687,7 +1703,7 @@ over average color, and average color extraction from the header.
 | **Source gamuts** | sRGB only | sRGB, P3, Adobe RGB, BT.2020, ProPhoto |
 | **Gamut clamping** | Hard per-channel | Relative-colorimetric per-channel clip in the output gamut (§12.6) |
 | **Input dimensions** | Any (library resizes) | Any (full-resolution DCT) |
-| **Quality scaling** | None | 3-bit tier: ×4^tier coefficients, 2^tier render resolution |
+| **Quality scaling** | None | 3-bit tier: ×4^level coefficients, 2^level render resolution, `level = renderLevel(tier)` |
 
 On the reference corpus (52 images, identical color-managed metrics), ChromaHash v0.6 —
 whose default-tier layout differs from v1 only in the smaller pre-tier header and a 27th L
