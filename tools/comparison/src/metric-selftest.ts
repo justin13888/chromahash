@@ -250,6 +250,68 @@ check(
   );
 }
 
+// 7b. THE REGRESSION THIS SUITE ONCE MISSED.
+//
+// The checks above fix REF_W = 256 and DEC = 32, i.e. one upscale factor of 8.
+// Two separate defects lived entirely outside that regime and shipped through a
+// green run: a fixed 64-px cap on the window radius (which broke `r >= S`, so
+// the score measured ordinary resolution loss once a decode fell below 16 px
+// against a 512 px reference), and a bias correction applied to the decode but
+// not to the envelope it was tested against (which broke the exact-zero
+// property at every radius). On a logo -- large flat fields, one hard edge --
+// a provably convex 4x3 decode scored 7.67, larger than the genuine ripple
+// above.
+//
+// So sweep the decode sizes the real lineup produces, against the reference
+// size it actually scores at, on the content shape that exposed it.
+{
+  const W = 512;
+  const H = 341;
+  // Logo-shaped: flat ground, one solid block, one hard edge. This is what
+  // broke; a photograph did not.
+  const logo = makeRgba(W, H, (x, y) => {
+    const inMark = x > W * 0.2 && x < W * 0.55 && y > H * 0.25 && y < H * 0.7;
+    return inMark ? [28, 78, 200] : [244, 244, 240];
+  });
+  // Fine periodic structure, the opposite failure shape.
+  const text = makeRgba(W, H, (x, y) =>
+    y % 7 < 3 && x % 5 < 3 ? [20, 20, 20] : [250, 250, 250],
+  );
+  const failures: string[] = [];
+  for (const [label, ref] of [
+    ["logo", logo],
+    ["text", text],
+  ] as const) {
+    for (const long of [4, 6, 8, 12, 16, 24, 32, 64]) {
+      const dw = Math.max(1, Math.round((W * long) / Math.max(W, H)));
+      const dh = Math.max(1, Math.round((H * long) / Math.max(W, H)));
+      // A box average is a convex combination of the samples it covers, so by
+      // the metric's central property it cannot overshoot. Anything above zero
+      // here is a false positive.
+      const s = computeRinging(
+        ref,
+        boxDownscale(ref, W, H, dw, dh),
+        W,
+        H,
+        dw,
+        dh,
+      );
+      if (s === null || s.ringing > 0) {
+        failures.push(
+          `${label} ${dw}x${dh}=${s?.ringing.toFixed(3) ?? "null"}`,
+        );
+      }
+    }
+  }
+  check(
+    "a convex decode scores 0 at every decode size, not just the easy one",
+    failures.length === 0,
+    failures.length === 0
+      ? "16 sizes x 2 content shapes, 4px to 64px against a 512px reference"
+      : `false positives: ${failures.join(", ")}`,
+  );
+}
+
 // 8. Degenerate rasters must not throw or produce NaN.
 {
   const solid = makeRgba(8, 8, () => [120, 120, 120]);

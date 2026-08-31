@@ -87,8 +87,24 @@ export const RING_DEAD_ZONE = 1.0;
  */
 export const RING_BIAS_RADIUS_FACTOR = 4;
 
-/** Caps the window on tiny decodes — a 4x4 codec thumbnail would ask for 256. */
-export const RING_MAX_RADIUS = 64;
+/**
+ * The window is bounded by the image, and by nothing else.
+ *
+ * There was a fixed cap here (64). It was wrong: the radius derivation requires
+ * `r >= S`, so capping it below `2S` breaks the property the whole metric rests
+ * on and the score starts measuring ordinary resolution loss. Measured on
+ * `graphic-logo-solid-blue.png` against a *box-averaged* decode — convex, so
+ * provably free of overshoot — a 4x3 decode scored **7.67**, larger than a real
+ * synthetic Gibbs ripple. The cap cost correctness and bought nothing: the
+ * sliding min/max is a monotonic deque, O(n) in the row length regardless of
+ * radius, so a large window is very nearly free.
+ */
+function windowRadius(scale: number, refW: number, refH: number): number {
+  const wanted = Math.ceil(RING_WINDOW_SAMPLES * scale);
+  // A window wider than the image measures the global range rather than a local
+  // one; there is nothing beyond the image to include.
+  return Math.max(1, Math.min(wanted, Math.max(refW, refH)));
+}
 
 /** Ringing measurements for one decode, all in 8-bit sRGB levels. */
 export interface RingingScores {
@@ -328,18 +344,7 @@ export function computeRinging(
   if (refW <= 0 || refH <= 0 || decW <= 0 || decH <= 0) return null;
 
   const scale = Math.max(refW / decW, refH / decH);
-  const radius = Math.max(
-    1,
-    Math.min(
-      RING_MAX_RADIUS,
-      Math.min(
-        Math.ceil(RING_WINDOW_SAMPLES * scale),
-        // A window wider than the image measures the global range, not a local
-        // one; cap it so a 1-px-wide strip fixture still behaves.
-        Math.max(1, Math.max(refW, refH) - 1),
-      ),
-    ),
-  );
+  const radius = windowRadius(scale, refW, refH);
   const biasRadius = radius * RING_BIAS_RADIUS_FACTOR;
 
   const count = refW * refH;
@@ -369,15 +374,36 @@ export function computeRinging(
     }
     const bias = boxMean(diff, refW, refH, biasRadius);
 
+    // An excursion has to survive BOTH tests: it must escape the reference's
+    // local range, *and* it must not be explained by a locally-smooth offset.
+    //
+    // Taking only the bias-corrected test breaks the property the metric is
+    // built on. Convexity says the decode itself lies inside [min, max]; it says
+    // nothing about the decode minus a bias, so wherever the bias is non-zero
+    // and the envelope is tight, a pure low-pass escapes. Measured on
+    // `graphic-logo-solid-blue.png` at a correct radius, a box-averaged decode
+    // scored 0.09 rather than 0.
+    //
+    // Taking only the raw test breaks the other property: on a solid colour the
+    // envelope is a single point, so any tint error reads as ringing.
+    //
+    // The smaller of the two keeps both. A low-pass has a raw excess of exactly
+    // zero; a uniform tint has a bias-corrected excess of zero; genuine ringing
+    // oscillates about an edge, so it largely cancels in the wide mean and
+    // survives both. The result is a conservative lower bound, which is what
+    // this metric claims to be.
     const out = excursions[c] as Float32Array;
     for (let i = 0; i < count; i++) {
-      const v = (decPlane[i] ?? 0) - (bias[i] ?? 0);
-      const over = v - (max[i] ?? 0) - RING_DEAD_ZONE;
+      const dec = decPlane[i] ?? 0;
+      const v = dec - (bias[i] ?? 0);
+      const hi = max[i] ?? 0;
+      const lo = min[i] ?? 0;
+      const over = Math.min(dec - hi, v - hi) - RING_DEAD_ZONE;
       if (over > 0) {
         out[i] = over;
         continue;
       }
-      const under = (min[i] ?? 0) - v - RING_DEAD_ZONE;
+      const under = Math.min(lo - dec, lo - v) - RING_DEAD_ZONE;
       out[i] = under > 0 ? -under : 0;
     }
   }
