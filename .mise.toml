@@ -1,5 +1,9 @@
 [tools]
 node = "24"
+# Every TypeScript task shells out to `pnpm`, but nothing installed it: a fresh
+# clone got "pnpm: command not found" from test:ts, build:ts, compare and the
+# perf harness. Pinned to typescript/package.json's own packageManager field.
+pnpm = "10.13.1"
 gradle = "9.4.0"
 swift = "6.2.4"
 java = "21"
