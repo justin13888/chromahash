@@ -708,12 +708,19 @@ Two real findings inside a negative result:
 
 **The aspect "gain" is a measurement artifact.** `upscaleRgba` resizes every
 decode to the reference dimensions with `fit: "fill"`, so **the evaluation
-cannot see aspect error at all** — it stretches the wrong-shaped decode back
+could not see aspect error at all** — it stretches the wrong-shaped decode back
 into the right frame. The real cost is analytic: a `b`-bit aspect field has a
 max ratio error of `2^(4/2^b) − 1`, i.e. 1.09% at 8 b, 4.4% at 6 b and **9.1% at
 5 b — worse than ThumbHash's 3-bit ~7%**, which is the comparison the format's
 "precise layout" claim rests on. At 5 bits, 3:2 and 4:3 images decode to the
 same 32×22 grid. Keep 8 bits.
+
+> **The blindness is fixed; the conclusion is not affected.** The comparison
+> harness now measures layout fidelity directly (`tools/comparison/src/aspect.ts`),
+> outside the metric path, so the number no longer has to be argued analytically —
+> see U19 in §7.14. The sweep rows above were measured under the blind harness and
+> still stand: they measure ΔE00, which the stretch does not affect, and the reason
+> to keep 8 bits was never in the sweep.
 
 ### 7.6 U10 — the compact tier below 32 B
 
@@ -959,10 +966,38 @@ verified at 0.00% drift, which is what confirmed that every knob this round adds
 defaults to byte-identical output; the last step is the −2.72% the gated set
 moved by when those defaults changed.
 
-**U19 — perceptual validation.** Not done, and now the most valuable thing left:
-§7.5 showed the harness is structurally blind to aspect-ratio error, and §8.5
-shows three separate MSE-reducing changes moving ΔE00 the wrong way. The metrics
-are load-bearing and unaudited against human judgement.
+**U19 — perceptual validation.** Two of the three gaps are now closed; the third
+is still the most valuable thing left.
+
+*Aspect blindness — closed.* §7.5 showed the harness could not see aspect-ratio
+error at all, because every decode is stretched back into the reference frame
+before scoring. `tools/comparison/src/aspect.ts` now measures it outside that
+path, reporting `|log₂(AR_declared / AR_original)|` in §8.1's own percent
+convention plus the reflow in CSS px for a 1000 px column. Two things had to be
+got right for the number to mean anything. It cannot come from the decode's
+reported dimensions: `decode_capped_to_with` caps per axis and the harness passes
+the encoder input as that cap, so on a 3:2 photograph t3 and t4 report the cap's
+100×67 rather than their own 128×84 and 256×168 — an error derived from that
+would read ≈0 for exactly the tiers in question. And it measures the *render
+grid*, which is coarser than the aspect byte: the byte is good to ±1.09%, but the
+base grid rounds to integers at a 32 px long edge, so a 3:2 source lands on
+32×21 = 1.5238. Measured on photographs, every tier reports an identical ~1.6%
+against ThumbHash's ~7.8% — tier-invariance being a self-check, since §8.2 defines
+the higher tiers as a bit shift of the already-rounded base.
+
+*Artifact blindness — closed.* ΔE00, SSIMULACRA2, Butteraugli and DSSIM are all
+aggregate fidelity scores; none separates *smooth but wrong* from *sharp with
+artifacts*, which is the distinction that decides whether a downstream blur-up
+rescues a placeholder. `tools/comparison/src/metrics/local.ts` measures ringing as
+RMS excursion beyond the reference's local range, so a decode that is merely a
+low-pass of the reference scores exactly zero. It gives §14's open question about
+the decode-side synthesis window a number to move: on photographs, ringing climbs
+monotonically with tier while every fidelity metric improves.
+
+*Human-judgement validation — still open, and still the most valuable item.*
+§8.5 shows three separate MSE-reducing changes moving ΔE00 the wrong way. The
+metrics remain load-bearing and unaudited against human ratings; nothing above
+changes that, and adding two more computed metrics arguably raises the stakes.
 
 ## 8. The optimized algorithm and its default parameters
 
