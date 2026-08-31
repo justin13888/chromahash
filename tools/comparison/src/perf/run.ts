@@ -111,6 +111,7 @@ for (const u of unavailable)
   process.stderr.write(`  - ${u.target}: ${u.reason}\n`);
 
 const cells: Cell[] = [];
+const recorded = new Set<string>();
 let done = 0;
 
 function record(
@@ -129,6 +130,14 @@ function record(
     bytes?: number | null;
   },
 ): void {
+  // The sweep blocks deliberately overlap - block A covers every target at the
+  // bounded cross tiers, block C extends Rust decode to all five. Measuring the
+  // same cell twice does not average: the 2026-08-29 baseline carried
+  // `decode/Rust/t2/natural` at both 1349 us (1.0% IQR) and 2047 us (30.0%),
+  // and the report quoted the noisy one. One id, one measurement - which is
+  // also what lets `verify:benchmark` bind a documented number to a cell.
+  if (recorded.has(id)) return;
+  recorded.add(id);
   done++;
   process.stderr.write(`  [${done}] ${id}\n`);
   let outcome: ReturnType<typeof probeCell>;
