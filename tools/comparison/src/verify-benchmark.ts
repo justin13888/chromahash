@@ -159,6 +159,8 @@ const PER_US: Record<string, number> = { us: 1, ms: 1e3, s: 1e6 };
 
 interface Cell {
   id: string;
+  /** chromahash-perf/2. Older runs reported the median as the headline. */
+  nsPerOp?: number;
   medianNsPerOp: number;
   iqrPct: number;
   noisy: boolean;
@@ -198,7 +200,7 @@ class Runs {
           continue;
         }
         seen.add(c.id);
-        const us = c.medianNsPerOp / 1000;
+        const us = (c.nsPerOp ?? c.medianNsPerOp) / 1000;
         const prior = this.byId.get(c.id);
         if (!prior) {
           this.byId.set(c.id, { us, cell: c, from: file });

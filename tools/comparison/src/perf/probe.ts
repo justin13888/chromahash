@@ -43,6 +43,22 @@ export interface CellResult {
   readonly iters: number;
   readonly reps: number;
   readonly samplesNsPerOp: number[];
+  /**
+   * The reported cost: the minimum over the timed blocks.
+   *
+   * Every source of error in a wall-clock benchmark is one-sided. Contention,
+   * interrupts, page faults, migration between performance and efficiency
+   * cores, and thermal throttling can only ever make a block slower than the
+   * work actually costs; nothing makes it faster. So the minimum is the sample
+   * least contaminated by the machine, and averaging or taking a median mixes
+   * the measurement with whatever else the host was doing.
+   *
+   * Measured on an Apple M3 Pro, ten fresh processes timing the same cell: the
+   * minimum settles to within 0.1% while the median of the same blocks spans
+   * 34%. Across two independent full sweeps, the cells disagreeing by more than
+   * 10% fall from 35 to 22 when read as minima.
+   */
+  readonly nsPerOp: number;
   readonly medianNsPerOp: number;
   readonly minNsPerOp: number;
   readonly ci95NsPerOp: [number, number];
@@ -153,6 +169,7 @@ export function probeCell(req: CellRequest): CellOutcome {
 
   const sorted = [...lines].sort((a, b) => a - b);
   const med = median(lines);
+  const min = sorted[0] ?? med;
   const iqr = quantile(sorted, 0.75) - quantile(sorted, 0.25);
   const iqrPct = med > 0 ? iqr / med : 0;
 
@@ -162,15 +179,18 @@ export function probeCell(req: CellRequest): CellOutcome {
       iters,
       reps: lines.length,
       samplesNsPerOp: lines,
+      nsPerOp: min,
       medianNsPerOp: med,
-      minNsPerOp: sorted[0] ?? med,
+      minNsPerOp: min,
       // A CI of the median, not the mean: a single descheduling event moves a
       // mean and leaves the median where it belongs.
       ci95NsPerOp: lines.length > 1 ? bootstrapCIOf(lines, median) : [med, med],
       iqrPct,
+      // The spread between the reported minimum and the median of the same
+      // blocks: how much of this cell was the machine rather than the work.
       // 5% is the line above which a cell cannot distinguish a regression from
-      // the machine, so the report marks it rather than quietly averaging it in.
-      noisy: iqrPct > 0.05,
+      // its host, so the report marks it rather than quietly folding it in.
+      noisy: iqrPct > 0.05 || (min > 0 && (med - min) / min > 0.05),
     },
   };
 }

@@ -41,6 +41,8 @@ interface Cell {
   iters: number;
   reps: number;
   samplesNsPerOp: number[];
+  /** The reported cost: the minimum over the timed blocks (see probe.ts). */
+  nsPerOp: number;
   medianNsPerOp: number;
   minNsPerOp: number;
   ci95NsPerOp: [number, number];
@@ -172,6 +174,7 @@ function record(
     iters: r.iters,
     reps: r.reps,
     samplesNsPerOp: r.samplesNsPerOp,
+    nsPerOp: r.nsPerOp,
     medianNsPerOp: r.medianNsPerOp,
     minNsPerOp: r.minNsPerOp,
     ci95NsPerOp: r.ci95NsPerOp,
@@ -366,7 +369,7 @@ if (!QUICK) {
 }
 
 const doc = {
-  schema: "chromahash-perf/1",
+  schema: "chromahash-perf/2",
   generatedAt: new Date().toISOString(),
   git: {
     commit: execFileSync("git", ["rev-parse", "--short", "HEAD"], {
