@@ -42,6 +42,9 @@ const BASELINE_DIR = path.join(REPO_ROOT, "tools/comparison/baselines");
 /** The committed runs, in the order a lookup prefers them. */
 const BASELINES = ["perf-report-full.json", "perf-report.json"] as const;
 
+/** The run format this document's figures are defined against. */
+const SCHEMA = "chromahash-perf/2";
+
 /**
  * Two runs of the same cell agree to about this much on a quiet machine. Used
  * only to flag disagreement *between* the committed runs, never to accept a
@@ -156,7 +159,8 @@ function parsePlaceholder(raw: string): DocNumber | null {
             : suffix === undefined
               ? "ratio"
               : "us";
-  return { value: Number.NaN, unit, decimals: unit === "us" ? 1 : 2 };
+  const decimals = unit === "us" ? 0 : unit === "percent" ? 1 : 2;
+  return { value: Number.NaN, unit, decimals };
 }
 
 /**
@@ -210,6 +214,7 @@ interface Cell {
 
 interface RunDoc {
   file: string;
+  schema: string;
   git: { commit: string; dirty: boolean };
   environment: { cpuModel: string; arch: string; cores: number };
   config: { mode: string; reps: number };
@@ -222,8 +227,13 @@ class Runs {
     { us: number; cell: Cell; from: string }
   >();
   readonly loaded: RunDoc[] = [];
-  readonly conflicts: string[] = [];
+  /** Same id, two runs, materially different: a property of the host. */
+  readonly crossRunSpread: string[] = [];
+  /** Same id twice inside one run: an integrity bug in the driver. */
+  readonly duplicates: string[] = [];
   readonly dirty: string[] = [];
+  /** Runs rejected outright, with the reason. */
+  readonly rejected: string[] = [];
 
   constructor(files: string[]) {
     for (const file of files) {
@@ -231,13 +241,25 @@ class Runs {
       if (!existsSync(full)) continue;
       const doc = JSON.parse(readFileSync(full, "utf8")) as RunDoc;
       doc.file = file;
+
+      // chromahash-perf/1 reported the median as a cell's headline figure; /2
+      // reports the minimum. Binding this document to a /1 run would compare
+      // numbers that do not mean the same thing, and a --fix against one would
+      // quietly write medians into a document that says minima.
+      if (doc.schema !== SCHEMA) {
+        this.rejected.push(
+          `${file}: schema ${doc.schema ?? "(none)"}, expected ${SCHEMA} — regenerate with \`mise run benchmark\``,
+        );
+        continue;
+      }
+
       this.loaded.push(doc);
       if (doc.git?.dirty) this.dirty.push(file);
 
       const seen = new Set<string>();
       for (const c of doc.cells) {
         if (seen.has(c.id)) {
-          this.conflicts.push(`${file}: duplicate cell id ${c.id}`);
+          this.duplicates.push(`${file}: duplicate cell id ${c.id}`);
           continue;
         }
         seen.add(c.id);
@@ -249,7 +271,7 @@ class Runs {
         }
         const delta = Math.abs(prior.us - us) / Math.min(prior.us, us);
         if (delta > CROSS_RUN_TOLERANCE) {
-          this.conflicts.push(
+          this.crossRunSpread.push(
             `${c.id}: ${prior.from} says ${prior.us.toFixed(1)} us, ` +
               `${file} says ${us.toFixed(1)} us (${(delta * 100).toFixed(1)}% apart)`,
           );
@@ -709,6 +731,7 @@ const { values } = parseArgs({
 });
 
 const runs = new Runs([...BASELINES]);
+for (const r of runs.rejected) console.error(`Rejected ${r}`);
 if (runs.loaded.length === 0) {
   console.error(
     [
@@ -783,15 +806,31 @@ for (const file of runs.dirty) {
     detail: "regenerate from a committed tree so the run traces to a revision",
   });
 }
-for (const c of runs.conflicts) {
+for (const c of runs.duplicates) {
   failures.push({
     where: "committed runs",
-    column: "consistency",
+    column: "integrity",
     row: "—",
-    documented: "one value per cell",
-    measured: "conflict",
+    documented: "one value per cell id",
+    measured: "duplicate",
     detail: c,
   });
+}
+
+// Two runs of the same cell disagreeing is a fact about the measuring host, not
+// about the document, so it is reported rather than failed on — but loudly:
+// it is the ceiling on how much any number here can be trusted.
+if (runs.crossRunSpread.length > 0) {
+  console.log(
+    `\nWARNING: ${runs.crossRunSpread.length} cell(s) disagree by more than ` +
+      `${(CROSS_RUN_TOLERANCE * 100).toFixed(0)}% between the committed runs. ` +
+      `That is the measuring host's reproducibility floor, and no figure here ` +
+      `is tighter than it.`,
+  );
+  for (const c of runs.crossRunSpread.slice(0, 10)) console.log(`  ${c}`);
+  if (runs.crossRunSpread.length > 10) {
+    console.log(`  ... and ${runs.crossRunSpread.length - 10} more`);
+  }
 }
 
 if (values.fix) {
