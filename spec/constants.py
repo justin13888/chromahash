@@ -134,9 +134,11 @@ class AcLayout:
     a_bits: int
 
 
-# Layout B: the v1 upper-tier base (the shipped default). Sized so a default-tier hash is
-# exactly 32 bytes for both alpha modes (the v0.6 footprint, for equal-budget
-# comparison):
+# Layout B: the v1 upper-tier base, reached only at codes 2..=4 (DEFAULT_LAYOUT is
+# LAYOUT_T0, below). Its counts were sized so that, unscaled, they would fill exactly
+# 32 bytes in both alpha modes — the v0.6 footprint, kept as the equal-budget anchor
+# LAYOUT_T0 was measured against. It is never emitted at 32 bytes itself, since every
+# code that reaches it scales the counts by 4^level:
 #   no-alpha = 54 prefix + 26·5 L + 2·9·4 chroma                  = 256 bits
 #   alpha    = 54 + 9 + 22·4 L + 2·3·3 chroma + 28·3 alpha        = 253 bits
 # (both round up to 32 bytes). The alpha row is the §11.3 allocation, which

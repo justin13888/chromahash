@@ -626,10 +626,12 @@ the test vectors.
 | Channel | Mode | K (code 1) | Bits | K (code 2) | Bits |
 |---|---|---|---|---|---|
 | L luminance | no-alpha | 28 | 4 each | 104 | 5 each |
-| L luminance | alpha | 20 | 5 each | 80 | 5 each |
-| a chroma | both | 15 / 9 (alpha) | 3 / 4 each | 36 | 4 each |
-| b chroma | both | 15 / 9 (alpha) | 3 / 4 each | 36 | 4 each |
-| Alpha | alpha | 5 | 4 each | 20 | 4 each |
+| L luminance | alpha | 22 | 4 each | 88 | 4 each |
+| a chroma | no-alpha | 15 | 3 each | 36 | 4 each |
+| a chroma | alpha | 3 | 3 each | 12 | 3 each |
+| b chroma | no-alpha | 15 | 3 each | 36 | 4 each |
+| b chroma | alpha | 3 | 3 each | 12 | 3 each |
+| Alpha | alpha | 28 | 3 each | 112 | 3 each |
 
 Run `python3 spec/selection.py --json` for all unique selections (one per `(W, H, K)`).
 
@@ -872,10 +874,19 @@ separately.
 
 ### 9.3 Alpha Channel Encoding
 
-When `hasAlpha = 1`: DC (5 bits), scale (4 bits), and `5·4^tier` AC coefficients (4 bits
-each, µ-law companded with `MU_ALPHA`). At the default tier the luminance K shrinks from 26 to 20,
-with the freed bits accommodating the alpha channel (29 bits of alpha overhead), keeping
-the default-tier hash at 32 bytes.
+When `hasAlpha = 1`: DC (5 bits), scale (4 bits), and the tier row's alpha AC coefficients
+(3 bits each, µ-law companded with `MU_ALPHA`). The count is the row's own — 16 at the
+compact tier, 28 at the default tier and in the code-2 base — scaled by `4^level` above
+code 2, giving **16 / 28 / 112 / 448 / 1792** for codes 0–4 (§3.2). It is not one constant
+scaled by `4^level`: the compact tier reads its own row, so the sequence starts at 16
+rather than at a scaled 28.
+
+At the default tier that is 93 bits of alpha (`5 + 4 + 28·3`), funded almost entirely out
+of **chroma** rather than luminance: a/b shrink from 15 coefficients each to 3 (−72 bits)
+and L from 28 to 22 (−24 bits). Chroma spent inside transparent regions composites away,
+while the alpha plane carries the silhouette — see §3.2 "On the alpha rows" and
+`EXPERIMENTS.md` §11.3. The 3 bits left over are the alpha row's padding, keeping the
+default-tier hash at 32 bytes.
 
 ---
 

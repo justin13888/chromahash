@@ -23,9 +23,9 @@ pinned by the test vectors. It is the UNWEIGHTED priority: the synthesis window
 is defined on the true spatial frequency, not on the perceptual sort key.
 
 K per channel at the default tier (constants.py LAYOUT_T0): L = 28 (no-alpha) /
-20 (alpha mode), chroma a/b = 15 / 9, alpha = 5. Tiers 1..=3 scale the LAYOUT_B
-counts by 4^m, and the larger grid keeps the higher K satisfiable
-(candidates ≥ 64·4^m − 1).
+22 (alpha mode), chroma a/b = 15 (no-alpha) / 3 (alpha mode), alpha = 28.
+Codes 2..=4 scale the LAYOUT_B counts by 4^level, and the larger grid keeps the
+higher K satisfiable (candidates ≥ 64·4^level − 1).
 
 Usage:
     python3 spec/selection.py           # pretty-print (default tier)
