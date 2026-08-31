@@ -219,6 +219,13 @@ export class CodecThumbAdapter implements FormatAdapter {
       encodedSizeBytes: chosen.data.length,
       decodedWidth: chosen.decodedWidth,
       decodedHeight: chosen.decodedHeight,
+      // A real codec bitstream carries its dimensions; the byte-target search
+      // picked this resolution, and the file states it.
+      intrinsicSize: {
+        kind: "declared",
+        width: chosen.decodedWidth,
+        height: chosen.decodedHeight,
+      },
       encodeTimeMs,
       decodeTimeMs,
       dataUri,

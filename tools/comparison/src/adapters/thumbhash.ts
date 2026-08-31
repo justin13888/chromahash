@@ -39,6 +39,10 @@ export class ThumbHashAdapter implements FormatAdapter {
       encodedSizeBytes,
       decodedWidth: dw,
       decodedHeight: dh,
+      // ThumbHash stores a 3-bit aspect field and derives its own render size
+      // from it; nothing caps this decode, so the returned dimensions are the
+      // format's own declaration.
+      intrinsicSize: { kind: "declared", width: dw, height: dh },
       encodeTimeMs,
       decodeTimeMs,
       dataUri,

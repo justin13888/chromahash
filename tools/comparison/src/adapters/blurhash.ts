@@ -61,6 +61,17 @@ export class BlurHashAdapter implements FormatAdapter {
       encodedSizeBytes,
       decodedWidth: decodeW,
       decodedHeight: decodeH,
+      // A BlurHash string encodes only the component counts and their
+      // coefficients -- no aspect ratio. The decoder is told what size to
+      // render, and the 32x32 above is this harness's choice, not the
+      // format's. A consumer must already know the dimensions from somewhere
+      // else, so BlurHash cannot cause a layout shift and cannot prevent one
+      // either; scoring it would be scoring our own constant.
+      intrinsicSize: {
+        kind: "absent",
+        reason:
+          "a BlurHash string carries no aspect ratio -- the decoder is told what size to render, and the 32x32 here is this harness's choice. Dimensions must come from elsewhere.",
+      },
       encodeTimeMs,
       decodeTimeMs,
       dataUri,

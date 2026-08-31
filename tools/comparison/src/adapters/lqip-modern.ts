@@ -80,6 +80,9 @@ export class LqipModernAdapter implements FormatAdapter {
       encodedSizeBytes,
       decodedWidth: dw,
       decodedHeight: dh,
+      // The WebP payload carries its own dimensions in the bitstream header;
+      // `info` is that header, not a size this harness requested.
+      intrinsicSize: { kind: "declared", width: dw, height: dh },
       encodeTimeMs,
       decodeTimeMs,
       dataUri,

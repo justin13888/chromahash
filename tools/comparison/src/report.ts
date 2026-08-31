@@ -1,4 +1,5 @@
 import { splitFor } from "./corpus.ts";
+import { aspectFidelity, log2ToPct } from "./aspect.ts";
 import {
   computePairedComparisons,
   type PairedComparison,
@@ -10,6 +11,7 @@ import type {
   FormatStat,
   HarnessResult,
   ImageCategory,
+  LocalMetrics,
   MetricResult,
 } from "./types.ts";
 
@@ -18,6 +20,13 @@ interface ImageEntry {
   category: ImageCategory;
   originalWidth: number;
   originalHeight: number;
+  /**
+   * Encoder-input dimensions (<=100px long edge). Layout fidelity is scored
+   * against these rather than the original, because this harness's own
+   * downscale already rounds the aspect — see aspect.ts.
+   */
+  smallWidth: number;
+  smallHeight: number;
   originalDataUri: string;
   loResDataUri: string;
   formatResults: FormatResult[];
@@ -63,6 +72,17 @@ function avgMetric(
   return vals.length > 0 ? vals.reduce((s, v) => s + v, 0) / vals.length : null;
 }
 
+/** Average a nullable field of the locally-computed metric set. */
+function avgMetricLocal(
+  results: FormatResult[],
+  pick: (m: LocalMetrics) => number | null,
+): number | null {
+  const vals = results
+    .map((r) => pick(r.local))
+    .filter((v): v is number => v !== null && Number.isFinite(v));
+  return vals.length > 0 ? vals.reduce((s, v) => s + v, 0) / vals.length : null;
+}
+
 /** Average a nullable field of the blurred metric set (null when not computed). */
 function avgBlurredMetric(
   results: FormatResult[],
@@ -102,6 +122,37 @@ export function computeFormatStats(
       .filter((v): v is number => v !== null && Number.isFinite(v));
     const ciedeSorted = [...ciedeValues].sort((a, b) => a - b);
 
+    const ringValues = results
+      .map((r) => r.local.ringing)
+      .filter((v): v is number => v !== null && Number.isFinite(v));
+    const ringSorted = [...ringValues].sort((a, b) => a - b);
+
+    // Layout fidelity is scored against the encoder input, and per image: the
+    // pairing of a result with its own entry is why this is aggregated here and
+    // not inside the adapters.
+    const aspects = filtered.flatMap((e) =>
+      e.formatResults
+        .filter((r) => r.formatName === name)
+        .map((r) =>
+          aspectFidelity(r.intrinsicSize, e.originalWidth, e.originalHeight),
+        )
+        .filter((a): a is NonNullable<typeof a> => a !== null),
+    );
+    // Averaged in octaves and converted once, not averaged as percentages —
+    // see aspect.ts.
+    const log2Sorted = aspects.map((a) => a.log2Error).sort((x, y) => x - y);
+    const meanLog2 =
+      log2Sorted.length > 0
+        ? log2Sorted.reduce((x, y) => x + y, 0) / log2Sorted.length
+        : null;
+    // A format that declared no size anywhere gets a dash and the reason, never
+    // a zero — a zero here would read as perfect layout fidelity.
+    const absent = results.find((r) => r.intrinsicSize.kind === "absent");
+    const absentReason =
+      aspects.length === 0 && absent?.intrinsicSize.kind === "absent"
+        ? absent.intrinsicSize.reason
+        : null;
+
     return {
       name,
       images: results.length,
@@ -119,6 +170,18 @@ export function computeFormatStats(
       medianCiede: ciedeSorted.length > 0 ? quantile(ciedeSorted, 0.5) : null,
       p90Ciede: ciedeSorted.length > 0 ? quantile(ciedeSorted, 0.9) : null,
       ciCiede: ciedeValues.length > 0 ? bootstrapCI(ciedeValues) : null,
+      avgRinging: avgMetricLocal(results, (m) => m.ringing),
+      p90Ringing: ringSorted.length > 0 ? quantile(ringSorted, 0.9) : null,
+      avgRingArea: avgMetricLocal(results, (m) => m.ringArea),
+      avgAspectErrorPct: meanLog2 !== null ? log2ToPct(meanLog2) : null,
+      p90AspectErrorPct:
+        log2Sorted.length > 0 ? log2ToPct(quantile(log2Sorted, 0.9)) : null,
+      maxAbsReflowPx:
+        aspects.length > 0
+          ? Math.max(...aspects.map((a) => Math.abs(a.reflowPx)))
+          : null,
+      aspectImages: aspects.length,
+      aspectAbsentReason: absentReason,
     };
   });
 }

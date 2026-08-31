@@ -245,6 +245,28 @@ export class ChromaHashAdapter implements FormatAdapter {
 
     const { w: dw, h: dh, rgba: decodedRgba } = decoded;
 
+    // The size ChromaHash *declares*, which is not necessarily the size decoded
+    // above. `decode_capped_to_with` caps per axis (`nat_w.min(max_w)`), so once
+    // the natural grid exceeds the encoder input the decode reports the cap --
+    // i.e. this harness's own downscale of the source. On a 3:2 photo the t3 and
+    // t4 columns come back as the input's 100x67 rather than the format's shape,
+    // and an aspect error derived from that would read ~0 for precisely the
+    // tiers whose layout precision is being questioned.
+    //
+    // A second, uncapped decode is the honest source. It is only needed when
+    // capping could have bitten: if both decoded edges came in strictly under
+    // the cap, neither `min` bound and the decode already is the natural size.
+    // That short-circuit skips the extra spawn for the low tiers, which is most
+    // of the lineup.
+    //
+    // Asking the binary rather than reimplementing `decodeOutputSize` in TS
+    // keeps the Rust core the single source of truth, as `gamut.ts` and
+    // `iqa.ts` already do -- and `decode` with no cap args is a subcommand every
+    // released tag understands, so `--versions` mode keeps working.
+    const cappedOut =
+      capW !== undefined && capH !== undefined && (dw >= capW || dh >= capH);
+    const natural = cappedOut ? decodeViaRust(bin, encoded, "srgb") : decoded;
+
     // Preview: decode to the source display gamut where ChromaHash supports it
     // (Display P3), and tag it with that ICC profile so a wide-gamut viewer shows
     // the true saturated color. Other gamuts preview in sRGB (decoder fallback).
@@ -278,6 +300,7 @@ export class ChromaHashAdapter implements FormatAdapter {
       decodeTimeMs,
       dataUri,
       ...scores,
+      intrinsicSize: { kind: "declared", width: natural.w, height: natural.h },
     };
   }
 }

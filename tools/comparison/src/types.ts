@@ -113,6 +113,53 @@ export const NULL_LOCAL_METRICS: LocalMetrics = {
   ringWindowRadius: null,
 };
 
+/**
+ * The size a format *declares* — what a consumer could reserve layout for from
+ * the payload alone, before any image data arrives.
+ *
+ * Deliberately **not** `decodedWidth`/`decodedHeight`. Those are the size this
+ * harness asked for: `decode_capped_to_with` in the Rust core caps per axis
+ * (`nat_w.min(max_w)`), and the ChromaHash adapter passes the encoder input as
+ * that cap, so at the higher tiers the reported decode dimensions *are the cap*
+ * — the harness's own downscale of the source, not the format's shape. Deriving
+ * an aspect error from them would report ~0 for exactly the tiers whose layout
+ * precision is in question.
+ *
+ * Required on {@link FormatResult} rather than optional: every adapter has to
+ * state its answer, and "this format carries no aspect at all" is an answer
+ * with a reason, not a missing field.
+ */
+export type IntrinsicSize =
+  | {
+      readonly kind: "declared";
+      readonly width: number;
+      readonly height: number;
+    }
+  | { readonly kind: "absent"; readonly reason: string };
+
+/**
+ * How far a format's declared shape is from the shape it was handed, and what
+ * that costs a page that reserves layout from it.
+ */
+export interface AspectFidelity {
+  /**
+   * |log2(AR_declared / AR_target)| in octaves. The symmetric measure: the
+   * ratio form |AR_d/AR_t − 1| scores 10% too wide as 10.00% and 10% too narrow
+   * as 9.09%, so a corpus mean would be biased by the landscape/portrait mix.
+   * Symmetry about 1:1 is the same property spec §8.1 builds the aspect
+   * encoding on.
+   */
+  log2Error: number;
+  /** (2^log2Error − 1) × 100 — spec §8.1's own convention for the same error. */
+  errorPct: number;
+  /**
+   * Layout shift in CSS px for a `REFLOW_CONTAINER_PX`-wide container. Positive
+   * means the real image is taller than the placeholder reserved, so content
+   * below it gets pushed down when the image loads.
+   */
+  reflowPx: number;
+}
+
 /** Result of encoding/decoding with a particular format. */
 export interface FormatResult {
   /** Name of the LQIP format. */
@@ -139,6 +186,8 @@ export interface FormatResult {
   metricsBlurred: MetricResult | null;
   /** Metrics computed by this harness rather than by iqa-cli. */
   local: LocalMetrics;
+  /** The size this format declares, or why it declares none. */
+  intrinsicSize: IntrinsicSize;
 }
 
 /** An adapter that processes an image through a specific LQIP format. */
@@ -210,6 +259,32 @@ export interface FormatStat {
   p90Ciede: number | null;
   /** 95% bootstrap confidence interval of the mean ΔE00 (see stats.ts). */
   ciCiede: [number, number] | null;
+  /** RMS ringing in 8-bit sRGB levels, averaged across the set. */
+  avgRinging: number | null;
+  /** 90th-percentile ringing — the images where artifacts actually bite. */
+  p90Ringing: number | null;
+  /** Mean fraction of pixels carrying any excursion, on [0, 1]. */
+  avgRingArea: number | null;
+  /**
+   * Mean aspect error, as a percent, converted from the mean of the per-image
+   * octave errors (see aspect.ts on why the mean is taken in log space).
+   */
+  avgAspectErrorPct: number | null;
+  /** 90th-percentile aspect error, as a percent. */
+  p90AspectErrorPct: number | null;
+  /**
+   * Largest absolute reflow across the set, in CSS px at the reference
+   * container width. Max rather than mean: layout shift is felt on the worst
+   * page in a set, not on the average one.
+   */
+  maxAbsReflowPx: number | null;
+  /**
+   * Images where this format declared a size at all. Zero means the format
+   * carries no aspect, and the report must print a dash rather than a number.
+   */
+  aspectImages: number;
+  /** Why no size was declared, when `aspectImages` is 0. */
+  aspectAbsentReason: string | null;
 }
 
 /**
@@ -233,6 +308,10 @@ export interface FormatJson {
   metricsBlurred: MetricResult | null;
   /** Metrics computed by this harness rather than by iqa-cli. */
   local: LocalMetrics;
+  /** The size this format declares, or why it declares none. */
+  intrinsicSize: IntrinsicSize;
+  /** Layout fidelity against the encoder input; null when no size is declared. */
+  aspect: AspectFidelity | null;
 }
 
 /** A single language implementation's result as serialized into the JSON report. */
@@ -282,6 +361,10 @@ export interface ScoringMetaJson {
   blurSigmaRule: string;
   /** Backdrop RGB both sides are composited over before scoring. */
   alphaBackdrop: readonly [number, number, number];
+  /** Container width the layout reflow figure is quoted for, in CSS px. */
+  reflowContainerPx: number;
+  /** Whether the locally-computed ringing metric was scored. */
+  ringing: boolean;
 }
 
 /**

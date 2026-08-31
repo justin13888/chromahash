@@ -98,6 +98,9 @@ export class RawPixelsAdapter implements FormatAdapter {
       encodedSizeBytes: packed.length,
       decodedWidth: n,
       decodedHeight: m,
+      // The control's grid is chosen from the byte budget and is what a
+      // consumer would be shipped, so it is a genuine declaration.
+      intrinsicSize: { kind: "declared", width: n, height: m },
       encodeTimeMs,
       decodeTimeMs,
       dataUri,

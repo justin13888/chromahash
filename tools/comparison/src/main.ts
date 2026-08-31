@@ -55,6 +55,7 @@ import {
 } from "./rd/lineup.ts";
 import { computeRdCurves, generateRdSection } from "./rd/report.ts";
 import { splitFor } from "./corpus.ts";
+import { aspectFidelity, REFLOW_CONTAINER_PX } from "./aspect.ts";
 import {
   computePairedComparisons,
   formatPairedTable,
@@ -610,6 +611,17 @@ async function main(): Promise<void> {
           metrics: r.metrics,
           metricsBlurred: r.metricsBlurred,
           local: r.local,
+          intrinsicSize: r.intrinsicSize,
+          // Scored against the ORIGINAL: that is the shape which eventually
+          // loads, so it is the shape the layout shift is felt against. The
+          // harness's own <=100px encoder input contributes a little of this
+          // (~0.5%), reported separately rather than netted out -- see
+          // aspect.ts and `encoderInputFloor`.
+          aspect: aspectFidelity(
+            r.intrinsicSize,
+            entry.originalWidth,
+            entry.originalHeight,
+          ),
         };
       }),
     );
@@ -724,6 +736,8 @@ async function main(): Promise<void> {
       blurredScoring,
       blurSigmaRule: BLUR_SIGMA_RULE,
       alphaBackdrop: ALPHA_BACKDROP,
+      reflowContainerPx: REFLOW_CONTAINER_PX,
+      ringing,
     },
     commit: meta.commit,
     repoUrl: meta.repoUrl,

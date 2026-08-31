@@ -83,6 +83,15 @@ export class UnpicAdapter implements FormatAdapter {
       encodedSizeBytes,
       decodedWidth: rasterW,
       decodedHeight: rasterH,
+      // A CSS gradient stack has no intrinsic size at all: it fills whatever
+      // box it is given. The raster scored above is sized from the *source*
+      // dimensions by this harness, so it carries no information the payload
+      // has.
+      intrinsicSize: {
+        kind: "absent",
+        reason:
+          "a CSS gradient stack has no intrinsic size -- it fills whatever box it is given. The raster scored here is derived from the source, not from the payload.",
+      },
       encodeTimeMs,
       decodeTimeMs: 0,
       dataUri,
