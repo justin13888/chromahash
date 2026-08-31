@@ -322,7 +322,7 @@ At the default tier it is the wrong answer. The count-vs-precision optimum moves
 budget, and a 32-byte hash has 202 AC bits to spend: sweeping the whole
 equal-byte grid (`EXPERIMENTS.md` §4.2) puts the optimum at 28 luma
 coefficients at 4 bits plus 15 chroma at 3, worth −3.5% mean ΔE00 on the
-never-tuned holdout with every guard improving. So v1 carries a **two-row
+never-tuned holdout with every guard improving. So v1 carries a **three-row
 layout table** rather than one base scaled by `4^level` (§3.2).
 
 The optimum is broad — L30/C13 and L32/C12 are within noise of L28/C15 — which
@@ -364,9 +364,11 @@ practice; beyond-range panoramas clamp gracefully to 16:1. Symmetric about 1:1
 (byte 128); portrait/landscape mirror symmetry is validator-enforced.
 
 ### Tier scaling by bit-shift of the rounded base
-`(w<<tier, h<<tier)` — never re-derive `round(32·2^tier/ratio)`; the two
-disagree (round(64/3)=21 vs round(32/3)<<1=22) and encoder/decoder grids MUST
-match or reconstruction desynchronizes.
+`(w<<level, h<<level)` for `level = renderLevel(tier)` — never re-derive
+`round(32·2^level/ratio)`; the two disagree (at level 1, round(64/3)=21 vs
+round(32/3)<<1=22) and encoder/decoder grids MUST match or reconstruction
+desynchronizes. Shifting by the raw tier code instead of by the level is the
+same bug one step earlier: codes 0 and 1 share level 0.
 
 ### Alpha: composite-over-average + separate channel
 Transparent pixels composite over the alpha-weighted average OKLAB (keeps the

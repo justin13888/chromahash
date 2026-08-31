@@ -63,7 +63,7 @@ layout precision, and wide-gamut support matter more than minimizing byte count.
 | Goal | Rationale |
 |------|-----------|
 | 32 bytes at the default tier | Memory-aligned, cache-friendly, predictable storage. Zero-overhead database column or cache key; equal-budget comparison with prior LQIP formats. |
-| Quality multiplier (3-bit tier) | Opt into more detail when wanted: long edge `32·2^tier`, byte length ≈ `4^tier`× the base. The common case stays 32 bytes. |
+| Quality multiplier (3-bit tier) | Opt into more detail when wanted: long edge `32·2^level`, byte length ≈ `4^level`× the base, where `level = renderLevel(tier)` (§3.5). The common case stays 32 bytes. |
 | Self-describing + fail-fast | Byte 0 carries version, tier, and flags; the byte length follows deterministically, so a parser validates a hash in O(1) and a validated hash always decodes. No checksum needed. |
 | OKLAB color space | Perceptually uniform — quantization levels are maximally efficient. |
 | 8-bit log₂ aspect ratio | ~1.09% max error for all photographic ratios. Covers 1:16 to 16:1. |
@@ -222,7 +222,7 @@ AC coefficients follow the prefix (and the alpha DC/scale in alpha mode), in **s
 order** (§6.2): the j-th value in each channel's field is the j-th selected `(cx, cy)`
 pair.
 
-The per-channel split is a **three-row table, not one base scaled by `4^tier`**: codes 0
+The per-channel split is a **three-row table, not one base scaled by `4^level`**: codes 0
 and 1 each have their own row, and codes 2–4 scale the code-2 base by `4^(tier−2)`. Bits
 per coefficient are constant within a row. The split exists because the count-vs-precision
 optimum moves with the budget — at 32 bytes the format is measurably better off with more,
@@ -528,8 +528,9 @@ aspect byte — no grid machinery, no mode flags:
 ANISO = 1.2      // oblique-effect weight   (§12.1)
 HV    = 0.15     // horizontal/vertical weight
 
+// level = renderLevel(tier) = max(0, tier − 1)  (§3.5) — NOT the raw tier code
 function selectCoefficients(aspect_byte, tier, K):
-    (W, H) = decodeOutputSize(aspect_byte, tier)   // §8.2; long side 32·2^tier, short side ≥ 2·2^tier
+    (W, H) = decodeOutputSize(aspect_byte, tier)   // §8.2; long side 32·2^level, short side ≥ 2·2^level
     entries = []
     for cy in 0 .. H−1:
         for cx in 0 .. W−1:
@@ -585,14 +586,14 @@ perceptual sort key.
 natural decode raster `[0, W) × [0, H)`. `cos(π/W × cx × (x+0.5))` with `cx = W`
 evaluates to zero at every sample, and `cx > W` aliases to a lower frequency — the
 bound makes selecting an unrepresentable frequency structurally impossible. The
-candidate count is at least `64·4^tier − 1` for every aspect byte (short side ≥ 2·2^tier),
+candidate count is at least `64·4^level − 1` for every aspect byte (short side ≥ 2·2^level),
 so every `K(tier)` the format uses is always fully satisfied.
 
-**Tier scaling.** Doubling the grid scales `(W, H)`, and hence every priority, by `4^tier`
+**Tier scaling.** Doubling the grid scales `(W, H)`, and hence every priority, by `4^level`
 uniformly. The weight depends only on the *ratio* `d/p`, which is unchanged, so the whole
-key scales by `4^tier` and the *ordering* is tier-independent: a higher tier reuses the
+key scales by `4^level` and the *ordering* is tier-independent: a higher tier reuses the
 same low-frequency ordering on a larger grid, which admits more (and higher) frequencies
-and lets `K` grow as `4^tier` (§3.5).
+and lets `K` grow as `4^level` (§3.5).
 
 **Priority.** `(cx·H)² + (cy·W)²` is the squared isotropic per-pixel spatial frequency
 scaled by `(W·H)²`: sorting ascending takes the K lowest spatial frequencies — an ℓ2
@@ -843,7 +844,7 @@ the default tier's size (§3.5). Shifting by the raw code would render it at 64 
 Over the byte range the base short side is at least 2 pixels (byte 0 → 2×32;
 byte 255 → 32×2), which the selection domain (§6.2) relies on; at render level `m` it is
 `2·2^m`. The tier scaling is a **bit shift of the rounded base size** — it MUST NOT be
-re-derived as `round(32·2^tier / ratio)`, which disagrees for non-power-of-two ratios
+re-derived as `round(32·2^level / ratio)`, which disagrees for non-power-of-two ratios
 (e.g. ratio 3, level 1: `round(64/3) = 21` vs `round(32/3) << 1 = 22`) and would
 desynchronize the encoder and decoder grids. Implementations MAY render at other sizes;
 see §6.4 and §11.3.
@@ -1477,7 +1478,7 @@ compatibility** with the v0.6 bitstream. The framing changes are:
   version, tier, reserved bit, and the deterministic length — failing fast — rather than by
   a CRC.
 - **Per-tier AC layout (§3.2, §7.4).** The layout is a three-row table rather than one
-  base scaled by `4^tier`. Code 1 spends its 202 AC bits on 28 luma coefficients at 4 bits
+  base scaled by `4^level`. Code 1 spends its 202 AC bits on 28 luma coefficients at 4 bits
   and 15 chroma at 3 (was 26 @ 5 and 9 @ 4); codes 2–4 scale the 5-bit/4-bit code-2 row;
   the compact tier has its own row again.
 - **Alpha allocation (§3.2, §7.4).** The alpha rows are rebuilt. The alpha channel had 5
@@ -1698,7 +1699,7 @@ over average color, and average color extraction from the header.
 | **Source gamuts** | sRGB only | sRGB, P3, Adobe RGB, BT.2020, ProPhoto |
 | **Gamut clamping** | Hard per-channel | Relative-colorimetric per-channel clip in the output gamut (§12.6) |
 | **Input dimensions** | Any (library resizes) | Any (full-resolution DCT) |
-| **Quality scaling** | None | 3-bit tier: ×4^tier coefficients, 2^tier render resolution |
+| **Quality scaling** | None | 3-bit tier: ×4^level coefficients, 2^level render resolution, `level = renderLevel(tier)` |
 
 On the reference corpus (52 images, identical color-managed metrics), ChromaHash v0.6 —
 whose default-tier layout differs from v1 only in the smaller pre-tier header and a 27th L

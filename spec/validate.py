@@ -552,9 +552,10 @@ def validate_length_formula():
     v1 drops v0.6's fixed 256-bit/32-byte frame. The encoded length is
     body_len_bytes(layout, has_alpha, tier) =
         ceil((PREFIX_BITS [+ ALPHA_PREFIX_BITS] + ac_payload_bits) / 8).
-    Tier 0 is 32 bytes for BOTH alpha modes (the v0.6 footprint, for equal-budget
-    comparison); each higher tier scales every AC count by 4^tier and grows the
-    body toward 4× as the fixed prefix becomes negligible. There is no CRC.
+    The default tier (code 1) is 32 bytes for BOTH alpha modes (the v0.6 footprint,
+    for equal-budget comparison); codes 2..=4 scale every AC count by 4^level, for
+    level = render_level(tier) = max(0, tier - 1), and grow the body toward 4× as
+    the fixed prefix becomes negligible. There is no CRC.
     """
     print("\n10. v1 length formula and tier scaling")
 
