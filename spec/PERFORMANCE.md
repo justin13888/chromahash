@@ -29,7 +29,17 @@ cell cannot be published here.
 > `bounded` sweep taken from a dirty tree, while §2, §3, §4, §5 and §6 quoted a
 > `--full` sweep that was never committed. Checked cell by cell,
 > `verify:benchmark` found **50 disagreements in 89 values**, two tables with no
-> measured cell at all, and six duplicate cell ids in the baseline.
+> measured cell at all, and six duplicate cell ids in the baseline. That baseline
+> has been removed rather than left in place: the gate rejected it on three
+> counts at once, and it was the source the repo's user-facing performance
+> claims had been quietly reading from.
+>
+> **`mise run verify:benchmark` therefore fails, by design, until a
+> re-measurement lands** — a placeholder is a bound cell with no number, and it
+> always fails. The `ci-comparison.yml` job carrying it is red on `master` for
+> the same reason. That is the gap made visible, not a regression to bisect:
+> a green gate here would mean the document had stopped asking for the numbers
+> it does not have.
 >
 > Re-measuring is a deliberate act, on a host that can hold a clock still. An
 > Apple M3 Pro laptop was tried and rejected: the same cell measured across

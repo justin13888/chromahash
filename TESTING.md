@@ -130,6 +130,12 @@ committed runs under `tools/comparison/baselines/` — so it is cheap and runs i
 `ci-comparison.yml` on every change to either. `verify:experiments` is its
 sibling for `EXPERIMENTS.md`.
 
+> **`verify:benchmark` currently fails, and its CI job is red on `master`.**
+> `spec/PERFORMANCE.md` carries `TBD` placeholders throughout and no perf run is
+> committed, both of which the gate fails on deliberately — see the banner at
+> the top of that document. Do not bisect it, and do not silence it: the
+> re-measurement below is what clears it.
+
 **Re-measuring is a deliberate act.** The perf sweep is the one gate whose
 output depends on the machine, so a re-measurement is reviewed the way a test
 vector regeneration is:
