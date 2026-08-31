@@ -69,7 +69,7 @@ layout precision, and wide-gamut support matter more than minimizing byte count.
 | 8-bit log₂ aspect ratio | ~1.09% max error for all photographic ratios. Covers 1:16 to 16:1. |
 | Top-K coefficient selection | The K lowest spatial frequencies for the image's aspect ratio — a single deterministic rule, no grid machinery, no aliasing. |
 | Quantization ranges sized to signal | Chroma DC spans the sRGB OKLAB hull; AC scale ranges match measured coefficient distributions. Every code level does work. |
-| 5-bit luminance AC | 31 levels for the most perceptually important channel. |
+| Per-row luminance AC precision | 4 bits (15 levels) at the compact and default tiers, where more coefficients beat finer ones at a 32-byte budget; 5 bits (31 levels) in the opaque code-2 base row that codes 2–4 scale (§7.4). |
 | µ-law companding with exact zero | Non-linear quantization matching natural image DCT coefficient distributions; zero coefficients decode exactly. |
 | Decode-aware DC selection | The encoder picks the DC codes whose *decoded* color is closest to the true average — gamut-corner solids round-trip nearly exactly. |
 | Multi-gamut encode | Accepts sRGB, Display P3, Adobe RGB, BT.2020, or ProPhoto RGB sources. |
@@ -1614,9 +1614,9 @@ frequency-normalized decoding.
 | **Larger size** | 32 bytes at the default tier vs 5–25 for variable-length formats. At 1B photos: 32 GB vs ~17 GB. Fixed size enables memory alignment and cache-friendly access; the compact tier (21 B) trades that fixed width for ThumbHash's footprint. |
 | **Encode cost** | Encoding is `O(K·W·H)` over the full source, with no downsample, so cost scales with the source's pixel count — a multi-megapixel original is far more expensive than a thumbnail. The DC search adds a fixed term that is negligible against it. The forward DCT dominates the total; see [`PERFORMANCE.md`](PERFORMANCE.md) §1 for the measured breakdown. |
 | **Decode cost** | Cost is `O(w·h·K)` and grows ~16× per tier level (`4^level` coefficients over a `4^level` raster), so the upper tiers are dramatically more expensive than the default — `decodeCapped` is the mitigation, and capping the raster is what makes tier 4 practical. See [`PERFORMANCE.md`](PERFORMANCE.md) §2 for measured figures. |
-| **Solid images** | 26 bytes of zero AC coefficients wasted. Irrelevant for photographs. |
+| **Solid images** | The whole AC payload is zero — 202 of the default tier's 256 bits, and a larger share at each tier above it, since only the 54-bit prefix carries signal. Irrelevant for photographs. |
 | **Extreme ratios** | Ratios beyond 16:1 clamp to 16:1. Rare in photography. |
-| **Wide-gamut DC clipping** | DC chroma beyond the sRGB hull clips at encode (§5.1). Invisible at decode (the decoder clips to sRGB regardless); a future P3-decode profile would be a format break. |
+| **Wide-gamut DC clipping** | The DC chroma range covers the OKLAB hull of sRGB ∪ Display P3 ∪ Adobe RGB (§7.1), so only sources wider than that union — some BT.2020 / ProPhoto inputs — clip at encode (§5.1), and no display can show those anyway. Decoding into Display P3 or Adobe RGB is already a caller option (§11, §12.5), not a format break. |
 | **Gamut clip** | Out-of-sRGB OKLAB values are clipped per-channel in linear sRGB (relative-colorimetric, §12.6) — the same mapping a display applies, so saturated wide-gamut solids render at full in-gamut saturation rather than desaturated. |
 | **No progressive decode** | The whole hash must be received before decoding. Never a practical bottleneck at these sizes; embedded/progressive tiers are a future direction (§15). |
 | **Codes 3–4 are not a rate–distortion claim** | See below. |
