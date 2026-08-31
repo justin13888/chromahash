@@ -17,6 +17,31 @@ func parseGamut(_ s: String) -> Gamut {
 /// Quality tier from CHROMAHASH_TIER, matching the Rust harness so the
 /// cross-language benchmark measures the same workload in every language.
 /// Defaults to the 32-byte tier.
+/// The Swift language version this binary was compiled with.
+let swiftCompilerVersion: String = {
+  #if swift(>=6.2)
+    return "6.2"
+  #elseif swift(>=6.1)
+    return "6.1"
+  #elseif swift(>=6.0)
+    return "6.0"
+  #else
+    return "unknown"
+  #endif
+}()
+
+/// The CPU architecture this binary was compiled for, spelled the way Rust's
+/// `std::env::consts::ARCH` spells it so report rows compare across languages.
+let machineArchitecture: String = {
+  #if arch(arm64)
+    return "aarch64"
+  #elseif arch(x86_64)
+    return "x86_64"
+  #else
+    return "unknown"
+  #endif
+}()
+
 func tierFromEnv() -> UInt8 {
   guard let raw = ProcessInfo.processInfo.environment["CHROMAHASH_TIER"],
     !raw.isEmpty
@@ -298,8 +323,18 @@ case "bench-batch":
   try runBench(1) { orExit(try encoder.encodeBatch(items))[0].hash[0] }
 
 case "bench-info":
+  // `operatingSystemVersionString` was reporting the *macOS* version under a
+  // `swift_version=` key — a Swift 6.2 build on macOS 26.6 reported
+  // "Version 26.6.1 (Build 25G76)". This lands verbatim in the perf report's
+  // environment.targetInfo, so the row mislabelled its own toolchain.
+  //
+  // #swiftLanguageVersion is resolved by the compiler that built this binary,
+  // which is the thing a timing run needs recorded. `arch` matches the key Rust,
+  // Go and C# already emit.
   var info = "runtime=swift\n"
-  info += "swift_version=\(ProcessInfo.processInfo.operatingSystemVersionString)\n"
+  info += "swift_version=\(swiftCompilerVersion)\n"
+  info += "arch=\(machineArchitecture)\n"
+  info += "os=\(ProcessInfo.processInfo.operatingSystemVersionString)\n"
   info += "threads=\(ProcessInfo.processInfo.activeProcessorCount)\n"
   FileHandle.standardOutput.write(Data(info.utf8))
 

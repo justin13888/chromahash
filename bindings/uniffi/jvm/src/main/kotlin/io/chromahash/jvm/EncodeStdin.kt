@@ -269,6 +269,9 @@ fun main(args: Array<String>) {
             println("runtime=kotlin")
             println("java_version=${System.getProperty("java.version")}")
             println("jvm=${System.getProperty("java.vm.name")}")
+            // Rust, Go, C# and Swift all report arch; without it a Kotlin row in
+            // the perf report cannot say which machine produced it.
+            println("arch=${System.getProperty("os.arch")}")
             println("threads=${Runtime.getRuntime().availableProcessors()}")
         }
         else -> {
