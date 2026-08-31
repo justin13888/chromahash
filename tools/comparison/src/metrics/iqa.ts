@@ -99,12 +99,18 @@ export function ensureIqaAvailable(): void {
  * reject images below a minimum side length. Request only the metrics valid for these
  * dimensions; ciede2000/psnr (the primary + reference) work at any size.
  */
-function metricsForDims(width: number, height: number): string[] {
+function metricsForDims(
+  width: number,
+  height: number,
+  only?: readonly string[],
+): string[] {
   const minSide = Math.min(width, height);
   const metrics = ["ciede2000", "psnr"];
   if (minSide >= 8) metrics.push("ssimulacra2", "psnr-hvs-m", "butteraugli");
   if (minSide >= 11) metrics.push("dssim", "ms-ssim");
-  return metrics;
+  // A caller that needs one metric should not pay for SSIMULACRA2 and
+  // Butteraugli, which dominate the cost at 512px (vendored C++ in iqa-cli).
+  return only ? metrics.filter((m) => only.includes(m)) : metrics;
 }
 
 let warned = false;
@@ -147,13 +153,22 @@ function cacheKey(
   distRgba: Uint8Array,
   width: number,
   height: number,
+  metrics: readonly string[],
 ): string {
-  return createHash("sha256")
-    .update(`v${CACHE_VERSION}:${width}x${height}:`)
-    .update(refRgba)
-    .update(":")
-    .update(distRgba)
-    .digest("hex");
+  return (
+    createHash("sha256")
+      // The requested metric set is part of the key. Two callers can now ask for
+      // different metrics over the same pair of buffers, and without this a
+      // cached one-metric result would be served to a caller that asked for all
+      // seven -- with the six it never requested reading as null.
+      .update(
+        `v${CACHE_VERSION}:${width}x${height}:${[...metrics].sort().join(",")}:`,
+      )
+      .update(refRgba)
+      .update(":")
+      .update(distRgba)
+      .digest("hex")
+  );
 }
 
 /**
@@ -234,8 +249,12 @@ export async function computeIqaMetrics(
   distRgba: Uint8Array,
   width: number,
   height: number,
+  /** Restrict to this subset of metric names; omit for every valid metric. */
+  only?: readonly string[],
 ): Promise<IqaMetrics> {
-  const key = cacheKey(refRgba, distRgba, width, height);
+  const requested = metricsForDims(width, height, only);
+  if (requested.length === 0) return { ...NULL_IQA_METRICS };
+  const key = cacheKey(refRgba, distRgba, width, height, requested);
   const cached = cacheRead(key);
   if (cached) return cached;
 
@@ -249,12 +268,16 @@ export async function computeIqaMetrics(
 
     let json: IqaJson;
     try {
-      json = runIqa(refPath, distPath, metricsForDims(width, height));
+      json = runIqa(refPath, distPath, requested);
     } catch {
       // A metric we believed valid still errored — fall back to the always-safe
       // pair so the primary CIEDE2000 metric survives.
       try {
-        json = runIqa(refPath, distPath, ["ciede2000", "psnr"]);
+        json = runIqa(
+          refPath,
+          distPath,
+          requested.filter((m) => m === "ciede2000" || m === "psnr"),
+        );
       } catch (err) {
         const reason =
           err instanceof Error

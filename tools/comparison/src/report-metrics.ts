@@ -118,6 +118,16 @@ export const METRIC_DOCS = {
     hrefLabel: "Wikipedia: Ringing artifacts",
     source: "harness",
   },
+  blurRecovery: {
+    label: "Blur recovery",
+    name: "Colour error removed by a blur-up",
+    direction: "higher",
+    why: "Placeholders are usually shown behind a blur, and a blur hides some kinds of error and not others. This is how much colour error disappears when both the placeholder and the original are blurred: a large number means most of the error was fine detail the blur was going to remove anyway, and a small one means the error is in the broad colours, where a blur cannot help. Read it beside Artifacts — a format high in both is one a blur-up rescues.",
+    scale: "ΔE00 removed. Larger means the blur-up helps more.",
+    href: "https://en.wikipedia.org/wiki/Gaussian_blur",
+    hrefLabel: "Wikipedia: Gaussian blur",
+    source: "iqa-cli",
+  },
   aspect: {
     label: "Aspect error",
     name: "Shape error against the original",

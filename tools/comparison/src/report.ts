@@ -294,7 +294,7 @@ function formatStatsTable(stats: FormatStat[]): string {
   const hasBlurred = stats.some((s) => s.avgCiedeBlurred !== null);
   const hasRinging = stats.some((s) => s.avgRinging !== null);
   return `<div class="table-scroll"><table>
-<tr><th>Format</th><th>Images</th><th>Avg Size (B)</th>${metricTh("ciede2000", "Avg ")}${metricTh("ciede2000", "Median ")}${metricTh("ciede2000", "p90 ")}<th>95% CI ΔE00</th>${hasBlurred ? `${metricTh("ciede2000", "Blurred ")}` : ""}${hasRinging ? metricTh("ringing", "Avg ") : ""}${metricTh("ssimulacra2", "Avg ")}${metricTh("butteraugli", "Avg ")}${metricTh("dssim", "Avg ")}${metricTh("msSsim", "Avg ")}${metricTh("psnrHvsM", "Avg ")}${metricTh("psnrDb", "Avg ")}<th>Encode (ms)</th><th>Decode (ms)</th></tr>
+<tr><th>Format</th><th>Images</th><th>Avg Size (B)</th>${metricTh("ciede2000", "Avg ")}${metricTh("ciede2000", "Median ")}${metricTh("ciede2000", "p90 ")}<th>95% CI ΔE00</th>${hasBlurred ? metricTh("blurRecovery") : ""}${hasRinging ? metricTh("ringing", "Avg ") : ""}${metricTh("ssimulacra2", "Avg ")}${metricTh("butteraugli", "Avg ")}${metricTh("dssim", "Avg ")}${metricTh("msSsim", "Avg ")}${metricTh("psnrHvsM", "Avg ")}${metricTh("psnrDb", "Avg ")}<th>Encode (ms)</th><th>Decode (ms)</th></tr>
 ${stats
   .map(
     (s) => `<tr>
@@ -305,7 +305,15 @@ ${stats
   <td>${gradeCell(s.medianCiede, 2, 2, 5)}</td>
   <td>${gradeCell(s.p90Ciede, 2, 2, 5)}</td>
   <td>${fmtCi(s.ciCiede, 2)}</td>
-  ${hasBlurred ? `<td>${gradeCell(s.avgCiedeBlurred, 2, 2, 5)}</td>\n  ` : ""}${hasRinging ? `<td>${fmt(s.avgRinging, 2)}</td>\n  ` : ""}<td>${fmt(s.avgSsimulacra2, 1)}</td>
+  ${
+    hasBlurred
+      ? `<td>${
+          s.avgCiede !== null && s.avgCiedeBlurred !== null
+            ? (s.avgCiede - s.avgCiedeBlurred).toFixed(2)
+            : "N/A"
+        }</td>\n  `
+      : ""
+  }${hasRinging ? `<td>${fmt(s.avgRinging, 2)}</td>\n  ` : ""}<td>${fmt(s.avgSsimulacra2, 1)}</td>
   <td>${fmt(s.avgButteraugli, 2)}</td>
   <td>${gradeCell(s.avgDssim, 4, 0.1, 0.25)}</td>
   <td>${fmt(s.avgMsSsim, 4)}</td>

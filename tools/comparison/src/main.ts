@@ -96,7 +96,12 @@ const { values } = parseArgs({
     "upscale-policy": { type: "string", default: "browser" },
     // Also score both sides after a Gaussian blur (sigma = longEdge/32),
     // modeling the blur-up presentation placeholders are displayed with.
-    "blurred-scoring": { type: "boolean", default: false },
+    "blurred-scoring": { type: "boolean", default: true },
+    // Blur recovery is on by default: an LQIP is normally displayed with a
+    // blur-up, so "how much of this error survives the blur" is part of what a
+    // reader is choosing between. The blurred pass requests ΔE00 alone, so it
+    // costs a fraction of the sharp set rather than doubling it.
+    "no-blurred-scoring": { type: "boolean", default: false },
     // Skip the locally-computed ringing metric (see metrics/local.ts). It costs
     // no subprocess but does cost CPU per pair; a preview-only run can drop it.
     "no-ringing": { type: "boolean", default: false },
@@ -138,7 +143,9 @@ const upscalePolicy: UpscalePolicy =
   (values["upscale-policy"] ?? "browser") === "linear"
     ? "linear-lanczos"
     : "browser-gamma";
-const blurredScoring = values["blurred-scoring"] ?? false;
+const blurredScoring =
+  (values["blurred-scoring"] ?? true) &&
+  !(values["no-blurred-scoring"] ?? false);
 const ringing = !(values["no-ringing"] ?? false);
 /** Optional comma-separated format filter (case-insensitive), e.g. --formats ChromaHash,ThumbHash. */
 const formatFilter = values.formats

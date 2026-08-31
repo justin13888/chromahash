@@ -64,6 +64,14 @@ export type BackdropSetName = keyof typeof BACKDROP_SETS;
  */
 export const BLUR_SIGMA_RULE = "max(1, longEdge / 32)";
 
+/**
+ * The blurred "as-rendered" pass exists to answer one question — how much of a
+ * format's error survives the blur-up a consumer applies — and ΔE00 answers it.
+ * Requesting the full set would double the run's iqa-cli cost for six columns
+ * nothing reads, and SSIMULACRA2 and Butteraugli are the expensive ones.
+ */
+const BLURRED_METRICS = ["ciede2000"] as const;
+
 /** Scoring configuration, set once by the orchestrator before processing. */
 export interface ScoringConfig {
   upscalePolicy: UpscalePolicy;
@@ -288,7 +296,13 @@ export async function computeAllMetrics(
         blurRgba(decodedAtRef, referenceW, referenceH, sigma),
       ]);
       perBackdropBlurred.push(
-        await computeIqaMetrics(refBlur, decBlur, referenceW, referenceH),
+        await computeIqaMetrics(
+          refBlur,
+          decBlur,
+          referenceW,
+          referenceH,
+          BLURRED_METRICS,
+        ),
       );
     }
   }
