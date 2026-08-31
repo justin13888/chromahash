@@ -278,8 +278,11 @@ if (!QUICK) {
       });
     }
     // E. Encoder-only levers, priced against their quality deltas in EXPERIMENTS.
+    //
+    // Three sizes, not two: the separable-DCT arm's whole claim is that its
+    // saving grows with K/Cx, and two points cannot show a trend.
     for (const arm of TUNE_ARMS) {
-      for (const n of [100, 512]) {
+      for (const n of [100, 256, 512]) {
         const fx = makeFixture(n, n, "gradient");
         record(
           `encode/Rust/t1/${n}x${n}/gradient/${arm.label}`,
