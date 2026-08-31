@@ -118,10 +118,36 @@ Then the slower gates, which are not part of a routine change:
 mise run test:simd:diff     # every SIMD backend this host can execute
 mise run rd:gate            # encoder quality regression gate
 mise run verify:experiments # every number in spec/EXPERIMENTS.md vs the sweep output
+mise run verify:benchmark   # every number in spec/PERFORMANCE.md vs the committed runs
 mise run mutants:rust       # full mutation sweep of the core (slow)
 mise run benchmark          # the perf sweep behind spec/PERFORMANCE.md
+mise run benchmark:full     # the same sweep, exhaustive matrix (hours)
 mise run benchmark:stages   # where encode time goes, stage by stage
 ```
+
+`verify:benchmark` needs no harness — it reads `spec/PERFORMANCE.md` and the
+committed runs under `tools/comparison/baselines/` — so it is cheap and runs in
+`ci-comparison.yml` on every change to either. `verify:experiments` is its
+sibling for `EXPERIMENTS.md`.
+
+**Re-measuring is a deliberate act.** The perf sweep is the one gate whose
+output depends on the machine, so a re-measurement is reviewed the way a test
+vector regeneration is:
+
+```bash
+mise run benchmark && mise run benchmark:full
+cp tools/comparison/output/perf/perf.json      tools/comparison/baselines/perf-report.json
+cp tools/comparison/output/perf/perf-full.json tools/comparison/baselines/perf-report-full.json
+mise run verify:benchmark -- --fix   # rewrite the document's cells from the runs
+mise run verify:benchmark            # must pass
+```
+
+Run it on a quiet machine from a clean tree: the driver records `git.dirty` and
+the gate refuses a run that cannot be traced to a revision. The gate also warns
+when the two runs disagree on a shared cell, which is the measuring host's
+reproducibility floor — no figure in the document is tighter than it. A laptop
+is usually not good enough; an Apple M3 Pro measured the same cell across fresh
+processes with a 34% spread and drifted ~25% over a few hours.
 
 > **`mise run test` does not run the per-backend SIMD differential tests.**
 > `test:rust` is a plain `cargo test`, so the `simd-diff-tests` feature is off

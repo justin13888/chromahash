@@ -730,6 +730,22 @@ const { values } = parseArgs({
   },
 });
 
+const doc = readFileSync(DOC, "utf8");
+const tables = parseTables(doc);
+
+if (values["list-unbound"]) {
+  console.log("Tables in PERFORMANCE.md with no binding:\n");
+  for (const t of tables) {
+    if (BINDINGS.some((b) => b.section === t.section && b.index === t.index)) {
+      continue;
+    }
+    console.log(
+      `  §${t.section} table ${t.index} (line ${t.line}): ${t.header.join(" | ")}`,
+    );
+  }
+  process.exit(0);
+}
+
 const runs = new Runs([...BASELINES]);
 for (const r of runs.rejected) console.error(`Rejected ${r}`);
 if (runs.loaded.length === 0) {
@@ -746,22 +762,6 @@ if (runs.loaded.length === 0) {
 
 if (values["list-cells"]) {
   for (const id of runs.ids) console.log(id);
-  process.exit(0);
-}
-
-const doc = readFileSync(DOC, "utf8");
-const tables = parseTables(doc);
-
-if (values["list-unbound"]) {
-  console.log("Tables in PERFORMANCE.md with no binding:\n");
-  for (const t of tables) {
-    if (BINDINGS.some((b) => b.section === t.section && b.index === t.index)) {
-      continue;
-    }
-    console.log(
-      `  §${t.section} table ${t.index} (line ${t.line}): ${t.header.join(" | ")}`,
-    );
-  }
   process.exit(0);
 }
 
@@ -821,11 +821,14 @@ for (const c of runs.duplicates) {
 // about the document, so it is reported rather than failed on — but loudly:
 // it is the ceiling on how much any number here can be trusted.
 if (runs.crossRunSpread.length > 0) {
+  const pct = (CROSS_RUN_TOLERANCE * 100).toFixed(0);
   console.log(
-    `\nWARNING: ${runs.crossRunSpread.length} cell(s) disagree by more than ` +
-      `${(CROSS_RUN_TOLERANCE * 100).toFixed(0)}% between the committed runs. ` +
-      `That is the measuring host's reproducibility floor, and no figure here ` +
-      `is tighter than it.`,
+    [
+      "",
+      `WARNING: ${runs.crossRunSpread.length} cell(s) disagree by more than ${pct}% between`,
+      "the committed runs. That is the measuring host's reproducibility floor,",
+      "and no figure in the document is tighter than it.",
+    ].join("\n"),
   );
   for (const c of runs.crossRunSpread.slice(0, 10)) console.log(`  ${c}`);
   if (runs.crossRunSpread.length > 10) {
