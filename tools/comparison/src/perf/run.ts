@@ -130,11 +130,11 @@ function record(
     bytes?: number | null;
   },
 ): void {
-  // The sweep blocks deliberately overlap - block A covers every target at the
+  // The sweep blocks deliberately overlap — block A covers every target at the
   // bounded cross tiers, block C extends Rust decode to all five. Measuring the
   // same cell twice does not average: the 2026-08-29 baseline carried
   // `decode/Rust/t2/natural` at both 1349 us (1.0% IQR) and 2047 us (30.0%),
-  // and the report quoted the noisy one. One id, one measurement - which is
+  // and the report quoted the noisy one. One id, one measurement — which is
   // also what lets `verify:benchmark` bind a documented number to a cell.
   if (recorded.has(id)) return;
   recorded.add(id);
@@ -315,20 +315,31 @@ if (!QUICK) {
   // D. SIMD on/off — the shipped feature nothing has ever measured.
   const scalar = available.find((t) => t.name === "Rust (scalar)");
   if (scalar) {
-    for (const n of [100, 512]) {
+    // Both builds, same sizes and tiers: the feature is only priceable as a
+    // ratio, so every scalar cell needs a default-build cell to divide into.
+    // The tier axis is here because the gain is largest where the per-pixel
+    // OKLAB transform is the biggest share of encode, which is the low tiers.
+    for (const [n, tier] of [
+      [100, 1],
+      [256, 1],
+      [512, 1],
+      [512, 0],
+    ] as const) {
       const fx = makeFixture(n, n, "gradient");
-      record(
-        `encode/Rust (scalar)/t1/${n}x${n}/gradient`,
-        "encode",
-        scalar,
-        1,
-        { w: n, h: n, content: "gradient" },
-        {
-          argv: ["bench-encode", String(n), String(n), "srgb", "@ITERS@"],
-          stdin: fx.rgba,
-          bytes: 32,
-        },
-      );
+      const argv = ["bench-encode", String(n), String(n), "srgb", "@ITERS@"];
+      const src = { w: n, h: n, content: "gradient" as const };
+      const bytes = TIER_BYTES[tier] ?? null;
+      for (const t of [rust, scalar]) {
+        if (!t) continue;
+        record(
+          `encode/${t.name}/t${tier}/${n}x${n}/gradient`,
+          "encode",
+          t,
+          tier,
+          src,
+          { argv, stdin: fx.rgba, bytes },
+        );
+      }
     }
   }
 

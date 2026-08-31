@@ -69,7 +69,7 @@ export const TIER_BYTES: Readonly<Record<number, number>> = {
 
 /** Source sizes for the encode-scaling axis. Encode is O(K*W*H) on the full source. */
 export const BOUNDED_SIZES = [64, 100, 256, 512] as const;
-export const FULL_SIZES = [64, 100, 256, 512, 1024] as const;
+export const FULL_SIZES = [64, 100, 128, 256, 512, 1024] as const;
 
 /** Cross-language tiers. Tier 4 decode costs ~250 ms, so bounded stops at 2. */
 export const BOUNDED_CROSS_TIERS = [0, 1, 2] as const;
@@ -90,6 +90,11 @@ export const TUNE_ARMS: ReadonlyArray<{ label: string; tune: string | null }> =
       tune: "scale_fit=0 ac_nearest=0 dc_search=0",
     },
     { label: "refine_passes=1", tune: "refine_passes=1" },
+    { label: "refine_passes=2", tune: "refine_passes=2" },
+    // The prototype separable forward DCT. Off by default and exposed by no
+    // binding (constants.rs `dct_separable: false`, pinned by a test), so this
+    // is the only way to price it — and PERFORMANCE.md §6 quotes it.
+    { label: "dct_separable", tune: "dct_separable=1" },
   ];
 
 /** Batch thread counts for the scaling sweep. */
