@@ -14,6 +14,8 @@ fn usage() -> ! {
     eprintln!("  encode_stdin batch-decode <count>");
     eprintln!("  encode_stdin bench-encode <width> <height> <gamut> <iters>");
     eprintln!("  encode_stdin bench-decode <iters> [max_width max_height]");
+    eprintln!("  encode_stdin bench-batch <width> <height> <gamut> <count>");
+    eprintln!("  encode_stdin bench-info");
     eprintln!("  encode_stdin dump-coeffs <width> <height> <gamut>");
     eprintln!();
     eprintln!("Quality: set CHROMAHASH_TIER=0..={MAX_TIER} to pick the quality tier.");
@@ -23,6 +25,11 @@ fn usage() -> ! {
     eprintln!("Sweep interface: set CHROMAHASH_TUNE to space-separated key=value");
     eprintln!("pairs to override v1 format constants, e.g.");
     eprintln!("  CHROMAHASH_TUNE=\"layout=B w_min_l=1.0 mu_c=8\"");
+    eprintln!();
+    eprintln!("Bench loop: CHROMAHASH_BENCH_REPS (default 1) timed blocks, each");
+    eprintln!("preceded by a shared warmup of CHROMAHASH_BENCH_WARMUP_MS (default 0,");
+    eprintln!("meaning a single warmup iteration).");
+    eprintln!("milliseconds. One mean-ns/op line per block on stdout.");
     std::process::exit(1);
 }
 
@@ -183,6 +190,9 @@ fn tunables_from_env() -> Tunables {
             "band_gain_c" => t.band_gain_c = parse_f64(),
             "aniso" => t.aniso_oblique = parse_f64(),
             "ac_nearest" => t.ac_nearest = value == "1" || value == "true",
+            // Prototype separable forward DCT. NOT byte-identical — see
+            // dct::dct_encode_selected_separable; a measurement knob only.
+            "dct_separable" => t.dct_separable = value == "1" || value == "true",
             "scale_fit" => t.scale_fit = parse_u32(),
             "refine_passes" => t.refine_passes = parse_u32(),
             "refine_delta" => t.refine_delta = parse_u32(),
@@ -333,6 +343,75 @@ fn parse_gamut(s: &str) -> Gamut {
     }
 }
 
+/// How many timed blocks to run, and how long to warm up first.
+///
+/// Warmup is **time-based, not count-based**: this contract is shared with six
+/// other language harnesses, and a fixed iteration count is either useless for
+/// Rust (~50 us/encode) or minutes for Python (~5 ms/encode).
+///
+/// Both defaults reproduce the pre-existing behaviour exactly — 1 timed block
+/// after a single warmup iteration — so `compare`, `sweep` and `rd-budget`,
+/// which call `bench-encode` once per image per format via
+/// `tools/comparison/src/adapters/chromahash.ts`, are unchanged in both output
+/// shape (one bare integer on stdout) and runtime. The heavier warmup that a
+/// steady-state measurement needs is the perf driver's policy to set, not a
+/// default every existing caller silently pays.
+struct BenchCfg {
+    reps: u32,
+    warmup_ms: u64,
+}
+
+fn bench_cfg() -> BenchCfg {
+    fn env_u64(key: &str, default: u64) -> u64 {
+        match std::env::var(key) {
+            Ok(s) => s.parse().unwrap_or_else(|_| {
+                eprintln!("{key}: invalid value '{s}'");
+                std::process::exit(1);
+            }),
+            Err(_) => default,
+        }
+    }
+    BenchCfg {
+        reps: env_u64("CHROMAHASH_BENCH_REPS", 1).max(1) as u32,
+        warmup_ms: env_u64("CHROMAHASH_BENCH_WARMUP_MS", 0),
+    }
+}
+
+/// Warm up for `warmup_ms`, then run `reps` timed blocks of `iters` iterations,
+/// printing one mean-ns/op line per block to stdout.
+///
+/// `op` returns one result-derived byte, which is folded into an accumulator
+/// reported on stderr. Consuming a byte of every result is what keeps the work
+/// from being optimized away; `black_box` alone on a discarded value is not
+/// enough of a guarantee to share with six other languages.
+fn run_bench(iters: u32, mut op: impl FnMut() -> u8) {
+    let cfg = bench_cfg();
+    let mut acc: u64 = 0;
+
+    // Always at least one iteration, so the default warmup_ms=0 is exactly the
+    // single warmup call this harness did before, and still validates the input
+    // before the first timed block.
+    let warm_start = std::time::Instant::now();
+    loop {
+        acc = acc.wrapping_add(u64::from(std::hint::black_box(op())));
+        if warm_start.elapsed().as_millis() >= u128::from(cfg.warmup_ms) {
+            break;
+        }
+    }
+
+    for _ in 0..cfg.reps {
+        let start = std::time::Instant::now();
+        for _ in 0..iters {
+            acc = acc.wrapping_add(u64::from(std::hint::black_box(op())));
+        }
+        let ns_per_op = start.elapsed().as_nanos() / u128::from(iters.max(1));
+        println!("{ns_per_op}");
+    }
+
+    eprintln!("checksum={acc:x}");
+    eprintln!("iters={iters}");
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
@@ -459,18 +538,10 @@ fn main() {
             let t = tunables_from_env();
             let tier = tier_from_env();
 
-            // Warmup (also validates the input before the timed loop).
-            std::hint::black_box(ChromaHash::encode_tuned_quality(
-                w, h, &rgba, gamut, &t, tier,
-            ));
-            let start = std::time::Instant::now();
-            for _ in 0..iters {
-                std::hint::black_box(ChromaHash::encode_tuned_quality(
-                    w, h, &rgba, gamut, &t, tier,
-                ));
-            }
-            let ns_per_op = start.elapsed().as_nanos() / u128::from(iters.max(1));
-            println!("{ns_per_op}");
+            run_bench(iters, || {
+                let hash = ChromaHash::encode_tuned_quality(w, h, &rgba, gamut, &t, tier);
+                hash.as_bytes()[0]
+            });
         }
         "bench-decode" => {
             // In-process decode timing: read one hash, loop `iters` times, print
@@ -500,13 +571,106 @@ fn main() {
                 None => ch.decode_to_tuned(out_gamut, &t),
             };
 
-            std::hint::black_box(run());
-            let start = std::time::Instant::now();
-            for _ in 0..iters {
-                std::hint::black_box(run());
+            run_bench(iters, || {
+                let (dw, dh, rgba) = run();
+                rgba[0] ^ (dw as u8) ^ (dh as u8)
+            });
+        }
+        "bench-batch" => {
+            // In-process batch throughput: build `count` items from one image and
+            // time whole BatchEncoder::encode_batch calls. Reported per *batch*,
+            // so the driver divides by count itself — a batch is the unit that
+            // scales with cores, and conflating it with per-op cost is what made
+            // the old "bulk per-op" column compare threading models rather than
+            // algorithms.
+            //
+            // CHROMAHASH_BATCH_THREADS pins the pool size (0 = default, 1 = the
+            // serial baseline), which is how the thread-scaling sweep is driven.
+            if args.len() != 6 {
+                eprintln!("Usage: encode_stdin bench-batch <width> <height> <gamut> <count>");
+                std::process::exit(1);
             }
-            let ns_per_op = start.elapsed().as_nanos() / u128::from(iters.max(1));
-            println!("{ns_per_op}");
+            let w: u32 = args[2].parse().expect("invalid width");
+            let h: u32 = args[3].parse().expect("invalid height");
+            let gamut = parse_gamut(&args[4]);
+            let count: usize = args[5].parse().expect("invalid count");
+
+            let expected_len = (w as usize) * (h as usize) * 4;
+            let mut rgba = vec![0u8; expected_len];
+            io::stdin()
+                .read_exact(&mut rgba)
+                .expect("failed to read RGBA from stdin");
+            let rgba: Arc<[u8]> = Arc::from(rgba);
+            let tier = tier_from_env();
+
+            let items: Vec<ImageInput> = (0..count)
+                .map(|_| ImageInput {
+                    w,
+                    h,
+                    rgba: Arc::clone(&rgba),
+                    gamut,
+                    quality: tier,
+                })
+                .collect();
+
+            let threads: usize = match std::env::var("CHROMAHASH_BATCH_THREADS") {
+                Ok(s) => s.parse().unwrap_or_else(|_| {
+                    eprintln!("CHROMAHASH_BATCH_THREADS: invalid value '{s}'");
+                    std::process::exit(1);
+                }),
+                Err(_) => 0,
+            };
+            let encoder = if threads > 0 {
+                BatchEncoder::with_threads(threads)
+            } else {
+                BatchEncoder::new()
+            };
+
+            // One batch is one "iteration": pass iters=1 so the printed number is
+            // nanoseconds per batch.
+            run_bench(1, || encoder.encode_batch(&items)[0].as_bytes()[0]);
+        }
+        "bench-info" => {
+            // Report what this build actually is, so a timing run records which
+            // vector backend produced it rather than leaving the reader to guess.
+            //
+            // The backend predicate below MIRRORS `dispatch` in rust/src/simd/mod.rs
+            // (AVX2, else SSE2, else scalar). It is duplicated rather than exported
+            // because reporting a diagnostic is not worth widening the core's
+            // public API; if that dispatch order changes, change it here too.
+            let simd_feature = cfg!(feature = "simd");
+            let backend = if !simd_feature {
+                "scalar"
+            } else if cfg!(any(target_arch = "x86", target_arch = "x86_64")) {
+                #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+                {
+                    if std::is_x86_feature_detected!("avx2") {
+                        "avx2"
+                    } else if std::is_x86_feature_detected!("sse2") {
+                        "sse2"
+                    } else {
+                        "scalar"
+                    }
+                }
+                #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+                {
+                    "scalar"
+                }
+            } else if cfg!(target_arch = "aarch64") {
+                "neon"
+            } else if cfg!(all(target_arch = "wasm32", target_feature = "simd128")) {
+                "simd128"
+            } else {
+                "scalar"
+            };
+            println!("runtime=rust");
+            println!("simd={backend}");
+            println!("feature_simd={}", u8::from(simd_feature));
+            println!("arch={}", std::env::consts::ARCH);
+            println!(
+                "threads={}",
+                std::thread::available_parallelism().map_or(0, |n| n.get())
+            );
         }
         "dump-coeffs" => {
             // Print the encoder's scale-normalized AC coefficients, one per

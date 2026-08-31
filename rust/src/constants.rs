@@ -446,6 +446,14 @@ pub struct Tunables {
     ///   SSE over the channel's AC set (clipping a lone outlier can buy back
     ///   resolution for everything else).
     pub scale_fit: u32,
+    /// Encoder-only: use the separable forward DCT prototype
+    /// (`dct::dct_encode_selected_separable`) instead of the direct 2-D sum.
+    ///
+    /// **Not byte-identical** — factoring the sum changes floating-point
+    /// association, so this is a measurement knob for costing a possible future
+    /// transform, never a shipped setting. `false` here and in every binding
+    /// (none of which expose `Tunables` at all).
+    pub dct_separable: bool,
     /// Encoder-only pixel-domain refinement passes (0 = off, the shipped
     /// behaviour). Each pass is a coordinate descent over the AC codes —
     /// optionally the DC and scale codes too — scored by the error of the
@@ -624,6 +632,7 @@ impl Tunables {
         aniso_oblique: 1.2,
         ac_nearest: true,
         scale_fit: 2,
+        dct_separable: false,
         refine_passes: 0,
         refine_delta: 1,
         refine_obj: 0,

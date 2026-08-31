@@ -91,6 +91,20 @@ exclude_re = [
     # missed mutant rather than quietly exempting a new one.
     "src/encode.rs:63:39.*replace - with (\\+|/) in select_dc_codes",
 
+    # `stage_timing` (src/encode.rs) is behind the off-by-default
+    # `bench-internals` feature, which this sweep does not enable — see the
+    # feature list above. cargo-mutants mutates the function bodies anyway
+    # because it does not evaluate `#[cfg(feature = ...)]`, but the mutated code
+    # is never compiled in, so the build is unchanged and every mutant is
+    # reported MISSED rather than unviable. Unkillable by construction, exactly
+    # like the NEON and wasm backends excluded by `exclude_globs` above: the
+    # code is not part of the artifact this sweep tests. It is measurement-only
+    # (no shipped path reaches it) and `nm` confirms the symbol is absent from a
+    # default release build.
+    "replace stage_timing::reset with \\(\\)",
+    "replace stage_timing::mark with \\(\\)",
+    "replace stage_timing::take .* with vec!",
+
     # Numeric kernels. portable_ln / portable_exp range-reduce in a loop: operator
     # mutations either re-converge to the same value (the series is invariant to
     # which 2^k bracket is chosen) or never terminate (timeouts). The remaining

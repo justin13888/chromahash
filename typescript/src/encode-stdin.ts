@@ -1,12 +1,13 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { benchEnvInt, rejectRustOnlyEnv, runBench } from "./bench.ts";
 import {
   BatchEncoder,
   ChromaHash,
   DEFAULT_TIER,
-  init,
   MAX_TIER,
+  init,
 } from "./index.ts";
 import type { Gamut, ImageInput } from "./index.ts";
 
@@ -20,7 +21,7 @@ const gamutMap: Record<string, Gamut> = {
 
 function usage(): never {
   process.stderr.write(
-    "Usage:\n  encode-stdin encode <width> <height> <gamut>\n  encode-stdin decode\n  encode-stdin average-color\n  encode-stdin batch-encode <width> <height> <gamut> <count>\n  encode-stdin batch-decode <count>\n",
+    "Usage:\n  encode-stdin encode <width> <height> <gamut>\n  encode-stdin decode\n  encode-stdin average-color\n  encode-stdin batch-encode <width> <height> <gamut> <count>\n  encode-stdin batch-decode <count>\n  encode-stdin bench-encode <width> <height> <gamut> <iters>\n  encode-stdin bench-decode <iters> [max_width max_height]\n  encode-stdin bench-batch <width> <height> <gamut> <count>\n  encode-stdin bench-info\n",
   );
   process.exit(1);
 }
@@ -179,6 +180,115 @@ switch (subcommand) {
     process.stdout.write(Buffer.from([acc & 0xff]));
     break;
   }
+  case "bench-encode": {
+    const wArg = args[1];
+    const hArg = args[2];
+    const gamutArg = args[3];
+    const itersArg = args[4];
+    if (!wArg || !hArg || !gamutArg || !itersArg) {
+      process.stderr.write(
+        "Usage: encode-stdin bench-encode <width> <height> <gamut> <iters>\n",
+      );
+      process.exit(1);
+    }
+    rejectRustOnlyEnv();
+    const gamut = gamutMap[gamutArg];
+    if (!gamut) {
+      process.stderr.write(`unknown gamut: ${gamutArg}\n`);
+      process.exit(1);
+    }
+    const w = Number.parseInt(wArg, 10);
+    const h = Number.parseInt(hArg, 10);
+    const iters = Number.parseInt(itersArg, 10);
+    const rgba = new Uint8Array(await readStdin());
+    const quality = tierFromEnv();
+    runBench(
+      iters,
+      () =>
+        ChromaHash.encodeWithQuality(w, h, rgba, gamut, quality).hash[0] ?? 0,
+    );
+    break;
+  }
+  case "bench-decode": {
+    const itersArg = args[1];
+    if (!itersArg) {
+      process.stderr.write(
+        "Usage: encode-stdin bench-decode <iters> [max_width max_height]\n",
+      );
+      process.exit(1);
+    }
+    rejectRustOnlyEnv();
+    const iters = Number.parseInt(itersArg, 10);
+    const ch = ChromaHash.fromBytes(new Uint8Array(await readStdin()));
+    const maxWArg = args[2];
+    const maxHArg = args[3];
+    if (maxWArg && maxHArg) {
+      const maxW = Number.parseInt(maxWArg, 10);
+      const maxH = Number.parseInt(maxHArg, 10);
+      runBench(iters, () => {
+        const r = ch.decodeCapped(maxW, maxH);
+        return (r.rgba[0] ?? 0) ^ (r.w & 0xff) ^ (r.h & 0xff);
+      });
+    } else {
+      runBench(iters, () => {
+        const r = ch.decode();
+        return (r.rgba[0] ?? 0) ^ (r.w & 0xff) ^ (r.h & 0xff);
+      });
+    }
+    break;
+  }
+  case "bench-batch": {
+    const wArg = args[1];
+    const hArg = args[2];
+    const gamutArg = args[3];
+    const countArg = args[4];
+    if (!wArg || !hArg || !gamutArg || !countArg) {
+      process.stderr.write(
+        "Usage: encode-stdin bench-batch <width> <height> <gamut> <count>\n",
+      );
+      process.exit(1);
+    }
+    rejectRustOnlyEnv();
+    const gamut = gamutMap[gamutArg];
+    if (!gamut) {
+      process.stderr.write(`unknown gamut: ${gamutArg}\n`);
+      process.exit(1);
+    }
+    // This binding's BatchEncoder is serial in JS and takes no thread count, so
+    // accept only the values that mean "however many you have".
+    const threads = benchEnvInt("CHROMAHASH_BATCH_THREADS", 0);
+    if (threads > 1) {
+      process.stderr.write(
+        `CHROMAHASH_BATCH_THREADS=${threads}: this binding's BatchEncoder is serial and takes no thread count\n`,
+      );
+      process.exit(1);
+    }
+    const w = Number.parseInt(wArg, 10);
+    const h = Number.parseInt(hArg, 10);
+    const count = Number.parseInt(countArg, 10);
+    const rgba = new Uint8Array(await readStdin());
+    const quality = tierFromEnv();
+    const items: ImageInput[] = Array.from({ length: count }, () => ({
+      w,
+      h,
+      rgba,
+      gamut,
+      quality,
+    }));
+    const encoder = new BatchEncoder();
+    // One batch is one iteration, so the printed number is ns per batch.
+    runBench(1, () => encoder.encodeBatch(items)[0]?.hash[0] ?? 0);
+    encoder.close();
+    break;
+  }
+  case "bench-info": {
+    process.stdout.write("runtime=typescript-wasm\n");
+    process.stdout.write(`node_version=${process.versions.node}\n`);
+    process.stdout.write("wasm=1\n");
+    process.stdout.write("threads=1\n");
+    break;
+  }
+
   default:
     usage();
 }

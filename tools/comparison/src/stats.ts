@@ -48,20 +48,58 @@ export function bootstrapCI(
   nResamples = 1000,
   alpha = 0.05,
 ): [number, number] {
+  return bootstrapCIOf(values, mean, nResamples, alpha);
+}
+
+/** Arithmetic mean. The statistic {@link bootstrapCI} resamples. */
+function mean(sample: number[]): number {
+  let sum = 0;
+  for (const v of sample) sum += v;
+  return sum / sample.length;
+}
+
+/**
+ * Bootstrap confidence interval for an arbitrary statistic of the sample.
+ *
+ * Timing wants a CI of the *median* — one descheduling event skews a mean, and
+ * the median is what the perf report leads with — while the quality tables want
+ * the mean, so the statistic is a parameter.
+ *
+ * The draw order is load-bearing and must not change: `verify:experiments`
+ * re-derives every confidence interval quoted in spec/EXPERIMENTS.md from this
+ * function, so altering how many times `rng()` is called per resample, or in
+ * what order, would silently invalidate a 1892-line document. Hence all
+ * `values.length` indices are drawn first and the statistic applied afterwards,
+ * which reproduces the previous sequence exactly.
+ */
+export function bootstrapCIOf(
+  values: number[],
+  statistic: (sample: number[]) => number,
+  nResamples = 1000,
+  alpha = 0.05,
+): [number, number] {
   if (values.length === 0) {
-    throw new RangeError("bootstrapCI: empty input");
+    throw new RangeError("bootstrapCIOf: empty input");
   }
   const rng = lcg(BOOTSTRAP_SEED);
-  const means: number[] = new Array(nResamples);
+  const stats: number[] = new Array(nResamples);
+  const sample: number[] = new Array(values.length);
   for (let r = 0; r < nResamples; r++) {
-    let sum = 0;
     for (let i = 0; i < values.length; i++) {
-      sum += values[Math.floor(rng() * values.length)] ?? 0;
+      sample[i] = values[Math.floor(rng() * values.length)] ?? 0;
     }
-    means[r] = sum / values.length;
+    stats[r] = statistic(sample);
   }
-  means.sort((a, b) => a - b);
-  return [quantile(means, alpha / 2), quantile(means, 1 - alpha / 2)];
+  stats.sort((a, b) => a - b);
+  return [quantile(stats, alpha / 2), quantile(stats, 1 - alpha / 2)];
+}
+
+/** Median of a sample, sorting a copy so the caller's array is untouched. */
+export function median(sample: number[]): number {
+  return quantile(
+    [...sample].sort((a, b) => a - b),
+    0.5,
+  );
 }
 
 /**

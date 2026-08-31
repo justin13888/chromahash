@@ -273,6 +273,93 @@ pub fn dct_decode_pixel_separable(
     value
 }
 
+/// Separable forward DCT over the selected coefficients — **prototype only**.
+///
+/// [`dct_encode_selected`] evaluates a full 2-D sum per selected coefficient, so
+/// it costs `K·W·H`. Most selected pairs share an `x` frequency, so the inner
+/// sum can be factored: one row pass per *distinct* `cx` (`Cx·W·H`), then a
+/// length-`H` column reduction per coefficient (`K·H`). The saving is roughly
+/// `K / Cx`, and both grow with the tier — `K` by `4^level` and `Cx` by
+/// `2^level` — so the wider the tier, the more there is to win. Stage timing
+/// puts the forward DCT at the overwhelming majority of an encode, rising with
+/// both size and tier (`spec/PERFORMANCE.md` §1), which is what makes this
+/// worth measuring.
+///
+/// **This is not byte-identical to [`dct_encode_selected`] and must never be
+/// enabled in a shipped build.** Floating-point addition is not associative, so
+/// factoring the sum changes the last bits of each coefficient, and a
+/// coefficient sitting near a quantization boundary can then land on a different
+/// code. It is reachable only through `Tunables::dct_separable`, which is
+/// `false` in `Tunables::DEFAULT` and which no binding exposes — adopting it
+/// would be a format change requiring a version bump, regenerated spec vectors,
+/// and every language landing together.
+pub fn dct_encode_selected_separable(
+    channel: &[f64],
+    w: usize,
+    h: usize,
+    coeffs: &[(usize, usize)],
+    cos_x: &[Vec<f64>],
+    cos_y: &[Vec<f64>],
+) -> (f64, Vec<f64>, f64) {
+    let wh = (w * h) as f64;
+    let dc: f64 = channel.iter().sum::<f64>() / wh;
+
+    // Row pass, memoized per distinct cx: rows[cx][y] = sum_x channel[x, y]·cos_x[cx][x].
+    let mut rows: Vec<Option<Vec<f64>>> = vec![None; cos_x.len()];
+    for &(cx, cy) in coeffs {
+        if cx >= w || cy >= h || rows[cx].is_some() {
+            continue;
+        }
+        // The memoization guard duplicates the clamp below, and on its own is
+        // unobservable — a row built for a dead frequency is simply never read,
+        // so a mutated guard produces identical output. This states the
+        // invariant instead, which `[profile.mutants]` (debug-assertions on)
+        // turns into a real check: building a row for cx >= w means the guard
+        // stopped agreeing with the clamp.
+        debug_assert!(
+            cx < w && cy < h,
+            "row pass reached a frequency the source cannot represent"
+        );
+        let cx_row = &cos_x[cx];
+        let mut acc = vec![0.0f64; h];
+        for (y, slot) in acc.iter_mut().enumerate() {
+            let mut sum = 0.0;
+            for x in 0..w {
+                sum += channel[x + y * w] * cx_row[x];
+            }
+            *slot = sum;
+        }
+        rows[cx] = Some(acc);
+    }
+
+    let mut ac = Vec::with_capacity(coeffs.len());
+    let mut scale = 0.0_f64;
+    for &(cx, cy) in coeffs {
+        // Same frequency clamp as the direct form: a frequency the source cannot
+        // represent is emitted as exact zero and excluded from the scale max.
+        if cx >= w || cy >= h {
+            ac.push(0.0);
+            continue;
+        }
+        let row = rows[cx].as_ref().expect("row pass ran for every live cx");
+        let cy_row = &cos_y[cy];
+        let mut f = 0.0;
+        for y in 0..h {
+            f += row[y] * cy_row[y];
+        }
+        f /= wh;
+        ac.push(f);
+        scale = scale.max(f.abs());
+    }
+
+    if scale < 1e-10 {
+        ac.fill(0.0);
+        scale = 0.0;
+    }
+
+    (dc, ac, scale)
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -515,6 +602,116 @@ mod tests {
         // Boundary coefficient gets exactly w_min (ρ=1 → hann=0).
         assert!((w.last().unwrap() - 0.3).abs() < 1e-12);
         assert!(w.iter().all(|&x| (0.3..=1.0).contains(&x)));
+    }
+
+    // ── Separable forward DCT prototype ──────────────────────────────────
+    //
+    // The prototype is unreachable from any shipped path, so nothing else in the
+    // suite would notice if it broke. These pin it directly — and they are what
+    // keeps the mutation sweep honest about a function no golden vector covers.
+
+    /// A channel with real structure at several frequencies, so the two forms
+    /// have something to disagree about.
+    fn textured_channel(w: usize, h: usize) -> Vec<f64> {
+        let mut c = vec![0.0; w * h];
+        for y in 0..h {
+            for x in 0..w {
+                let fx = x as f64 / w as f64;
+                let fy = y as f64 / h as f64;
+                c[x + y * w] = 0.5 + 0.3 * (fx * 7.0).cos() + 0.2 * (fy * 5.0).sin()
+                    - 0.1 * ((fx + fy) * 11.0).cos();
+            }
+        }
+        c
+    }
+
+    #[test]
+    fn separable_dct_agrees_with_the_direct_form() {
+        // Not asserted bit-for-bit: factoring the sum reassociates the additions,
+        // which is exactly why the prototype is not byte-identical and cannot
+        // ship without a format change. What must hold is that it computes the
+        // same transform to within reassociation error.
+        for &(w, h) in &[(4, 4), (8, 4), (4, 8), (16, 16), (13, 7)] {
+            let channel = textured_channel(w, h);
+            let sel = select_coefficients(128, 1, 12);
+            let cos_x = precompute_cos_table(w, 32);
+            let cos_y = precompute_cos_table(h, 32);
+            let (dc_a, ac_a, scale_a) =
+                dct_encode_selected(&channel, w, h, &sel.coeffs, &cos_x, &cos_y);
+            let (dc_b, ac_b, scale_b) =
+                dct_encode_selected_separable(&channel, w, h, &sel.coeffs, &cos_x, &cos_y);
+            assert!((dc_a - dc_b).abs() < 1e-12, "{w}x{h}: DC {dc_a} vs {dc_b}");
+            assert!(
+                (scale_a - scale_b).abs() < 1e-12,
+                "{w}x{h}: scale {scale_a} vs {scale_b}"
+            );
+            assert_eq!(ac_a.len(), ac_b.len());
+            for (i, (a, b)) in ac_a.iter().zip(ac_b.iter()).enumerate() {
+                assert!((a - b).abs() < 1e-12, "{w}x{h}: AC[{i}] {a} vs {b}");
+            }
+        }
+    }
+
+    #[test]
+    fn separable_dct_clamps_frequencies_the_source_cannot_represent() {
+        // cx >= w or cy >= h must be emitted as exact zero and left out of the
+        // scale max — the v0.5 dim-1xN catastrophe the direct form guards against.
+        let (w, h) = (2, 2);
+        let channel = textured_channel(w, h);
+        let cos_x = precompute_cos_table(w, 8);
+        let cos_y = precompute_cos_table(h, 8);
+        let coeffs = vec![(0, 1), (1, 0), (5, 0), (0, 6), (7, 7)];
+        let (_, ac, scale) = dct_encode_selected_separable(&channel, w, h, &coeffs, &cos_x, &cos_y);
+        assert_eq!(ac[2], 0.0, "cx >= w must be exactly zero");
+        assert_eq!(ac[3], 0.0, "cy >= h must be exactly zero");
+        assert_eq!(ac[4], 0.0, "both out of range must be exactly zero");
+        let live_max = ac[0].abs().max(ac[1].abs());
+        assert_eq!(scale, live_max, "scale must ignore the clamped entries");
+    }
+
+    #[test]
+    fn separable_dct_floors_a_constant_channel_to_zero() {
+        let (w, h) = (4, 4);
+        let channel = vec![0.5; w * h];
+        let sel = select_coefficients(128, 0, 9);
+        let cos_x = precompute_cos_table(w, 8);
+        let cos_y = precompute_cos_table(h, 8);
+        let (dc, ac, scale) =
+            dct_encode_selected_separable(&channel, w, h, &sel.coeffs, &cos_x, &cos_y);
+        assert!((dc - 0.5).abs() < 1e-12);
+        assert_eq!(scale, 0.0, "near-zero scale must floor to exactly 0");
+        assert!(ac.iter().all(|&v| v == 0.0), "and zero every coefficient");
+    }
+
+    #[test]
+    fn separable_dct_handles_degenerate_dimensions() {
+        for &(w, h) in &[(1, 8), (8, 1), (1, 1)] {
+            let channel = textured_channel(w, h);
+            let sel = select_coefficients(128, 1, 6);
+            let cos_x = precompute_cos_table(w, 16);
+            let cos_y = precompute_cos_table(h, 16);
+            let (dc_a, ac_a, _) = dct_encode_selected(&channel, w, h, &sel.coeffs, &cos_x, &cos_y);
+            let (dc_b, ac_b, _) =
+                dct_encode_selected_separable(&channel, w, h, &sel.coeffs, &cos_x, &cos_y);
+            assert!((dc_a - dc_b).abs() < 1e-12, "{w}x{h}");
+            for (a, b) in ac_a.iter().zip(ac_b.iter()) {
+                assert!((a - b).abs() < 1e-12, "{w}x{h}: {a} vs {b}");
+            }
+        }
+    }
+
+    #[test]
+    fn separable_dct_is_off_in_the_shipped_defaults() {
+        // If this ever fails, the prototype has been adopted — which is a format
+        // change, and every golden vector in spec/test-vectors must have been
+        // regenerated with it.
+        // Read through black_box so this is a real runtime check rather than a
+        // constant clippy can fold away (and warn about).
+        let shipped = std::hint::black_box(&crate::constants::Tunables::DEFAULT).dct_separable;
+        assert!(
+            !shipped,
+            "dct_separable must stay off: the separable transform is not byte-identical"
+        );
     }
 
     #[test]

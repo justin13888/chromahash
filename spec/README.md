@@ -1600,8 +1600,8 @@ frequency-normalized decoding.
 | Trade-off | Details |
 |-----------|---------|
 | **Larger size** | 32 bytes at the default tier vs 5–25 for variable-length formats. At 1B photos: 32 GB vs ~17 GB. Fixed size enables memory alignment and cache-friendly access; the compact tier (21 B) trades that fixed width for ThumbHash's footprint. |
-| **Encode cost** | Full-resolution encoding: ~400ms for 12MP in Rust (single-threaded). The v0.6 DC search adds ~10 µs (27 DC simulations) — negligible. |
-| **Decode cost** | ~36µs native / ~182µs JS. OKLAB is 18× costlier per pixel than linear color, but both are <1ms. |
+| **Encode cost** | Encoding is `O(K·W·H)` over the full source, with no downsample, so cost scales with the source's pixel count — a multi-megapixel original is far more expensive than a thumbnail. The DC search adds a fixed term that is negligible against it. The forward DCT dominates the total; see [`PERFORMANCE.md`](PERFORMANCE.md) §1 for the measured breakdown. |
+| **Decode cost** | Cost is `O(w·h·K)` and grows ~16× per tier level (`4^level` coefficients over a `4^level` raster), so the upper tiers are dramatically more expensive than the default — `decodeCapped` is the mitigation, and capping the raster is what makes tier 4 practical. See [`PERFORMANCE.md`](PERFORMANCE.md) §2 for measured figures. |
 | **Solid images** | 26 bytes of zero AC coefficients wasted. Irrelevant for photographs. |
 | **Extreme ratios** | Ratios beyond 16:1 clamp to 16:1. Rare in photography. |
 | **Wide-gamut DC clipping** | DC chroma beyond the sRGB hull clips at encode (§5.1). Invisible at decode (the decoder clips to sRGB regardless); a future P3-decode profile would be a format break. |

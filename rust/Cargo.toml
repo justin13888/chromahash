@@ -47,6 +47,16 @@ simd = []
 # (native) or `mise run test:simd:emulated` (every target via QEMU/wasmtime).
 simd-diff-tests = ["simd"]
 
+# `bench-internals` (off by default) compiles the per-stage timing in
+# `src/encode.rs` and the `bench_stages` example that reads it, so
+# `mise run benchmark:stages` can say where encode time actually goes. It adds
+# no dependency and no default-build API: with the feature off the `stage!`
+# marks expand to nothing, so the shipped build contains none of it. Deliberately
+# NOT part of `full` — `full` means "test everything", and this is a measurement
+# switch with no tests of its own. It is also absent from the cargo-mutants
+# feature set (rust/.cargo/mutants.toml), so it adds no mutants to the hot path.
+bench-internals = []
+
 # `full` turns on every feature — the default set plus the opt-in
 # `simd-diff-tests` — for "test everything" invocations (CI and `mise run test`).
 full = ["spec-vectors", "simd", "simd-diff-tests"]
@@ -54,6 +64,10 @@ full = ["spec-vectors", "simd", "simd-diff-tests"]
 [[test]]
 name = "spec_vectors"
 required-features = ["spec-vectors"]
+
+[[example]]
+name = "bench_stages"
+required-features = ["bench-internals"]
 
 [dev-dependencies]
 # Test-only: randomized property tests for the invariants the golden vectors
