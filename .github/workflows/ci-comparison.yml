@@ -10,6 +10,9 @@ on:
       # encoder is in rust/. Without this the gate never fired on the changes
       # it was built for.
       - "rust/**"
+      # verify:benchmark checks this document against the committed perf runs,
+      # so an edit to either must run the gate.
+      - "spec/PERFORMANCE.md"
       - ".github/workflows/ci-comparison.yml"
   pull_request:
     paths:
@@ -19,6 +22,9 @@ on:
       # encoder is in rust/. Without this the gate never fired on the changes
       # it was built for.
       - "rust/**"
+      # verify:benchmark checks this document against the committed perf runs,
+      # so an edit to either must run the gate.
+      - "spec/PERFORMANCE.md"
       - ".github/workflows/ci-comparison.yml"
 
 jobs:
@@ -80,6 +86,12 @@ jobs:
 
       - name: Build
         run: pnpm --prefix tools/comparison run build
+
+      # Reads spec/PERFORMANCE.md and the committed runs under baselines/ only —
+      # no harness, no toolchain, so it runs before the expensive steps and
+      # fails fast on a documentation drift.
+      - name: PERFORMANCE.md agrees with the committed perf runs
+        run: node tools/comparison/dist/verify-benchmark.js
 
       # Build CLI harnesses (verify they compile) — the Rust toolchain is already
       # installed above for the WASM glue build.

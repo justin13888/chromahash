@@ -656,6 +656,20 @@ description = "Check every table in spec/EXPERIMENTS.md against the sweep output
 depends = ["build:compare"]
 run = "node tools/comparison/dist/verify-experiments.js"
 
+# Check every table in spec/PERFORMANCE.md against the committed perf runs in
+# tools/comparison/baselines/. The document is transcribed by hand, so a re-run
+# silently invalidates it — and it had: the committed baseline was a bounded run
+# from a dirty tree, while §2, §3, §4, §5 and §6 quoted a --full run that was
+# never committed. Sibling of verify:experiments, which does the same for
+# EXPERIMENTS.md.
+#   --list-unbound   tables with no binding
+#   --list-cells     every cell id the committed runs provide
+#   --section 7      just one section
+[tasks."verify:benchmark"]
+description = "Check every table in spec/PERFORMANCE.md against the committed perf runs"
+depends = ["build:compare"]
+run = "node tools/comparison/dist/verify-benchmark.js"
+
 # ─── Benchmark ──────────────────────────────────────────────────────────────
 
 [tasks."build:benchmark"]
