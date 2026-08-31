@@ -399,3 +399,12 @@ re-measurement fills them in.
 how the drift it was supposed to catch went unnoticed. It does not read
 `README.md` or `spec/README.md`, which is why those two are kept free of figures
 rather than gated.
+
+**`BENCHMARK.md` was the third file, and was missed.** It published a full
+seven-language encode/decode table attributed to an Apple M3 Pro, with a "single"
+column that timed process startup — the Kotlin and C# cells §7 cites. Nothing
+referenced it: no generator wired to a task, no gate, and no link from anywhere
+in the repo, which is why fencing `README.md` and `spec/README.md` did not reach
+it. It is now a pointer to this document, linked from the root `README.md` so it
+has an inbound reference, and `tools/benchmark/README.md` no longer tells the
+reader that `mise run benchmark` regenerates it.

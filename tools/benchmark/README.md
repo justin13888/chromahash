@@ -56,11 +56,20 @@ float rounding — so each baseline decodes a hash it encoded itself.
 
 ## Running
 
+> **`mise run benchmark` no longer runs this harness.** That task now drives the
+> unified perf sweep in `tools/comparison/src/perf/`, which writes
+> `tools/comparison/output/perf/perf.json` and feeds
+> [`spec/PERFORMANCE.md`](../../spec/PERFORMANCE.md). No mise task executes
+> `benchmark.py`; the four `format:benchmark` / `lint:benchmark` tasks only lint
+> this directory. Run it directly:
+
 ```sh
-mise run benchmark              # builds all harnesses (mise toolchains) + runs
+mise run build:benchmark        # build the language harnesses (incl. both baselines)
+cd tools/benchmark
+uv run benchmark.py --skip-build
 ```
 
-Fast local iteration (skip the build, fewer/smaller runs):
+Fast local iteration (fewer/smaller runs):
 
 ```sh
 cd tools/benchmark
@@ -83,7 +92,12 @@ Requires `hyperfine` on `PATH`.
 - `json/{encode,decode}_{single,bulk}.json` — raw hyperfine results
 - `benchmark-single.png` — single-mode bars (startup-dominated)
 - `benchmark-bulk.png` — bulk per-op bars (real compute)
-- `benchmark-summary.md` — the markdown table (also printed to stdout)
+- `benchmark-summary.md` — the markdown table (also printed to stdout).
+  Nothing consumes it: `BENCHMARK.md` used to be a manual paste of it and is now
+  a pointer to `spec/PERFORMANCE.md`. Treat its output as a local investigation,
+  not a publishable figure — the repo publishes wall-clock only through
+  `spec/PERFORMANCE.md`, bound to a committed run and gated by
+  `mise run verify:benchmark`.
 
 ## Not in scope / CI
 

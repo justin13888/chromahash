@@ -41,7 +41,7 @@ ChromaHash is built for professional photo management at scale, where perceptual
 
 ## Guides
 
-- [Performance](spec/PERFORMANCE.md) — where encode and decode time actually goes, per tier, per implementation, and what each lever costs
+- [Performance](spec/PERFORMANCE.md) — where encode and decode time actually goes, per tier, per implementation, and what each lever costs. It is the only place this repo publishes wall-clock; [`BENCHMARK.md`](BENCHMARK.md) is a pointer to it.
 - [Decoding on Android](docs/android.md) — how the [`bindings/uniffi/`] AAR wraps the native Rust core for fast, SIMD-ready placeholder decoding
 
 ## Setup

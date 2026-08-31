@@ -433,9 +433,12 @@ description = "Auto-fix comparison tool lint findings (Biome)"
 run = "pnpm --prefix tools/comparison run lint:fix"
 
 # ─── Benchmark driver (Python) ────────────────────────────────────────────────
-# The cross-language performance harness. Not published, but every benchmark
-# number quoted in the docs comes out of it, so it is held to the same lint and
-# format contract as the `python/` package (see tools/benchmark/pyproject.toml).
+# The original cross-language performance harness, superseded by the unified perf
+# sweep in tools/comparison/src/perf/ that `benchmark` now runs. No task here
+# executes it — the four tasks below only lint and format the directory, to the
+# same contract as the `python/` package (see tools/benchmark/pyproject.toml).
+# It survives as a local investigation tool and as the only harness that carries
+# the ThumbHash timing baselines; nothing it prints is published.
 
 [tasks."format:benchmark"]
 description = "Format the benchmark driver (Ruff)"

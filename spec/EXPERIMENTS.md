@@ -1292,6 +1292,30 @@ replaces:
 | v0.6: unweighted, one sort per channel | 391.6k / 395.8k / 399.8k |
 | v1: weighted, one sort per (aspect, tier) | 356.8k / 318.0k / 348.4k |
 
+> **What this table is, and is not.** It is an A/B of two decode implementations
+> at one fixture, run to show that the +32% is gone — not a decode-latency figure.
+> Mind the units: the `k` suffix is thousands of **nanoseconds**, so these cells
+> are fractions of a millisecond, not the microsecond figures a decode-cost table
+> reports.
+>
+> The candidate sort is **inside the timed region on both rows**, because it is
+> inside the shipped decode: `SelectionOrder::new` is constructed on every
+> `decode()` call (`rust/src/decode.rs`), and there is no selection cache in the
+> crate. "Once per (aspect, tier)" means once per *decode* rather than once per
+> *channel* — every channel's selection is a prefix of the same list — not
+> memoization across calls. So the v1 row is the shipped path, and the ~8% is a
+> like-for-like saving.
+>
+> It is also **unbound and ungated**: beyond a repeat count of three it names no
+> host, no per-run iteration count and no warm-up, and §6 lists no command that
+> reproduces it. `verify:experiments` does not check it — the table carries no
+> binding, so the checking loop never reaches it; the note beside it
+> (`"10.2#0": "decode timings, not a corpus measurement"`) is an audit trail
+> printed by `--list-unbound`, not an exemption the gate enforces. Do not quote
+> it as the cost of a decode. [`PERFORMANCE.md`](PERFORMANCE.md) §2
+> is where decode cost lives, and its `decode/Rust/t1/natural` cell is what should
+> replace this table once a re-measurement lands.
+
 ### 10.3 Verification
 
 `adopted-defaults` runs the new `Tunables::DEFAULT` with **no overrides at all**
