@@ -281,8 +281,9 @@ pub fn dct_decode_pixel_separable(
 /// length-`H` column reduction per coefficient (`K·H`). The saving is roughly
 /// `K / Cx`, and both grow with the tier — `K` by `4^level` and `Cx` by
 /// `2^level` — so the wider the tier, the more there is to win. Stage timing
-/// puts the forward DCT at 78.7% of a 512x512 tier-1 encode and 96.6% of a
-/// tier-4 one, which is what makes this worth measuring.
+/// puts the forward DCT at the overwhelming majority of an encode, rising with
+/// both size and tier (`spec/PERFORMANCE.md` §1), which is what makes this
+/// worth measuring.
 ///
 /// **This is not byte-identical to [`dct_encode_selected`] and must never be
 /// enabled in a shipped build.** Floating-point addition is not associative, so

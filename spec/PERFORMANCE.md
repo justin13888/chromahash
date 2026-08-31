@@ -350,9 +350,9 @@ Ordered by measured size, not by appeal:
 1. **The forward-DCT inner loop.** §1 puts it at the overwhelming majority of
    encode at every size and tier that matters, so it is the only place where a
    large win is available at all, and it needs no format change.
-2. **Adopt the separable transform** (§6) — measured, byte-identical over 40
-   encodings, but it costs a format version. Worth deciding deliberately rather
-   than by default.
+2. **Adopt the separable transform** (§6) — prototyped and byte-identical over
+   40 encodings, but its speedup is still unmeasured here and it costs a format
+   version. Worth deciding deliberately rather than by default.
 3. **Reconsider `ac_nearest` and per-tier `scale_fit`** (§4), for small inputs
    only. Their quality effects are at or below the noise floor at the default
    tier, and their time cost vanishes at photo resolution.
@@ -373,13 +373,19 @@ harness verified and no gate protected:
 - encode "~400 ms for 12 MP"
 - "the v0.6 DC search adds ~10 µs — negligible"
 
-The first two are wrong by a large factor; §2 and §3 give the measurements. That
-the DC-search line is still right while the other two are not dates the table to
-the **v0.6** era: v0.7 raised the default coefficient counts and adopted the
-encoder searches §4 prices. They were never re-measured because nothing measured
-them.
+The first two are wrong by a large factor. That the DC-search line is still
+right while the other two are not dates the table to the **v0.6** era: v0.7
+raised the default coefficient counts and adopted the encoder searches §4
+prices. They were never re-measured because nothing measured them.
 
-Both are corrected in the spec, and `mise run verify:benchmark` now checks this
-document against the committed runs — a task that this section previously
-claimed existed before it did, which is how the drift it was supposed to catch
-went unnoticed.
+Both files now state what follows from the algorithm — encode is `O(K·W·H)` over
+the full source, decode is `O(w·h·K)` rising ~16× per tier level — and point
+here for the figures rather than restating any. Replacing one untraceable number
+with another would repeat the mistake; §2 and §3 carry the measurements once a
+re-measurement fills them in.
+
+`mise run verify:benchmark` now checks this document against the committed runs
+— a task that this section previously claimed existed before it did, which is
+how the drift it was supposed to catch went unnoticed. It does not read
+`README.md` or `spec/README.md`, which is why those two are kept free of figures
+rather than gated.
