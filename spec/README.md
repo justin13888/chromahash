@@ -1619,16 +1619,16 @@ frequency-normalized decoding.
 | **Wide-gamut DC clipping** | DC chroma beyond the sRGB hull clips at encode (§5.1). Invisible at decode (the decoder clips to sRGB regardless); a future P3-decode profile would be a format break. |
 | **Gamut clip** | Out-of-sRGB OKLAB values are clipped per-channel in linear sRGB (relative-colorimetric, §12.6) — the same mapping a display applies, so saturated wide-gamut solids render at full in-gamut saturation rather than desaturated. |
 | **No progressive decode** | The whole hash must be received before decoding. Never a practical bottleneck at these sizes; embedded/progressive tiers are a future direction (§15). |
-| **Tiers 2–3 are not a rate–distortion claim** | See below. |
+| **Codes 3–4 are not a rate–distortion claim** | See below. |
 
-### 14.1 What tiers 2–3 are for
+### 14.1 What codes 3 and 4 are for
 
-Tiers 0 and 1 (32–108 bytes) are where this format is competitive on quality: it leads
+Codes 1 and 2 (32–108 bytes) are where this format is competitive on quality: it leads
 every other LQIP and every size-matched codec on ΔE00 by 8–25%, and at 108 B it takes
 SSIMULACRA2 off size-matched WebP. Below 48 bytes no general codec can produce output at
 all, which is the compact and default tiers' whole argument.
 
-Tiers 2 and 3 are **not** justified that way, and this specification does not claim they
+Codes 3 and 4 are **not** justified that way, and this specification does not claim they
 are. Measured at equal bytes on the same corpus, WebP overtakes ChromaHash somewhere
 around 300 bytes, and by ~1.6 kB even uncoded RGB565 pixels score better than code 4
 (`EXPERIMENTS.md` §2, §3). Entropy coding would recover roughly 4% — nowhere near the
