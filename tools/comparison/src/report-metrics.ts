@@ -12,6 +12,8 @@
  * table without a definition behind it.
  */
 
+import { esc } from "./html.ts";
+
 /** Which way is better, for the arrow the report prints beside a column. */
 export type MetricDirection = "lower" | "higher";
 
@@ -164,15 +166,7 @@ export function directionArrow(key: MetricKey): string {
  */
 export function metricTh(key: MetricKey, prefix = ""): string {
   const d = METRIC_DOCS[key];
-  return `<th><a class="metric-link" href="#metric-${key}" title="${escapeAttr(d.name)} — ${escapeAttr(d.scale)}">${prefix}${d.label}</a> ${directionArrow(key)}</th>`;
-}
-
-function escapeAttr(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/"/g, "&quot;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+  return `<th><a class="metric-link" href="#metric-${key}" title="${esc(d.name)} — ${esc(d.scale)}">${prefix}${d.label}</a> ${directionArrow(key)}</th>`;
 }
 
 /** The Metrics tab: every metric, why it is here, and where it is defined. */

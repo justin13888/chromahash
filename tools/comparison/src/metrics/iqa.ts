@@ -253,7 +253,14 @@ export async function computeIqaMetrics(
   only?: readonly string[],
 ): Promise<IqaMetrics> {
   const requested = metricsForDims(width, height, only);
-  if (requested.length === 0) return { ...NULL_IQA_METRICS };
+  if (requested.length === 0) {
+    // All-null here would be indistinguishable from a real measurement in the
+    // report. A caller asking for a metric set that resolves to nothing at
+    // these dimensions has a bug; say so rather than emitting a hollow row.
+    throw new IqaError(
+      `no requested metric is valid at ${width}x${height} (asked for ${only?.join(",") ?? "the default set"}).`,
+    );
+  }
   const key = cacheKey(refRgba, distRgba, width, height, requested);
   const cached = cacheRead(key);
   if (cached) return cached;

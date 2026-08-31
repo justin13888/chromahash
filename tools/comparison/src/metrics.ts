@@ -88,9 +88,15 @@ export interface ScoringConfig {
    */
   alphaFidelity?: boolean;
   /**
-   * Score ringing (see `metrics/local.ts`). Defaults to on; `--no-ringing`
-   * turns it off for preview-only runs. Optional so the sweep and gate call
-   * sites keep compiling untouched under `exactOptionalPropertyTypes`.
+   * Score ringing (see `metrics/local.ts`). Defaults to **off**, and the report
+   * opts in.
+   *
+   * Optional-and-off rather than optional-and-on because the four other entry
+   * points -- `sweep.ts`, `rd-gate.ts`, `rd-budget.ts`, `entropy-budget.ts` --
+   * construct a config without this field and read only `metrics`. Defaulting
+   * it on made every one of them compute a ~25 ms/pair metric they discard,
+   * which over a sweep's thousands of pairs is minutes per run for a number
+   * nothing looks at.
    */
   ringing?: boolean;
 }
@@ -108,6 +114,33 @@ export function setScoringConfig(config: ScoringConfig): void {
 
 export function getScoringConfig(): ScoringConfig {
   return scoringConfig;
+}
+
+/**
+ * Memoized {@link flattenOverBackdrop} for the reference.
+ *
+ * The reference is composited once per format column -- ~15 times per image --
+ * and its opaque fast path returns the input array unchanged, so for an opaque
+ * image the result is already object-stable. For anything with transparency it
+ * allocates a fresh array every call, which made the ringing envelope cache in
+ * `metrics/local.ts` (keyed on buffer identity) a 100% miss on exactly the
+ * `cutout-*` corpus it was written for. Memoizing here restores that identity
+ * and drops ~15 composites per image besides.
+ */
+const flattenedReferences = new WeakMap<Uint8Array, Map<string, Uint8Array>>();
+
+function flattenReference(rgba: Uint8Array, backdrop: Backdrop): Uint8Array {
+  let perBuffer = flattenedReferences.get(rgba);
+  if (!perBuffer) {
+    perBuffer = new Map();
+    flattenedReferences.set(rgba, perBuffer);
+  }
+  const key = backdrop.join(",");
+  const hit = perBuffer.get(key);
+  if (hit) return hit;
+  const built = flattenOverBackdrop(rgba, backdrop);
+  perBuffer.set(key, built);
+  return built;
 }
 
 /** Composite RGBA over a backdrop (source-over), yielding opaque RGBA. */
@@ -255,14 +288,14 @@ export async function computeAllMetrics(
 
   let ringing = NULL_RINGING;
   for (const backdrop of backdrops) {
-    const reference = flattenOverBackdrop(referenceRgba, backdrop);
+    const reference = flattenReference(referenceRgba, backdrop);
     const decodedFlat = flattenOverBackdrop(decodedRgba, backdrop);
 
     // Primary backdrop only. Averaging an artifact measure across white/black/
     // grey composites is not meaningful, and it would triple the cost. Never on
     // the blurred set either: blurring both sides destroys the artifact by
     // construction, which is the whole point of the blur-up presentation.
-    if ((scoringConfig.ringing ?? true) && ringing === NULL_RINGING) {
+    if ((scoringConfig.ringing ?? false) && ringing === NULL_RINGING) {
       ringing =
         computeRinging(
           reference,

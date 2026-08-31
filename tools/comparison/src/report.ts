@@ -2,6 +2,7 @@ import { splitFor, tierFor } from "./corpus.ts";
 import { aspectFidelity, log2ToPct } from "./aspect.ts";
 import { METRIC_DOCS, metricTh, renderMetricsTab } from "./report-metrics.ts";
 import { layoutStyles, renderLayoutTab } from "./report-layout.ts";
+import { esc } from "./html.ts";
 import {
   computePairedComparisons,
   type PairedComparison,
@@ -23,9 +24,10 @@ interface ImageEntry {
   originalWidth: number;
   originalHeight: number;
   /**
-   * Encoder-input dimensions (<=100px long edge). Layout fidelity is scored
-   * against these rather than the original, because this harness's own
-   * downscale already rounds the aspect — see aspect.ts.
+   * Encoder-input dimensions (<=100px long edge) — the resolution every format
+   * encodes from. Layout fidelity is scored against the *original*, not these;
+   * the gap between the two is this harness's own contribution and is reported
+   * as its own row on the Layout tab. See aspect.ts.
    */
   smallWidth: number;
   smallHeight: number;
@@ -129,9 +131,9 @@ export function computeFormatStats(
       .filter((v): v is number => v !== null && Number.isFinite(v));
     const ringSorted = [...ringValues].sort((a, b) => a - b);
 
-    // Layout fidelity is scored against the encoder input, and per image: the
-    // pairing of a result with its own entry is why this is aggregated here and
-    // not inside the adapters.
+    // Scored per image against that image's own original, which is why this is
+    // aggregated here rather than inside the adapters: an adapter sees one
+    // image and cannot pair a result with the entry it came from.
     const aspects = filtered.flatMap((e) =>
       e.formatResults
         .filter((r) => r.formatName === name)
@@ -298,7 +300,7 @@ function formatStatsTable(stats: FormatStat[]): string {
 ${stats
   .map(
     (s) => `<tr>
-  <td class="name"><strong>${s.name}</strong></td>
+  <td class="name"><strong>${esc(s.name)}</strong></td>
   <td${s.images < maxImages ? ' class="short" title="fewer images than the set: this format could not represent the byte budget on every image, so its means cover only the images listed"' : ""}>${s.images}${s.images < maxImages ? "*" : ""}</td>
   <td>${s.avgSize.toFixed(1)}</td>
   <td>${gradeCell(s.avgCiede, 2, 2, 5)}</td>
@@ -487,7 +489,7 @@ function imageRow(entry: ImageEntry): string {
   const box = rowBox(entry.originalWidth, entry.originalHeight);
   return `
 <div class="image-row">
-  <div class="image-name">${entry.name}</div>
+  <div class="image-name">${esc(entry.name)}</div>
   <div class="image-cell">
     <div class="image-box original-wrap" style="${boxVars(box)}">
       <img class="img-hires" src="${entry.originalDataUri}" alt="Original">
@@ -505,7 +507,7 @@ function imageRow(entry: ImageEntry): string {
         const css = r.dataUri.slice(4);
         return `<div class="image-cell">
       <div class="image-box" style="${boxVars(box)}"><div class="css-preview" style="background-image:${css}"></div></div>
-      <div class="label">${r.formatName}<br>${r.decodedWidth}x${r.decodedHeight}px | ${r.encodedSizeBytes}B</div>
+      <div class="label">${esc(r.formatName)}<br>${r.decodedWidth}x${r.decodedHeight}px | ${r.encodedSizeBytes}B</div>
     </div>`;
       }
       const m = (v: number | null, d: number) =>
@@ -519,8 +521,8 @@ function imageRow(entry: ImageEntry): string {
       const dssimStr = `<br>S2:${m(r.metrics.ssimulacra2, 0)} Bu:${m(r.metrics.butteraugli, 1)}${ringStr}`;
       const fit = fitInBox(r.decodedWidth, r.decodedHeight, box);
       return `<div class="image-cell">
-      <div class="image-box" style="${boxVars(box)}"><img src="${r.dataUri}" alt="${r.formatName}" style="${sizeStyle(fit)}"></div>
-      <div class="label">${r.formatName}<br>${r.decodedWidth}x${r.decodedHeight}px | ${r.encodedSizeBytes}B${ciedeStr}${dssimStr}</div>
+      <div class="image-box" style="${boxVars(box)}"><img src="${r.dataUri}" alt="${esc(r.formatName)}" style="${sizeStyle(fit)}"></div>
+      <div class="label">${esc(r.formatName)}<br>${r.decodedWidth}x${r.decodedHeight}px | ${r.encodedSizeBytes}B${ciedeStr}${dssimStr}</div>
     </div>`;
     })
     .join("\n  ")}
@@ -618,7 +620,7 @@ function headlineTable(stats: FormatStat[]): string {
 ${stats
   .map(
     (s) => `<tr>
-  <td class="name"><strong>${s.name}</strong></td>
+  <td class="name"><strong>${esc(s.name)}</strong></td>
   <td>${s.avgSize.toFixed(0)}</td>
   <td>${gradeCell(s.avgCiede, 2, 2, 5)}</td>
   <td>${fmt(s.avgSsimulacra2, 0)}</td>
@@ -661,7 +663,13 @@ export function generateReport(
   const showImplementations = opts?.showImplementations ?? true;
 
   const realEntries = entries.filter((e) => tierFor(e.name) === "real");
-  const photoEntries = entries.filter((e) =>
+  // Intersected with the tier, not category alone. `categorizeImage` falls
+  // through to "Realistic" for any filename it does not recognise, and
+  // PHOTO_CATEGORIES includes "Realistic" -- so a file under an unknown prefix
+  // would count as a photograph here while `tierFor` called it synthetic, and
+  // the headline table and the Layout tab would silently be computed over
+  // different image sets while both being labelled "Layout".
+  const photoEntries = realEntries.filter((e) =>
     PHOTO_CATEGORIES.includes(e.category),
   );
   // The headline is scored on photographs alone: they are what a placeholder
@@ -836,7 +844,7 @@ ${catEntries
     const box = rowBox(entry.originalWidth, entry.originalHeight);
     return `
 <div class="image-row">
-  <div class="image-name">${entry.name}</div>
+  <div class="image-name">${esc(entry.name)}</div>
   <div class="image-cell">
     <div class="image-box original-wrap" style="${boxVars(box)}">
       <img class="img-hires" src="${entry.originalDataUri}" alt="Original">

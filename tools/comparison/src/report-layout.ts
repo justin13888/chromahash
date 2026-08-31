@@ -15,6 +15,7 @@ import {
   REFLOW_CONTAINER_PX,
 } from "./aspect.ts";
 import { METRIC_DOCS } from "./report-metrics.ts";
+import { esc } from "./html.ts";
 import type { FormatResult, FormatStat } from "./types.ts";
 
 /** The slice of a report entry this tab needs. */
@@ -42,19 +43,31 @@ function fmt(v: number | null, digits: number): string {
 function layoutTable(stats: FormatStat[], floorPct: number | null): string {
   const scored = stats
     .filter((s) => s.aspectImages > 0)
-    .sort(
-      (a, b) =>
-        (a.maxAbsReflowPx ?? Number.POSITIVE_INFINITY) -
-        (b.maxAbsReflowPx ?? Number.POSITIVE_INFINITY),
-    );
-  const unscored = stats.filter((s) => s.aspectImages === 0);
+    // Infinity - Infinity is NaN, which leaves the affected rows in an
+    // implementation-defined order; compare the nulls explicitly instead.
+    .sort((a, b) => {
+      const x = a.maxAbsReflowPx;
+      const y = b.maxAbsReflowPx;
+      if (x === null && y === null) return a.name.localeCompare(b.name);
+      if (x === null) return 1;
+      if (y === null) return -1;
+      return x - y;
+    });
+  // Only formats whose adapter actually declared `kind: "absent"` -- not merely
+  // formats with no results in this subset. A codec that fails its byte budget
+  // on every real-tier image while succeeding on a synthetic one would survive
+  // the column filter and land here, and the sentence below would then make a
+  // factual claim about it that is the opposite of what its adapter declared.
+  const unscored = stats.filter(
+    (s) => s.aspectImages === 0 && s.aspectAbsentReason !== null,
+  );
 
   const best = scored[0]?.maxAbsReflowPx ?? null;
   const rows = scored
     .map((s) => {
       const winner = best !== null && s.maxAbsReflowPx === best;
       return `<tr${winner ? ' class="row-best"' : ""}>
-  <td class="name">${winner ? "★ " : ""}<strong>${s.name}</strong></td>
+  <td class="name">${winner ? "★ " : ""}<strong>${esc(s.name)}</strong></td>
   <td>${fmt(s.avgAspectErrorPct, 2)}%</td>
   <td>${fmt(s.p90AspectErrorPct, 2)}%</td>
   <td><strong>${fmt(s.maxAbsReflowPx, 0)}&nbsp;px</strong></td>
@@ -78,8 +91,8 @@ function layoutTable(stats: FormatStat[], floorPct: number | null): string {
     .map(
       (s) =>
         `<tr class="row-absent">
-  <td class="name"><strong>${s.name}</strong></td>
-  <td colspan="4" title="${(s.aspectAbsentReason ?? "").replace(/"/g, "&quot;")}">— carries no shape of its own; the dimensions must come from somewhere else</td>
+  <td class="name"><strong>${esc(s.name)}</strong></td>
+  <td colspan="4" title="${esc(s.aspectAbsentReason ?? "")}">— carries no shape of its own; the dimensions must come from somewhere else</td>
 </tr>`,
     )
     .join("\n");
@@ -122,7 +135,7 @@ function diagram(
     <div class="res-reserved" style="height:${reservedH.toFixed(1)}px"></div>
     <div class="res-true" style="top:${trueH.toFixed(1)}px"></div>
   </div>
-  <div class="res-label">${label}<br><span class="${Math.abs(reflowPx) < 1 ? "metric-good" : Math.abs(reflowPx) < 20 ? "metric-warn" : "metric-bad"}">${sign}${reflowPx.toFixed(0)} px</span></div>
+  <div class="res-label">${esc(label)}<br><span class="${Math.abs(reflowPx) < 1 ? "metric-good" : Math.abs(reflowPx) < 20 ? "metric-warn" : "metric-bad"}">${sign}${reflowPx.toFixed(0)} px</span></div>
 </div>`;
 }
 
@@ -132,6 +145,7 @@ function pickDiverse(entries: LayoutEntry[], n: number): LayoutEntry[] {
     .filter((e) => e.originalWidth > 0 && e.originalHeight > 0)
     .map((e) => ({ e, ar: Math.log2(e.originalWidth / e.originalHeight) }))
     .sort((a, b) => a.ar - b.ar);
+  if (n <= 1) return withAr.length > 0 ? [withAr[0]?.e as LayoutEntry] : [];
   if (withAr.length <= n) return withAr.map((x) => x.e);
   // Even strides through the sorted range, so portrait and landscape extremes
   // both appear rather than n near-identical 3:2 photographs.
@@ -194,7 +208,7 @@ export function renderLayoutTab(
         .join("\n");
       if (!cells) return "";
       return `<div class="res-row">
-  <div class="res-title">${e.name}<br><span class="res-dim">${e.originalWidth}&times;${e.originalHeight}</span></div>
+  <div class="res-title">${esc(e.name)}<br><span class="res-dim">${e.originalWidth}&times;${e.originalHeight}</span></div>
   ${cells}
 </div>`;
     })
