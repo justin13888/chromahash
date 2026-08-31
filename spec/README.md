@@ -63,13 +63,13 @@ layout precision, and wide-gamut support matter more than minimizing byte count.
 | Goal | Rationale |
 |------|-----------|
 | 32 bytes at the default tier | Memory-aligned, cache-friendly, predictable storage. Zero-overhead database column or cache key; equal-budget comparison with prior LQIP formats. |
-| Quality multiplier (3-bit tier) | Opt into more detail when wanted: long edge `32·2^level`, byte length ≈ `4^level`× the base, where `level = renderLevel(tier)` (§3.5). The common case stays 32 bytes. |
+| Quality multiplier (3-bit tier) | Opt into more detail when wanted: long edge `32·2^level` and byte length growing ≈ `4^level`× from the 32-byte default, where `level = renderLevel(tier)` (§3.5). The compact tier is its own 21-byte row rather than a scaling of that. The common case stays 32 bytes. |
 | Self-describing + fail-fast | Byte 0 carries version, tier, and flags; the byte length follows deterministically, so a parser validates a hash in O(1) and a validated hash always decodes. No checksum needed. |
 | OKLAB color space | Perceptually uniform — quantization levels are maximally efficient. |
 | 8-bit log₂ aspect ratio | ~1.09% max error for all photographic ratios. Covers 1:16 to 16:1. |
 | Top-K coefficient selection | The K lowest spatial frequencies for the image's aspect ratio — a single deterministic rule, no grid machinery, no aliasing. |
 | Quantization ranges sized to signal | Chroma DC spans the sRGB OKLAB hull; AC scale ranges match measured coefficient distributions. Every code level does work. |
-| Per-row luminance AC precision | 4 bits (15 levels) at the compact and default tiers, where more coefficients beat finer ones at a 32-byte budget; 5 bits (31 levels) in the opaque code-2 base row that codes 2–4 scale (§7.4). |
+| Per-row luminance AC precision | 4 bits (15 levels) at the default tier, where 28 coefficients beat 26 finer ones at 32 bytes, and at the compact tier, whose own 21-byte sweep landed on 4 bits again; 5 bits (31 levels) in the opaque code-2 base row that codes 2–4 scale (§7.4). |
 | µ-law companding with exact zero | Non-linear quantization matching natural image DCT coefficient distributions; zero coefficients decode exactly. |
 | Decode-aware DC selection | The encoder picks the DC codes whose *decoded* color is closest to the true average — gamut-corner solids round-trip nearly exactly. |
 | Multi-gamut encode | Accepts sRGB, Display P3, Adobe RGB, BT.2020, or ProPhoto RGB sources. |
@@ -222,8 +222,8 @@ AC coefficients follow the prefix (and the alpha DC/scale in alpha mode), in **s
 order** (§6.2): the j-th value in each channel's field is the j-th selected `(cx, cy)`
 pair.
 
-The per-channel split is a **three-row table, not one base scaled by `4^level`**: codes 0
-and 1 each have their own row, and codes 2–4 scale the code-2 base by `4^(tier−2)`. Bits
+The per-channel split is a **three-row table, not one base scaled by `4^(tier−2)`**: codes
+0 and 1 each have their own row, and codes 2–4 scale the code-2 base by `4^(tier−2)`. Bits
 per coefficient are constant within a row. The split exists because the count-vs-precision
 optimum moves with the budget — at 32 bytes the format is measurably better off with more,
 coarser coefficients than the code-2 row scaled down would give it (`EXPERIMENTS.md` §4.2,
@@ -337,8 +337,11 @@ countScale(tier)  = 4^renderLevel(tier)
 
 Valid tier codes are `0..=4` (`MAX_TIER = 4`); `5..=7` are reserved and MUST be rejected.
 Codes 0 and 1 share a render level, so shifting by the raw code rather than by
-`renderLevel` gives the compact tier a 64 px grid and 4× the coefficients — what the
-`valid_compact` test vectors exist to catch.
+`renderLevel` over-renders every code from 1 up. The **default tier** is where it bites
+first and hardest: a 64 px grid and 4× the coefficients for what must be a 32-byte,
+32 px hash. The compact tier is the one code the mistake leaves alone — `renderLevel(0)`
+and the raw code are both 0 — so a `valid_compact` vector passes under the bug; it is the
+code-1 vectors, whose length check fails, that catch it.
 
 **Length formula** — the total byte length is determined entirely by `(tier, hasAlpha)`:
 
@@ -838,8 +841,9 @@ decodeOutputSize(byte, tier):
     return (w << level, h << level)      // long edge 32·2^level
 ```
 
-Shifting by `renderLevel(tier)` rather than by `tier` is what places the compact tier at
-the default tier's size (§3.5). Shifting by the raw code would render it at 64 px.
+Shifting by `renderLevel(tier)` rather than by `tier` is what keeps the default tier at
+the base 32 px size, which the compact tier shares (§3.5). Shifting by the raw code would
+render the default tier at 64 px; the compact tier, at code 0, is unaffected either way.
 
 Over the byte range the base short side is at least 2 pixels (byte 0 → 2×32;
 byte 255 → 32×2), which the selection domain (§6.2) relies on; at render level `m` it is
