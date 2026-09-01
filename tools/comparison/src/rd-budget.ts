@@ -592,7 +592,11 @@ async function main(): Promise<void> {
         continue;
       }
       const tier = tierFor(a.nL);
-      const s = 4 ** tier;
+      // `l1=`/`c=` are counts at the *default* tier, which the encoder scales by
+      // 4^level. `tierFor` returns a tier code, and code 1 is level 0, so the
+      // exponent is the code minus one — using the code divides by an extra
+      // factor of 4 and synthesizes a layout a quarter of the budget.
+      const s = 4 ** (tier - 1);
       // Express the target counts as base counts at the chosen tier.
       const l1 = Math.round(a.nL / s);
       const c = Math.round(a.nC / s);
