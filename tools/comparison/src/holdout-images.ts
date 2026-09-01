@@ -70,7 +70,13 @@ export async function ensureHoldoutImages(): Promise<string[]> {
     const filePath = path.join(HOLDOUT_DIR, `kodak${num}.png`);
     const downloaded = await ensurePinnedFixture({
       filePath,
-      url: `http://r0k.us/graphics/kodak/kodak/kodim${num}.png`,
+      // HTTPS first: r0k.us is the canonical home of the suite but is one
+      // hobby server, and this was the only plain-HTTP fetch in the corpus.
+      // The Wikimedia mirror is the fallback; the digest makes it safe.
+      urls: [
+        `https://r0k.us/graphics/kodak/kodak/kodim${num}.png`,
+        `http://r0k.us/graphics/kodak/kodak/kodim${num}.png`,
+      ],
       sha256,
       label: `kodak${num}`,
     });

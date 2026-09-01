@@ -412,7 +412,7 @@ export async function ensureNaturalImages(
     const filePath = path.join(NATURAL_DIR, `${label}.jpg`);
     const downloaded = await ensurePinnedFixture({
       filePath,
-      url: `https://picsum.photos/id/${id}/${width}/${height}`,
+      urls: [`https://picsum.photos/id/${id}/${width}/${height}`],
       sha256,
       label: `${label} (picsum/${id})`,
     });

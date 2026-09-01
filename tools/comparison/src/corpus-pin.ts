@@ -14,6 +14,7 @@
 
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
+import path from "node:path";
 
 /** Lowercase hex SHA-256 of a buffer. */
 export function sha256(bytes: Uint8Array): string {
@@ -24,8 +25,16 @@ export function sha256(bytes: Uint8Array): string {
 export interface PinnedFixture {
   /** Absolute path of the cached file. */
   filePath: string;
-  /** Source URL to fetch from when the file is not cached. */
-  url: string;
+  /**
+   * Sources to fetch from, tried in order, when the file is not cached.
+   *
+   * More than one because a corpus that lives at a single URL is a corpus that
+   * disappears when that host does — and one did: `picsum.photos` answered 503
+   * for the whole photographic corpus, which aborted every run and every sweep
+   * with it. The digest is what makes a mirror safe to trust: whichever source
+   * answers, the bytes still have to be the pinned ones.
+   */
+  urls: readonly string[];
   /** Expected lowercase-hex SHA-256 of the file's exact bytes. */
   sha256: string;
   /** Human label used in error messages. */
@@ -142,10 +151,51 @@ async function fetchWithRetry(url: string): Promise<Buffer> {
   throw new Error(lastError);
 }
 
+/**
+ * A local directory to satisfy fixtures from before any network fetch, set with
+ * `CHROMAHASH_CORPUS_DIR`.
+ *
+ * The point is an air-gapped or rate-limited run: populate a directory once,
+ * point every later run at it, and the corpus never touches the network. Files
+ * are matched by basename and still verified against the pin, so a stale or
+ * wrong file there fails exactly as loudly as a bad download.
+ */
+function localCorpusDir(): string | null {
+  const dir = process.env.CHROMAHASH_CORPUS_DIR;
+  return dir === undefined || dir === "" ? null : dir;
+}
+
+/** Try every source in order; the digest is what makes a mirror safe. */
+async function fetchFromAny(
+  urls: readonly string[],
+  label: string,
+): Promise<Buffer> {
+  const failures: string[] = [];
+  for (const url of urls) {
+    try {
+      return await fetchWithRetry(url);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      failures.push(`  ${url}: ${reason}`);
+      if (url !== urls[urls.length - 1]) {
+        console.warn(`  ${label}: ${reason} — trying the next source`);
+      }
+    }
+  }
+  throw new CorpusPinError(
+    [
+      `corpus fixture ${label} could not be fetched from any of its ${urls.length} source(s):`,
+      ...failures,
+      "  Refusing to continue with a partial corpus — every reported mean would shift.",
+      "  Set CHROMAHASH_CORPUS_DIR to a directory holding the pinned files to run offline.",
+    ].join("\n"),
+  );
+}
+
 export async function ensurePinnedFixture(
   fixture: PinnedFixture,
 ): Promise<boolean> {
-  const { filePath, url, label } = fixture;
+  const { filePath, urls, label } = fixture;
   const want = fixture.sha256.toLowerCase();
 
   let cached: Buffer | null = null;
@@ -172,25 +222,40 @@ export async function ensurePinnedFixture(
     );
   }
 
-  let body: Buffer;
-  try {
-    body = await fetchWithRetry(url);
-  } catch (err) {
-    throw new CorpusPinError(
-      [
-        `corpus fixture ${label} could not be fetched from ${url}: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-        "  Refusing to continue with a partial corpus — every reported mean would shift.",
-      ].join("\n"),
-    );
+  // A local mirror wins over the network, but not over the pin.
+  const localDir = localCorpusDir();
+  if (localDir !== null) {
+    const candidate = path.join(localDir, path.basename(filePath));
+    let local: Buffer | null = null;
+    try {
+      local = await fs.readFile(candidate);
+    } catch {
+      local = null;
+    }
+    if (local !== null) {
+      const got = sha256(local);
+      if (got !== want) {
+        throw new CorpusPinError(
+          [
+            `corpus fixture ${label} in CHROMAHASH_CORPUS_DIR does not match its pin.`,
+            `  file:     ${candidate}`,
+            `  expected: ${want}`,
+            `  actual:   ${got}`,
+          ].join("\n"),
+        );
+      }
+      await fs.writeFile(filePath, local);
+      return true;
+    }
   }
+
+  const body = await fetchFromAny(urls, label);
 
   const got = sha256(body);
   if (got !== want) {
     throw new CorpusPinError(
       [
-        `corpus fixture ${label} downloaded from ${url} does not match its pin.`,
+        `corpus fixture ${label} does not match its pin after download.`,
         `  expected: ${want}`,
         `  actual:   ${got}`,
         "  Upstream served different bytes. Update the pin deliberately and re-measure;",
