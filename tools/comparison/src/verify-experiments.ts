@@ -462,9 +462,14 @@ function rewriteCell(raw: string, value: string): string {
   const usesUnicodeMinus = /[\u2212]/.test(body);
   let next = value;
   if (usesUnicodeMinus) next = next.replace(/^-/, "\u2212");
-  // Preserve a trailing unit or annotation ("%", " B", " @32 px", "pp").
+  // Preserve a trailing unit or annotation ("%", " B", " @32 px", "pp") \u2014 but
+  // only when the measured value is a bare number. A composite value already
+  // carries what this regex reads as a suffix: on a win count the "unit" is
+  // `/31`, so appending it to `16/31` produced `16/31/31`. That stayed hidden
+  // while every win count happened to agree, and surfaced the first time one
+  // did not.
   const suffix = /^[-\u2212+]?[0-9.]+(.*)$/.exec(body)?.[1] ?? "";
-  if (!/^\[/.test(value)) next += suffix;
+  if (/^[-\u2212+]?[0-9.]+$/.test(value)) next += suffix;
   else if (usesUnicodeMinus) next = value.replace(/-/g, "\u2212");
   return bold ? `**${next}**` : next;
 }
