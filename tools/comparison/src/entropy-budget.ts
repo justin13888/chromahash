@@ -92,8 +92,11 @@ const BUDGETS: ReadonlyArray<{ bytes: number; tier: number }> = [
  * Render level for a tier code. Counts scale by 4^level and the raster by
  * 2^level; the codes are ordered by quality and code 1 is level 0, so the two
  * differ by one. Conflating them multiplies every count by four.
+ *
+ * Saturates at zero, matching `render_level` in `rust/src/constants.rs`: code 0
+ * is the compact tier and is level 0, not level −1.
  */
-const levelOf = (tier: number): number => tier - 1;
+const levelOf = (tier: number): number => Math.max(0, tier - 1);
 
 /** Precision families swept, as [luma bits, chroma bits]. */
 const PRECISION_FAMILIES: ReadonlyArray<readonly [number, number]> = [

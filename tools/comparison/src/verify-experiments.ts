@@ -1448,12 +1448,11 @@ for (const s of skipped) console.log(`  SKIP  ${s}`);
 // (section 9.5), because section 6 never listed the holdout runs they bind to.
 // `--strict` is for the case where every sweep is supposed to be on disk, and
 // a SKIP means the document has drifted out of reach of its own evidence.
-if (values.strict && skipped.length > 0) {
+const strictFailed = values.strict && skipped.length > 0;
+const reportStrict = () =>
   console.log(
     `\n--strict: ${skipped.length} table(s) could not be checked. Run the sweeps named above, or drop the binding.`,
   );
-  process.exit(1);
-}
 
 if (failures.length > 0) {
   console.log(`\n${failures.length} disagreement(s):\n`);
@@ -1489,6 +1488,12 @@ Re-run without --fix to confirm, and read the diff: a corrected number can
 invalidate the sentence beneath its table.`,
     );
   }
+  if (strictFailed) reportStrict();
+  process.exit(1);
+}
+
+if (strictFailed) {
+  reportStrict();
   process.exit(1);
 }
 console.log("\nEvery bound table agrees with its sweep output.");
