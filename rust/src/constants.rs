@@ -10,7 +10,7 @@ pub enum Gamut {
 
 // ── v1 wire format ─────────────────────────────────────────────────────────
 //
-// chromahash ships as release 0.7.1, but the on-wire format carries its own
+// chromahash ships as release 0.7.2, but the on-wire format carries its own
 // generation number, independent of the package semver. This is wire-format
 // generation **v1**. Every framing parameter below is a named constant so the
 // encoder, decoder, and `spec/constants.py` agree without scattered literals.

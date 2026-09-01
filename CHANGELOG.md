@@ -33,6 +33,90 @@ crates.io, PyPI, NuGet, Go and SwiftPM coordinates are unchanged.
 ## [Unreleased]
 <!-- git-cliff-unreleased-end -->
 
+## [0.7.2] - 2026-09-01
+
+### ⚠ Breaking changes
+
+- **comparison**: `ComparisonJson.schemaVersion` 3 -> 4. `encodeTimeMs`, `decodeTimeMs`, `avgEncode` and `avgDecode` are gone; `implementations[]` gains `error`. No consumer pins the version.  Verified against the pre-change baseline over eight cold-cache photographs: every per-image metric, and every summary field other than the removed timing, is byte-identical.
+- **comparison**: Every number measured on the photographic corpus moves. The new corpus is materially harder — the R-D gate's mean ΔE00 at tier 1 goes 8.8459 -> 11.1369 (+25.9%) over its 8 images. `baselines/rd-gate.json` is regenerated here and passes at 0.00% drift; **`spec/EXPERIMENTS.md` has NOT been re-baselined yet** and its tables still describe the Picsum corpus. §6 must be re-run in full before those numbers mean anything again.
+
+
+### Added
+
+- **rust**: Give the bench harness reps, timed warmup, batch and info
+- **go**: Implement the bench subcommand contract
+- **py**: Implement the bench subcommand contract
+- **ts**: Implement the bench contract, and give pure-TS decode a harness
+- **csharp**: Implement the bench subcommand contract
+- **jvm**: Implement the bench subcommand contract
+- **swift**: Implement the bench subcommand contract
+- **comparison**: Add the unified perf driver
+- **rust**: Measure where encode time actually goes
+- **rust**: Cost a separable forward DCT behind an off-by-default tunable
+- **comparison**: Measure the axes PERFORMANCE.md quotes
+- **comparison**: Verify PERFORMANCE.md against the committed perf runs
+- **comparison**: Rewrite documented numbers from a committed run
+- **comparison**: Price the encoder levers at a third size
+- **comparison**: Measure ringing as excursion beyond the reference's local range
+- **comparison**: Measure layout fidelity from each format's declared size
+- **comparison**: Tier the corpus into real content and synthetic fixtures
+- **comparison**: Rebuild the report around evidence tiers
+- **comparison**: Report blur recovery, and key the metric cache on the metric set
+- **comparison**: Let a corpus fixture have more than one source
+- **comparison**: Source the photographic corpus from Wikimedia Commons
+
+### Changed
+
+- **tools**: Update the just references in source and comments
+- **comparison**: Let the bootstrap resample any statistic
+- **comparison**: Give locally-computed metrics a named home
+- **comparison**: Stop scoring what the codec byte-target search discards
+- **comparison**: Score images concurrently
+- **comparison**: Stop publishing numbers the report cannot support
+- **comparison**: Scope the determinism gate to six fixtures
+
+### Fixed
+
+- **swift**: Point the benchmark tasks at the root Package.swift
+- Satisfy the repo's own lint and format gates
+- Repair the two CI failures the local gates could not reach
+- **comparison**: Size timed blocks from a warm pilot
+- **comparison**: Measure each cell once
+- **swift**: Report the Swift version, not the OS version
+- **comparison**: Report the minimum, not the median
+- **comparison**: Separate host noise from documentation drift
+- **spec**: Correct the alpha-mode allocation in §6.2, §9.3 and the references
+- **spec**: Scale and render by renderLevel, not the raw tier code
+- **spec**: Label tiers by the codes that shipped
+- **spec**: Correct the §1 and §14 trade-off rows
+- **spec**: Name the tier the raw-code shift actually breaks
+- **comparison**: Version and validate the iqa metric cache
+- **comparison**: Make the ringing metric's zero actually exact
+- **comparison**: Stop charging sweeps for a metric they discard, and other review fixes
+
+### Documentation
+
+- Record the registry state v0.7.1 actually reached
+- Mark the three re-pointed publishers as resolved
+- Describe the format v1 actually ships
+- Point every command at mise run
+- **spec**: Point EXPERIMENTS and RATIONALE at mise run
+- Remove redundant dev guide and registry bootstrap notes
+- Add the performance report, and correct claims it disproves
+- **spec**: Quote the measured run, and commit the run it quotes
+- Record what the vector work closed, and what it did not
+- **spec**: Rebuild PERFORMANCE.md on numbers that can be traced
+- Record the perf gate and how a re-measurement is reviewed
+- Stop publishing figures no committed run backs
+- **comparison**: Say plainly that the perf gate is red, and why
+- **rust**: Fix the LAYOUT_B comments that contradict the struct below them
+- **spec**: Say what §10.2's decode timings measure
+- Bring BENCHMARK.md inside the performance fence
+- Close the gap that let BENCHMARK.md rot unnoticed
+- **comparison**: Document the tool, its corpus tiers and its metrics
+- **comparison**: Correct the corpus count and two stale names
+
+
 ## [0.7.1] - 2026-08-29
 
 ### ⚠ Breaking changes
@@ -340,7 +424,8 @@ The v0.2 reference reworked the format: adaptive grids, `MAX_CHROMA` lowered fro
 - Official format specification under `spec/`.
 - Monorepo scaffolding, README, and development guide.
 
-[Unreleased]: https://github.com/visualcommons/chromahash/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/visualcommons/chromahash/compare/v0.7.2...HEAD
+[0.7.2]: https://github.com/visualcommons/chromahash/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/visualcommons/chromahash/compare/v0.6.0...v0.7.1
 [0.6.0]: https://github.com/visualcommons/chromahash/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/visualcommons/chromahash/compare/v0.4.0...v0.5.0

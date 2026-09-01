@@ -1,17 +1,17 @@
 # ChromaHash Format Specification
 
-**Release:** 0.7.1
+**Release:** 0.7.2
 **Wire-format generation:** v1 (`version` field = 0)
 **Status:** Stable
-**Date:** 2026-08-23
+**Date:** 2026-09-01
 
 > **What "Stable" means here.** Every constant this format ships has a measurement behind
 > it on the current corpora, taken on a tune split and validated once on a never-tuned
 > holdout (`EXPERIMENTS.md` §11). The wire format freezes **at the 0.7.1 release**: from
-> that tag on, a change to it increments the `version` field. 0.7.1 has not been tagged,
-> so v1 has never been published and the bitstream is still open to correction (§13). It
-> does **not** mean every language binding has caught up — the Rust core is the reference
-> and the bindings follow it.
+> that tag on, a change to it increments the `version` field. 0.7.1 is tagged and
+> published, so v1 is live and the bitstream is frozen (§13). It does **not** mean every
+> language binding has caught up — the Rust core is the reference and the bindings
+> follow it.
 
 > ChromaHash is a compact, self-describing Low Quality Image Placeholder (LQIP)
 > format designed for professional photo management at scale. It encodes a
@@ -21,7 +21,7 @@
 > header) trades size for detail, roughly quadrupling the byte length per tier
 > while doubling the rendered resolution on each axis.
 >
-> The release version (`0.7.1`, semver) and the **wire-format generation** (`v1`,
+> The release version (`0.7.2`, semver) and the **wire-format generation** (`v1`,
 > the 3-bit `version` field, value `0`) are independent axes: the release follows
 > semver, while the on-wire `version` field increments only on an incompatible
 > format break (`1`→v2, `2`→v3, …). This generation is a clean break with **no

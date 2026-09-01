@@ -10,7 +10,7 @@
     <LangVersion>latest</LangVersion>
     <RootNamespace>ChromaHash</RootNamespace>
     <AssemblyName>ChromaHash</AssemblyName>
-    <Version>0.7.1</Version>
+    <Version>0.7.2</Version>
     <Description>ChromaHash: modern LQIP (Low Quality Image Placeholder) format</Description>
     <Authors>Justin Chung</Authors>
     <PackageLicenseExpression>MIT OR Apache-2.0</PackageLicenseExpression>
