@@ -30,6 +30,25 @@ const MAIN = path.join(TOOL_ROOT, "dist/main.js");
 const SYNTHETIC = path.join(TOOL_ROOT, "fixtures/synthetic");
 
 /**
+ * The fixtures this gate scores.
+ *
+ * A fixed handful, not the whole synthetic corpus. The invariant under test is
+ * that per-image results are folded in input order rather than completion
+ * order, and that shows up with any set of images whose metrics differ — more
+ * images buy no extra coverage and only make the gate too slow to run on every
+ * push. These six differ in chroma, key, structure and aspect, so a reordering
+ * moves the aggregates rather than cancelling out.
+ */
+const GATE_FIXTURES = [
+  "checkerboard.png",
+  "dim-9x6.png",
+  "gradient-2d.png",
+  "monochrome.png",
+  "noise.png",
+  "solid-red.png",
+] as const;
+
+/**
  * Volatile fields that differ between any two runs and say nothing about
  * determinism: when the report was generated, and the paths of the standalone
  * image files, which each run writes into its own output directory.
@@ -55,7 +74,7 @@ function runReport(outDir: string, jobs: number): string {
     [
       MAIN,
       "--images",
-      "fixtures/synthetic/*.png",
+      `fixtures/synthetic/{${GATE_FIXTURES.join(",")}}`,
       "--skip-natural",
       "--skip-holdout",
       "--skip-harnesses",
