@@ -170,10 +170,6 @@ export interface FormatResult {
   decodedWidth: number;
   /** Height of the decoded preview image. */
   decodedHeight: number;
-  /** Average encode time in milliseconds. */
-  encodeTimeMs: number;
-  /** Average decode time in milliseconds. */
-  decodeTimeMs: number;
   /** Base64 PNG data URI for HTML embedding. */
   dataUri: string;
   /** Quality metrics (all null for CSS-only formats like unpic). */
@@ -195,7 +191,7 @@ export interface FormatAdapter {
   /** Display name of the format. */
   readonly name: string;
   /** Process an image and return the format result. */
-  process(input: ImageInput, iterations: number): Promise<FormatResult>;
+  process(input: ImageInput): Promise<FormatResult>;
 }
 
 /** Result from a per-language CLI harness. */
@@ -206,6 +202,15 @@ export interface HarnessResult {
   hash: Uint8Array;
   /** Whether this hash matches the reference (Rust) hash. */
   matches: boolean;
+  /**
+   * Why this harness produced no hash, or null when it ran.
+   *
+   * A harness that builds and then crashes used to be recorded as
+   * `matches: false` — indistinguishable from a genuine byte disagreement,
+   * which is a claim nothing observed. Consumers must treat an errored result
+   * as *inconclusive*, never as a mismatch.
+   */
+  error: string | null;
   /** Decoded preview as a base64 PNG data URI. */
   dataUri: string;
   /** Width of the decoded preview, or 0 when the harness produced no preview. */
@@ -241,8 +246,6 @@ export interface FormatStat {
    */
   images: number;
   avgSize: number;
-  avgEncode: number;
-  avgDecode: number;
   /** Primary metric: mean CIEDE2000 ΔE00 (lower is better). */
   avgCiede: number | null;
   avgDssim: number | null;
@@ -297,8 +300,6 @@ export interface FormatJson {
   encodedSizeBytes: number;
   decodedWidth: number;
   decodedHeight: number;
-  encodeTimeMs: number;
-  decodeTimeMs: number;
   /** Relative path to the standalone preview image, or null for CSS-only formats. */
   preview: string | null;
   /** CSS gradient string for CSS-only formats (e.g. unpic), else null. */
@@ -319,8 +320,13 @@ export interface ImplementationJson {
   language: string;
   /** Hex-encoded 32-byte hash, or "" if the harness errored. */
   hash: string;
-  /** Whether this hash matches the reference (Rust) hash. */
+  /**
+   * Whether this hash matches the reference (Rust) hash. Meaningful only when
+   * {@link error} is null — an errored harness produced no hash to compare.
+   */
   matches: boolean;
+  /** Why this harness produced no hash, or null when it ran. */
+  error: string | null;
   /** Relative path to the standalone decoded preview, or null if the harness errored. */
   preview: string | null;
 }

@@ -5,7 +5,7 @@ import path from "node:path";
 import sharp from "sharp";
 import type { FormatAdapter, FormatResult, ImageInput } from "../types.ts";
 import { rgbaToDataUri } from "../image-loader.ts";
-import { ALPHA_BACKDROP, computeAllMetrics, timeMs } from "../metrics.ts";
+import { ALPHA_BACKDROP, computeAllMetrics } from "../metrics.ts";
 import {
   BudgetUnrepresentableError,
   findCodecVariantForBudget,
@@ -255,7 +255,7 @@ export class CodecThumbAdapter implements FormatAdapter {
     };
   }
 
-  async process(input: ImageInput, iterations: number): Promise<FormatResult> {
+  async process(input: ImageInput): Promise<FormatResult> {
     const reference = input.metricReferenceRgba ?? input.referenceRgba;
     const maxLongEdge = Math.max(input.smallWidth, input.smallHeight);
     const encodeAt = (longEdge: number, quality: number) =>
@@ -304,13 +304,6 @@ export class CodecThumbAdapter implements FormatAdapter {
       chosen.decodedHeight,
     );
 
-    const encodeTimeMs = await timeMs(async () => {
-      await encodeAt(chosen.longEdge, chosen.quality);
-    }, iterations);
-    const decodeTimeMs = await timeMs(async () => {
-      await this.decode(chosen.data);
-    }, iterations);
-
     const dataUri = await rgbaToDataUri(
       chosen.decodedRgba,
       chosen.decodedWidth,
@@ -329,8 +322,6 @@ export class CodecThumbAdapter implements FormatAdapter {
         width: chosen.decodedWidth,
         height: chosen.decodedHeight,
       },
-      encodeTimeMs,
-      decodeTimeMs,
       dataUri,
       ...scores,
     };

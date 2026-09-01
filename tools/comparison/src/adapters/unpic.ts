@@ -1,7 +1,7 @@
 import { blurhashToCssGradientString } from "@unpic/placeholder";
 import { decode, encode } from "blurhash";
 import type { FormatAdapter, FormatResult, ImageInput } from "../types.ts";
-import { ALPHA_BACKDROP, computeAllMetrics, timeMs } from "../metrics.ts";
+import { ALPHA_BACKDROP, computeAllMetrics } from "../metrics.ts";
 import {
   type GradientCellColor,
   rasterizeUnpicGradients,
@@ -22,7 +22,7 @@ const RASTER_LONG_EDGE = 64;
 export class UnpicAdapter implements FormatAdapter {
   readonly name = "unpic";
 
-  async process(input: ImageInput, iterations: number): Promise<FormatResult> {
+  async process(input: ImageInput): Promise<FormatResult> {
     const { smallWidth: w, smallHeight: h, smallRgba: rgba } = input;
 
     // unpic uses BlurHash internally, then converts to CSS gradient
@@ -30,10 +30,6 @@ export class UnpicAdapter implements FormatAdapter {
 
     const hashStr = encode(pixels, w, h, 4, 4);
     const css = blurhashToCssGradientString(hashStr);
-    const encodeTimeMs = await timeMs(() => {
-      const bh = encode(pixels, w, h, 4, 4);
-      blurhashToCssGradientString(bh);
-    }, iterations);
 
     // The "encoded" size is the CSS string length
     const encodedSizeBytes = new TextEncoder().encode(css).length;
@@ -92,8 +88,6 @@ export class UnpicAdapter implements FormatAdapter {
         reason:
           "a CSS gradient stack has no intrinsic size -- it fills whatever box it is given. The raster scored here is derived from the source, not from the payload.",
       },
-      encodeTimeMs,
-      decodeTimeMs: 0,
       dataUri,
       ...scores,
     };

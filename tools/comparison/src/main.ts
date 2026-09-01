@@ -82,7 +82,6 @@ const { values } = parseArgs({
     // version mode can fall back to versions-report.html instead of clobbering it.
     output: { type: "string" },
     json: { type: "string" },
-    iterations: { type: "string", default: "10" },
     "skip-harnesses": { type: "boolean", default: false },
     "generate-fixtures": { type: "boolean", default: true },
     "skip-natural": { type: "boolean", default: false },
@@ -135,7 +134,6 @@ const outputPath =
     : values.versions
       ? "output/versions-report.html"
       : "output/report.html");
-const iterations = Number.parseInt(values.iterations ?? "10", 10);
 // Version-comparison mode compares chromahash builds only, and R-D mode sweeps
 // format variants, so the cross-language harness verification is irrelevant in
 // both and is always skipped.
@@ -391,9 +389,6 @@ async function main(): Promise<void> {
           // tags lack capped decode); metrics resample to source regardless.
           capToSource: false,
           tier: chromaTier,
-          // Old tag binaries predate the bench subcommands; spawn-loop timing
-          // keeps every version column measured the same way.
-          benchTiming: false,
         }),
     );
     if (adapters.length === 0) {
@@ -556,7 +551,7 @@ async function main(): Promise<void> {
       const formatResults: FormatResult[] = [];
       for (const adapter of adapters) {
         try {
-          const result = await adapter.process(input, iterations);
+          const result = await adapter.process(input);
           formatResults.push(result);
         } catch (err) {
           // Metric-infrastructure failures abort the whole run — a report where
@@ -651,8 +646,6 @@ async function main(): Promise<void> {
           encodedSizeBytes: r.encodedSizeBytes,
           decodedWidth: r.decodedWidth,
           decodedHeight: r.decodedHeight,
-          encodeTimeMs: r.encodeTimeMs,
-          decodeTimeMs: r.decodeTimeMs,
           preview,
           css,
           metrics: r.metrics,
@@ -689,6 +682,7 @@ async function main(): Promise<void> {
           language: r.language,
           hash: toHex(r.hash),
           matches: r.matches,
+          error: r.error,
           preview,
         };
       }),
@@ -761,14 +755,18 @@ async function main(): Promise<void> {
     // A language that produced no result anywhere was never run at all — its
     // harness could not be built. That is "unavailable", not a parity failure,
     // and reporting it as FAIL asserts a byte mismatch that was never observed.
-    const ran = entries.some((e) =>
-      e.harnessResults.some((r) => r.language === language),
+    //
+    // A harness that built and then *crashed* is the same kind of absent
+    // verdict: it produced no hash, so it neither matched nor disagreed. Only
+    // an observed byte difference is a FAIL.
+    const observed = entries.flatMap((e) =>
+      e.harnessResults.filter(
+        (r) => r.language === language && r.error === null,
+      ),
     );
-    if (!ran) return { language, pass: null as boolean | null };
-    const pass = entries.every(
-      (e) =>
-        e.harnessResults.find((r) => r.language === language)?.matches ?? false,
-    );
+    if (observed.length === 0)
+      return { language, pass: null as boolean | null };
+    const pass = observed.every((r) => r.matches);
     return { language, pass };
   });
 
@@ -776,7 +774,7 @@ async function main(): Promise<void> {
   const rdJson = rdVariants ? computeRdCurves(entries, rdVariants) : null;
 
   const json: ComparisonJson = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     generatedAt: meta.generatedAt,
     scoring: {
       referenceCap: REFERENCE_CAP,
@@ -879,8 +877,16 @@ async function main(): Promise<void> {
       const results = entries.flatMap((e) =>
         e.harnessResults.filter((r) => r.language === lang),
       );
-      const allMatch = results.every((r) => r.matches);
-      console.log(`  ${lang}: ${allMatch ? "PASS" : "FAIL"}`);
+      const observed = results.filter((r) => r.error === null);
+      const errored = results.length - observed.length;
+      const note = errored > 0 ? ` (${errored} image(s) errored)` : "";
+      const verdict =
+        observed.length === 0
+          ? "N/A"
+          : observed.every((r) => r.matches)
+            ? "PASS"
+            : "FAIL";
+      console.log(`  ${lang}: ${verdict}${note}`);
     }
   }
 }

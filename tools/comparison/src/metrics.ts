@@ -4,25 +4,6 @@ import { computeIqaMetrics, NULL_IQA_METRICS } from "./metrics/iqa.ts";
 import { computeRinging, NULL_RINGING } from "./metrics/local.ts";
 import { upscaleRgba, type UpscalePolicy } from "./upscale.ts";
 
-/**
- * Time a function over N iterations, returning average time in milliseconds.
- * Works for both sync and async functions.
- */
-export async function timeMs(
-  fn: () => void | Promise<void>,
-  iterations: number,
-): Promise<number> {
-  // Warmup
-  await fn();
-
-  const start = performance.now();
-  for (let i = 0; i < iterations; i++) {
-    await fn();
-  }
-  const elapsed = performance.now() - start;
-  return elapsed / iterations;
-}
-
 /** An opaque RGB backdrop that translucent pixels are composited over. */
 export type Backdrop = readonly [number, number, number];
 

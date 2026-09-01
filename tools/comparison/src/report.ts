@@ -116,10 +116,6 @@ export function computeFormatStats(
     const avgSize =
       results.reduce((s, r) => s + r.encodedSizeBytes, 0) /
       (results.length || 1);
-    const avgEncode =
-      results.reduce((s, r) => s + r.encodeTimeMs, 0) / (results.length || 1);
-    const avgDecode =
-      results.reduce((s, r) => s + r.decodeTimeMs, 0) / (results.length || 1);
 
     const ciedeValues = results
       .map((r) => r.metrics.ciede2000)
@@ -161,8 +157,6 @@ export function computeFormatStats(
       name,
       images: results.length,
       avgSize,
-      avgEncode,
-      avgDecode,
       avgCiede: avgMetric(results, (m) => m.ciede2000),
       avgDssim: avgMetric(results, (m) => m.dssim),
       avgMsSsim: avgMetric(results, (m) => m.msSsim),
@@ -296,7 +290,7 @@ function formatStatsTable(stats: FormatStat[]): string {
   const hasBlurred = stats.some((s) => s.avgCiedeBlurred !== null);
   const hasRinging = stats.some((s) => s.avgRinging !== null);
   return `<div class="table-scroll"><table>
-<tr><th>Format</th><th>Images</th><th>Avg Size (B)</th>${metricTh("ciede2000", "Avg ")}${metricTh("ciede2000", "Median ")}${metricTh("ciede2000", "p90 ")}<th>95% CI ΔE00</th>${hasBlurred ? metricTh("blurRecovery") : ""}${hasRinging ? metricTh("ringing", "Avg ") : ""}${metricTh("ssimulacra2", "Avg ")}${metricTh("butteraugli", "Avg ")}${metricTh("dssim", "Avg ")}${metricTh("msSsim", "Avg ")}${metricTh("psnrHvsM", "Avg ")}${metricTh("psnrDb", "Avg ")}<th>Encode (ms)</th><th>Decode (ms)</th></tr>
+<tr><th>Format</th><th>Images</th><th>Avg Size (B)</th>${metricTh("ciede2000", "Avg ")}${metricTh("ciede2000", "Median ")}${metricTh("ciede2000", "p90 ")}<th>95% CI ΔE00</th>${hasBlurred ? metricTh("blurRecovery") : ""}${hasRinging ? metricTh("ringing", "Avg ") : ""}${metricTh("ssimulacra2", "Avg ")}${metricTh("butteraugli", "Avg ")}${metricTh("dssim", "Avg ")}${metricTh("msSsim", "Avg ")}${metricTh("psnrHvsM", "Avg ")}${metricTh("psnrDb", "Avg ")}</tr>
 ${stats
   .map(
     (s) => `<tr>
@@ -321,8 +315,6 @@ ${stats
   <td>${fmt(s.avgMsSsim, 4)}</td>
   <td>${fmt(s.avgPsnrHvsM, 1)}</td>
   <td>${fmt(s.avgPsnr, 1)}</td>
-  <td>${s.avgEncode.toFixed(3)}</td>
-  <td>${s.avgDecode.toFixed(3)}</td>
 </tr>`,
   )
   .join("\n")}
@@ -715,17 +707,16 @@ export function generateReport(
     }
     // No result anywhere means the harness was never run, not that it
     // disagreed with the reference. Mirrors the JSON summary in main.ts.
-    const ran = entries.some((e) =>
-      e.harnessResults.some((r) => r.language === lang),
+    // A harness that built and then crashed produced no hash either, so it is
+    // the same absent verdict rather than a mismatch. Only an observed byte
+    // difference is a failure.
+    const observed = entries.flatMap((e) =>
+      e.harnessResults.filter((r) => r.language === lang && r.error === null),
     );
-    if (!ran) {
+    if (observed.length === 0) {
       return { language: lang, pass: null as boolean | null };
     }
-    const allMatch = entries.every((e) => {
-      const result = e.harnessResults.find((r) => r.language === lang);
-      return result?.matches ?? false;
-    });
-    return { language: lang, pass: allMatch };
+    return { language: lang, pass: observed.every((r) => r.matches) };
   });
 
   // Only tabs with content are emitted: --rd narrows the corpus to
@@ -744,7 +735,7 @@ export function generateReport(
     ),
   );
 
-  const scoringNote = `Placeholders are judged at the size they are shown: every format's decode is upscaled to a display-resolution reference — the original capped to 512&nbsp;px on the long edge — and scored there. Both sides are composited over a white backdrop first, so transparency has a defined meaning. The seven metrics above marked <em>iqa-cli</em> are computed by <a href="https://crates.io/crates/iqa-cli" rel="noreferrer"><code>iqa-cli</code></a>; window-based ones are omitted (N/A) for images below their minimum size. The two marked <em>measured here</em> are computed by this harness — ringing deliberately samples the decode nearest-neighbour rather than reusing that upscale, because the resampler overshoots and would otherwise be credited to the format. <strong>Timing</strong>: per-operation averages over the run's iteration count. ChromaHash is measured in-process inside its release-built native binary; the npm formats run in-process in Node, so compare timings as "native Rust" vs "Node/JS" rather than as one ranking.`;
+  const scoringNote = `Placeholders are judged at the size they are shown: every format's decode is upscaled to a display-resolution reference — the original capped to 512&nbsp;px on the long edge — and scored there. Both sides are composited over a white backdrop first, so transparency has a defined meaning. The seven metrics above marked <em>iqa-cli</em> are computed by <a href="https://crates.io/crates/iqa-cli" rel="noreferrer"><code>iqa-cli</code></a>; window-based ones are omitted (N/A) for images below their minimum size. The two marked <em>measured here</em> are computed by this harness — ringing deliberately samples the decode nearest-neighbour rather than reusing that upscale, because the resampler overshoots and would otherwise be credited to the format. <strong>Speed is not measured here.</strong> This report answers "how good does each format look at a given size"; encode and decode timings come from a dedicated harness that controls for run-to-run noise (repeated blocks, a minimum-of-blocks estimator, confidence intervals) and are published in <code>spec/PERFORMANCE.md</code>. Timing a format while the machine is busy scoring every other one, as this page used to, produces a number that measures the load rather than the codec.`;
 
   const tabs: { id: string; label: string; html: string }[] = [
     {

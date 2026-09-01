@@ -1,7 +1,7 @@
 import lqip from "lqip-modern";
 import sharp from "sharp";
 import type { FormatAdapter, FormatResult, ImageInput } from "../types.ts";
-import { computeAllMetrics, timeMs } from "../metrics.ts";
+import { computeAllMetrics } from "../metrics.ts";
 
 export class LqipModernAdapter implements FormatAdapter {
   readonly name: string;
@@ -20,7 +20,7 @@ export class LqipModernAdapter implements FormatAdapter {
     this.outputFormat = opts?.outputFormat ?? "webp";
   }
 
-  async process(input: ImageInput, iterations: number): Promise<FormatResult> {
+  async process(input: ImageInput): Promise<FormatResult> {
     const { smallWidth: w, smallHeight: h, smallRgba: rgba } = input;
 
     // lqip-modern takes a Buffer of an image file (not raw RGBA).
@@ -33,9 +33,6 @@ export class LqipModernAdapter implements FormatAdapter {
 
     const lqipOpts = { resize: this.resize, outputFormat: this.outputFormat };
     const result = await lqip(pngBuffer, lqipOpts);
-    const encodeTimeMs = await timeMs(async () => {
-      await lqip(pngBuffer, lqipOpts);
-    }, iterations);
 
     const encodedSizeBytes = result.content.length;
     // Built here rather than taken from result.metadata.dataURIBase64: the
@@ -58,12 +55,6 @@ export class LqipModernAdapter implements FormatAdapter {
     // Decode timing: the real WebP → RGBA decode, measured like every other
     // format (previously hard-coded to 0, which misrepresented the format as
     // having a free decode).
-    const decodeTimeMs = await timeMs(async () => {
-      await sharp(result.content)
-        .ensureAlpha()
-        .raw()
-        .toBuffer({ resolveWithObject: true });
-    }, iterations);
 
     const reference = input.metricReferenceRgba ?? input.referenceRgba;
     const scores = await computeAllMetrics(
@@ -83,8 +74,6 @@ export class LqipModernAdapter implements FormatAdapter {
       // The WebP payload carries its own dimensions in the bitstream header;
       // `info` is that header, not a size this harness requested.
       intrinsicSize: { kind: "declared", width: dw, height: dh },
-      encodeTimeMs,
-      decodeTimeMs,
       dataUri,
       ...scores,
     };
