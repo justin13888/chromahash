@@ -37,20 +37,21 @@ import { ensureNaturalImages } from "./natural-images.ts";
 /**
  * The gated images: eight tune-split photographs spanning the corpus categories
  * the encoder is most likely to regress on — mid-key detail, a face, a night
- * scene, a saturated one, a dark skin tone under a high-key background, and a
- * grayscale photograph whose chroma AC set is identically zero (the degenerate
- * input for any change to the chroma path). Content-pinned by
- * `natural-images.ts`, so this set is byte-identical on every machine.
+ * scene, a saturated one, a skin tone, and a photograph whose measured mean
+ * chroma is ~0 so its chroma AC set is identically zero (the degenerate input
+ * for any change to the chroma path). One image per axis of the corpus audit,
+ * all from the tune split. Content-pinned by `natural-images.ts`, so this set
+ * is byte-identical on every machine.
  */
 const GATE_IMAGES = [
-  "chroma-strawberries",
-  "natural-city",
-  "natural-facade",
-  "natural-food",
-  "natural-mountains",
-  "night-milky-way",
-  "portrait-camera",
-  "portrait-suit",
+  "portrait-african-lady",
+  "chroma-the-old-monochrome",
+  "natural-landschaftsschutzgebiet-volkspark-rehberge",
+  "natural-andrew-jackson-state",
+  "night-bas-lica-notre",
+  "natural-fishing-the-coast",
+  "natural-dish-meatloaf-served",
+  "natural-hard-rock-cafe",
 ] as const;
 
 /** Quality tier the gate scores: the 32-byte default (spec §2.5 tier code 1). */

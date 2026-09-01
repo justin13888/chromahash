@@ -10,7 +10,8 @@ pnpm-debug.log*
 # Generated report + downloaded comparison fixtures.
 output/
 fixtures/synthetic/
-fixtures/natural/
+fixtures/natural/*.jpg
+fixtures/natural/*.png
 fixtures/holdout/*.png
 fixtures/alpha/*.png
 fixtures/alpha/*.jpg

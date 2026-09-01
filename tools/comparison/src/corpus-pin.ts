@@ -165,6 +165,25 @@ function localCorpusDir(): string | null {
   return dir === undefined || dir === "" ? null : dir;
 }
 
+/**
+ * Minimum gap between two network fetches.
+ *
+ * A corpus is a few dozen files from one host, fetched back to back — the shape
+ * that trips a rate limiter. Wikimedia answers a burst with
+ * "Your bot is making too many requests. Please reduce your request rate", and
+ * while the backoff above recovers from that, the polite thing (and the faster
+ * one overall) is not to provoke it. Only applies to real fetches: a cached or
+ * locally-mirrored corpus does not wait at all.
+ */
+const MIN_FETCH_GAP_MS = 350;
+let lastFetchAt = 0;
+
+async function pace(): Promise<void> {
+  const wait = lastFetchAt + MIN_FETCH_GAP_MS - Date.now();
+  if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+  lastFetchAt = Date.now();
+}
+
 /** Try every source in order; the digest is what makes a mirror safe. */
 async function fetchFromAny(
   urls: readonly string[],
@@ -173,6 +192,7 @@ async function fetchFromAny(
   const failures: string[] = [];
   for (const url of urls) {
     try {
+      await pace();
       return await fetchWithRetry(url);
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
