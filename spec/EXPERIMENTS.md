@@ -221,24 +221,34 @@ byte count *and* coefficient count fixed, vary only the raster
 | 416 L / 144 C (411 B) @64 px | 7.830 @64 px | 7.828 @128 px | 0.02% |
 | 1664 L / 576 C (1623 B) | 6.745 @64 px | 6.726 @256 px | 0.29% |
 
-**The raster is inert wherever it is legal, and only there.** `prepare_channel`
-drops any selected pair with `cx >= w || cy >= h`, so the test is *per-axis*
-and the short edge is what binds: on a 3:2 photograph a 32 px raster is 32×21,
-and the ℓ2 ball of K luma coefficients reaches an index of about √(4K/π). The
-four rows split exactly on that test — 11.5 against 21 and 23.0 against 42
-clear it and cost nothing (−0.02%, 0.02%); 23.0 against 21 and 46.0 against 42
-do not, and the frequencies the decoder discards cost 0.92% and 0.29%.
+(The "native tier raster" column names the tier's own render. The shipped-tier
+arms are scored through the harness's ≤100 px encoder input, so t2 and t3 render
+at 100×67 rather than 128×84 and 256×168 — which is what §7.14 measures around.
+The tier's own raster is nonetheless what governs the selection below.)
+
+**The raster is inert wherever it is legal, and only there** — and the binding
+constraint is at *encode*, not decode. `SelectionOrder` builds its candidate set
+as every `(cx, cy)` in `[0, W) × [0, H)` for the encoding tier's own render, so
+a frequency outside that box is never a candidate in the first place and
+`prepare_channel`'s `cx >= w || cy >= h` test has nothing left to drop. The box
+is *per-axis* and the short edge is what binds: on a 3:2 photograph a 32 px
+raster is 32×21, and the ℓ2 ball of K luma coefficients reaches an index of
+about √(4K/π). The four rows split exactly on that test — 11.5 against 21 and
+23.0 against 42 clear it and cost nothing (−0.02%, 0.02%); 23.0 against 21 and
+46.0 against 42 do not, and the coefficients the encoder is forced to substitute
+for the ones the box denies it cost 0.92% and 0.29%.
 
 So the conclusion stands, with its scope now stated: all of the measured
 quality in the tier ladder comes from coefficient count, and the render-edge
 doubling is a convenience for the consumer rather than a fidelity mechanism.
 What it satisfies is a correctness bound, not a quality one — and below that
-bound the doubling is not free, it is repairing damage the smaller raster did.
+bound the doubling is not free: it is returning the coefficients a smaller
+candidate box had denied the encoder.
 
 Round 1 read this table as "if anything the *smaller* raster scores better",
 which its numbers supported (−0.04% / −0.05% / −0.34%, all negative). That
-reading was an artifact of a corpus insensitive enough that discarded
-frequencies did not show. The third row is the control that separates the two
+reading was an artifact of a corpus insensitive enough that the forced
+substitution did not show. The third row is the control that separates the two
 explanations — same counts, same baseline, a raster that clears the bound —
 and it was in the sweep the whole time, never quoted.
 
