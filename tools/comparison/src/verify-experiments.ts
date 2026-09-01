@@ -1303,10 +1303,6 @@ const BINDINGS: Binding[] = [
     aliases: {
       "shipped A5@4 L20@5 C9@4": "SHIPPED A5@4 L20@5 C9@4",
       "**A28@3 L22@4 C3@3** (the tier-0 choice)": "A28@3 L22@4 C3@3",
-      // The config labelled this arm L26@4 while running `la1=28:4`. The label
-      // is fixed in sweeps/alpha-tier1.json; the committed *output* still
-      // carries the old one until the sweep is re-run, so map across it.
-      "A20@3 L28@4 C3@3": "A20@3 L26@4 C3@3",
     },
   },
 
