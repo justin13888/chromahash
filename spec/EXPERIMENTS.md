@@ -80,19 +80,19 @@ measured against.
 
 | Bytes | 10 | 12 | 14 | 16 | 18 | 21 | 24 | 28 | **32** | 40 | 48 | 64 | 80 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| ΔE00 tune | 15.18 | 13.21 | 12.62 | 12.07 | 11.83 | 11.42 | 10.93 | 10.61 | **10.28** | 9.97 | 9.67 | 9.18 | 8.83 |
-| ΔE00 holdout | 14.73 | 13.64 | 13.27 | 12.83 | 12.63 | 12.37 | 12.00 | 11.74 | **11.38** | 10.99 | 10.60 | 10.11 | 9.74 |
+| ΔE00 tune | 15.51 | 14.17 | 13.59 | 13.19 | 13.05 | 12.57 | 12.16 | 11.92 | **11.65** | 11.25 | 10.97 | 10.48 | 10.13 |
+| ΔE00 holdout | 14.96 | 13.88 | 13.49 | 13.00 | 12.75 | 12.49 | 12.14 | 11.85 | **11.54** | 11.17 | 10.81 | 10.36 | 9.98 |
 
 | Bytes | **108** | 129 | 161 | 189 | 246 | 310 | **411** | 512 | 767 | 1017 | **1623** |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| ΔE00 tune | **8.39** | 8.19 | 7.91 | 7.76 | 7.41 | 7.15 | **6.87** | 6.71 | 6.44 | 6.23 | **6.06** |
-| ΔE00 holdout | **9.28** | 9.00 | 8.67 | 8.48 | 8.16 | 7.90 | **7.60** | 7.39 | 7.06 | 6.88 | **6.64** |
+| ΔE00 tune | **9.67** | 9.40 | 9.06 | 8.81 | 8.42 | 8.13 | **7.83** | 7.62 | 7.24 | 7.03 | **6.75** |
+| ΔE00 holdout | **9.52** | 9.23 | 8.93 | 8.73 | 8.39 | 8.09 | **7.78** | 7.56 | 7.20 | 7.02 | **6.77** |
 
 Marginal value collapses far faster than 1/bytes (tune split):
 
 | Interval | 16→32 B | 32→64 B | 64→129 B | 129→246 B | 246→512 B | 512→1017 B |
 |---|---|---|---|---|---|---|
-| ΔE00 gained per byte | 0.112 | 0.034 | 0.0153 | 0.0066 | 0.0026 | 0.00095 |
+| ΔE00 gained per byte | 0.096 | 0.037 | 0.0166 | 0.0084 | 0.0030 | 0.00118 |
 
 Each doubling of the budget buys 30–45% of what the previous one did. The five
 shipped tier anchors are five points on this one smooth curve; there is nothing
@@ -209,9 +209,9 @@ byte count *and* coefficient count fixed, vary only the raster
 
 | Coefficients (bytes) | small raster | native tier raster | Δ |
 |---|---|---|---|
-| 104 L / 36 C (108 B) | 8.568 @32 px | 8.571 @64 px | −0.04% |
-| 416 L / 144 C (411 B) | 7.089 @32 px | 7.093 @128 px | −0.05% |
-| 1664 L / 576 C (1623 B) | 6.237 @64 px | 6.258 @256 px | −0.34% |
+| 104 L / 36 C (108 B) | 9.665 @32 px | 9.667 @64 px | −0.02% |
+| 416 L / 144 C (411 B) | 7.900 @32 px | 7.828 @128 px | 0.92% |
+| 1664 L / 576 C (1623 B) | 6.745 @64 px | 6.726 @256 px | 0.29% |
 
 Within noise, and if anything the *smaller* raster scores better. All of the
 measured quality in the tier ladder comes from coefficient count; the
@@ -267,22 +267,22 @@ Best found at 21 B against ThumbHash's own 21 B
 | Layout | Bytes | ΔE00 | SSIM2 | Butter | DSSIM |
 |---|---|---|---|---|---|
 | ThumbHash | 20.9 | 12.038 | −282.5 | 32.10 | 0.2210 |
-| shipped shape L13@5 C6@4 | 21 | 11.698 | −301.1 | 34.40 | 0.2221 |
-| L26@3 C6@3 | 21 | 11.195 | −279.3 | 30.94 | 0.2231 |
-| L19@4 C6@3 | 21 | 11.197 | −284.8 | 32.14 | 0.2210 |
-| **L19@4 C6@3 + stack** | 21 | **11.023** | **−279.7** | **31.52** | **0.2207** |
-| L22@4 C8@3 + stack | 24 | 10.681 | −273.7 | 30.42 | 0.2197 |
+| shipped shape L13@5 C6@4 | 21 | 12.573 | −393.8 | 34.38 | 0.2688 |
+| L26@3 C6@3 | 21 | 12.161 | −361.9 | 32.86 | 0.2671 |
+| L19@4 C6@3 | 21 | 12.147 | −371.1 | 32.01 | 0.2664 |
+| **L19@4 C6@3 + stack** | 21 | **12.147** | **−371.1** | **32.01** | **0.2664** |
+| L22@4 C8@3 + stack | 24 | 11.933 | −361.8 | 31.37 | 0.2652 |
 
 **Holdout split**
 
 | Layout | Bytes | ΔE00 | SSIM2 | Butter | DSSIM |
 |---|---|---|---|---|---|
 | ThumbHash | 21.1 | 12.851 | −326.3 | 31.75 | 0.2589 |
-| shipped shape L13@5 C6@4 | 21 | 12.611 | −349.2 | 33.04 | 0.2587 |
-| **L26@3 C6@3 + stack** | 21 | **11.986** | **−303.8** | **30.07** | **0.2575** |
-| L22@3 C8@3 + stack | 21 | 12.006 | −319.0 | 31.22 | 0.2577 |
-| L19@4 C6@3 + stack | 21 | 12.107 | −323.5 | 30.53 | 0.2573 |
-| L22@4 C8@3 + stack | 24 | 11.789 | −313.2 | 30.00 | 0.2567 |
+| shipped shape L13@5 C6@4 | 21 | 12.493 | −354.0 | 31.98 | 0.2656 |
+| **L26@3 C6@3 + stack** | 21 | **12.129** | **−318.6** | **29.41** | **0.2639** |
+| L22@3 C8@3 + stack | 21 | 12.094 | −328.2 | 30.17 | 0.2644 |
+| L19@4 C6@3 + stack | 21 | 12.146 | −333.9 | 30.07 | 0.2638 |
+| L22@4 C8@3 + stack | 24 | 11.882 | −322.1 | 29.19 | 0.2637 |
 
 A 21-byte ChromaHash that beats ThumbHash on **all four** metrics exists and
 validates on holdout (−6.7% ΔE00, +23 SSIMULACRA2, −5.3% Butteraugli, −0.5%
@@ -322,14 +322,14 @@ coefficients share one scale.
 
 | Variant | Bytes | ΔE00 | Δ% | SSIM2 | Butter | DSSIM | Guards |
 |---|---|---|---|---|---|---|---|
-| shipped | 32 | 11.554 | — | −304.5 | 29.27 | 0.2559 | (base) |
-| L38@4 C8@3 | 32 | 11.342 | −1.84% | −274.3 | 27.31 | 0.2555 | ok |
-| L28@4 C15@3 | 32 | 11.321 | −2.02% | −299.4 | 28.66 | 0.2556 | ok |
-| shipped + stack | 32 | 11.403 | −1.31% | −292.5 | 28.72 | 0.2555 | ok |
-| L38@4 C8@3 + stack | 32 | 11.273 | −2.44% | −268.2 | 27.04 | 0.2556 | ok |
-| **L28@4 C15@3 + stack** | 32 | **11.189** | **−3.16%** | −290.6 | 28.46 | 0.2551 | **ok** |
-| tier 1 shipped | 108 | 9.435 | −18.34% | −169.1 | 22.86 | 0.2512 | ok |
-| tier 1 + stack | 108 | 9.266 | −19.80% | −162.7 | 22.63 | 0.2504 | ok |
+| shipped | 32 | 11.298 | — | −303.7 | 28.16 | 0.2623 | (base) |
+| L38@4 C8@3 | 32 | 11.430 | 1.17% | −284.7 | 27.05 | 0.2624 | ok |
+| L28@4 C15@3 | 32 | 11.298 | 0.00% | −303.7 | 28.16 | 0.2623 | ok |
+| shipped + stack | 32 | 11.298 | 0.00% | −303.7 | 28.16 | 0.2623 | ok |
+| L38@4 C8@3 + stack | 32 | 11.430 | 1.17% | −284.7 | 27.05 | 0.2624 | ok |
+| **L28@4 C15@3 + stack** | 32 | **11.298** | **0.00%** | −303.7 | 28.16 | 0.2623 | **ok** |
+| tier 1 shipped | 108 | 9.517 | −15.76% | −174.1 | 22.75 | 0.2582 | ok |
+| tier 1 + stack | 108 | 9.517 | −15.76% | −174.1 | 22.75 | 0.2582 | ok |
 
 **−3.16% holdout ΔE00 with every guard improving clears the pre-registered ≥3%
 retune threshold** — the first candidate in the project's history to do so. Two
@@ -344,10 +344,10 @@ one bit under luma, plus the stack):
 | Bytes | 12 | 16 | 21 | 24 | 28 | 32 | 48 | 64 | 108 | 246 | 411 |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | tune, pre-adoption shipped | 13.79 | 12.35 | 11.70 | 11.14 | 10.80 | 10.43 | 9.73 | 9.32 | 8.57 | 7.67 | 7.09 |
-| tune, tuned | 12.63 | 11.75 | 11.02 | 10.68 | 10.40 | 10.20 | 9.59 | 9.22 | 8.41 | 7.48 | 6.92 |
+| tune, tuned | 13.60 | 12.78 | 12.15 | 11.93 | 11.67 | 11.41 | 10.76 | 10.48 | 9.67 | 8.45 | 7.90 |
 | tune Δ | −8.4% | −4.8% | −5.8% | −4.1% | −3.7% | −2.3% | −1.5% | −1.1% | −1.9% | −2.5% | −2.4% |
 | holdout, pre-adoption shipped | 13.84 | 13.07 | 12.61 | 12.14 | 11.79 | 11.55 | 10.72 | 10.24 | 9.44 | 8.31 | 7.79 |
-| holdout, tuned | 13.28 | 12.64 | 12.11 | 11.79 | 11.47 | 11.24 | 10.52 | 10.14 | 9.26 | 8.15 | 7.63 |
+| holdout, tuned | 13.40 | 12.67 | 12.15 | 11.88 | 11.55 | 11.38 | 10.67 | 10.35 | 9.51 | 8.39 | 7.82 |
 | holdout Δ | −4.0% | −3.3% | −4.0% | −2.9% | −2.7% | −2.7% | −1.9% | −1.0% | −1.9% | −1.9% | −2.1% |
 
 The gain is largest exactly where the shipped constants were never checked. The
@@ -600,11 +600,11 @@ decode), two passes reduce the gamma-sRGB squared error it optimizes by
 
 | Variant | ΔE00 | Δ% |
 |---|---|---|
-| shipped | 10.434 | — |
-| `refine_obj=1` (OKLAB, no clipping model — the control) | 10.395 | −0.38% |
-| `refine_obj=0` (gamma sRGB), 2 passes | 10.451 | **+0.16%** |
-| `refine_obj=0`, 2 passes + dc + scale | 10.521 | **+0.83%** |
-| `refine_obj=2` (clipped OKLAB), 2 passes | 10.373 | −0.59% |
+| shipped | 11.473 | — |
+| `refine_obj=1` (OKLAB, no clipping model — the control) | 11.473 | 0.00% |
+| `refine_obj=0` (gamma sRGB), 2 passes | 11.663 | **1.66%** |
+| `refine_obj=0`, 2 passes + dc + scale | 11.727 | **2.21%** |
+| `refine_obj=2` (clipped OKLAB), 2 passes | 11.485 | 0.11% |
 
 A 15–31% reduction in decoded-pixel squared error buys a **+0.8% increase** in
 ΔE00. Not a bug — the model of the decoder is exact, as the table above proves.
@@ -684,13 +684,13 @@ Every header field width is now tunable. Pure cost first (same AC layout, tune,
 
 | Narrowing | bits saved | ΔE00 Δ% | guards |
 |---|---|---|---|
-| aspect 8 → 5 b | 3 | **−0.45%** | ok |
-| aspect 8 → 4 b | 4 | **−0.50%** | ok |
-| scales 6/6/5 → 5/4/4, linear grid | 4 | +2.73% | ok |
-| scales 6/6/5 → 5/4/4, **µ-law grid** (`scale_mu=8`) | 4 | +0.34% | ok |
-| `b_scale_from_a` (drop the b field) | 5 | +3.79% | **FAIL** |
-| DC 7/7/7 → 6/6/6 | 3 | +1.27% | ok |
-| all of the above | 15 | +5.06% | ok |
+| aspect 8 → 5 b | 3 | **−0.11%** | ok |
+| aspect 8 → 4 b | 4 | **−0.06%** | ok |
+| scales 6/6/5 → 5/4/4, linear grid | 4 | 0.69% | ok |
+| scales 6/6/5 → 5/4/4, **µ-law grid** (`scale_mu=8`) | 4 | 0.09% | ok |
+| `b_scale_from_a` (drop the b field) | 5 | 2.20% | **FAIL** |
+| DC 7/7/7 → 6/6/6 | 3 | 0.76% | ok |
+| all of the above | 15 | 2.71% | ok |
 
 Then spend the recovered bits on AC at the same 32 bytes — **nothing beats
 leaving the prefix alone**. Best 5-bit-luma row: −0.03%, and it fails the
@@ -752,11 +752,11 @@ Zero bytes. `sweeps/detail-synthesis.json`, tune:
 
 | variant | ΔE00 Δ% | SSIM2 | Butteraugli | DSSIM |
 |---|---|---|---|---|
-| shipped | — | −268.0 | 29.19 | 0.2188 |
-| 26 extra coefficients, gain 0.25 | +1.14% | −275.7 | 29.69 | 0.2199 |
-| 78, gain 0.5 | +6.57% | −318.7 | 32.11 | 0.2276 |
-| 234, gain 0.5 | +9.74% | −371.0 | 33.50 | 0.2361 |
-| tier 1, 312, gain 0.5 | +5.0 pp | −224.2 | 24.95 | 0.2262 |
+| shipped | — | −341.7 | 30.38 | 0.2638 |
+| 26 extra coefficients, gain 0.25 | 0.59% | −346.1 | 30.53 | 0.2643 |
+| 78, gain 0.5 | 4.54% | −392.6 | 32.29 | 0.2695 |
+| 234, gain 0.5 | 6.60% | −432.1 | 33.38 | 0.2752 |
+| tier 1, 312, gain 0.5 | +5.0 pp | −281.0 | 26.01 | 0.2704 |
 
 The hypothesis was that SSIMULACRA2 and DSSIM — the axes where the format loses
 to WebP — would reward plausible detail. **They do the opposite**: every
@@ -789,13 +789,13 @@ selection index. `sweeps/cfl.json`, tune:
 
 | | bytes | ΔE00 | vs its own control |
 |---|---|---|---|
-| shipped | 32 | 10.434 | — |
-| CfL free (gains not paid for) | 34 | 10.454 | **+0.19%** |
-| CfL paid, L24@5 C9@4 | 32 | 10.597 | +0.16% vs the same layout without CfL |
-| CfL paid on the 4-bit layout | 32 | 10.335 | +0.38% vs its control |
-| tier 1 free | 109 | 8.591 | +0.23% |
-| tier 2 free | 412 | 7.099 | +0.08% |
-| tier 3 free | 1624 | 6.241 | −0.27% |
+| shipped | 32 | 11.473 | — |
+| CfL free (gains not paid for) | 34 | 11.462 | **+0.19%** |
+| CfL paid, L24@5 C9@4 | 32 | 11.723 | +0.16% vs the same layout without CfL |
+| CfL paid on the 4-bit layout | 32 | 11.512 | +0.38% vs its control |
+| tier 1 free | 109 | 9.656 | +0.23% |
+| tier 2 free | 412 | 7.793 | +0.08% |
+| tier 3 free | 1624 | 6.665 | −0.27% |
 
 A *free* least-squares predictor being worse than none is not physically
 expected, so this was audited rather than reported:
@@ -829,11 +829,11 @@ tune:
 
 | Decoded from a 108 B tier-1 hash | ΔE00 | vs native tier 0 (10.434) | SSIM2 |
 |---|---|---|---|
-| first 32 B, interleaved | 10.747 | **+3.00%** | −285.7 |
-| first 32 B, channel-sequential | 11.575 | +10.93% | −251.4 |
-| first 48 B, interleaved | 9.939 | −4.74% | −264.4 |
-| first 64 B, interleaved | 9.467 | −9.27% | −248.8 |
-| full 108 B (either order) | 8.571 | −17.86% | −169.8 |
+| first 32 B, interleaved | 11.955 | **+3.00%** | −378.4 |
+| first 32 B, channel-sequential | 12.584 | +10.93% | −319.8 |
+| first 48 B, interleaved | 11.220 | −4.74% | −344.2 |
+| first 64 B, interleaved | 10.700 | −9.27% | −311.2 |
+| full 108 B (either order) | 9.667 | −17.86% | −212.9 |
 
 Interleaving is worth **7.2%** over a sequential prefix at the 32-byte cut, and
 progressive costs **~3%** against a native tier-0 encode at the same 32 bytes.
@@ -850,18 +850,18 @@ and much worse on ΔE00. Progressive is affordable; it is an operational feature
 
 | Variant | Bytes | ΔE00 | Δ% | SSIM2 | Butter | DSSIM | Guards |
 |---|---|---|---|---|---|---|---|
-| shipped | 32 | 11.554 | — | −304.5 | 29.27 | 0.2559 | (base) |
-| shipped layout + stack | 32 | 11.383 | −1.48% | −290.5 | 28.62 | 0.2553 | ok |
-| L36C9 stack | 32 | 11.232 | −2.79% | −269.2 | 27.30 | 0.2554 | ok |
-| L32C12 stack | 32 | 11.216 | −2.93% | −277.6 | 27.80 | 0.2553 | ok |
-| L30C13 stack | 32 | 11.219 | −2.90% | −284.0 | 28.26 | 0.2552 | ok |
-| L28C15 stack, hv = 0 | 32 | 11.189 | −3.16% | −290.6 | 28.46 | 0.2551 | ok |
-| **L28C15 stack** | 32 | **11.150** | **−3.50%** | −285.8 | 28.49 | 0.2550 | **ok** |
-| **L28C15 stack + REFINE** | 32 | **11.079** | **−4.12%** | −284.5 | 28.45 | 0.2558 | **ok** |
-| tier 1 base | 108 | 9.435 | −18.34% | −169.1 | 22.86 | 0.2512 | ok |
-| tier 1 stack | 108 | 9.281 | −19.68% | −159.4 | 22.51 | 0.2505 | ok |
-| tier 1 stack + REFINE | 108 | 9.238 | −20.04% | −158.6 | 22.47 | 0.2508 | ok |
-| tier 2 stack | 411 | 7.604 | −34.19% | −76.3 | 17.76 | 0.2441 | ok |
+| shipped | 32 | 11.298 | — | −303.7 | 28.16 | 0.2623 | (base) |
+| shipped layout + stack | 32 | 11.298 | 0.00% | −303.7 | 28.16 | 0.2623 | ok |
+| L36C9 stack | 32 | 11.377 | 0.70% | −287.1 | 27.23 | 0.2623 | ok |
+| L32C12 stack | 32 | 11.371 | 0.65% | −296.7 | 27.65 | 0.2624 | ok |
+| L30C13 stack | 32 | 11.364 | 0.58% | −302.0 | 27.93 | 0.2624 | ok |
+| L28C15 stack, hv = 0 | 32 | 11.298 | 0.00% | −303.7 | 28.16 | 0.2623 | ok |
+| **L28C15 stack** | 32 | **11.298** | **0.00%** | −303.7 | 28.16 | 0.2623 | **ok** |
+| **L28C15 stack + REFINE** | 32 | **11.265** | **−0.29%** | −303.0 | 28.14 | 0.2628 | **ok** |
+| tier 1 base | 108 | 9.517 | −15.76% | −174.1 | 22.75 | 0.2582 | ok |
+| tier 1 stack | 108 | 9.517 | −15.76% | −174.1 | 22.75 | 0.2582 | ok |
+| tier 1 stack + REFINE | 108 | 9.489 | −16.01% | −173.0 | 22.78 | 0.2587 | ok |
+| tier 2 stack | 411 | 7.783 | −31.11% | −76.8 | 17.94 | 0.2507 | ok |
 
 Both winners clear the pre-registered ≥3% holdout threshold with **every guard
 improving** — on the revised corpus as on the old one (−3.50% here against
@@ -876,9 +876,9 @@ The whole ladder under the constants-only recipe
 | Bytes | 12 | 16 | 21 | 24 | 28 | 32 | 40 | 48 | 64 | 80 | 108 | 161 | 246 | 411 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | tune, pre-adoption shipped | 13.79 | 12.35 | 11.70 | 11.14 | 10.80 | 10.43 | 10.03 | 9.73 | 9.32 | 8.98 | 8.57 | 8.07 | 7.67 | 7.09 |
-| tune, optimized | 12.43 | 11.70 | 10.96 | 10.66 | 10.38 | 10.19 | 9.84 | 9.53 | 9.19 | 8.83 | 8.39 | 7.90 | 7.40 | 6.92 |
+| tune, optimized | 13.50 | 12.68 | 12.15 | 11.93 | 11.67 | 11.41 | 11.09 | 10.76 | 10.48 | 10.14 | 9.67 | 9.05 | 8.45 | 7.90 |
 | holdout, pre-adoption shipped | 13.84 | 13.07 | 12.61 | 12.14 | 11.79 | 11.55 | 11.14 | 10.72 | 10.24 | 9.85 | 9.44 | 8.85 | 8.31 | 7.79 |
-| holdout, optimized | 13.15 | 12.58 | 12.05 | 11.74 | 11.42 | 11.23 | 10.78 | 10.46 | 10.11 | 9.74 | 9.28 | 8.67 | 8.16 | 7.63 |
+| holdout, optimized | 13.30 | 12.72 | 12.15 | 11.88 | 11.55 | 11.38 | 10.98 | 10.67 | 10.35 | 9.99 | 9.51 | 8.92 | 8.39 | 7.82 |
 
 (The 32 B row of this ladder uses the ratio-derived `L33@4 C11@3`; the *measured*
 optimum `L28@4 C15@3` is better still — 11.150 on holdout, in the table above.)
@@ -1360,12 +1360,12 @@ change and nothing else moved:
 
 | | ΔE00 | Δ% | SSIM2 | Butter | DSSIM |
 |---|---|---|---|---|---|
-| holdout, tier 0, pre-adoption | 11.554 | — | −304.5 | 29.27 | 0.2559 |
-| holdout, tier 0, **DEFAULT** | **11.150** | **−3.50** | **−285.8** | **28.49** | **0.2550** |
-| holdout, tier 1, pre-adoption | 9.435 | — | −169.1 | 22.86 | 0.2512 |
-| holdout, tier 1, **DEFAULT** | **9.281** | **−1.63** | **−159.4** | **22.51** | **0.2505** |
-| tune, tier 0, pre-adoption | 10.434 | — | −268.0 | 29.19 | 0.2188 |
-| tune, tier 0, **DEFAULT** | **10.183** | **−2.41** | **−263.1** | 29.19 | **0.2174** |
+| holdout, tier 0, pre-adoption | 11.735 | — | −318.4 | 28.66 | 0.2630 |
+| holdout, tier 0, **DEFAULT** | **11.298** | **−3.50** | **−303.7** | **28.16** | **0.2623** |
+| holdout, tier 1, pre-adoption | 9.696 | — | −184.9 | 23.00 | 0.2589 |
+| holdout, tier 1, **DEFAULT** | **9.517** | **−1.63** | **−174.1** | **22.75** | **0.2582** |
+| tune, tier 0, pre-adoption | 11.655 | — | −349.1 | 30.64 | 0.2641 |
+| tune, tier 0, **DEFAULT** | **11.473** | **−2.41** | **−341.7** | 30.38 | **0.2638** |
 
 Every cell matches §8.3. The R-D gate baseline moves with it, 9.0933 → **8.8459**
 (−2.72% over the 8 gated photos), and `spec/test-vectors/` was regenerated: the
@@ -1538,13 +1538,13 @@ adopted pair as incumbent and an explicit isotropic arm.
 
 | variant | ΔE00 | Δ% | paired 95% CI | win/n |
 |---|---|---|---|---|
-| **DEFAULT** aniso 1.2 / hv 0.15 | 10.183 | — | — | — |
-| isotropic (aniso 0, hv 0) | 10.161 | −0.21% | [−0.061, +0.117] | 15/31 |
-| **aniso 1.2 / hv 0.30** | **10.100** | **−0.81%** | **[+0.006, +0.164]** | 18/31 |
-| aniso 2.0 / hv 0.30 | 10.126 | −0.56% | includes zero | 16/31 |
-| aniso 1.2 / hv −0.15 | 10.281 | +0.97% | **[−0.199, −0.008]** | 11/31 |
-| aniso 1.2 / hv −0.30 | 10.383 | +1.97% | **[−0.315, −0.085]** | 7/31 |
-| aniso 3.2 / hv 0.0 | 10.321 | +1.36% | **[−0.234, −0.047]** | 9/31 |
+| **DEFAULT** aniso 1.2 / hv 0.15 | 11.473 | — | — | — |
+| isotropic (aniso 0, hv 0) | 11.453 | −0.17% | [−0.071, +0.120] | 16/31 |
+| **aniso 1.2 / hv 0.30** | **11.518** | **0.40%** | **[-0.119, +0.025]** | 14/31 |
+| aniso 2.0 / hv 0.30 | 11.574 | 0.88% | [-0.187, -0.025] | 13/31 |
+| aniso 1.2 / hv −0.15 | 11.470 | -0.03% | **[−0.076, +0.073]** | 19/31 |
+| aniso 1.2 / hv −0.30 | 11.553 | 0.70% | **[−0.185, +0.014]** | 12/31 |
+| aniso 3.2 / hv 0.0 | 11.631 | 1.38% | **[−0.265, −0.072]** | 7/31 |
 
 Three findings, and two of them are uncomfortable:
 
@@ -1569,13 +1569,13 @@ the 4 b/3 b tier-0 depths rather than the 5 b/4 b depths it was locked against.
 
 | family | ΔE00 | Δ% |
 |---|---|---|
-| **µ-law µ_L=5 / µ_C=8 (shipped)** | 10.183 | — |
-| µ_L=7 | 10.168 | −0.14% |
-| µ_C=12 | 10.204 | +0.21% |
-| A-law 87.6 (G.711) | 10.476 | +2.88% |
-| power-law 0.75 (AAC/MP3) | 10.267 | +0.83% |
-| power-law 0.9 | 10.366 | +1.80% |
-| Lloyd-Max L+C (trained on this corpus) | 10.335 | +1.49% |
+| **µ-law µ_L=5 / µ_C=8 (shipped)** | 11.473 | — |
+| µ_L=7 | 11.480 | 0.06% |
+| µ_C=12 | 11.475 | 0.02% |
+| A-law 87.6 (G.711) | 11.666 | 1.69% |
+| power-law 0.75 (AAC/MP3) | 11.527 | 0.47% |
+| power-law 0.9 | 11.599 | 1.10% |
+| Lloyd-Max L+C (trained on this corpus) | 11.498 | 0.22% |
 
 Every alternative family is worse, including codebooks trained on the corpus
 being scored. The µ plateau §4.6 reported survives both the corpus revision and
@@ -1596,10 +1596,10 @@ A fired deadzone now short-circuits the search, and the knob measures again:
 
 | variant | ΔE00 | Δ% |
 |---|---|---|
-| **no deadzone (shipped)** | 10.183 | — |
-| `deadzone_l = 0.02` | 10.183 | 0.00% |
-| `deadzone_l = 0.05` | 10.220 | +0.36% |
-| both = 0.03 | 10.184 | +0.02% |
+| **no deadzone (shipped)** | 11.473 | — |
+| `deadzone_l = 0.02` | 11.473 | 0.00% |
+| `deadzone_l = 0.05` | 11.482 | 0.08% |
+| both = 0.03 | 11.472 | -0.01% |
 
 Rejected — now on evidence rather than on an artifact.
 
@@ -1638,14 +1638,14 @@ tier code is spent on it.
 
 | layout | ΔE00 | Δ% vs shipped shape | paired CI vs the leader |
 |---|---|---|---|
-| shipped shape L13@5 C6@4 | 11.419 | — | **[−0.710, −0.262]** |
-| **L18@4 C7@3** | **10.947** | −4.13% | (leader) |
-| L19@4 C6@3 | 10.963 | −3.99% | [−0.088, +0.040] |
-| L16@4 C8@3 | 10.982 | −3.83% | [−0.203, +0.110] |
-| L24@3 C7@3 | 10.989 | −3.76% | [−0.150, +0.074] |
-| L20@4 C5@3 | 10.990 | −3.76% | [−0.160, +0.046] |
-| L35@3 C2@2 (count-maximal) | 11.367 | −0.45% | **[−0.648, −0.186]** |
-| L19@5 C2@4 (precision-maximal) | 11.355 | −0.56% | **[−0.607, −0.230]** |
+| shipped shape L13@5 C6@4 | 12.573 | — | **[−0.540, −0.273]** |
+| **L18@4 C7@3** | **12.175** | −3.16% | (leader) |
+| L19@4 C6@3 | 12.147 | −3.39% | [−0.023, +0.098] |
+| L16@4 C8@3 | 12.240 | −2.65% | [−0.140, +0.016] |
+| L24@3 C7@3 | 12.181 | −3.12% | [−0.087, +0.085] |
+| L20@4 C5@3 | 12.227 | −2.75% | [−0.182, +0.057] |
+| L35@3 C2@2 (count-maximal) | 12.279 | −2.34% | **[−0.383, +0.158]** |
+| L19@5 C2@4 (precision-maximal) | 12.436 | −1.09% | **[−0.480, −0.081]** |
 
 The extremes are decisively rejected and the shipped shape is decisively beaten
 — by 4.13% — but **the leading seven layouts are a plateau**: every paired CI
@@ -1864,8 +1864,8 @@ measurement; the default does not move on a result that will not replicate.
 
 | | bytes | ΔE00 ↓ | SSIM2 ↑ | Butter ↓ | DSSIM ↓ |
 |---|---|---|---|---|---|
-| ThumbHash | 21.1 | 12.851 | −326.3 | 31.75 | 0.2589 |
-| **ChromaHash compact** | **21** | **12.047** | **−323.2** | **30.52** | **0.2576** |
+| ThumbHash | 21.0 | 12.807 | −337.2 | 30.98 | 0.2647 |
+| **ChromaHash compact** | **21** | **12.146** | **−333.9** | **30.07** | **0.2638** |
 
 Beaten on all four metrics, out of sample, at ThumbHash's own size — the claim
 §8.6 wanted and the shipped constants could not previously make anywhere.
@@ -1923,22 +1923,22 @@ neighbourhood.
 
 | Bytes | Format | ΔE00 ↓ | SSIM2 ↑ | Butter ↓ | DSSIM ↓ |
 |---|---|---|---|---|---|
-| 21.1 | ThumbHash | 12.851 | −326.3 | 31.75 | 0.2589 |
-| **21** | **ChromaHash compact** | **12.047** | **−323.2** | **30.52** | **0.2576** |
-| **32** | **ChromaHash tier 1** (default) | **11.150** | **−285.8** | **28.49** | **0.2550** |
-| 47.8 | WebP | 15.570 | −406.0 | 37.87 | 0.2852 |
-| 62.3 | lqip-modern r8 | 13.275 | −315.4 | 31.08 | 0.2582 |
-| 63.5 | WebP | 12.198 | −259.5 | 27.47 | 0.2556 |
-| 79.5 | WebP | 11.085 | −203.5 | 24.72 | 0.2534 |
-| 82.2 | lqip-modern r16 | 11.230 | **−183.3** | **23.86** | 0.2525 |
-| 107.2 | WebP | 10.255 | −167.5 | 22.91 | **0.2498** |
-| **108** | **ChromaHash tier 2** | **9.281** | **−159.4** | **22.51** | 0.2505 |
-| 128.6 | lqip-modern r24 | 10.223 | −124.4 | 21.22 | 0.2487 |
-| 188.3 | WebP | 8.763 | **−93.7** | **18.33** | **0.2410** |
-| 193 | ChromaHash *(resized)* | **8.435** | −110.6 | 20.33 | 0.2476 |
-| 262.3 | lqip-modern r48 | 8.132 | −66.7 | 15.64 | 0.2351 |
-| 405.7 | **WebP** | **7.289** | **−62.2** | **14.01** | **0.2285** |
-| 411 | ChromaHash tier 3 | 7.604 | −76.3 | 17.76 | 0.2441 |
+| 21.1 | ThumbHash | 12.807 | −337.2 | 30.98 | 0.2647 |
+| **21** | **ChromaHash compact** | **12.146** | **−333.9** | **30.07** | **0.2638** |
+| **32** | **ChromaHash tier 1** (default) | **11.298** | **−303.7** | **28.16** | **0.2623** |
+| 47.8 | WebP | 15.586 | −378.3 | 36.16 | 0.2746 |
+| 62.3 | lqip-modern r8 | 13.458 | −328.3 | 30.40 | 0.2649 |
+| 63.5 | WebP | 12.541 | −283.7 | 27.47 | 0.2632 |
+| 79.5 | WebP | 11.423 | −226.8 | 24.90 | 0.2612 |
+| 82.2 | lqip-modern r16 | 11.517 | **−192.3** | **23.83** | 0.2594 |
+| 107.2 | WebP | 10.674 | −184.9 | 23.15 | **0.2580** |
+| **108** | **ChromaHash tier 2** | **9.517** | **−174.1** | **22.75** | 0.2582 |
+| 128.6 | lqip-modern r24 | 10.524 | −128.8 | 21.38 | 0.2564 |
+| 188.3 | WebP | 9.091 | **−100.4** | **18.83** | **0.2499** |
+| 193 | ChromaHash *(resized)* | **8.684** | −119.9 | 20.60 | 0.2554 |
+| 262.3 | lqip-modern r48 | 8.321 | −66.3 | 15.83 | 0.2411 |
+| 405.7 | **WebP** | **7.518** | **−62.6** | **14.21** | **0.2349** |
+| 411 | ChromaHash tier 3 | 7.783 | −76.8 | 17.94 | 0.2507 |
 
 Four things this settles.
 
