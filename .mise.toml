@@ -659,6 +659,15 @@ description = "Self-check the locally-computed metrics (ringing, aspect)"
 depends = ["build:compare"]
 run = "node tools/comparison/dist/metric-selftest.js"
 
+# Asserts that fanning the image loop across cores does not move a published
+# number. Runs the real orchestrator twice over the generated synthetic corpus —
+# once at --jobs 1, once wide — and diffs the reports. Generated fixtures mean no
+# network, no pinned corpus and no iqa-cli-free excuse to skip it in CI.
+[tasks."selftest:determinism"]
+description = "Assert a concurrent run scores identically to a serial one"
+depends = ["build:compare"]
+run = "node tools/comparison/dist/determinism-check.js"
+
 # Check every table in spec/EXPERIMENTS.md against the sweep results in
 # tools/comparison/output/sweeps/. The document is transcribed by hand, so a
 # re-run of a sweep silently invalidates it; this is the only thing that
