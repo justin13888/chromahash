@@ -19,6 +19,13 @@ tune and validated on holdout, per the pre-registered rule in `RATIONALE.md`.
 > audit, the additions and what moved. Round-1 and round-2 conclusions survive;
 > two effect sizes do not, and are corrected in place.
 
+> **Corpus re-source (2026-09).** The photographic corpus was then re-sourced
+> from Wikimedia Commons for licensing reasons (`85f6af3`), which moved every
+> photographic number below. §1–§11 were re-measured against it. **§9.5 records
+> what moved, what was not re-measured, and which tables are views onto sweeps
+> rather than transcriptions of them** — read it before quoting a figure from
+> this file. The alpha and graphic corpora were untouched by the re-source.
+
 > **Tier numbering.** Every section below was written before the tier codes
 > were reordered by quality, and uses the *old* numbering, where code 0 was the
 > 32-byte default. The shipped codes are `0` = compact (21 B), `1` = default
@@ -582,12 +589,13 @@ already carried — §11.14's is the current cross-format record. Nothing said s
 so the block could not reproduce three of its own tables and still exited 0.
 **A SKIP is not a pass** — read the skip list, or run with `--strict`, which
 turns one into a failure.
-Five configs in `tools/comparison/sweeps/` are **not** written up above, and are
+Six configs in `tools/comparison/sweeps/` are **not** written up above, and are
 listed here so their absence is not mistaken for a result being withheld:
-`low-budget-allocation` and `v06-vs-v1` were run (their output is in
-`output/sweeps/`) and were superseded before this file's round-3 numbers were
-taken; `capped-tier1-vs-tier0`, `scalefactor-bands-t1` and
-`tier-precision-vs-count` were written but never run. None of them informed an
+`low-budget-allocation` and `v06-vs-v1` were run and superseded before this
+file's round-3 numbers were taken, and their outputs no longer survive on disk;
+`capped-tier1-vs-tier0`, `compact-tier-alpha`, `scalefactor-bands-t1` and
+`tier-precision-vs-count` were written but never run — `compact-tier-alpha` is
+listed as a command above but has never produced an output. None of them informed an
 adopted constant. `mise run verify:experiments` checks the tables that *are* here
 against the outputs that produced them.
 
@@ -597,8 +605,9 @@ against the outputs that produced them.
 
 Every command above reads the corpus of `tools/comparison/src/natural-images.ts`
 and `holdout-images.ts`, content-pinned by SHA-256. The numbers in this file are
-from the 39-image curated corpus of §9; a run against a different corpus is a
-different experiment, not a reproduction.
+from the 39-image photographic corpus re-sourced from Wikimedia Commons in
+`85f6af3` (§9.5), at the split sizes named at the top of this file; a run
+against a different corpus is a different experiment, not a reproduction.
 
 
 ## 7. Round 2: every roadmap item, built and measured
@@ -696,7 +705,9 @@ frequencies (vertical edges) down the order (`sweeps/selection-hv.json`, tune,
 > `aniso_oblique = 1.2` / `sel_hv = 0.15`, after which "unset" means "the
 > adopted value". Every `aniso = 0` cell above is really `aniso = 1.2`, and the
 > `hv = 0` column is really `hv = 0.15`. Re-run today the config reports the
-> shipped default, 11.4727, for four arms that name four different points.
+> shipped default, 11.4727, for **six** arms — the four cells of the grid above
+> that name four different points, plus both `L28@4 C15@3` arms. Its twelve
+> non-layout arms resolve to six distinct `(aniso, hv)` points, not twelve.
 >
 > This is the same defect §11.5 records for `aniso-selection` and
 > `aniso-extended`, which were deleted for it; `selection-hv` has it too and was
@@ -714,10 +725,11 @@ measures the same family correctly and does not reproduce that reading.
 landscape** (§9): on the old 22-image split the same cell measured −2.09%, and
 `aniso` alone −1.17%. Interiors, facades and flat man-made surfaces do not share
 the horizon-driven H/V asymmetry, and a *fixed* trained order can encode only
-one asymmetry. On top of the retuned L28@4 C15@3 layout the weights now add
-nothing at all on tune (−1.99% with them, −2.01% without) — the layout has
-already taken what they were taking. They still pay on holdout (§7.12), which is
-where the decision is made, but the honest size of this lever is the +1.5 energy
+one asymmetry. Round 2 also read the retuned L28@4 C15@3 layout as having already taken what
+the weights were taking, at −1.99% against −2.01%. That comparison is not
+readable either: both of its arms are in the collision above and now report one
+number between them. §11.5 measures the family correctly, and §7.12 is where the
+out-of-sample decision is made. The honest size of this lever is the +1.3 energy
 points `coeff-stats` now measures (§4.10), not +2.2.
 
 **Cost:** the weighted order is a float sort over every candidate, and it is
@@ -826,6 +838,16 @@ Using the 12 `(aniso, hv)` presets of §7.4 as the signalled alphabet, per-image
 Signalling 4 bits costs ~0.37% ΔE00 at 32 B, so an oracle selector nets ~−1.2%
 — and a real selector would capture only part of the oracle. Worth less than the
 fixed preset it would sit on top of. Not recommended.
+
+> **Round-2 values, and not reproducible — see §7.4.** The alphabet here is
+> `selection-hv.json`'s twelve non-layout arms, and that config sets one
+> selection parameter per arm while letting the other default. The figures above
+> were taken when both defaults were 0, so the labels were accurate when
+> written. Re-run today those twelve arms resolve to **six** distinct presets, so
+> the oracle-over-12 experiment cannot be reproduced and the 4-bit signalling
+> cost it prices would be 3 bits. The verdict survives — a smaller alphabet does
+> not make the oracle worth more than the fixed preset — but the numbers are
+> round 2's, not the current corpus's.
 
 ### 7.10 U14 — chroma-from-luma: built, audited, refuted at every tier
 
@@ -1090,9 +1112,9 @@ unchanged.
 `54 + 28·4 + 2·15·3 = 256 bits` — tier 0 is still exactly 32 bytes.
 `54 + 19·4 + 2·6·3 = 166 bits` → 21 bytes for the compact tier.
 
-\* The compact layout is chosen on tune, where `L 19 @ 4 b` wins (11.023 vs
-11.046). On holdout the 3-bit sibling `L 26 @ 3 b, a/b 6 @ 3 b` is better
-(11.986 vs 12.107) — both beat ThumbHash on all four metrics, and the choice
+\* The compact layout is chosen on tune, where `L 19 @ 4 b` wins (12.147 vs
+12.161). On holdout the 3-bit sibling `L 26 @ 3 b, a/b 6 @ 3 b` is better
+(12.129 vs 12.146) — both beat ThumbHash on all four metrics, and the choice
 between them should be re-made against the alpha-mode layout before a compact
 tier is written down.
 **Not yet measured:** the alpha-mode layout. The arithmetic points at
@@ -1134,14 +1156,25 @@ Holdout, photographic corpus:
 
 | | ΔE00 | SSIMULACRA2 | Butteraugli | DSSIM |
 |---|---|---|---|---|
-| shipped, 32 B | 11.554 | −304.5 | 29.27 | 0.2559 |
-| optimized constants + encoder, 32 B | **11.150 (−3.50%)** | **−285.8** | **28.49** | **0.2550** |
-| + optional refinement, 32 B | **11.079 (−4.12%)** | −284.5 | 28.45 | 0.2558 |
-| shipped, tier 1 108 B | 9.435 | −169.1 | 22.86 | 0.2512 |
-| optimized, tier 1 108 B | **9.281 (−1.63 pp)** | **−159.4** | **22.51** | **0.2505** |
+| shipped, 32 B | 11.735 | −318.4 | 28.66 | 0.2630 |
+| optimized constants + encoder, 32 B | **11.298 (−3.72%)** | **−303.7** | **28.16** | **0.2623** |
+| + optional refinement, 32 B | **11.265 (−4.01%)** | −303.0 | 28.14 | 0.2628 |
+| shipped, tier 1 108 B | 9.696 | −184.9 | 23.00 | 0.2589 |
+| optimized, tier 1 108 B | **9.517 (−1.84 pp)** | **−174.1** | **22.75** | **0.2582** |
 
-**Equal-quality byte saving: the optimized 32-byte encode matches the shipped
-format at 40 bytes** (holdout 11.150 vs 11.138) — 20%, or ~24% with refinement.
+Every guard improves at both tiers, and the tier-0 delta clears the
+pre-registered ≥3% holdout threshold. These are the same four rows §10.3 checks
+against `adopted-defaults`, which reconstructs the pre-adoption constants by
+hand rather than inheriting them — the only way the comparison stays meaningful
+now that §10 has made the optimized recipe the default.
+
+> **The equal-quality byte saving is not restated here.** Round 2 put it at 20%
+> — the optimized 32-byte encode matching the shipped format at 40 bytes — read
+> off a ladder of the *pre-adoption* signal path. No current sweep produces that
+> ladder: `budget-ladder` resizes the layout but inherits today's adopted
+> knobs, so it is a ladder of the format that ships, not of the one the saving
+> was measured against. The −3.72% above is what the corpus still supports; the
+> byte figure needs a pre-adoption ladder nobody has run.
 
 At the proposed 21-byte compact tier the format beats ThumbHash on **all four
 metrics** on holdout (§7.6), which the shipped constants do not.
@@ -1184,22 +1217,22 @@ scoring config, same metric cache — the two runners share all of it).
 
 | Bytes | Format | ΔE00 | SSIM2 | Butter | DSSIM |
 |---|---|---|---|---|---|
-| 21.1 | ThumbHash | 12.851 | −326.3 | 31.75 | 0.2589 |
+| 21.0 | ThumbHash | 12.851 | −326.3 | 31.75 | 0.2589 |
 | 21 | ChromaHash **shipped** | 12.611 | −349.2 | 33.04 | 0.2587 |
 | 21 | ChromaHash **optimized** | **12.047** | **−323.2** | **30.52** | **0.2576** |
 | 25.8 | RawRGB565 | 12.570 | −351.6 | 34.19 | 0.2585 |
 | 32 | ChromaHash **shipped** | 11.554 | −304.5 | 29.27 | 0.2559 |
 | 32 | ChromaHash **optimized** | **11.150** | **−285.8** | **28.49** | **0.2550** |
 | 47.5 | RawRGB565 | 11.388 | −317.6 | 31.19 | 0.2555 |
-| 47.8 | WebP | 15.570 | −406.0 | 37.87 | 0.2852 |
+| 47.7 | WebP | 15.570 | −406.0 | 37.87 | 0.2852 |
 | 48 | ChromaHash **optimized** | **10.464** | **−231.2** | **25.32** | **0.2538** |
 | 82.3 | lqip-modern r16 | 11.230 | **−183.3** | **23.86** | 0.2525 |
 | 80 | ChromaHash **optimized** | **9.744** | −192.4 | 23.98 | **0.2515** |
 | 107.3 | WebP | 10.255 | −167.5 | 22.91 | 0.2498 |
 | 108 | ChromaHash shipped | 9.435 | −169.1 | 22.86 | 0.2512 |
 | 108 | ChromaHash **optimized** | **9.281** | **−159.4** | **22.51** | **0.2505** |
-| 128.6 | lqip-modern r24 | 10.223 | **−124.4** | **21.22** | **0.2487** |
-| 405.7 | **WebP** | **7.289** | **−62.2** | **14.01** | **0.2285** |
+| 132.8 | lqip-modern r24 | 10.223 | **−124.4** | **21.22** | **0.2487** |
+| 404.8 | **WebP** | **7.289** | **−62.2** | **14.01** | **0.2285** |
 | 411 | ChromaHash optimized | 7.604 | −76.3 | 17.76 | 0.2441 |
 
 Two things move:
@@ -1514,11 +1547,11 @@ change and nothing else moved:
 | | ΔE00 | Δ% | SSIM2 | Butter | DSSIM |
 |---|---|---|---|---|---|
 | holdout, tier 0, pre-adoption | 11.735 | — | −318.4 | 28.66 | 0.2630 |
-| holdout, tier 0, **DEFAULT** | **11.298** | **−3.50** | **−303.7** | **28.16** | **0.2623** |
+| holdout, tier 0, **DEFAULT** | **11.298** | **−3.72** | **−303.7** | **28.16** | **0.2623** |
 | holdout, tier 1, pre-adoption | 9.696 | — | −184.9 | 23.00 | 0.2589 |
-| holdout, tier 1, **DEFAULT** | **9.517** | **−1.63** | **−174.1** | **22.75** | **0.2582** |
+| holdout, tier 1, **DEFAULT** | **9.517** | **−1.84** | **−174.1** | **22.75** | **0.2582** |
 | tune, tier 0, pre-adoption | 11.655 | — | −349.1 | 30.64 | 0.2641 |
-| tune, tier 0, **DEFAULT** | **11.473** | **−2.41** | **−341.7** | 30.38 | **0.2638** |
+| tune, tier 0, **DEFAULT** | **11.473** | **−1.56** | **−341.7** | 30.38 | **0.2638** |
 
 Every cell matches §8.3. The R-D gate baseline moves with it, 9.0933 → **8.8459**
 (−2.72% over the 8 gated photos), and `spec/test-vectors/` was regenerated: the
@@ -2015,22 +2048,28 @@ with `--split holdout`.
 
 | candidate | tune | holdout | verdict |
 |---|---|---|---|
-| `sel_hv` 0.15 → 0.30 | −0.81%, CI excluded zero | **+0.69%** | **rejected** |
-| isotropic weights | −0.21% | +0.60%, guards fail | rejected |
-| pre-adoption v0.6-derived | +2.47% | +3.63% | (confirms §8 out of sample) |
-| compact 21 B `L19@4 C6@3` | −3.99% | −2.6% vs the shipped shape | adopted |
+| `sel_hv` 0.15 → 0.30 | +0.40%, CI straddles (§11.5) | **+0.56%** | **rejected** |
+| isotropic weights | −0.17%, CI straddles | +0.62%, guards fail | rejected |
+| pre-adoption v0.6-derived | +1.59% | +3.87% | (confirms §8 out of sample) |
+| compact 21 B `L19@4 C6@3` | −3.39% | −2.78% vs the shipped shape | adopted |
 
 Holdout ranks the compact plateau differently from tune — `L26@3 C6@3` leads it
-at 11.971 against the adopted layout's 12.047 — which is the same tune/holdout
+at 12.129 against the adopted layout's 12.146 — which is the same tune/holdout
 disagreement §8.1 originally flagged for this tier. The pick was frozen before
 the holdout was opened and is not revisited on it; the spread across the four
-candidates is 0.9%, and all four beat the shipped shape by 2.3–3.2%.
+candidates is 0.7%, and all four beat the shipped shape by 2.5–3.1%.
 
-`sel_hv = 0.30` was significant on tune, and pointed the same way on the
-graphics corpus (§11.4 — −0.39% there, though its CI includes zero), and it
-still failed out of sample. The shipped `0.15` stands. This is the split doing
-exactly the job it exists for: a result that was significant on one corpus and
-directionally agreed with on a second did not survive a third split.
+`sel_hv = 0.30` was significant on tune when round 3 took it, pointed the same
+way on the graphics corpus (§11.4 — −0.39% there, though its CI includes zero),
+and still failed out of sample. The shipped `0.15` stands. This is the split
+doing exactly the job it exists for: a result significant on one corpus and
+directionally agreed with on a second did not survive a third.
+
+The re-baseline has since removed the premise as well. On the Wikimedia corpus
+the tune arm is **+0.40% with a CI straddling zero** (§11.5), so the result the
+holdout rejected no longer reproduces in sample either — and what now clears
+zero on tune is `hv = 0`, in the opposite direction. The verdict on `0.30` is
+unchanged; the reason it is rejected is now over-determined.
 
 **Alpha holdout (8 images):**
 
@@ -2112,21 +2151,22 @@ neighbourhood.
 
 | Bytes | Format | ΔE00 ↓ | SSIM2 ↑ | Butter ↓ | DSSIM ↓ |
 |---|---|---|---|---|---|
-| 21.1 | ThumbHash | 12.807 | −337.2 | 30.98 | 0.2647 |
+| 21.0 | ThumbHash | 12.807 | −337.2 | 30.98 | 0.2647 |
 | **21** | **ChromaHash compact** | **12.146** | **−333.9** | **30.07** | **0.2638** |
 | **32** | **ChromaHash tier 1** (default) | **11.298** | **−303.7** | **28.16** | **0.2623** |
-| 47.8 | WebP | 15.586 | −378.3 | 36.16 | 0.2746 |
-| 62.3 | lqip-modern r8 | 13.458 | −328.3 | 30.40 | 0.2649 |
+| 47.7 | WebP | 15.586 | −378.3 | 36.16 | 0.2746 |
+| 62.9 | lqip-modern r8 | 13.458 | −328.3 | 30.40 | 0.2649 |
 | 63.5 | WebP | 12.541 | −283.7 | 27.47 | 0.2632 |
-| 79.5 | WebP | 11.423 | −226.8 | 24.90 | 0.2612 |
-| 82.2 | lqip-modern r16 | 11.517 | **−192.3** | **23.83** | 0.2594 |
-| 107.2 | WebP | 10.674 | −184.9 | 23.15 | **0.2580** |
+| 79.6 | WebP | 11.423 | −226.8 | 24.90 | 0.2612 |
+| 83.8 | lqip-modern r16 | 11.517 | **−192.3** | **23.83** | 0.2594 |
+| 107.0 | WebP | 10.674 | −184.9 | 23.15 | **0.2580** |
 | **108** | **ChromaHash tier 2** | **9.517** | **−174.1** | **22.75** | 0.2582 |
-| 128.6 | lqip-modern r24 | 10.524 | −128.8 | 21.38 | 0.2564 |
-| 188.3 | WebP | 9.091 | **−100.4** | **18.83** | **0.2499** |
+| 132.8 | lqip-modern r24 | 10.524 | −128.8 | 21.38 | 0.2564 |
+| 175.8 | lqip-modern r32 | 9.733 | **−92.1** | 19.43 | 0.2521 |
+| 188.7 | WebP | 9.091 | −100.4 | **18.83** | **0.2499** |
 | 193 | ChromaHash *(resized)* | **8.684** | −119.9 | 20.60 | 0.2554 |
-| 262.3 | lqip-modern r48 | 8.321 | −66.3 | 15.83 | 0.2411 |
-| 405.7 | **WebP** | **7.518** | **−62.6** | **14.21** | **0.2349** |
+| 271.5 | lqip-modern r48 | 8.321 | −66.3 | 15.83 | 0.2411 |
+| 404.8 | **WebP** | **7.518** | **−62.6** | **14.21** | **0.2349** |
 | 411 | ChromaHash tier 3 | 7.783 | −76.8 | 17.94 | 0.2507 |
 
 Four things this settles.
@@ -2141,18 +2181,20 @@ Four things this settles.
    raw pixels, and ChromaHash leads all of them.
 3. **Code 2 (108 B) is the format's strongest point.** It beats size-matched
    WebP on ΔE00 by 10.8% *and* takes SSIMULACRA2 and Butteraugli, losing only
-   DSSIM by 0.0002. It also beats lqip-modern at 129 B while being 20 B smaller.
+   DSSIM by 0.0002. It also beats lqip-modern at 133 B while being 25 B smaller.
    The margin is wider than round 3 measured, not narrower: 9.5% then, 10.8%
    now.
-4. **WebP takes the structural guards from ~190 B up, but not ΔE00 until
-   later.** At ~190 B WebP leads SSIMULACRA2, Butteraugli and DSSIM while
-   ChromaHash still leads ΔE00 (8.684 vs 9.091); the ΔE00 crossover is between
-   193 and 411 B, where WebP leads all four. The same ordering holds on tune
+4. **The structural guards go from ~190 B up, but ΔE00 does not.** In that
+   neighbourhood ChromaHash still leads ΔE00 (8.684 against WebP's 9.091), WebP
+   takes Butteraugli and DSSIM, and SSIMULACRA2 goes to **lqip-modern r32** at
+   175.8 B (−92.1 against WebP's −100.4) — not to WebP, as round 3 recorded and
+   as §7.14 already says. The ΔE00 crossover is between 193 and 411 B, where
+   WebP does lead all four. The same ordering holds on tune
    (8.785 vs 8.944 at ~190 B). §14.1 of the spec states this rather than
    arguing around it.
 
 The structural weakness §2 identified is narrowed but not gone: lqip-modern
-still takes SSIMULACRA2 and Butteraugli at ~82 B, where ChromaHash wins ΔE00 by
+still takes SSIMULACRA2 and Butteraugli at ~84 B, where ChromaHash wins ΔE00 by
 13%. The format still buys colour accuracy with structural accuracy; it now does
 so over a wider range and loses the trade later.
 
