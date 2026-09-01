@@ -201,7 +201,7 @@ and **32% of a 21 B hash**.
 
 ## 4. Designs attempted this round
 
-### 4.1 Doubling the render raster buys nothing — the tier's second knob is inert
+### 4.1 Doubling the render raster buys nothing — wherever the raster is legal
 
 A tier does two things: ×4 the coefficient count and ×2 the render edge. Hold
 byte count *and* coefficient count fixed, vary only the raster
@@ -211,14 +211,29 @@ byte count *and* coefficient count fixed, vary only the raster
 |---|---|---|---|
 | 104 L / 36 C (108 B) | 9.665 @32 px | 9.667 @64 px | −0.02% |
 | 416 L / 144 C (411 B) | 7.900 @32 px | 7.828 @128 px | 0.92% |
+| 416 L / 144 C (411 B) @64 px | 7.830 @64 px | 7.828 @128 px | 0.02% |
 | 1664 L / 576 C (1623 B) | 6.745 @64 px | 6.726 @256 px | 0.29% |
 
-Within noise, and if anything the *smaller* raster scores better. All of the
-measured quality in the tier ladder comes from coefficient count; the
-render-edge doubling is a convenience for the consumer, not a fidelity
-mechanism. The real constraint it satisfies is that the decoder drops selected
-frequencies outside the raster, so the raster must clear the top selected
-frequency index (≈ √(4K/π)) — that is a correctness bound, not a quality one.
+**The raster is inert wherever it is legal, and only there.** `prepare_channel`
+drops any selected pair with `cx >= w || cy >= h`, so the test is *per-axis*
+and the short edge is what binds: on a 3:2 photograph a 32 px raster is 32×21,
+and the ℓ2 ball of K luma coefficients reaches an index of about √(4K/π). The
+four rows split exactly on that test — 11.5 against 21 and 23.0 against 42
+clear it and cost nothing (−0.02%, 0.02%); 23.0 against 21 and 46.0 against 42
+do not, and the frequencies the decoder discards cost 0.92% and 0.29%.
+
+So the conclusion stands, with its scope now stated: all of the measured
+quality in the tier ladder comes from coefficient count, and the render-edge
+doubling is a convenience for the consumer rather than a fidelity mechanism.
+What it satisfies is a correctness bound, not a quality one — and below that
+bound the doubling is not free, it is repairing damage the smaller raster did.
+
+Round 1 read this table as "if anything the *smaller* raster scores better",
+which its numbers supported (−0.04% / −0.05% / −0.34%, all negative). That
+reading was an artifact of a corpus insensitive enough that discarded
+frequencies did not show. The third row is the control that separates the two
+explanations — same counts, same baseline, a raster that clears the bound —
+and it was in the sweep the whole time, never quoted.
 
 ### 4.2 Count vs precision: the shipped answer is right at 108 B and wrong at 32 B
 

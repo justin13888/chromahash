@@ -769,6 +769,12 @@ const BINDINGS: Binding[] = [
         cand: "t2 counts @tier0 (32px)",
         base: "t2 shipped (411 B, 128px)",
       },
+      // The control that separates "the raster is inert" from "the raster is
+      // below the bound": same counts, same base, a raster that clears it.
+      "416 L / 144 C (411 B) @64 px": {
+        cand: "t2 counts @tier1 (64px)",
+        base: "t2 shipped (411 B, 128px)",
+      },
       "1664 L / 576 C (1623 B)": {
         cand: "t3 counts @tier1 (64px)",
         base: "t3 shipped (1623 B, 256px)",
