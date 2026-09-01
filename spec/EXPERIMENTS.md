@@ -510,10 +510,12 @@ decoder must understand.
 mise run sweep budget-ladder                        # R-D ladder, shipped constants
 mise run sweep budget-ladder --split holdout
 mise run sweep budget-ladder-tuned                  # round-1 recipe
+mise run sweep budget-ladder-tuned --split holdout   # §4.5
 mise run sweep render-raster                        # §4.1
 mise run sweep allocation-grid                      # §4.2, §4.7
 mise run sweep precision-by-budget                  # §4.2
 mise run sweep thumbhash-headtohead                 # §4.3
+mise run sweep thumbhash-headtohead --split holdout  # §4.3, §7.6
 mise run sweep encoder-compute                      # §4.4
 mise run sweep holdout-candidates --split holdout   # §4.5
 mise run sweep retune-32b                           # §4.6
@@ -536,6 +538,8 @@ mise run sweep budget-ladder-optimized --split holdout
 # Cross-format R-D at arbitrary budgets, with guard-aware winners (§2, §7.14)
 node tools/comparison/dist/rd-budget.js --split tune \
   --budgets 12,16,18,21,24,28,32,40,48,64,80,108,192,411,1623
+node tools/comparison/dist/rd-budget.js --split holdout \
+  --budgets 12,16,18,21,24,28,32,40,48,64,80,108,192,411,1623   # §11.14
 
 node tools/comparison/dist/cfl-probe.js      --split tune   # §4.8
 node tools/comparison/dist/coeff-stats.js    --split tune   # §4.9, §4.10
@@ -570,6 +574,14 @@ mise run sweep adopted-defaults --split holdout     # §10.3
 mise run verify:experiments
 mise run verify:experiments --list-unbound
 ```
+
+The three `--split holdout` lines marked §4.5, §7.6 and §11.14 were **missing
+until the §9.5 re-run**, and each is the only source for a table this file
+already carried — §11.14's is the current cross-format record. Nothing said so:
+`verify:experiments` reports a missing sweep output as SKIP, not as a failure,
+so the block could not reproduce three of its own tables and still exited 0.
+**A SKIP is not a pass** — read the skip list, or run with `--strict`, which
+turns one into a failure.
 Five configs in `tools/comparison/sweeps/` are **not** written up above, and are
 listed here so their absence is not mistaken for a result being withheld:
 `low-budget-allocation` and `v06-vs-v1` were run (their output is in
@@ -1322,6 +1334,91 @@ following are *not* covered by this revision:
   layout in §8.1 is still unmeasured — flagged there, unchanged here.
 * **Perceptual validation (U19).** Still the most valuable missing thing: this
   revision improved *what* is measured, not *whether the metric is right*.
+
+### 9.5 The Wikimedia re-source (2026-09), and what it moved
+
+`85f6af3` replaced the curated photographic corpus with images sourced from
+Wikimedia Commons, for licensing reasons rather than measurement ones, and said
+plainly that every photographic number would move. It left §1–§11 describing
+the retired set. This subsection is the re-run it asked for: every command §6
+lists, plus three it does not, re-measured and transcribed by
+`verify:experiments --fix`.
+
+The alpha and graphic corpora were untouched by the re-source, so §11.1–§11.4,
+§11.3, §11.11 and §11.10's graphics column agree with their previous values to
+the last digit. That is the control on the whole exercise — a re-run that
+reproduces what did not change is measuring the corpus rather than the weather.
+
+#### What moved
+
+| Measurement | Curated (§9) | Wikimedia | Verdict |
+|---|---|---|---|
+| Tier 1, tune / holdout ΔE00 | 10.28 / 11.38 | 11.65 / 11.54 | Tune is 13.3% harder; **holdout only 1.4%**, being three-quarters Kodak24 |
+| R-D gate, mean of 8 | 8.8459 | 11.1369 | +25.9%, and 0.00% drift against its own baseline |
+| Compact tier vs ThumbHash, holdout | wins all four | wins all four | unchanged |
+| 108 B vs size-matched WebP, holdout | −9.5% ΔE00 | **−10.8%** | **grew** |
+| ΔE00 crossover with WebP | between 193 and 411 B | between 193 and 411 B | unchanged |
+| Compact-tier layout | `L19@4 C6@3` | `L19@4 C6@3` | unchanged — but its tie-break no longer separates it (§11.10) |
+| `sel_hv = 0.30` vs `0.15`, tune | −0.81%, CI excludes zero | **+0.40%, CI straddles** | **refuted** |
+| Best selection-weight arm | `aniso 1.2 / hv 0.30` | **`aniso 0.9 / hv 0`** | **moved to `hv = 0`** |
+| Trainable selection-order headroom | +1.5 energy points | **+1.3** | shrank again |
+| Entropy-coding headroom at 32 B | −4.3% | **−1.6%** | **more than halved** |
+| Entropy-coding headroom at 108 B | −4.0% | **−4.8%** | grew |
+| Count-maximal layout vs shipped | 13% worse | **2.9% worse** | **weakened** |
+| Scalefactor bands, best arm | −0.30% | **−0.13%** | narrowed, still below threshold |
+| Doubling the render raster | inert (−0.05%) | inert *above the bound*, +0.92% below it | **rescoped** (§4.1) |
+
+**Nothing that ships changed, and two things that were concluded did.** Every
+adopted constant in §8.1 still clears its bar and every item in §8.4 is still
+rejected. The two casualties are both *tune-only* selection-order results —
+§7.4's matrix and §11.5's `sel_hv = 0.30` — which is the third corpus in a row
+to shrink or reverse a selection-order effect, exactly as §4.10 predicts for
+anything that exploits a dominant orientation structure.
+
+#### Three defects this found, and one it could not fix
+
+The re-run was more informative about the tools than about the format.
+
+1. **`rd-budget` synthesized every off-anchor layout a quarter of its budget.**
+   `8a2029a` changed `tierFor` to return a tier code; its caller kept reading a
+   render level. At the 192 B budget the row was a 53-byte hash scored against
+   192-byte competitors, which reads as a quality regression rather than a
+   sizing error. Two of §11.14's four conclusions and all of §7.14's U16
+   summary are computed from those rows.
+2. **`entropy-budget`'s reference row vanished.** The same commit left a lookup
+   testing `r.tier === 0`, which no row satisfies any more, so §7.13's source
+   table had been printing an empty section for five days.
+3. **`verify-experiments --fix` corrupted composite cells.** Rewriting a win
+   count `15/31` to `16/31` re-appended the "unit" it had already parsed,
+   producing `16/31/31`. It reported success and left seven cells malformed.
+
+The first two are the same defect: **nothing in the harness distinguishes a
+tier code from a render level.** §11.10 records the library hitting this and
+solving it with `render_level(tier)`; the tools have no such function, so the
+sweep that fixed the library seeded three of these in `tools/comparison`. A
+type — or even a named `levelOf`, which is what these fixes add — is the
+durable answer, and it is not applied everywhere yet.
+
+The one that could not be fixed here is **`sweeps/selection-hv.json`**, whose
+arms set one selection parameter and inherit the adopted value for the other
+(§7.4). Its table is retired in place rather than re-transcribed, because a
+number measured at a point the label does not name is worse than no number.
+
+#### What was not re-measured
+
+Stated so their absence is not mistaken for agreement:
+
+* **§7.1's first table** (pixel-domain squared error on three source shapes)
+  comes from a refine harness that no longer exists as a runnable tool. Its
+  second table, the ΔE00 ablation, is bound and re-measured.
+* **§2, §3 and §8.6** are the round-1 and round-2 cross-format records,
+  explicitly superseded by §11.14 and kept as history. They are not re-run.
+* **§10.2's decode timings** are not a corpus measurement.
+* The unbound derived tables in §4.2, §4.4, §4.7, §7.2, §7.6, §7.9, §8.3,
+  §11.0, §11.2, §11.3 and §11.12 are hand-derived from sweeps that *were*
+  re-run, and are **not** re-transcribed here. Their sweeps' bound tables are
+  current; these views onto them are not. `verify:experiments --list-unbound`
+  is the list.
 
 ## 10. Adoption: making §8 the default (2026-08)
 
