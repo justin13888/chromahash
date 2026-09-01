@@ -428,10 +428,10 @@ Whole tier-0 AC payload: 202 b fixed → **189.2 b** zeroth-order (−6.4%) →
 headroom, or 2.6 more luma coefficients.
 
 > **Corrected in §7.13.** Both figures are *in-sample* entropies of the corpus
-> that produced them, and the 156.9 b context number does **not** survive
+> that produced them, and the 159.3 b context number does **not** survive
 > out-of-sample scoring — 26+18 per-index histograms estimated from 31 images
 > over a 31-symbol alphabet are mostly noise. Measured leave-one-image-out with
-> a real adaptive coder, the achievable saving is **8.7%, not 22.3%**.
+> a real adaptive coder, the achievable saving is **7.4%, not 21.1%**.
 
 ### 4.10 Selection-order headroom, measured
 
@@ -439,18 +439,20 @@ Luma AC energy captured by K=26 of the 200 lowest-frequency candidates (tune):
 
 | Selection | energy captured |
 |---|---|
-| ℓ2-ball prefix (shipped) | 81.73% |
-| best corpus-fixed 26 (trainable, zero signaling) | 83.27% — 6 of 26 slots differ |
-| best per-image 26 (oracle) | 91.16% |
+| ℓ2-ball prefix (shipped) | 75.94% |
+| best corpus-fixed 26 (trainable, zero signaling) | 77.26% — 5 of 26 slots differ |
+| best per-image 26 (oracle) | 88.70% |
 
-The trainable reorder is worth ~1.5 energy points, consistent with the −0.64%
-ΔE00 the anisotropic weight achieves on this corpus — `aniso` is capturing most
-of what a fully trained fixed order could. Per-image selection is worth 9 points
-but needs signaling, which only pays alongside entropy coding.
+The trainable reorder is worth ~1.3 energy points, the same order as the −0.46%
+ΔE00 the anisotropic weight achieves on this corpus (§11.5) — `aniso` is
+capturing most of what a fully trained fixed order could. Per-image selection is
+worth 12.8 points but needs signaling, which only pays alongside entropy coding.
 
 Both headroom figures shrank when the corpus stopped being predominantly
-outdoor landscape (§9): a trained *fixed* order is worth less exactly when the
-corpus's dominant orientation structure is less uniform.
+outdoor landscape (§9), and the trainable one shrank again on the Wikimedia
+re-source: 2.2 points, then 1.5, now **1.3**. A trained *fixed* order is worth
+less exactly when the corpus's dominant orientation structure is less uniform,
+and three corpora in a row have now said so with a smaller number each time.
 
 ## 5. Untried (as of round 1)
 
@@ -675,9 +677,26 @@ frequencies (vertical edges) down the order (`sweeps/selection-hv.json`, tune,
 | aniso = 0 | +2.22% | +1.54% | — | −0.67% | −0.81% |
 | aniso = 1.2 | +0.92% | +0.36% | −0.64% | **−1.03%** | −1.13% |
 
-Nearly additive with the oblique-effect weight, and the sign is interpretable:
-photographic corpora carry more energy in vertical frequencies (horizons,
-ground/sky), so demoting horizontal ones is right.
+> **Not reproducible, and left at its round-2 values deliberately. Read §11.5
+> instead.** `sweeps/selection-hv.json` sets only the parameter each arm varies
+> and lets the other default. That was correct when it was written, because both
+> defaults were 0 — and it stopped being correct the moment §10 adopted
+> `aniso_oblique = 1.2` / `sel_hv = 0.15`, after which "unset" means "the
+> adopted value". Every `aniso = 0` cell above is really `aniso = 1.2`, and the
+> `hv = 0` column is really `hv = 0.15`. Re-run today the config reports the
+> shipped default, 11.4727, for four arms that name four different points.
+>
+> This is the same defect §11.5 records for `aniso-selection` and
+> `aniso-extended`, which were deleted for it; `selection-hv` has it too and was
+> missed. It is not fixed here because fixing it means replacing the config, and
+> `sweeps/selection-weights.json` already **is** that replacement: it sets both
+> parameters explicitly in all 29 arms and is the grid §11.5 reads. The numbers
+> above are kept as the round-2 record of what was concluded and how.
+
+Round 2 read the matrix as nearly additive with the oblique-effect weight, with
+an interpretable sign: photographic corpora carry more energy in vertical
+frequencies (horizons, ground/sky), so demoting horizontal ones is right. §11.5
+measures the same family correctly and does not reproduce that reading.
 
 **The effect halved when the corpus stopped being predominantly outdoor
 landscape** (§9): on the old 22-image split the same cell measured −2.09%, and
@@ -913,34 +932,44 @@ model) rather than assigned its pooled entropy, and the model is scored
 
 | Model | AC bits (of 202 fixed) | vs fixed | honest? |
 |---|---|---|---|
-| static pooled entropy (§4.9) | 185.6 | −8.1% | no — in-sample lower bound |
-| static per-index entropy (§4.9) | 156.9 | −22.3% | **no — badly optimistic** |
-| order-0 adaptive, no decoder tables | 196.6 | −2.7% | yes |
-| order-0 pretrained table, LOO | 187.9 | −7.0% | yes |
-| per-index context table, LOO | 188.1 | −6.9% | yes |
-| **per-index context backing off to order-0, LOO** | **184.4** | **−8.7%** | yes |
+| static pooled entropy (§4.9) | 187.9 | −7.0% | no — in-sample lower bound |
+| static per-index entropy (§4.9) | 159.3 | −21.1% | **no — badly optimistic** |
+| order-0 adaptive, no decoder tables | 196.0 | −3.0% | yes |
+| order-0 pretrained table, LOO | 190.3 | −5.8% | yes |
+| per-index context table, LOO | 190.5 | −5.7% | yes |
+| **per-index context backing off to order-0, LOO** | **187.0** | **−7.4%** | yes |
 
 Two corrections fall out:
 
-* **A table-free adaptive coder is worse than the static entropy by 5.9%**
-  (196.6 vs 185.6 b). A 44-symbol payload never lets a model that starts uniform
+* **A table-free adaptive coder is worse than the static entropy by 4.3%**
+  (196.0 vs 187.9 b). A 44-symbol payload never lets a model that starts uniform
   pay for itself.
 * **Per-index context, scored out of sample, is worse than plain order-0**
-  (188.1 vs 187.9 b) — the opposite of what §4.9's in-sample number implied. It
-  helps only when backed off to the order-0 table, and then by 3.5 b.
+  (190.5 vs 190.3 b) — the opposite of what §4.9's in-sample number implied. It
+  helps only when backed off to the order-0 table, and then by 3.3 b.
 
-So the real tier-0 headroom is **17.6 bits ≈ 3 extra 5-bit luma coefficients**,
+So the real tier-0 headroom is **15.0 bits ≈ 2 extra 5-bit luma coefficients**,
 not the ~10 that the in-sample context figure implies. Spending it (searching
-layouts that fit under each coder) gives **−4.3% ΔE00** at 32 B and **−4.0%** at 108 B — real, and of
-the same order as the constants changes of §8, but paid for with decoder tables,
-a decode loop, and the O(1) length check that currently *is* the validity check.
+layouts that fit under each coder) gives **−1.6% ΔE00** at 32 B and **−4.8%** at
+108 B, each against the best layout the *fixed* fields can reach at the same
+budget — real, and at 108 B of the same order as the constants changes of §8,
+but paid for with decoder tables, a decode loop, and the O(1) length check that
+currently *is* the validity check.
 
-A useful counter-finding from the same search: maximizing *coefficient count* is
-the wrong objective. The count-maximal layout that fits 32 B under the fixed
-fields is L35@3 C23@2 — 81 coefficients — and it scores **11.829, 13% worse than
-shipped**; letting a coder buy 182 of them is worse still (11.673). There is a
-precision floor below which more coefficients stop helping, and 3-bit luma with
-2-bit chroma is below it.
+Both figures moved, and in opposite directions: the 32 B case is now less than
+half what round 2 recorded and the 108 B case rather more. At 32 B a coder buys
+two coefficients out of 44, which is inside the noise of a layout search; the
+case for entropy coding, such as it is, is a case about the upper tiers.
+
+The counter-finding from the same search is **half-refuted, and worth saying
+so**. Maximizing *coefficient count* is still the wrong objective — under every
+coder the count-maximal layout loses to that coder's ΔE00-optimal one (11.576 vs
+11.252 under the best). But round 2's stronger claim, that it is worse than the
+shipped layout outright, no longer holds: the count-maximal layout under the
+fixed fields (L35@3 C23@2, 81 coefficients) is **11.987 — 2.9% worse than
+shipped, not 13%** — and once a coder buys 147 of them it reaches **11.576,
+0.7% better than shipped**. The precision floor is real and it is a good deal
+shallower than the old corpus made it look.
 
 ### 7.14 U16/U17/U18 — the evaluation items
 
@@ -948,10 +977,18 @@ precision floor below which more coefficients stop helping, and 3-bit luma with
 winner-per-metric summary (and a `--summarize` mode that recomputes it from an
 existing JSON). It makes the §2 asymmetry explicit: on the tune split
 ChromaHash's shipped constants win ΔE00 *and lose at least one guard* at
-**21 B** (to ThumbHash), **80 B** and **108 B** (to lqip-modern) and **192 B**
-(to lqip-modern and WebP, which also draws level on ΔE00); they sweep all four
-metrics at 12, 16, 18, 24, 28, 32, 40, 48 and 64 B. §8.6 shows the optimized
-recipe reclaiming 21 B, and 108 B against size-matched WebP.
+**12 B** (SSIMULACRA2, to raw RGB565), **80 B** and **192 B** (SSIMULACRA2 and
+Butteraugli, to lqip-modern and WebP); they sweep all four metrics at 21, 28,
+32, 40, 48, 64 and **108 B**, and stand unopposed at 16, 18 and 24 B.
+
+The asymmetry is narrower than round 2 recorded, in both directions. **21 B and
+108 B are now clean sweeps** where they were guard losses — to ThumbHash and
+lqip-modern respectively — which is the positioning §8.6 predicted the optimized
+recipe would reclaim, now measured directly rather than inferred. **12 B is a
+new loss**, on SSIMULACRA2 to raw RGB565. And at 192 B ChromaHash now leads
+ΔE00 outright (8.785 vs WebP's 8.944) rather than being drawn level with; that
+particular change is not the corpus but a defect in the harness, and is not a
+result — see §9.5.
 
 **U17 — content-pinned corpus.** `corpus-pin.ts` verifies a SHA-256 for every
 fixture, cached or freshly fetched; `natural-images.ts` (39 digests) and
@@ -977,10 +1014,13 @@ baseline gates nothing), and asserts every hash is exactly 32 bytes. Wired into
 `ci-comparison.yml`. The set gained a dark-skin portrait and a grayscale
 photograph in the §9 revision, so the gate now covers the two inputs most likely
 to expose a chroma-path regression; baseline mean 8.9043 (6 images) → **9.0933**
-(8 images) → **8.8459** after §10 adopted the recipe. The middle step was
-verified at 0.00% drift, which is what confirmed that every knob this round adds
-defaults to byte-identical output; the last step is the −2.72% the gated set
-moved by when those defaults changed.
+(8 images) → **8.8459** after §10 adopted the recipe → **11.1369** after
+`85f6af3` re-sourced the corpus from Wikimedia Commons. The 9.0933 step was
+verified at 0.00% drift, which is what confirmed that every knob round 2 adds
+defaults to byte-identical output; 8.8459 is the −2.72% the gated set moved by
+when those defaults changed; 11.1369 is +25.9% and is a different set of eight
+photographs, not a quality change — the encoder did not move, and `rd:gate`
+reports 0.00% drift against it here.
 
 **U19 — perceptual validation.** Two of the three gaps are now closed; the third
 is still the most valuable thing left.
@@ -1655,10 +1695,12 @@ claims; the claim now rests on the current corpus.
 
 ### 11.9 Scalefactor bands, re-derived — still below threshold
 
-`sweeps/scalefactor-bands.json`: the best arm (`band_gain_l = 0.7`, high-band
-luma scaled down) is worth **−0.30%**, consistent with the −0.52% at tier 1
-`RATIONALE.md` records. Real, small, and it costs a signalled band split it
-cannot pay for. Not adopted; unchanged from the previous verdict.
+`sweeps/scalefactor-bands.json`: the best arm (`band_gain_l = 0.7` with the
+band split at 0.3, high-band luma scaled down) is worth **−0.13%**, against the
+−0.52% at tier 1 `RATIONALE.md` records and the −0.30% round 3 measured. Real,
+small, and it costs a signalled band split it cannot pay for. Not adopted; the
+verdict is unchanged and the margin under it has narrowed twice running, which
+is the more useful thing to know about it.
 
 ### 11.10 The compact tier — a plateau, tie-broken across corpora
 
@@ -1932,12 +1974,12 @@ Deliberately unchanged, each with the number that left it alone:
 
 | Kept | Why |
 |---|---|
-| `sel_hv = 0.15` | 0.30 was better on two tune corpora and **worse on holdout** (§11.12) |
+| `sel_hv = 0.15` | 0.30 was better on two tune corpora and **worse on holdout** (§11.12); on the current corpus it is worse on tune too, and `hv = 0` is better — unvalidated on holdout (§11.5) |
 | `aniso_oblique = 1.2` | Isotropic is statistically indistinguishable on tune and worse on holdout (§11.5, §11.12) |
 | µ-law µ_L = 5 / µ_C = 8 | Every alternative family is worse, including corpus-trained codebooks (§11.6) |
-| No deadzone | +0.36% once the knob could move the output (§11.7) |
-| Quantization ranges | Every arm within ±0.13% (§11.8) |
-| No scalefactor bands | −0.30%, below threshold and unable to pay its signalling (§11.9) |
+| No deadzone | +0.08% once the knob could move the output (§11.7) |
+| Quantization ranges | Every arm within ±0.17% (§11.8) |
+| No scalefactor bands | −0.13%, below threshold and unable to pay its signalling (§11.9) |
 | Tier-0 opaque layout | Holds on non-photographic content; no candidate significantly better (§11.4) |
 | `alpha_ac_fit = false` | −0.21% on tune, +0.09% on holdout (§11.12) |
 
@@ -1951,8 +1993,8 @@ What is still not measured, and is now the honest list for v0.8:
   measured directly.
 * **Smartphone-source photographs** — sensor noise, motion blur, heavy JPEG
   history. Both photographic corpora are professional captures.
-* **Entropy-coded AC** (−4.3%), which remains refused on the fail-fast O(1)
-  length check rather than on its quality (§7.13).
+* **Entropy-coded AC** (−1.6% at 32 B, −4.8% at 108 B), which remains refused
+  on the fail-fast O(1) length check rather than on its quality (§7.13).
 
 ### 11.14 Cross-format positioning, re-measured against the shipped constants
 
@@ -1996,17 +2038,20 @@ Four things this settles.
    out of sample. That is the positioning claim §8.6 wanted and no shipped
    constant set had previously been able to make.
 2. **No general codec reaches these budgets.** WebP's smallest usable output on
-   this corpus is ~48 B and it scores 15.570 there — worse than ChromaHash at
-   **12 bytes**. Between 12 and 48 bytes the comparison set is other LQIPs and
+   this corpus is ~48 B and it scores 15.586 there — worse than ChromaHash at
+   **12 bytes** (13.878), which is a clean sweep of all four metrics in its own
+   neighbourhood. Between 12 and 48 bytes the comparison set is other LQIPs and
    raw pixels, and ChromaHash leads all of them.
 3. **Code 2 (108 B) is the format's strongest point.** It beats size-matched
-   WebP on ΔE00 by 9.5% *and* takes SSIMULACRA2 and Butteraugli, losing only
-   DSSIM by 0.0007. It also beats lqip-modern at 129 B while being 20 B smaller.
+   WebP on ΔE00 by 10.8% *and* takes SSIMULACRA2 and Butteraugli, losing only
+   DSSIM by 0.0002. It also beats lqip-modern at 129 B while being 20 B smaller.
+   The margin is wider than round 3 measured, not narrower: 9.5% then, 10.8%
+   now.
 4. **WebP takes the structural guards from ~190 B up, but not ΔE00 until
    later.** At ~190 B WebP leads SSIMULACRA2, Butteraugli and DSSIM while
-   ChromaHash still leads ΔE00 (8.435 vs 8.763); the ΔE00 crossover is between
+   ChromaHash still leads ΔE00 (8.684 vs 9.091); the ΔE00 crossover is between
    193 and 411 B, where WebP leads all four. The same ordering holds on tune
-   (7.737 vs 7.868 at ~190 B). §14.1 of the spec states this rather than
+   (8.785 vs 8.944 at ~190 B). §14.1 of the spec states this rather than
    arguing around it.
 
 The structural weakness §2 identified is narrowed but not gone: lqip-modern
