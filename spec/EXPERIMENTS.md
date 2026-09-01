@@ -94,7 +94,7 @@ Marginal value collapses far faster than 1/bytes (tune split):
 |---|---|---|---|---|---|---|
 | ΔE00 gained per byte | 0.096 | 0.037 | 0.0166 | 0.0084 | 0.0030 | 0.00118 |
 
-Each doubling of the budget buys 30–45% of what the previous one did. The five
+Each doubling of the budget buys 36–51% of what the previous one did. The five
 shipped tier anchors are five points on this one smooth curve; there is nothing
 special about 21/32/108/411/1623 B beyond ×4 arithmetic above the default.
 
@@ -420,11 +420,12 @@ coefficients.
 
 | | luma (5 b field) | chroma (4 b field) |
 |---|---|---|
-| zeroth-order entropy | 4.469 b | 3.865 b |
-| entropy conditioned on selection index | 3.590 b | 3.529 b |
+| zeroth-order entropy | 4.607 b | 3.855 b |
+| entropy conditioned on selection index | 3.708 b | 3.495 b |
 
-Whole tier-0 AC payload: 202 b fixed → **185.8 b** zeroth-order (−8.0%) →
-**156.9 b** with a per-index context model (−22.3%).
+Whole tier-0 AC payload: 202 b fixed → **189.2 b** zeroth-order (−6.4%) →
+**159.3 b** with a per-index context model (−21.1%). At 32 B that is 1.6 B of
+headroom, or 2.6 more luma coefficients.
 
 > **Corrected in §7.13.** Both figures are *in-sample* entropies of the corpus
 > that produced them, and the 156.9 b context number does **not** survive
@@ -1555,27 +1556,43 @@ adopted pair as incumbent and an explicit isotropic arm.
 |---|---|---|---|---|
 | **DEFAULT** aniso 1.2 / hv 0.15 | 11.473 | — | — | — |
 | isotropic (aniso 0, hv 0) | 11.453 | −0.17% | [−0.071, +0.120] | 16/31 |
-| **aniso 1.2 / hv 0.30** | **11.518** | **0.40%** | **[-0.119, +0.025]** | 14/31 |
-| aniso 2.0 / hv 0.30 | 11.574 | 0.88% | [-0.187, -0.025] | 13/31 |
-| aniso 1.2 / hv −0.15 | 11.470 | -0.03% | **[−0.076, +0.073]** | 19/31 |
-| aniso 1.2 / hv −0.30 | 11.553 | 0.70% | **[−0.185, +0.014]** | 12/31 |
+| **aniso 0.9 / hv 0.0** | **11.392** | **−0.71%** | **[+0.027, +0.143]** | 17/31 |
+| **aniso 1.2 / hv 0.0** (shipped aniso, `sel_hv` off) | **11.420** | **−0.46%** | **[+0.011, +0.101]** | 20/31 |
+| aniso 1.2 / hv 0.30 | 11.518 | 0.40% | [−0.119, +0.025] | 14/31 |
+| aniso 2.0 / hv 0.30 | 11.574 | 0.88% | **[−0.187, −0.025]** | 13/31 |
+| aniso 1.2 / hv −0.15 | 11.470 | −0.03% | [−0.076, +0.073] | 19/31 |
+| aniso 1.2 / hv −0.30 | 11.553 | 0.70% | [−0.185, +0.014] | 12/31 |
 | aniso 3.2 / hv 0.0 | 11.631 | 1.38% | **[−0.265, −0.072]** | 7/31 |
 
-Three findings, and two of them are uncomfortable:
+Three findings, and the first two are uncomfortable:
 
-1. **`sel_hv = 0.30` is significantly better than the shipped `0.15`** —
-   the largest positive-direction arm whose CI excludes zero. (`aniso 0.9 /
-   hv 0.15` also clears zero, at −0.07% with 4/31 wins — real but too small to
-   act on.) §11.4 finds the same *direction* on the graphics corpus, though not
-   significantly there. The adopted value is not the tune optimum.
+1. **`sel_hv` is worth less than nothing at the shipped `aniso`.** Turning it
+   off — `aniso 1.2 / hv 0`, one knob changed — is −0.46% with a CI that
+   excludes zero and wins 20 of 31 images. `aniso 0.9 / hv 0` is the grid's best
+   arm at −0.71%, also excluding zero. Every arm that clears zero in the good
+   direction has `hv = 0`; no arm with `hv ≠ 0` does. Two caveats before anyone
+   acts on it: this is 28 arms scored against one incumbent with no multiplicity
+   correction, and −0.71% is inside the range §9.3 has already watched a
+   selection-order effect halve under a corpus change.
 2. **Isotropic is statistically indistinguishable from the adopted weights.**
    On the current corpus the selection weights buy nothing measurable on tune;
    their justification rests entirely on the holdout delta §7.12 recorded
    (−3.16% without them, −3.50% with). §8.1 already called them "the weakest of
    the three constants-level changes"; this is weaker still.
-3. **The sign is real.** Negative `hv` is significantly worse, and large `aniso`
-   without `hv` is significantly worse. The weights are not noise — the
-   *magnitude* the format shipped is simply not where the optimum is.
+3. **Large `aniso` is real, and negative `hv` no longer is.** Every arm at
+   `aniso ≥ 2.0` is significantly worse whatever `hv` does, so the weight is not
+   noise. But negative `hv`, which round 3 recorded as significantly worse, now
+   is not: `hv −0.15` is −0.03% and `hv −0.30` is +0.70% with a CI straddling
+   zero. What survives is a bound on `aniso`, not a sign for `hv`.
+
+> **Round 3 read this grid the other way round**, and its own numbers supported
+> it: `aniso 1.2 / hv 0.30` was −0.81% with a CI excluding zero, and the section
+> concluded "`sel_hv = 0.30` is significantly better than the shipped `0.15`".
+> On the current corpus that same arm is **+0.40%** and its CI straddles zero.
+> Nothing about the format changed; the conclusion was carried by a corpus of
+> predominantly outdoor landscape, exactly as §4.10 predicts for anything that
+> exploits a dominant orientation structure. Neither reading has been validated
+> on holdout, and neither should be adopted from tune alone.
 
 ### 11.6 µ-law companding, re-derived — stands
 
@@ -1594,7 +1611,7 @@ the 4 b/3 b tier-0 depths rather than the 5 b/4 b depths it was locked against.
 
 Every alternative family is worse, including codebooks trained on the corpus
 being scored. The µ plateau §4.6 reported survives both the corpus revision and
-the bit-depth change: every µ_L ∈ {4…7} lands within ±0.14% of the shipped µ_L = 5.
+the bit-depth change: every µ_L ∈ {4…7} lands within ±0.06% of the shipped µ_L = 5.
 
 ### 11.7 Deadzone, re-derived — and it was measuring nothing
 
@@ -1632,7 +1649,7 @@ next sweep to touch it draws a conclusion from a constant.
 ### 11.8 Quantization ranges, re-derived — stand
 
 `sweeps/quant-ranges.json`: `max_l_scale` ∈ {0.35, 0.5, 0.65}, `max_a/b_scale`
-∈ {0.1, 0.125, 0.15}. Every arm lands within **±0.13%** of the shipped values
+∈ {0.1, 0.125, 0.15}. Every arm lands within **±0.17%** of the shipped values
 and every guard holds. The ranges are sized to the signal, as `RATIONALE.md`
 claims; the claim now rests on the current corpus.
 
@@ -1653,19 +1670,27 @@ tier code is spent on it.
 
 | layout | ΔE00 | Δ% vs shipped shape | paired CI vs the leader |
 |---|---|---|---|
-| shipped shape L13@5 C6@4 | 12.573 | — | **[−0.540, −0.273]** |
-| **L18@4 C7@3** | **12.175** | −3.16% | (leader) |
-| L19@4 C6@3 | 12.147 | −3.39% | [−0.023, +0.098] |
-| L16@4 C8@3 | 12.240 | −2.65% | [−0.140, +0.016] |
-| L24@3 C7@3 | 12.181 | −3.12% | [−0.087, +0.085] |
-| L20@4 C5@3 | 12.227 | −2.75% | [−0.182, +0.057] |
-| L35@3 C2@2 (count-maximal) | 12.279 | −2.34% | **[−0.383, +0.158]** |
-| L19@5 C2@4 (precision-maximal) | 12.436 | −1.09% | **[−0.480, −0.081]** |
+| shipped shape L13@5 C6@4 | 12.573 | — | **[−0.580, −0.288]** |
+| **L19@4 C6@3** | **12.147** | −3.39% | (leader) |
+| L26@3 C6@3 | 12.161 | −3.27% | [−0.090, +0.062] |
+| L18@4 C7@3 | 12.175 | −3.16% | [−0.098, +0.023] |
+| L16@4 C8@3 | 12.240 | −2.65% | **[−0.195, −0.002]** |
+| L24@3 C7@3 | 12.181 | −3.12% | [−0.106, +0.032] |
+| L20@4 C5@3 | 12.227 | −2.75% | [−0.204, +0.012] |
+| L35@3 C2@2 (count-maximal) | 12.279 | −2.34% | **[−0.403, +0.120]** |
+| L19@5 C2@4 (precision-maximal) | 12.436 | −1.09% | **[−0.501, −0.130]** |
 
 The extremes are decisively rejected and the shipped shape is decisively beaten
-— by 4.13% — but **the leading seven layouts are a plateau**: every paired CI
-against the leader includes zero. The photographic split cannot choose here, and
-squeezing its guard metrics for a winner would be mining noise.
+— by 3.39% — but **the leading five layouts are a plateau**: their paired CIs
+against the leader all include zero. Only `L16@4 C8@3` has separated from the
+group, and it separated downward. The photographic split still cannot choose
+among the five, and squeezing its guard metrics for a winner would be mining
+noise.
+
+The *identity* of the leader did move, though, and toward the layout that
+shipped: on the old corpus `L18@4 C7@3` led and `L19@4 C6@3` sat second, and
+that ordering is now reversed. Nothing separates them — the CI between them
+straddles zero either way — which is the point of calling it a plateau.
 
 So the tie is broken on new information rather than on a second look at the same
 data: which candidate holds up on the graphics corpus, which a compact tier will
@@ -1673,15 +1698,25 @@ also be asked to carry (`sweeps/compact-tier-graphics.json`).
 
 | layout | photo rank | graphics ΔE00 | graphics rank | rank sum |
 |---|---|---|---|---|
-| **L19@4 C6@3** | 2 | 10.855 (−2.78%) | 3 | **5** |
-| L20@4 C5@3 | 5 | 10.783 (−3.43%) | 1 | 6 |
-| L18@4 C7@3 | 1 | 10.917 (−2.22%) | 7 | 8 |
-| L24@3 C7@3 | 4 | 10.885 (−2.52%) | 5 | 9 |
-| L26@3 C6@3 | 8 | 10.813 (−3.16%) | 2 | 10 |
-| L16@4 C8@3 | 3 | 11.060 (−0.94%) | 8 | 11 |
+| **L19@4 C6@3** | 1 | 10.855 (−2.78%) | 3 | **4** |
+| L26@3 C6@3 | 2 | 10.813 (−3.16%) | 2 | **4** |
+| L24@3 C7@3 | 5 | 10.885 (−2.52%) | 5 | 10 |
+| L20@4 C5@3 | 9 | 10.783 (−3.43%) | 1 | 10 |
+| L18@4 C7@3 | 4 | 10.917 (−2.22%) | 7 | 11 |
+| L16@4 C8@3 | 11 | 11.060 (−0.94%) | 8 | 19 |
 
-`L 19 @ 4 b, a/b 6 @ 3 b` is the most robust across both bodies of content —
-and it is the layout §8.1 chose on tune, arrived at independently.
+The graphics column is unchanged — `85f6af3` re-sourced the photographic corpus
+only — so every rank that moved here moved because of the photo column.
+
+**The choice is unchanged and its justification is not.** On the old corpus the
+rank sum separated `L19@4 C6@3` (5) from `L26@3 C6@3` (10) and that gap is what
+broke the tie. The two now **tie at 4**, so the rank sum no longer decides
+anything. What decides it instead is stronger evidence than round 3 had:
+`L19@4 C6@3` leads the photographic corpus outright, which it did not before,
+and it is the layout §8.1 chose on tune and the one that shipped.
+
+Read carefully, that is a tie-break rule failing and the conclusion surviving on
+other grounds — not a rule confirming itself twice.
 
 > **Superseded.** The paragraph below records the code-4 placement as it was
 > built. It did not ship that way: `f6417d3` reordered the tier codes by quality before
