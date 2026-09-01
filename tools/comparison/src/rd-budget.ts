@@ -269,7 +269,7 @@ async function scoreAdapter(
   let scored = 0;
   for (const input of inputs) {
     try {
-      const r = await adapter.process(input, 1);
+      const r = await adapter.process(input);
       bytesSum += r.encodedSizeBytes;
       ciede.push(r.metrics.ciede2000);
       ssim2.push(r.metrics.ssimulacra2);

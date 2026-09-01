@@ -36,7 +36,16 @@ let ensuredBuilt = false;
  * Build the shim if it is missing. The normal compare flow pre-builds it in the
  * harness build phase (so this is a no-op); this fallback covers paths that skip
  * that phase — `--skip-harnesses`, tests, or importing this module directly.
+ *
+ * Exported so a concurrent caller can force the build *before* fanning out.
+ * `ensuredBuilt` is a check-then-act with a subprocess between the two halves,
+ * so several workers arriving together would each see `false` and launch their
+ * own `cargo build` of the same crate.
  */
+export function ensureGamutReferenceBuilt(): void {
+  ensureBuilt();
+}
+
 function ensureBuilt(): void {
   if (ensuredBuilt) {
     return;

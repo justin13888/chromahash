@@ -24,6 +24,7 @@ import {
   ensureIqaAvailable,
   IqaError,
   setAllowMissingIqa,
+  setMetricJobs,
 } from "./metrics/iqa.ts";
 import {
   ALPHA_BACKDROP,
@@ -54,13 +55,15 @@ import {
   TIER_BYTES,
 } from "./rd/lineup.ts";
 import { computeRdCurves, generateRdSection } from "./rd/report.ts";
-import { splitFor } from "./corpus.ts";
+import { splitFor, tierFor } from "./corpus.ts";
+import { defaultJobs, mapConcurrent } from "./pool.ts";
+import { aspectFidelity, REFLOW_CONTAINER_PX } from "./aspect.ts";
 import {
   computePairedComparisons,
   formatPairedTable,
   pickVersionBaseline,
 } from "./paired.ts";
-import { gamutToSrgbReference } from "./gamut.ts";
+import { ensureGamutReferenceBuilt, gamutToSrgbReference } from "./gamut.ts";
 import type {
   ComparisonImageJson,
   ComparisonJson,
@@ -79,7 +82,6 @@ const { values } = parseArgs({
     // version mode can fall back to versions-report.html instead of clobbering it.
     output: { type: "string" },
     json: { type: "string" },
-    iterations: { type: "string", default: "10" },
     "skip-harnesses": { type: "boolean", default: false },
     "generate-fixtures": { type: "boolean", default: true },
     "skip-natural": { type: "boolean", default: false },
@@ -95,7 +97,15 @@ const { values } = parseArgs({
     "upscale-policy": { type: "string", default: "browser" },
     // Also score both sides after a Gaussian blur (sigma = longEdge/32),
     // modeling the blur-up presentation placeholders are displayed with.
-    "blurred-scoring": { type: "boolean", default: false },
+    "blurred-scoring": { type: "boolean", default: true },
+    // Blur recovery is on by default: an LQIP is normally displayed with a
+    // blur-up, so "how much of this error survives the blur" is part of what a
+    // reader is choosing between. The blurred pass requests ΔE00 alone, so it
+    // costs a fraction of the sharp set rather than doubling it.
+    "no-blurred-scoring": { type: "boolean", default: false },
+    // Skip the locally-computed ringing metric (see metrics/local.ts). It costs
+    // no subprocess but does cost CPU per pair; a preview-only run can drop it.
+    "no-ringing": { type: "boolean", default: false },
     formats: { type: "string" },
     versions: { type: "string" },
     commit: { type: "string" },
@@ -103,6 +113,10 @@ const { values } = parseArgs({
     // photographic corpus and chart quality vs bytes (see rd/lineup.ts).
     rd: { type: "boolean", default: false },
     "skip-codecs": { type: "boolean", default: false },
+    // Concurrent images, and the cap on concurrent iqa-cli processes.
+    // `--jobs 1` is exact serial execution and is the reference the
+    // determinism self-test compares a parallel run against.
+    jobs: { type: "string" },
   },
 });
 
@@ -120,7 +134,6 @@ const outputPath =
     : values.versions
       ? "output/versions-report.html"
       : "output/report.html");
-const iterations = Number.parseInt(values.iterations ?? "10", 10);
 // Version-comparison mode compares chromahash builds only, and R-D mode sweeps
 // format variants, so the cross-language harness verification is irrelevant in
 // both and is always skipped.
@@ -134,7 +147,10 @@ const upscalePolicy: UpscalePolicy =
   (values["upscale-policy"] ?? "browser") === "linear"
     ? "linear-lanczos"
     : "browser-gamma";
-const blurredScoring = values["blurred-scoring"] ?? false;
+const blurredScoring =
+  (values["blurred-scoring"] ?? true) &&
+  !(values["no-blurred-scoring"] ?? false);
+const ringing = !(values["no-ringing"] ?? false);
 /** Optional comma-separated format filter (case-insensitive), e.g. --formats ChromaHash,ThumbHash. */
 const formatFilter = values.formats
   ? values.formats.split(",").map((f) => f.trim().toLowerCase())
@@ -229,7 +245,22 @@ async function main(): Promise<void> {
   setAllowMissingIqa(values["allow-missing-iqa"] ?? false);
   ensureIqaAvailable();
 
-  setScoringConfig({ upscalePolicy, blurredScoring });
+  setScoringConfig({ upscalePolicy, blurredScoring, ringing });
+
+  // Fan-out width. Scoring is dominated by iqa-cli subprocesses and sharp
+  // encodes, so the default is one worker per available core; --jobs 1 restores
+  // exact serial execution.
+  const jobs = (() => {
+    const raw = values.jobs;
+    if (raw === undefined) return defaultJobs();
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isInteger(parsed) || parsed < 1) {
+      console.error(`--jobs ${raw} is not a positive integer.`);
+      process.exit(1);
+    }
+    return parsed;
+  })();
+  setMetricJobs(jobs);
   console.log(
     `Scoring: reference cap ${REFERENCE_CAP}px, upscale=${upscalePolicy}${blurredScoring ? ", blurred set enabled" : ""}`,
   );
@@ -358,9 +389,6 @@ async function main(): Promise<void> {
           // tags lack capped decode); metrics resample to source regardless.
           capToSource: false,
           tier: chromaTier,
-          // Old tag binaries predate the bench subcommands; spawn-loop timing
-          // keeps every version column measured the same way.
-          benchTiming: false,
         }),
     );
     if (adapters.length === 0) {
@@ -432,7 +460,7 @@ async function main(): Promise<void> {
     activeFormatNames = [...known, ...extra];
   }
 
-  const entries: Array<{
+  interface Entry {
     name: string;
     category: ImageCategory;
     originalWidth: number;
@@ -443,111 +471,130 @@ async function main(): Promise<void> {
     loResDataUri: string;
     formatResults: FormatResult[];
     harnessResults: HarnessResult[];
-  }> = [];
-
-  for (const imagePath of imagePaths) {
-    const fileName = path.basename(imagePath);
-    const name = fileName.replace(/\.[^.]+$/, "");
-    const category = categorizeImage(fileName);
-
-    console.log(`Processing: ${name} (${category})`);
-
-    const input = await loadImage(imagePath);
-
-    // Determine gamut from filename (used by both adapters and harnesses)
-    const gamutMap: Record<string, string> = {
-      "gamut-srgb": "srgb",
-      "gamut-p3": "displayp3",
-      "gamut-adobe-rgb": "adobergb",
-      "gamut-bt2020": "bt2020",
-      "gamut-prophoto": "prophoto",
-    };
-    const gamut = gamutMap[name] ?? "srgb";
-    input.gamut = gamut;
-    // Color-managed metric reference: all formats are scored against the
-    // image's true sRGB appearance at display (reference) resolution, not the
-    // raw gamut-encoded bytes.
-    input.metricReferenceRgba = gamutToSrgbReference(
-      input.referenceRgba,
-      gamut,
-    );
-    // The report previews stay at encoder-input resolution; gamut fixtures
-    // need their own small-res sRGB conversion for display.
-    const displaySmallRgba = gamutToSrgbReference(input.smallRgba, gamut);
-
-    // Gamut fixtures store raw bytes tagged with a wide gamut and carry no ICC
-    // profile, so rendering them as plain sRGB misrepresents the source (#39).
-    // For Display P3 — a real, ICC-taggable display gamut — show the *source*
-    // P3 bytes tagged with the P3 profile, so on a wide-gamut viewer the Original
-    // and the (P3-decoded, P3-tagged) ChromaHash preview both show the true
-    // saturated color and match, while sRGB-only formats look less saturated.
-    // Other wide gamuts (Adobe RGB / BT.2020 / ProPhoto) aren't P3-taggable and
-    // fall back to the color-managed sRGB appearance.
-    const colorManaged = gamut !== "srgb";
-    const p3 = gamut === "displayp3";
-    const previewIcc = p3 ? "p3" : undefined;
-    // P3: the raw source bytes are already P3-encoded — tag, don't convert.
-    const displayRgba = p3 ? input.smallRgba : displaySmallRgba;
-    const originalDataUri = colorManaged
-      ? await rgbaToDataUri(
-          displayRgba,
-          input.smallWidth,
-          input.smallHeight,
-          previewIcc,
-        )
-      : await fileBufferToDisplayDataUri(input.fileBuffer);
-    const loResDataUri = await rgbaToDataUri(
-      colorManaged ? displayRgba : input.smallRgba,
-      input.smallWidth,
-      input.smallHeight,
-      previewIcc,
-    );
-
-    // Run format adapters
-    const formatResults: FormatResult[] = [];
-    for (const adapter of adapters) {
-      try {
-        const result = await adapter.process(input, iterations);
-        formatResults.push(result);
-      } catch (err) {
-        // Metric-infrastructure failures abort the whole run — a report where
-        // one format silently lost its metrics is not a comparison.
-        if (err instanceof IqaError) throw err;
-        console.warn(
-          `  ${adapter.name} failed: ${err instanceof Error ? err.message : err}`,
-        );
-      }
-    }
-
-    // Run cross-language harnesses (if not skipped)
-    let harnessResults: HarnessResult[] = [];
-    if (!skipHarnesses) {
-      try {
-        harnessResults = await runAllHarnesses(
-          input,
-          gamut,
-          unavailableHarnesses,
-        );
-      } catch (err) {
-        console.warn(
-          `  Harness runner failed: ${err instanceof Error ? err.message : err}`,
-        );
-      }
-    }
-
-    entries.push({
-      name,
-      category,
-      originalWidth: input.originalWidth,
-      originalHeight: input.originalHeight,
-      smallWidth: input.smallWidth,
-      smallHeight: input.smallHeight,
-      originalDataUri,
-      loResDataUri,
-      formatResults,
-      harnessResults,
-    });
   }
+
+  // Force the wide-gamut shim's build before fanning out: `ensureBuilt` is a
+  // check-then-act around a `cargo build`, so concurrent first-callers would
+  // each launch one. Only gamut fixtures reach it, so only pay for it if the
+  // corpus actually has one.
+  if (imagePaths.some((p) => path.basename(p).startsWith("gamut-"))) {
+    ensureGamutReferenceBuilt();
+  }
+
+  // Images are independent, so they are scored concurrently. `mapConcurrent`
+  // places results by index rather than pushing on completion, which is what
+  // keeps every downstream mean bit-identical to a serial run — see pool.ts.
+  //
+  // The real throttle is the semaphore around iqa-cli, not this width; going
+  // wider here only keeps that semaphore fed while an image is busy encoding.
+  let done = 0;
+  const entries: Entry[] = await mapConcurrent(
+    imagePaths,
+    jobs,
+    async (imagePath): Promise<Entry> => {
+      const fileName = path.basename(imagePath);
+      const name = fileName.replace(/\.[^.]+$/, "");
+      const category = categorizeImage(fileName);
+
+      const input = await loadImage(imagePath);
+
+      // Determine gamut from filename (used by both adapters and harnesses)
+      const gamutMap: Record<string, string> = {
+        "gamut-srgb": "srgb",
+        "gamut-p3": "displayp3",
+        "gamut-adobe-rgb": "adobergb",
+        "gamut-bt2020": "bt2020",
+        "gamut-prophoto": "prophoto",
+      };
+      const gamut = gamutMap[name] ?? "srgb";
+      input.gamut = gamut;
+      // Color-managed metric reference: all formats are scored against the
+      // image's true sRGB appearance at display (reference) resolution, not the
+      // raw gamut-encoded bytes.
+      input.metricReferenceRgba = gamutToSrgbReference(
+        input.referenceRgba,
+        gamut,
+      );
+      // The report previews stay at encoder-input resolution; gamut fixtures
+      // need their own small-res sRGB conversion for display.
+      const displaySmallRgba = gamutToSrgbReference(input.smallRgba, gamut);
+
+      // Gamut fixtures store raw bytes tagged with a wide gamut and carry no ICC
+      // profile, so rendering them as plain sRGB misrepresents the source (#39).
+      // For Display P3 — a real, ICC-taggable display gamut — show the *source*
+      // P3 bytes tagged with the P3 profile, so on a wide-gamut viewer the Original
+      // and the (P3-decoded, P3-tagged) ChromaHash preview both show the true
+      // saturated color and match, while sRGB-only formats look less saturated.
+      // Other wide gamuts (Adobe RGB / BT.2020 / ProPhoto) aren't P3-taggable and
+      // fall back to the color-managed sRGB appearance.
+      const colorManaged = gamut !== "srgb";
+      const p3 = gamut === "displayp3";
+      const previewIcc = p3 ? "p3" : undefined;
+      // P3: the raw source bytes are already P3-encoded — tag, don't convert.
+      const displayRgba = p3 ? input.smallRgba : displaySmallRgba;
+      const originalDataUri = colorManaged
+        ? await rgbaToDataUri(
+            displayRgba,
+            input.smallWidth,
+            input.smallHeight,
+            previewIcc,
+          )
+        : await fileBufferToDisplayDataUri(input.fileBuffer);
+      const loResDataUri = await rgbaToDataUri(
+        colorManaged ? displayRgba : input.smallRgba,
+        input.smallWidth,
+        input.smallHeight,
+        previewIcc,
+      );
+
+      // Run format adapters
+      const formatResults: FormatResult[] = [];
+      for (const adapter of adapters) {
+        try {
+          const result = await adapter.process(input);
+          formatResults.push(result);
+        } catch (err) {
+          // Metric-infrastructure failures abort the whole run — a report where
+          // one format silently lost its metrics is not a comparison.
+          if (err instanceof IqaError) throw err;
+          console.warn(
+            `  ${adapter.name} failed: ${err instanceof Error ? err.message : err}`,
+          );
+        }
+      }
+
+      // Run cross-language harnesses (if not skipped)
+      let harnessResults: HarnessResult[] = [];
+      if (!skipHarnesses) {
+        try {
+          harnessResults = await runAllHarnesses(
+            input,
+            gamut,
+            unavailableHarnesses,
+          );
+        } catch (err) {
+          console.warn(
+            `  Harness runner failed: ${err instanceof Error ? err.message : err}`,
+          );
+        }
+      }
+
+      console.log(`[${++done}/${imagePaths.length}] ${name} (${category})`);
+
+      return {
+        name,
+        category,
+        originalWidth: input.originalWidth,
+        originalHeight: input.originalHeight,
+        smallWidth: input.smallWidth,
+        smallHeight: input.smallHeight,
+        originalDataUri,
+        loResDataUri,
+        formatResults,
+        harnessResults,
+      };
+    },
+  );
 
   const absOutput = path.resolve(toolRoot, outputPath);
   const absJson = path.resolve(toolRoot, jsonPath);
@@ -599,12 +646,22 @@ async function main(): Promise<void> {
           encodedSizeBytes: r.encodedSizeBytes,
           decodedWidth: r.decodedWidth,
           decodedHeight: r.decodedHeight,
-          encodeTimeMs: r.encodeTimeMs,
-          decodeTimeMs: r.decodeTimeMs,
           preview,
           css,
           metrics: r.metrics,
           metricsBlurred: r.metricsBlurred,
+          local: r.local,
+          intrinsicSize: r.intrinsicSize,
+          // Scored against the ORIGINAL: that is the shape which eventually
+          // loads, so it is the shape the layout shift is felt against. The
+          // harness's own <=100px encoder input contributes a little of this
+          // (~0.5%), reported separately rather than netted out -- see
+          // aspect.ts and `encoderInputFloor`.
+          aspect: aspectFidelity(
+            r.intrinsicSize,
+            entry.originalWidth,
+            entry.originalHeight,
+          ),
         };
       }),
     );
@@ -625,6 +682,7 @@ async function main(): Promise<void> {
           language: r.language,
           hash: toHex(r.hash),
           matches: r.matches,
+          error: r.error,
           preview,
         };
       }),
@@ -634,6 +692,7 @@ async function main(): Promise<void> {
       name: entry.name,
       category: entry.category,
       split: splitFor(entry.name),
+      tier: tierFor(entry.name),
       originalWidth: entry.originalWidth,
       originalHeight: entry.originalHeight,
       original: entry.originalDataUri,
@@ -696,14 +755,18 @@ async function main(): Promise<void> {
     // A language that produced no result anywhere was never run at all — its
     // harness could not be built. That is "unavailable", not a parity failure,
     // and reporting it as FAIL asserts a byte mismatch that was never observed.
-    const ran = entries.some((e) =>
-      e.harnessResults.some((r) => r.language === language),
+    //
+    // A harness that built and then *crashed* is the same kind of absent
+    // verdict: it produced no hash, so it neither matched nor disagreed. Only
+    // an observed byte difference is a FAIL.
+    const observed = entries.flatMap((e) =>
+      e.harnessResults.filter(
+        (r) => r.language === language && r.error === null,
+      ),
     );
-    if (!ran) return { language, pass: null as boolean | null };
-    const pass = entries.every(
-      (e) =>
-        e.harnessResults.find((r) => r.language === language)?.matches ?? false,
-    );
+    if (observed.length === 0)
+      return { language, pass: null as boolean | null };
+    const pass = observed.every((r) => r.matches);
     return { language, pass };
   });
 
@@ -711,7 +774,7 @@ async function main(): Promise<void> {
   const rdJson = rdVariants ? computeRdCurves(entries, rdVariants) : null;
 
   const json: ComparisonJson = {
-    schemaVersion: 2,
+    schemaVersion: 4,
     generatedAt: meta.generatedAt,
     scoring: {
       referenceCap: REFERENCE_CAP,
@@ -719,6 +782,8 @@ async function main(): Promise<void> {
       blurredScoring,
       blurSigmaRule: BLUR_SIGMA_RULE,
       alphaBackdrop: ALPHA_BACKDROP,
+      reflowContainerPx: REFLOW_CONTAINER_PX,
+      ringing,
     },
     commit: meta.commit,
     repoUrl: meta.repoUrl,
@@ -757,7 +822,12 @@ async function main(): Promise<void> {
             showImplementations: false,
             paired: paired !== null,
           }
-        : undefined,
+        : // The standard report used to fall through to FORMAT_NAMES, so the
+          // size-matched WebP/AVIF columns appeared in the galleries and in the
+          // console summary but in none of the HTML tables. They are the most
+          // useful comparison a reader has -- "how does this compare with just
+          // shipping a tiny WebP?" -- and they are already computed.
+          { formatNames: activeFormatNames },
   );
   await fs.writeFile(absOutput, html);
 
@@ -807,8 +877,16 @@ async function main(): Promise<void> {
       const results = entries.flatMap((e) =>
         e.harnessResults.filter((r) => r.language === lang),
       );
-      const allMatch = results.every((r) => r.matches);
-      console.log(`  ${lang}: ${allMatch ? "PASS" : "FAIL"}`);
+      const observed = results.filter((r) => r.error === null);
+      const errored = results.length - observed.length;
+      const note = errored > 0 ? ` (${errored} image(s) errored)` : "";
+      const verdict =
+        observed.length === 0
+          ? "N/A"
+          : observed.every((r) => r.matches)
+            ? "PASS"
+            : "FAIL";
+      console.log(`  ${lang}: ${verdict}${note}`);
     }
   }
 }

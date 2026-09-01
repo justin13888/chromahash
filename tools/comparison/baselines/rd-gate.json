@@ -1,48 +1,48 @@
 {
-  "note": "Baseline for the default-tier (32-byte) R-D regression gate (src/rd-gate.ts). Regenerate deliberately with `mise run rd:gate:update` after an intended encoder change, and say so in the commit message.",
+  "note": "Baseline for the tier-0 R-D regression gate (src/rd-gate.ts). Regenerate deliberately with `mise run rd:gate:update` after an intended encoder change, and say so in the commit message.",
   "tier": 1,
   "tolerancePct": 1,
   "images": [
     {
-      "label": "chroma-strawberries",
+      "label": "chroma-the-old-monochrome",
       "bytes": 32,
-      "ciede2000": 15.314762487289755
+      "ciede2000": 8.996802373274656
     },
     {
-      "label": "natural-city",
+      "label": "natural-andrew-jackson-state",
       "bytes": 32,
-      "ciede2000": 8.210880007415827
+      "ciede2000": 13.285259391540746
     },
     {
-      "label": "natural-facade",
+      "label": "natural-dish-meatloaf-served",
       "bytes": 32,
-      "ciede2000": 9.643841022210228
+      "ciede2000": 14.228461571862523
     },
     {
-      "label": "natural-food",
+      "label": "natural-fishing-the-coast",
       "bytes": 32,
-      "ciede2000": 5.643689990695808
+      "ciede2000": 3.5449224552783187
     },
     {
-      "label": "natural-mountains",
+      "label": "natural-hard-rock-cafe",
       "bytes": 32,
-      "ciede2000": 6.730469060965571
+      "ciede2000": 12.04764075794808
     },
     {
-      "label": "night-milky-way",
+      "label": "natural-landschaftsschutzgebiet-volkspark-rehberge",
       "bytes": 32,
-      "ciede2000": 5.675999295718619
+      "ciede2000": 10.499755598019469
     },
     {
-      "label": "portrait-camera",
+      "label": "night-bas-lica-notre",
       "bytes": 32,
-      "ciede2000": 10.177460910741322
+      "ciede2000": 12.959260640331395
     },
     {
-      "label": "portrait-suit",
+      "label": "portrait-african-lady",
       "bytes": 32,
-      "ciede2000": 9.370075940020957
+      "ciede2000": 13.533332266463093
     }
   ],
-  "meanCiede2000": 8.845897339382262
+  "meanCiede2000": 11.136929381839785
 }

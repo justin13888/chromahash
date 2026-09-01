@@ -130,8 +130,6 @@ export function buildRdLineup(): RdVariant[] {
         // natural 32 px render is already below the encoder-input cap, so this
         // frames v0.6 identically to a capped tier-0 decode either way.
         capToSource: false,
-        // The shim predates the in-process bench subcommands.
-        benchTiming: false,
       }),
     });
   } else {

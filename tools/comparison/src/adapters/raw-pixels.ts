@@ -1,7 +1,7 @@
 import sharp from "sharp";
 import type { FormatAdapter, FormatResult, ImageInput } from "../types.ts";
 import { rgbaToDataUri } from "../image-loader.ts";
-import { computeAllMetrics, flattenOverBackdrop, timeMs } from "../metrics.ts";
+import { computeAllMetrics, flattenOverBackdrop } from "../metrics.ts";
 import { BudgetUnrepresentableError } from "../rd/byte-target.ts";
 
 /** RGB565 packs each pixel into two bytes (5 red, 6 green, 5 blue bits). */
@@ -44,7 +44,7 @@ export class RawPixelsAdapter implements FormatAdapter {
     return best;
   }
 
-  async process(input: ImageInput, iterations: number): Promise<FormatResult> {
+  async process(input: ImageInput): Promise<FormatResult> {
     const { smallWidth: w, smallHeight: h, smallRgba: rgba } = input;
 
     const grid = this.chooseGrid(w, h);
@@ -73,14 +73,8 @@ export class RawPixelsAdapter implements FormatAdapter {
 
     const gridRgba = await downscale();
     const packed = packRgb565(gridRgba);
-    const encodeTimeMs = await timeMs(async () => {
-      packRgb565(await downscale());
-    }, iterations);
 
     const decodedRgba = unpackRgb565(packed);
-    const decodeTimeMs = await timeMs(() => {
-      unpackRgb565(packed);
-    }, iterations);
 
     const dataUri = await rgbaToDataUri(decodedRgba, n, m);
     const reference = input.metricReferenceRgba ?? input.referenceRgba;
@@ -98,8 +92,9 @@ export class RawPixelsAdapter implements FormatAdapter {
       encodedSizeBytes: packed.length,
       decodedWidth: n,
       decodedHeight: m,
-      encodeTimeMs,
-      decodeTimeMs,
+      // The control's grid is chosen from the byte budget and is what a
+      // consumer would be shipped, so it is a genuine declaration.
+      intrinsicSize: { kind: "declared", width: n, height: m },
       dataUri,
       ...scores,
     };

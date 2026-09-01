@@ -13,6 +13,17 @@ export const QUALITY_MIN = 1;
 export const QUALITY_MAX = 100;
 
 /**
+ * The only metric candidate selection reads (see {@link betterCiede}).
+ *
+ * Scoring a candidate with the full seven-metric set computed SSIMULACRA2 and
+ * Butteraugli — the two expensive ones — for every rung of the ladder, then
+ * threw them away: measured, 37 metric calls per image of which 6 reach the
+ * report. Narrowing to ΔE00 cannot change which candidate wins, because that
+ * decision was always this field alone.
+ */
+const RANKING_METRICS = ["ciede2000"] as const;
+
+/**
  * Thrown when a byte budget is unrepresentable for a codec (e.g. AVIF's
  * container overhead alone exceeds ~250B, so a 32B target has no encoding).
  * The R-D report shows such variants as N/A at their anchor.
@@ -90,6 +101,8 @@ export async function findCodecVariantForBudget(
     if (fit === null) continue;
 
     const decoded = await opts.decode(fit.data);
+    // Ranking only — see RANKING_METRICS. The caller re-scores the winner with
+    // the full set, so nothing reported comes from this call.
     const scores = await computeAllMetrics(
       opts.referenceRgba,
       opts.referenceWidth,
@@ -97,6 +110,7 @@ export async function findCodecVariantForBudget(
       decoded.rgba,
       decoded.width,
       decoded.height,
+      { only: RANKING_METRICS, skipBlurred: true, skipRinging: true },
     );
     const candidate: CodecCandidate = {
       longEdge,

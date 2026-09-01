@@ -5,11 +5,32 @@
  * choice, so the harness supports both and stamps the active policy into the
  * report:
  *
- * - `browser-gamma` (primary): resample in gamma-encoded sRGB with a smooth
- *   kernel (Mitchell). Browsers upscale `<img>` elements in gamma space with
- *   bilinear/smooth filtering, so this is closest to the placeholder's real
- *   on-screen appearance. Mitchell over bilinear avoids sharp's bilinear
- *   blockiness at large factors while staying overshoot-free.
+ * - `browser-gamma` (primary): resample in gamma-encoded sRGB via sharp.
+ *   Browsers upscale `<img>` elements in gamma space with bilinear/smooth
+ *   filtering, so this is closest to the placeholder's real on-screen
+ *   appearance.
+ *
+ *   Two corrections to what this comment used to claim, both measured against
+ *   the installed sharp 0.33.5 rather than inferred:
+ *
+ *   1. The `kernel` option below does *not* select the enlargement filter.
+ *      libvips applies `kernel` on the reduce path only; enlarging goes through
+ *      its own interpolator. `cubic`, `mitchell`, `lanczos2` and `lanczos3`
+ *      produce byte-identical output when upscaling a step edge and differ when
+ *      downscaling it. The option is kept because a decode is occasionally
+ *      *reduced* to the reference (a 100px decode against a smaller reference),
+ *      where it does apply — but the headline "gamma-space Mitchell" was never
+ *      what the upscale did.
+ *   2. It is not overshoot-free. Enlarging a 64 -> 192 step overshoots to
+ *      [55, 201] — about 7% of the step in each direction. The old claim
+ *      survived because the obvious test uses a 0 -> 255 edge, where the
+ *      overshoot is clipped at the byte boundary and is invisible.
+ *
+ *   Neither changes what this function returns, and neither should: every
+ *   published number in `spec/EXPERIMENTS.md` was measured through this path.
+ *   They do mean a metric that must not see a resampler's halo cannot be
+ *   computed on this output — see `metrics/local.ts`, which samples
+ *   nearest-neighbour instead for exactly this reason.
  * - `linear-lanczos`: decode sRGB to linear light, separable Lanczos-3, then
  *   re-encode. This is the signal-processing-correct resample; it measures
  *   reconstruction fidelity independent of browser rendering quirks. Pure TS
@@ -189,9 +210,9 @@ export async function upscaleRgba(
   if (policy === "linear-lanczos") {
     return upscaleLinearLanczos(rgba, srcW, srcH, targetW, targetH);
   }
-  // browser-gamma: gamma-space Mitchell via sharp, stretched to the target
+  // browser-gamma: gamma-space resample via sharp, stretched to the target
   // aspect (fit: "fill") the way a browser stretches an <img> with explicit
-  // dimensions.
+  // dimensions. `kernel` binds on the reduce path only — see the module note.
   const { data } = await sharp(Buffer.from(rgba), {
     raw: { width: srcW, height: srcH, channels: 4 },
   })

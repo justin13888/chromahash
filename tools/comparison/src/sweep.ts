@@ -382,7 +382,7 @@ async function scoreVariant(
     const decoded = decodeViaRust(cli, hash, "srgb", capW, capH, variant.tune);
 
     const reference = input.metricReferenceRgba ?? input.referenceRgba;
-    const { metrics, alphaMae } = await computeAllMetrics(
+    const { metrics, local } = await computeAllMetrics(
       reference,
       input.referenceWidth,
       input.referenceHeight,
@@ -394,7 +394,7 @@ async function scoreVariant(
     ssim2s.push(metrics.ssimulacra2);
     butters.push(metrics.butteraugli);
     dssims.push(metrics.dssim);
-    alphaMaes.push(alphaMae);
+    alphaMaes.push(local.alphaMae);
   }
 
   return {

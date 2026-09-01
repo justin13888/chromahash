@@ -269,7 +269,7 @@ export async function ensureGraphicImages(): Promise<string[]> {
     if (
       await ensurePinnedFixture({
         filePath,
-        url: spec.url,
+        urls: [spec.url],
         sha256: spec.sha256,
         label: spec.label,
       })

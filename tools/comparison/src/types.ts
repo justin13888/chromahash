@@ -1,4 +1,4 @@
-import type { CorpusSplit } from "./corpus.ts";
+import type { CorpusSplit, CorpusTier } from "./corpus.ts";
 import type { PairedComparison } from "./paired.ts";
 
 /** Represents a loaded and downscaled image ready for encoding. */
@@ -64,6 +64,102 @@ export interface MetricResult {
   psnrDb: number | null;
 }
 
+/**
+ * Metrics this harness computes itself, in-process, rather than reading from
+ * `iqa-cli`.
+ *
+ * Kept out of {@link MetricResult} deliberately, and for the reason `alphaMae`
+ * always was: `MetricResult` is *what iqa-cli returned*, and folding a
+ * locally-computed number into it would make the report's provenance claim
+ * false. Anything measured here belongs in this interface instead.
+ */
+export interface LocalMetrics {
+  /**
+   * Mean absolute alpha error on [0, 1], scored on the alpha plane alone at
+   * reference resolution. Null unless alpha fidelity is being scored.
+   */
+  alphaMae: number | null;
+  /**
+   * Ringing: RMS excursion beyond the reference's local range, in 8-bit sRGB
+   * levels. Lower is better; a decode that is merely a blur of the reference
+   * scores exactly 0. This is the artifact measure — see `metrics/local.ts`
+   * for why the fidelity metrics cannot answer the same question.
+   */
+  ringing: number | null;
+  /** Achromatic part of the ringing excursion (levels). */
+  ringingLuma: number | null;
+  /** Chromatic part of the ringing excursion (levels); orthogonal to the above. */
+  ringingChroma: number | null;
+  /** Fraction of pixels with any excursion at all, on [0, 1]. */
+  ringArea: number | null;
+  /** 99th percentile of the per-pixel excursion (levels). */
+  ringP99: number | null;
+  /**
+   * Envelope radius used, in reference pixels. Reported because it is derived
+   * per format per image from the decode's scale, so the score carries its own
+   * scale (see `metrics/local.ts`).
+   */
+  ringWindowRadius: number | null;
+}
+
+/** All-null local metrics — for CSS-only formats and skipped computations. */
+export const NULL_LOCAL_METRICS: LocalMetrics = {
+  alphaMae: null,
+  ringing: null,
+  ringingLuma: null,
+  ringingChroma: null,
+  ringArea: null,
+  ringP99: null,
+  ringWindowRadius: null,
+};
+
+/**
+ * The size a format *declares* — what a consumer could reserve layout for from
+ * the payload alone, before any image data arrives.
+ *
+ * Deliberately **not** `decodedWidth`/`decodedHeight`. Those are the size this
+ * harness asked for: `decode_capped_to_with` in the Rust core caps per axis
+ * (`nat_w.min(max_w)`), and the ChromaHash adapter passes the encoder input as
+ * that cap, so at the higher tiers the reported decode dimensions *are the cap*
+ * — the harness's own downscale of the source, not the format's shape. Deriving
+ * an aspect error from them would report ~0 for exactly the tiers whose layout
+ * precision is in question.
+ *
+ * Required on {@link FormatResult} rather than optional: every adapter has to
+ * state its answer, and "this format carries no aspect at all" is an answer
+ * with a reason, not a missing field.
+ */
+export type IntrinsicSize =
+  | {
+      readonly kind: "declared";
+      readonly width: number;
+      readonly height: number;
+    }
+  | { readonly kind: "absent"; readonly reason: string };
+
+/**
+ * How far a format's declared shape is from the shape it was handed, and what
+ * that costs a page that reserves layout from it.
+ */
+export interface AspectFidelity {
+  /**
+   * |log2(AR_declared / AR_target)| in octaves. The symmetric measure: the
+   * ratio form |AR_d/AR_t − 1| scores 10% too wide as 10.00% and 10% too narrow
+   * as 9.09%, so a corpus mean would be biased by the landscape/portrait mix.
+   * Symmetry about 1:1 is the same property spec §8.1 builds the aspect
+   * encoding on.
+   */
+  log2Error: number;
+  /** (2^log2Error − 1) × 100 — spec §8.1's own convention for the same error. */
+  errorPct: number;
+  /**
+   * Layout shift in CSS px for a `REFLOW_CONTAINER_PX`-wide container. Positive
+   * means the real image is taller than the placeholder reserved, so content
+   * below it gets pushed down when the image loads.
+   */
+  reflowPx: number;
+}
+
 /** Result of encoding/decoding with a particular format. */
 export interface FormatResult {
   /** Name of the LQIP format. */
@@ -74,10 +170,6 @@ export interface FormatResult {
   decodedWidth: number;
   /** Height of the decoded preview image. */
   decodedHeight: number;
-  /** Average encode time in milliseconds. */
-  encodeTimeMs: number;
-  /** Average decode time in milliseconds. */
-  decodeTimeMs: number;
   /** Base64 PNG data URI for HTML embedding. */
   dataUri: string;
   /** Quality metrics (all null for CSS-only formats like unpic). */
@@ -88,6 +180,10 @@ export interface FormatResult {
    * run enables --blurred-scoring.
    */
   metricsBlurred: MetricResult | null;
+  /** Metrics computed by this harness rather than by iqa-cli. */
+  local: LocalMetrics;
+  /** The size this format declares, or why it declares none. */
+  intrinsicSize: IntrinsicSize;
 }
 
 /** An adapter that processes an image through a specific LQIP format. */
@@ -95,7 +191,7 @@ export interface FormatAdapter {
   /** Display name of the format. */
   readonly name: string;
   /** Process an image and return the format result. */
-  process(input: ImageInput, iterations: number): Promise<FormatResult>;
+  process(input: ImageInput): Promise<FormatResult>;
 }
 
 /** Result from a per-language CLI harness. */
@@ -106,6 +202,15 @@ export interface HarnessResult {
   hash: Uint8Array;
   /** Whether this hash matches the reference (Rust) hash. */
   matches: boolean;
+  /**
+   * Why this harness produced no hash, or null when it ran.
+   *
+   * A harness that builds and then crashes used to be recorded as
+   * `matches: false` — indistinguishable from a genuine byte disagreement,
+   * which is a claim nothing observed. Consumers must treat an errored result
+   * as *inconclusive*, never as a mismatch.
+   */
+  error: string | null;
   /** Decoded preview as a base64 PNG data URI. */
   dataUri: string;
   /** Width of the decoded preview, or 0 when the harness produced no preview. */
@@ -141,8 +246,6 @@ export interface FormatStat {
    */
   images: number;
   avgSize: number;
-  avgEncode: number;
-  avgDecode: number;
   /** Primary metric: mean CIEDE2000 ΔE00 (lower is better). */
   avgCiede: number | null;
   avgDssim: number | null;
@@ -159,6 +262,32 @@ export interface FormatStat {
   p90Ciede: number | null;
   /** 95% bootstrap confidence interval of the mean ΔE00 (see stats.ts). */
   ciCiede: [number, number] | null;
+  /** RMS ringing in 8-bit sRGB levels, averaged across the set. */
+  avgRinging: number | null;
+  /** 90th-percentile ringing — the images where artifacts actually bite. */
+  p90Ringing: number | null;
+  /** Mean fraction of pixels carrying any excursion, on [0, 1]. */
+  avgRingArea: number | null;
+  /**
+   * Mean aspect error, as a percent, converted from the mean of the per-image
+   * octave errors (see aspect.ts on why the mean is taken in log space).
+   */
+  avgAspectErrorPct: number | null;
+  /** 90th-percentile aspect error, as a percent. */
+  p90AspectErrorPct: number | null;
+  /**
+   * Largest absolute reflow across the set, in CSS px at the reference
+   * container width. Max rather than mean: layout shift is felt on the worst
+   * page in a set, not on the average one.
+   */
+  maxAbsReflowPx: number | null;
+  /**
+   * Images where this format declared a size at all. Zero means the format
+   * carries no aspect, and the report must print a dash rather than a number.
+   */
+  aspectImages: number;
+  /** Why no size was declared, when `aspectImages` is 0. */
+  aspectAbsentReason: string | null;
 }
 
 /**
@@ -171,8 +300,6 @@ export interface FormatJson {
   encodedSizeBytes: number;
   decodedWidth: number;
   decodedHeight: number;
-  encodeTimeMs: number;
-  decodeTimeMs: number;
   /** Relative path to the standalone preview image, or null for CSS-only formats. */
   preview: string | null;
   /** CSS gradient string for CSS-only formats (e.g. unpic), else null. */
@@ -180,6 +307,12 @@ export interface FormatJson {
   metrics: MetricResult;
   /** Blurred "as-rendered" metrics; null unless --blurred-scoring ran. */
   metricsBlurred: MetricResult | null;
+  /** Metrics computed by this harness rather than by iqa-cli. */
+  local: LocalMetrics;
+  /** The size this format declares, or why it declares none. */
+  intrinsicSize: IntrinsicSize;
+  /** Layout fidelity against the encoder input; null when no size is declared. */
+  aspect: AspectFidelity | null;
 }
 
 /** A single language implementation's result as serialized into the JSON report. */
@@ -187,8 +320,13 @@ export interface ImplementationJson {
   language: string;
   /** Hex-encoded 32-byte hash, or "" if the harness errored. */
   hash: string;
-  /** Whether this hash matches the reference (Rust) hash. */
+  /**
+   * Whether this hash matches the reference (Rust) hash. Meaningful only when
+   * {@link error} is null — an errored harness produced no hash to compare.
+   */
   matches: boolean;
+  /** Why this harness produced no hash, or null when it ran. */
+  error: string | null;
   /** Relative path to the standalone decoded preview, or null if the harness errored. */
   preview: string | null;
 }
@@ -199,6 +337,8 @@ export interface ComparisonImageJson {
   category: ImageCategory;
   /** Corpus split (see corpus.ts) so downstream tools never re-derive it. */
   split: CorpusSplit;
+  /** Real content or a generated capability fixture (see corpus.ts). */
+  tier: CorpusTier;
   originalWidth: number;
   originalHeight: number;
   /** Relative path to the standalone original (display-sized) image. */
@@ -229,6 +369,10 @@ export interface ScoringMetaJson {
   blurSigmaRule: string;
   /** Backdrop RGB both sides are composited over before scoring. */
   alphaBackdrop: readonly [number, number, number];
+  /** Container width the layout reflow figure is quoted for, in CSS px. */
+  reflowContainerPx: number;
+  /** Whether the locally-computed ringing metric was scored. */
+  ringing: boolean;
 }
 
 /**
