@@ -20,6 +20,7 @@
  *   node dist/verify-experiments.js              # every bound table
  *   node dist/verify-experiments.js --section 11.5
  *   node dist/verify-experiments.js --list-unbound
+ *   node dist/verify-experiments.js --strict        # a SKIP is a failure
  *
  * Exit status is non-zero on any disagreement, so `mise run verify:experiments`
  * gates a documentation change the way `mise run rd:gate` gates a quality change.
@@ -1265,7 +1266,8 @@ const BINDINGS: Binding[] = [
       "**DEFAULT** aniso 1.2 / hv 0.15": "DEFAULT aniso=1.2 hv=0.15",
       "isotropic (aniso 0, hv 0)": "isotropic (aniso=0 hv=0)",
       "**aniso 0.9 / hv 0.0**": "aniso=0.9 hv=0.0",
-      "**aniso 1.2 / hv 0.0** (shipped aniso, `sel_hv` off)": "aniso=1.2 hv=0.0",
+      "**aniso 1.2 / hv 0.0** (shipped aniso, `sel_hv` off)":
+        "aniso=1.2 hv=0.0",
       "aniso 1.2 / hv 0.30": "aniso=1.2 hv=0.3",
       "aniso 2.0 / hv 0.30": "aniso=2.0 hv=0.3",
       "aniso 1.2 / hv −0.15": "aniso=1.2 hv=-0.15",
@@ -1345,6 +1347,7 @@ const { values } = parseArgs({
     section: { type: "string" },
     "list-unbound": { type: "boolean", default: false },
     fix: { type: "boolean", default: false },
+    strict: { type: "boolean", default: false },
   },
 });
 
@@ -1380,6 +1383,8 @@ const UNBOUND_NOTES: Record<string, string> = {
   "7.13#0": "entropy-budget output, not a sweep",
   "9.3#0":
     "old-corpus vs new-corpus figures; the old corpus no longer exists, which is the point of the section",
+  "9.5#0":
+    "curated-corpus vs Wikimedia-corpus figures; the curated corpus no longer exists, same reason as §9.3",
   "10.2#0": "decode timings, not a corpus measurement",
   "11.0#0": "a two-row scoring demonstration on one synthetic fixture",
   "11.2#0":
@@ -1435,6 +1440,20 @@ console.log(
     `(${BINDINGS.length} bound of ${tables.length} in the document).`,
 );
 for (const s of skipped) console.log(`  SKIP  ${s}`);
+
+// A missing sweep output is reported rather than fatal, so the tool stays
+// useful on a machine that has run only part of section 6. That also means a
+// table whose sweep nobody ran passes silently: three of this document's
+// tables sat unreproducible behind a green run until the 2026-09 re-baseline
+// (section 9.5), because section 6 never listed the holdout runs they bind to.
+// `--strict` is for the case where every sweep is supposed to be on disk, and
+// a SKIP means the document has drifted out of reach of its own evidence.
+if (values.strict && skipped.length > 0) {
+  console.log(
+    `\n--strict: ${skipped.length} table(s) could not be checked. Run the sweeps named above, or drop the binding.`,
+  );
+  process.exit(1);
+}
 
 if (failures.length > 0) {
   console.log(`\n${failures.length} disagreement(s):\n`);
