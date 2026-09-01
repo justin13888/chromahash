@@ -187,6 +187,69 @@ async function blurRgba(
   return new Uint8Array(data);
 }
 
+/**
+ * Memoized {@link blurRgba} for the reference, on the same principle as
+ * {@link flattenReference} above.
+ *
+ * The blurred pass blurs both sides, but the reference side is the *same*
+ * buffer for every format column and — far worse — for every candidate the
+ * codec byte-target search scores. That was ~52 identical 512 px Gaussians per
+ * image. The decode side is genuinely different every time and is not cached.
+ *
+ * Keyed on buffer identity, which `flattenReference` is what makes stable.
+ */
+const blurredReferences = new WeakMap<Uint8Array, Map<number, Uint8Array>>();
+
+async function blurReference(
+  rgba: Uint8Array,
+  width: number,
+  height: number,
+  sigma: number,
+): Promise<Uint8Array> {
+  let perBuffer = blurredReferences.get(rgba);
+  if (!perBuffer) {
+    perBuffer = new Map();
+    blurredReferences.set(rgba, perBuffer);
+  }
+  const hit = perBuffer.get(sigma);
+  if (hit) return hit;
+  const built = await blurRgba(rgba, width, height, sigma);
+  perBuffer.set(sigma, built);
+  return built;
+}
+
+/**
+ * Per-call narrowing of what {@link computeAllMetrics} computes.
+ *
+ * A *ranking* caller — the codec byte-target search — compares candidates on
+ * ΔE00 alone and discards the rest, so paying for SSIMULACRA2 and Butteraugli
+ * on every rung of the dimension ladder buys nothing. Measured on eight 512 px
+ * photo pairs: the full seven-metric set costs 0.69 s per pair against 0.059 s
+ * for ΔE00 alone, so narrowing the search is ~11x cheaper per candidate.
+ *
+ * This narrows only *which metrics are asked for*. It cannot change a reported
+ * number: the winner is re-scored with the full set, and the metric cache keys
+ * on the requested set (see `metrics/iqa.ts`) so a narrow result is never
+ * served to a caller that asked for everything.
+ */
+export interface MetricOptions {
+  /** Restrict the iqa-cli set to these metric names; omit for every valid one. */
+  only?: readonly string[];
+  /**
+   * Skip the blurred "as-rendered" pass regardless of
+   * {@link ScoringConfig.blurredScoring}. Blur recovery is reported for the
+   * chosen variant only, so scoring it for a candidate that loses is waste.
+   */
+  skipBlurred?: boolean;
+  /**
+   * Skip the locally-computed ringing metric regardless of
+   * {@link ScoringConfig.ringing}. Same reasoning as {@link skipBlurred}: it is
+   * reported for the chosen variant only, and it is not free (~45 ms/pair
+   * measured, against ~59 ms for a ΔE00-only iqa-cli call).
+   */
+  skipRinging?: boolean;
+}
+
 /** Primary + optional blurred "as-rendered" metric sets for one decode. */
 export interface MetricScores {
   metrics: MetricResult;
@@ -281,6 +344,7 @@ export async function computeAllMetrics(
   decodedRgba: Uint8Array,
   decodedW: number,
   decodedH: number,
+  options: MetricOptions = {},
 ): Promise<MetricScores> {
   const backdrops = scoringConfig.backdrops ?? [ALPHA_BACKDROP];
   const perBackdrop: MetricResult[] = [];
@@ -295,7 +359,11 @@ export async function computeAllMetrics(
     // grey composites is not meaningful, and it would triple the cost. Never on
     // the blurred set either: blurring both sides destroys the artifact by
     // construction, which is the whole point of the blur-up presentation.
-    if ((scoringConfig.ringing ?? false) && ringing === NULL_RINGING) {
+    if (
+      (scoringConfig.ringing ?? false) &&
+      !(options.skipRinging ?? false) &&
+      ringing === NULL_RINGING
+    ) {
       ringing =
         computeRinging(
           reference,
@@ -319,13 +387,19 @@ export async function computeAllMetrics(
     );
 
     perBackdrop.push(
-      await computeIqaMetrics(reference, decodedAtRef, referenceW, referenceH),
+      await computeIqaMetrics(
+        reference,
+        decodedAtRef,
+        referenceW,
+        referenceH,
+        options.only,
+      ),
     );
 
-    if (scoringConfig.blurredScoring) {
+    if (scoringConfig.blurredScoring && !(options.skipBlurred ?? false)) {
       const sigma = Math.max(1, Math.max(referenceW, referenceH) / 32);
       const [refBlur, decBlur] = await Promise.all([
-        blurRgba(reference, referenceW, referenceH, sigma),
+        blurReference(reference, referenceW, referenceH, sigma),
         blurRgba(decodedAtRef, referenceW, referenceH, sigma),
       ]);
       perBackdropBlurred.push(

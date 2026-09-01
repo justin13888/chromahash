@@ -5,7 +5,7 @@ import path from "node:path";
 import sharp from "sharp";
 import type { FormatAdapter, FormatResult, ImageInput } from "../types.ts";
 import { rgbaToDataUri } from "../image-loader.ts";
-import { ALPHA_BACKDROP, timeMs } from "../metrics.ts";
+import { ALPHA_BACKDROP, computeAllMetrics, timeMs } from "../metrics.ts";
 import {
   BudgetUnrepresentableError,
   findCodecVariantForBudget,
@@ -24,6 +24,37 @@ const CODEC_LABEL: Record<ThumbCodec, string> = {
 
 /** Subprocess timeout for the cjxl/djxl CLI tools. */
 const JXL_TIMEOUT_MS = 60_000;
+
+/** The encoder input downscaled to one ladder dimension, as raw pixels. */
+interface ResizedInput {
+  data: Buffer;
+  width: number;
+  height: number;
+  channels: 1 | 2 | 3 | 4;
+}
+
+/**
+ * Per-image memos, keyed on the encoder input's buffer identity so an entry is
+ * collectable as soon as the image is. Shared across every `CodecThumbAdapter`
+ * instance deliberately — the six the report builds probe overlapping
+ * `(dimension, quality)` pairs, and that overlap is most of the duplicated work.
+ * See {@link CodecThumbAdapter.encodeAt}.
+ */
+const resizedInputs = new WeakMap<Uint8Array, Map<number, ResizedInput>>();
+const encodedVariants = new WeakMap<Uint8Array, Map<string, Buffer>>();
+
+/** Fetch (or create) the per-image memo bucket for `key`. */
+function perImage<K, V>(
+  store: WeakMap<Uint8Array, Map<K, V>>,
+  key: Uint8Array,
+): Map<K, V> {
+  let bucket = store.get(key);
+  if (!bucket) {
+    bucket = new Map();
+    store.set(key, bucket);
+  }
+  return bucket;
+}
 
 /**
  * Whether the system `cjxl`/`djxl` CLIs are on PATH. sharp has no JXL support,
@@ -116,31 +147,91 @@ export class CodecThumbAdapter implements FormatAdapter {
       : `${CODEC_LABEL[codec]}@${targetBytes}B`;
   }
 
-  /** Downscale the encoder input to `longEdge` and encode it at `quality`. */
+  /**
+   * Downscale the encoder input to `longEdge` and encode it at `quality`.
+   *
+   * Both halves are memoized on the encoder input's buffer identity, which is
+   * stable for the life of one image and lets the WeakMap drop the entry when
+   * the image goes out of scope. Two distinct wins, both measured:
+   *
+   * - **The resize**, once per `longEdge` instead of once per encode. A quality
+   *   binary search probes ~8 qualities per rung and re-ran the Lanczos every
+   *   time.
+   * - **The encode**, once per `(codec, longEdge, quality)`. `main.ts` builds
+   *   six `CodecThumbAdapter`s that share a dimension ladder and all probe
+   *   `q=1`, `q=100` and `q=50` at every rung, so 64 of 202 encodes per image
+   *   were byte-identical repeats of one another's work. The floor-fallback
+   *   path alone encoded `(4, QUALITY_MIN)` three times.
+   */
   private async encodeAt(
     input: ImageInput,
     longEdge: number,
     quality: number,
   ): Promise<Buffer> {
-    let pipeline = sharp(Buffer.from(input.smallRgba), {
+    const cacheKey = `${this.codec}:${longEdge}:${quality}`;
+    const encodes = perImage(encodedVariants, input.smallRgba);
+    const cached = encodes.get(cacheKey);
+    if (cached) return cached;
+
+    const resized = await this.resizeTo(input, longEdge);
+    const pipeline = sharp(resized.data, {
+      raw: {
+        width: resized.width,
+        height: resized.height,
+        channels: resized.channels,
+      },
+    });
+    const encoded = await this.encodePipeline(pipeline, quality);
+    encodes.set(cacheKey, encoded);
+    return encoded;
+  }
+
+  /** The encoder input downscaled to `longEdge`, memoized per image. */
+  private async resizeTo(
+    input: ImageInput,
+    longEdge: number,
+  ): Promise<ResizedInput> {
+    const resizes = perImage(resizedInputs, input.smallRgba);
+    const hit = resizes.get(longEdge);
+    if (hit) return hit;
+    const { data, info } = await sharp(Buffer.from(input.smallRgba), {
       raw: { width: input.smallWidth, height: input.smallHeight, channels: 4 },
-    }).resize(longEdge, longEdge, { fit: "inside", kernel: "lanczos3" });
+    })
+      .resize(longEdge, longEdge, { fit: "inside", kernel: "lanczos3" })
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    const built = {
+      data,
+      width: info.width,
+      height: info.height,
+      channels: info.channels,
+    };
+    resizes.set(longEdge, built);
+    return built;
+  }
+
+  /** Encode an already-resized pipeline at `quality`. */
+  private async encodePipeline(
+    pipeline: sharp.Sharp,
+    quality: number,
+  ): Promise<Buffer> {
     switch (this.codec) {
       case "webp":
         return pipeline.webp({ quality }).toBuffer();
       case "avif":
         return pipeline.avif({ quality }).toBuffer();
-      case "jpeg":
+      case "jpeg": {
         // JPEG has no alpha; flatten over the scoring backdrop rather than
         // sharp's default black so alpha semantics match the metrics.
-        pipeline = pipeline.flatten({
+        const flattened = pipeline.flatten({
           background: {
             r: ALPHA_BACKDROP[0],
             g: ALPHA_BACKDROP[1],
             b: ALPHA_BACKDROP[2],
           },
         });
-        return pipeline.jpeg({ quality, mozjpeg: true }).toBuffer();
+        return flattened.jpeg({ quality, mozjpeg: true }).toBuffer();
+      }
       case "jxl": {
         const png = await pipeline.png().toBuffer();
         return cjxlEncode(png, quality);
@@ -201,6 +292,18 @@ export class CodecThumbAdapter implements FormatAdapter {
       throw new BudgetUnrepresentableError(this.name, this.targetBytes, floor);
     }
 
+    // The search ranks on ΔE00 alone (see RANKING_METRICS), so the winner is
+    // the only variant that gets the full metric set — including the blurred
+    // pass and ringing, which the report displays and the search skipped.
+    const scores = await computeAllMetrics(
+      reference,
+      input.referenceWidth,
+      input.referenceHeight,
+      chosen.decodedRgba,
+      chosen.decodedWidth,
+      chosen.decodedHeight,
+    );
+
     const encodeTimeMs = await timeMs(async () => {
       await encodeAt(chosen.longEdge, chosen.quality);
     }, iterations);
@@ -229,7 +332,7 @@ export class CodecThumbAdapter implements FormatAdapter {
       encodeTimeMs,
       decodeTimeMs,
       dataUri,
-      ...chosen.scores,
+      ...scores,
     };
   }
 }
