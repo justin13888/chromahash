@@ -1422,7 +1422,7 @@ charts, maps, schematics, comics, dense text). Both content-pinned by SHA-256,
 never depends on a result. The generated `alpha-*`, `illust-*` and `textui-*`
 synthetic fixtures stay out of both: they are 8×8 correctness cases for a code
 path, not content to tune against. The new prefixes sit outside
-`PHOTO_PREFIXES`, so every photographic sweep still sees 31 tune / 32 holdout
+`CORPUS_PREFIXES`, so every photographic sweep still sees 31 tune / 32 holdout
 images and no number in §1–§10 moves.
 
 **Alpha scoring.** `ALPHA_BACKDROP` composited both sides over opaque white

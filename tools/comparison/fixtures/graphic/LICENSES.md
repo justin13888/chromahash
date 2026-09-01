@@ -90,15 +90,6 @@ below is per image, as the licences require.
 - Dimensions: 1920x1080
 - Notes: Linux desktop screenshot: window chrome, icons and a photographic wallpaper.
 
-### `graphic-hbar-chart-shipments`
-
-- Source: <https://commons.wikimedia.org/wiki/File:HIVPlot10.png>
-- File: <https://upload.wikimedia.org/wikipedia/commons/f/f6/HIVPlot10.png>
-- Author: Chamaemelum
-- License: Public domain
-- Dimensions: 3200x1600
-- Notes: Horizontal seaborn-style bar chart: ten saturated category bars, grid lines and small axis text on white.
-
 ### `graphic-infographic-timeline`
 
 - Source: <https://commons.wikimedia.org/wiki/File:Constitutional_recognition_in_South_Africa_Timeline_Infographic.png>
@@ -152,6 +143,15 @@ below is per image, as the licences require.
 - License: Public domain
 - Dimensions: 6306x3456
 - Notes: Historic hand-engraved statistical pie charts; aged paper, JPEG scan.
+
+### `graphic-scientific-plot`
+
+- Source: <https://commons.wikimedia.org/wiki/File:HIVPlot10.png>
+- File: <https://upload.wikimedia.org/wikipedia/commons/f/f6/HIVPlot10.png>
+- Author: Chamaemelum
+- License: Public domain
+- Dimensions: 3200x1600
+- Notes: Horizontal seaborn-style bar chart: ten saturated category bars, grid lines and small axis text on white.
 
 ### `graphic-sheet-music-dense`
 

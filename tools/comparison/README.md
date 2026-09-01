@@ -30,9 +30,10 @@ of it answers the same question.
 
 `src/corpus.ts` splits the corpus three ways, on three orthogonal axes:
 
-- **`CorpusTier`** — `real` (127 images) or `synthetic` (43). Real content is
-  photographs, curated transparent cut-outs and curated graphics. Synthetic is
-  the generated fixtures: `solid-*`, `gradient-*`, `dim-*`, `gamut-*`, `noise`.
+- **`CorpusTier`** — `real` (111 images) or `synthetic` (43). Real content is
+  39 curated photographs, the 24-image Kodak suite, 24 transparent cut-outs and
+  24 graphics. Synthetic is the generated fixtures: `solid-*`, `gradient-*`,
+  `dim-*`, `gamut-*`, `noise`.
 - **`CorpusSplit`** — `tune` or `holdout`. Constants sweeps tune on `tune` only;
   `holdout` (the Kodak True Color suite plus held-out curated photographs) is
   what shows whether tuned constants generalize.
