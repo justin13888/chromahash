@@ -686,17 +686,24 @@ decode), two passes reduce the gamma-sRGB squared error it optimizes by
 
 | Variant | ΔE00 | Δ% |
 |---|---|---|
-| shipped | 11.473 | — |
-| `refine_obj=1` (OKLAB, no clipping model — the control) | 11.473 | 0.00% |
-| `refine_obj=0` (gamma sRGB), 2 passes | 11.663 | **1.66%** |
-| `refine_obj=0`, 2 passes + dc + scale | 11.727 | **2.21%** |
-| `refine_obj=2` (clipped OKLAB), 2 passes | 11.485 | 0.11% |
+| shipped | 11.655 | — |
+| `refine_obj=1` (OKLAB, no clipping model — the control) | 11.636 | −0.16% |
+| `refine_obj=0` (gamma sRGB), 2 passes | 11.685 | **0.26%** |
+| `refine_obj=0`, 2 passes + dc + scale | 11.740 | **0.73%** |
+| `refine_obj=2` (clipped OKLAB), 2 passes | 11.633 | −0.19% |
 
-A 15–31% reduction in decoded-pixel squared error buys a **+0.8% increase** in
-ΔE00. Not a bug — the model of the decoder is exact, as the table above proves.
-The premise of U1 was wrong: at these bitrates, squared pixel error and
-perceived colour error are actively anti-correlated. (`refine_obj=1` finding
-−0.38% on a supposedly separable objective is the scale mismatch of §4.4 turning
+A 15–31% reduction in decoded-pixel squared error buys a **+0.26% increase** in
+ΔE00, and pushing it to 17–31% with the DC and scale coordinates buys **+0.73%**
+— the more squared error the search removes, the worse the colour gets. Not a
+bug: the model of the decoder is exact, as the table above proves. The premise
+of U1 was wrong: at these bitrates, squared pixel error and perceived colour
+error are actively anti-correlated.
+
+The control makes the same point from the other side. Holding the search fixed
+and swapping only the objective flips the sign — `refine_obj=2` (clipped OKLAB)
+is −0.19% where `refine_obj=0` (gamma sRGB) is +0.26%, on identical passes over
+identical codes. The search was never the problem. (`refine_obj=1` finding
+−0.16% on a supposedly separable objective is the scale mismatch of §4.4 turning
 up again through a different door.)
 
 ### 7.2 U5 — metric-targeted RDO: the objective is what matters, and it stopped paying
@@ -801,7 +808,7 @@ the lever is the +1.3 energy points `coeff-stats` now measures (§4.10), not
 **+32% decode time** (302 → 399 µs) — the integer reformulation `RATIONALE.md`
 already flags is now a performance requirement, not just a purity one.
 
-### 7.5 U8/U9 — shrink the prefix: the "highest-value unmeasured item" is refuted
+### 7.5 U8/U9 — shrink the prefix: it buys ΔE00, and the bill is aspect fidelity
 
 Every header field width is now tunable. Pure cost first (same AC layout, tune,
 32 B):
@@ -809,31 +816,43 @@ Every header field width is now tunable. Pure cost first (same AC layout, tune,
 | Narrowing | bits saved | ΔE00 Δ% | guards |
 |---|---|---|---|
 | aspect 8 → 5 b | 3 | **−0.11%** | ok |
-| aspect 8 → 4 b | 4 | **−0.06%** | ok |
+| aspect 8 → 4 b | 4 | **−0.06%** | **FAIL** |
 | scales 6/6/5 → 5/4/4, linear grid | 4 | 0.69% | ok |
 | scales 6/6/5 → 5/4/4, **µ-law grid** (`scale_mu=8`) | 4 | 0.09% | ok |
 | `b_scale_from_a` (drop the b field) | 5 | 2.20% | **FAIL** |
 | DC 7/7/7 → 6/6/6 | 3 | 0.76% | ok |
-| all of the above | 15 | 2.71% | ok |
+| all of the above | 15 | 2.71% | **FAIL** |
 
-Then spend the recovered bits on AC at the same 32 bytes — **nothing beats
-leaving the prefix alone**. Best 5-bit-luma row: −0.03%, and it fails the
-guards. Best 4-bit-luma row: −2.05% against −2.01% for the same layout with the
-full prefix, i.e. **+0.04 pp** for three bits of aspect precision.
+(The ΔE00 column is bound; the `guards` column is not, and two of its cells were
+stale — narrowing aspect to 4 b and the all-in row both fail their guards.)
 
-Two real findings inside a negative result:
+Then spend the recovered bits on AC at the same 32 bytes. **On ΔE00 this now
+pays.** The best 4-bit-luma row is **−0.68%** against the same layout with the
+full prefix, every guard passing: three bits of aspect precision become two more
+luma coefficients, `L30@4 C14@3` for `L28@4 C15@3`. That is consistent with
+§4.2, where more 4-bit luma is what this budget wants. The best 5-bit-luma row
+is +1.40% and fails its guards, so the gain belongs to the 4-bit layouts and not
+to the idea in general.
 
-* **µ-law scale codes work.** Narrowing the scale fields costs +2.73% on a
-  linear grid and +0.34% on a companded one. Corpus scales cluster far below
+Round 2 measured that same comparison at **+0.04 pp** — nothing — and wrote the
+section as a refutation on that basis. On this corpus it is **−0.68 pp**, so the
+refutation cannot rest there any more. It rests on the paragraph below instead,
+which was always the stronger argument and never depended on the sweep.
+
+Two findings that survive intact:
+
+* **µ-law scale codes work.** Narrowing the scale fields costs +0.69% on a
+  linear grid and +0.09% on a companded one. Corpus scales cluster far below
   the range maximum, exactly as expected. If a future revision needs scale bits,
   this is how to take them.
-* **U9 is dead.** `b_scale_from_a` costs +3.79% and fails the guards. The two
+* **U9 is dead.** `b_scale_from_a` costs +2.20% and fails the guards. The two
   chroma scales are not redundant.
 
-**The aspect "gain" is a measurement artifact.** `upscaleRgba` resizes every
-decode to the reference dimensions with `fit: "fill"`, so **the evaluation
-could not see aspect error at all** — it stretches the wrong-shaped decode back
-into the right frame. The real cost is analytic: a `b`-bit aspect field has a
+**The aspect gain is bought with something the metric cannot see.**
+`upscaleRgba` resizes every decode to the reference dimensions with
+`fit: "fill"`, so **the evaluation cannot see aspect error at all** — it
+stretches the wrong-shaped decode back into the right frame, which is precisely
+why the ΔE00 ledger above reads as a free win. The real cost is analytic: a `b`-bit aspect field has a
 max ratio error of `2^(4/2^b) − 1`, i.e. 1.09% at 8 b, 4.4% at 6 b and **9.1% at
 5 b — worse than ThumbHash's 3-bit ~7%**, which is the comparison the format's
 "precise layout" claim rests on. At 5 bits, 3:2 and 4:3 images decode to the
@@ -922,7 +941,7 @@ fixed preset it would sit on top of. Not recommended.
 > not make the oracle worth more than the fixed preset — but the numbers are
 > round 2's, not the current corpus's.
 
-### 7.10 U14 — chroma-from-luma: built, audited, refuted at every tier
+### 7.10 U14 — chroma-from-luma: the predictor works, and does not pay for itself
 
 Implemented as a wire feature: a signalled per-channel least-squares gain
 (`cfl_bits`, `cfl_range`), with each chroma AC coefficient coded as a residual
@@ -932,19 +951,26 @@ selection index. `sweeps/cfl.json`, tune:
 | | bytes | ΔE00 | vs its own control |
 |---|---|---|---|
 | shipped | 32 | 11.473 | — |
-| CfL free (gains not paid for) | 34 | 11.462 | **+0.19%** |
-| CfL paid, L24@5 C9@4 | 32 | 11.723 | +0.16% vs the same layout without CfL |
-| CfL paid on the 4-bit layout | 32 | 11.512 | +0.38% vs its control |
-| tier 1 free | 109 | 9.656 | +0.23% |
-| tier 2 free | 412 | 7.793 | +0.08% |
-| tier 3 free | 1624 | 6.665 | −0.27% |
+| CfL free (gains not paid for) | 34 | 11.462 | **−0.09%** |
+| CfL paid, L24@5 C9@4 | 32 | 11.723 | −0.04% vs the same layout without CfL |
+| CfL paid on the 4-bit layout | 32 | 11.512 | −0.04% vs its control |
+| tier 1 free | 109 | 9.656 | −0.11% |
+| tier 2 free | 412 | 7.793 | −0.45% |
+| tier 3 free | 1624 | 6.665 | −0.90% |
 
-A *free* least-squares predictor being worse than none is not physically
-expected, so this was audited rather than reported:
+**This column changed sign on the Wikimedia corpus, and it is the one column in
+the table nothing checks** — the binding covers `bytes` and `ΔE00`, so the
+control deltas were never re-derived when the ΔE00 cells were. Round 2 read a
+free predictor as *worse* than none (+0.19% at 32 B), which is not physically
+expected and prompted the audit below. Measured now it is slightly better, and
+consistently so, growing with tier: −0.09% at 32 B to −0.90% at tier 3. The
+audit's findings stand; what has changed is that they no longer need to explain
+away a paradox:
 
 1. **Gain precision excluded.** Sweeping `cfl_range` over 0.05–1.0 and
    `cfl_bits` to 10 (α step 5·10⁻⁴, effectively exact) leaves it in the
-   +0.07…+0.21% band (`sweeps/cfl-range.json`). Quantized gains are not the
+   −0.21…+0.02% band (`sweeps/cfl-range.json`) — every arm but the coarsest
+   range a small gain. Quantized gains are not the problem, and were never the
    problem.
 2. **The predictor does work.** Residual *energy* after the least-squares gain
    is 71.5% (a) / 63.2% (b) of the original (§4.8) — an amplitude ratio of
@@ -955,11 +981,23 @@ expected, so this was audited rather than reported:
    and 3 were measured before the §9 corpus revision; the ΔE00 verdict above is
    from the revised corpus and does not rest on them.)
 
-So CfL reduces both the scale and the coefficient error, and still costs ΔE00.
-This is the same anti-correlation as §7.1, now on a third independent lever:
-**MSE-optimal chroma is not ΔE00-optimal at these bitrates.** Combined with the
-2 · `cfl_bits` it must pay for, CfL is a loss at tiers 0–2 and within noise at
-tier 3 (−0.27% there). The §4.8 correlation probe called this correctly.
+So CfL reduces the scale, the coefficient error *and* — on this corpus — ΔE00.
+The three now agree, which removes the anti-correlation round 2 read here and
+filed alongside §7.1's. That reading was an artifact of the old corpus; §7.1's
+own anti-correlation is unaffected and still stands on its own evidence.
+
+**What refutes CfL is the bill, not the prediction.** The gain field costs
+2 · `cfl_bits`, and those bytes buy coefficients that are worth more than the
+prediction saves: paid at 32 B on `L24@5 C9@4` it is **+2.18% against the
+shipped layout**, and on the 4-bit layout **+0.34%**, while against its own
+size-matched control it is a wash either way (−0.04%). A −0.09% predictor cannot
+fund a 10-bit field at a 32-byte budget.
+
+The tier-3 figure is the one worth revisiting if the format ever grows a cheaper
+way to signal the gains: −0.90% free at 1623 B is the largest CfL has measured
+here, and unlike the low tiers there are enough coefficients for the field to
+amortize against. The §4.8 correlation probe still calls the magnitude
+correctly.
 
 ### 7.11 U15 — embedded/progressive tiers
 
@@ -969,18 +1007,18 @@ byte-neutral at full length), and `trunc_bytes` decodes only a prefix, treating
 every code past it as the exact-zero centre code. `sweeps/embedded-tiers.json`,
 tune:
 
-| Decoded from a 108 B tier-1 hash | ΔE00 | vs native tier 0 (10.434) | SSIM2 |
+| Decoded from a 108 B tier-1 hash | ΔE00 | vs native tier 0 (11.473) | SSIM2 |
 |---|---|---|---|
-| first 32 B, interleaved | 11.955 | **+3.00%** | −378.4 |
-| first 32 B, channel-sequential | 12.584 | +10.93% | −319.8 |
-| first 48 B, interleaved | 11.220 | −4.74% | −344.2 |
-| first 64 B, interleaved | 10.700 | −9.27% | −311.2 |
-| full 108 B (either order) | 9.667 | −17.86% | −212.9 |
+| first 32 B, interleaved | 11.955 | **+4.21%** | −378.4 |
+| first 32 B, channel-sequential | 12.584 | +9.69% | −319.8 |
+| first 48 B, interleaved | 11.220 | −2.20% | −344.2 |
+| first 64 B, interleaved | 10.700 | −6.74% | −311.2 |
+| full 108 B (either order) | 9.667 | −15.74% | −212.9 |
 
-Interleaving is worth **7.2%** over a sequential prefix at the 32-byte cut, and
-progressive costs **~3%** against a native tier-0 encode at the same 32 bytes.
+Interleaving is worth **5.0%** over a sequential prefix at the 32-byte cut, and
+progressive costs **~4%** against a native tier-0 encode at the same 32 bytes.
 Note the trade the two orders make: a sequential prefix delivers all of the luma
-and none of the chroma, so it scores *better* on SSIMULACRA2 (−251.4 vs −285.7)
+and none of the chroma, so it scores *better* on SSIMULACRA2 (−319.8 vs −378.4)
 and much worse on ΔE00. Progressive is affordable; it is an operational feature
 (one hash serves every size), not a quality one.
 
@@ -1267,23 +1305,31 @@ metrics** on holdout (§7.6), which the shipped constants do not.
 
 | Idea | Verdict |
 |---|---|
-| Pixel-SSE refinement (U1) | +0.8% ΔE00 despite −15…31% pixel SSE. Objective was wrong. |
+| Pixel-SSE refinement (U1) | +0.26% ΔE00 (+0.73% with dc+scale) despite −15…31% pixel SSE. Objective was wrong. |
 | Closed-loop re-projection (U4) | Provably a fixed bias on an orthogonal basis; subsumed by U5. |
-| Prefix narrowing (U8) | Best case +0.04 pp; the aspect "gain" is a metric artifact. |
-| `b_scale_from_a` (U9) | +3.79%, fails guards. |
+| Prefix narrowing (U8) | Best case **−0.68 pp** on ΔE00 — but paid for in aspect error the metric cannot see (9.1% at 5 b, worse than ThumbHash). Refused on that, not on the sweep. |
+| `b_scale_from_a` (U9) | +2.20%, fails guards. |
 | Decoder detail synthesis (U12) | Every structural metric monotonically worse; +70% decode. |
 | Per-image signalled selection (U13) | Oracle −1.59% vs best fixed, minus ~0.37% signalling. |
-| Chroma-from-luma (U14) | +0.19% even with free, effectively-exact gains, at tiers 0–2. |
+| Chroma-from-luma (U14) | Free gains help slightly now (−0.09% at 32 B, −0.90% at tier 3); paid for, the field costs more than it saves (+2.18% at 32 B). |
 
 ### 8.5 The meta-finding
 
-Three independent levers — pixel-domain RDO (§7.1), chroma-from-luma (§7.10),
-and the objective sweep (§7.2) — all reduced squared error and all failed to
-improve ΔE00, in one case while measurably improving both the quantizer step and
-the coefficient RMS. **At LQIP bitrates the MSE-domain is exhausted.** Everything
-that paid this round paid by changing *where the bits go* (layout, selection
-order) or by changing *what error means* (the perceptual objective), never by
-minimizing squared error harder.
+Round 2 read three independent levers this way — pixel-domain RDO (§7.1),
+chroma-from-luma (§7.10), and the objective sweep (§7.2) — as all reducing
+squared error and all failing to improve ΔE00. **On the Wikimedia corpus that is
+down to one.** §7.1 still shows it cleanly and in both directions: minimizing
+gamma-sRGB SSE costs +0.26% while swapping only the objective to clipped OKLAB
+buys −0.19%. But §7.10's chroma-from-luma now *does* translate its coefficient
+gain into ΔE00 (−0.09% at 32 B, −0.90% at tier 3), and what refuses it is the
+cost of the gain field, not an anti-correlation.
+
+So the meta-finding holds in the weaker form it can still support: **at LQIP
+bitrates, minimizing squared error harder buys little and can cost.** What paid
+this round still paid by changing *where the bits go* (layout, selection order)
+or *what error means* (the perceptual objective) — but the MSE domain is not
+inverted, only nearly flat, and the one lever that inverts it is the one
+optimizing pixels the decoder never shows at that size.
 
 The corollary is uncomfortable and should be stated: every one of those
 conclusions rests on ΔE00 with three guard metrics, and §7.5 showed the harness
@@ -1484,6 +1530,11 @@ reproduces what did not change is measuring the corpus rather than the weather.
 | Count-maximal layout vs shipped | 13% worse | **2.9% worse** | **weakened** |
 | Scalefactor bands, best arm | −0.30% | **−0.13%** | narrowed, still below threshold |
 | Doubling the render raster | inert (−0.05%) | inert *above the bound*, +0.92% below it | **rescoped** (§4.1) |
+| CfL with free gains, 32 B / tier 3 | +0.19% / −0.27% | **−0.09% / −0.90%** | **sign flipped** (§7.10) |
+| Prefix narrowing, best 4-bit row | +0.04 pp | **−0.68 pp** | **now pays on ΔE00** (§7.5) |
+| Metric-targeted RDO optimum | −0.80% | **−0.07%** | **evaporated** (§7.2) |
+| `fit2+nearest` at 32 B | −0.43% | −0.30% | narrowed; mode 1 / mode 2 order reversed (§4.4) |
+| Count-vs-precision at 32 B | −2.0% | −1.7% | thesis intact, restated (§4.2) |
 
 **Nothing that ships changed, and two things that were concluded did.** Every
 adopted constant in §8.1 still clears its bar and every item in §8.4 is still
@@ -1492,7 +1543,7 @@ rejected. The two casualties are both *tune-only* selection-order results —
 to shrink or reverse a selection-order effect, exactly as §4.10 predicts for
 anything that exploits a dominant orientation structure.
 
-#### Four defects this found
+#### Five defects this found
 
 The re-run was more informative about the tools than about the format.
 
@@ -1549,6 +1600,22 @@ default as of that run", not as the pre-adoption format.
 A check that reconciles an arm's label against the constants it sets would have
 caught all of this, and is the obvious next thing to build. It is not in this
 change.
+
+5. **A column nobody checks, inside a table that passes.** `verify:experiments`
+   binds *columns*, not tables, and a table is reported green when the columns
+   it binds agree — saying nothing about the rest. §10.3's Δ%, §7.11's "vs
+   native tier 0", §7.10's "vs its own control" and §7.5's `guards` are all
+   unbound, and all four were stale; §7.10's had every sign inverted and §7.5's
+   had two cells reading `ok` for arms that fail their guards. §11.14's byte
+   column is the same problem, which is why the current cross-format record
+   carried a stale x-axis while its four metric columns were re-transcribed.
+
+   This is "a SKIP is not a pass" one level down, and it is worse, because a
+   SKIP is at least printed. The unbound columns are invisible: nothing in the
+   output distinguishes a table whose four columns were all checked from one
+   where three were. Listing them is a few lines against the existing bindings —
+   `--list-unbound` already does the table-level version — and it is the second
+   obvious thing to build.
 
 #### What was not re-measured
 
@@ -1995,6 +2062,14 @@ also be asked to carry (`sweeps/compact-tier-graphics.json`).
 
 The graphics column is unchanged — `85f6af3` re-sourced the photographic corpus
 only — so every rank that moved here moved because of the photo column.
+
+Neither rank column is machine-checked (only `graphics ΔE00` is bound), and the
+two are drawn from **different pools**: 15 layouts on the photographic sweep
+against 9 on the graphics one, so a photo rank of 11 and a graphics rank of 8
+are not the same distance from last. That does not touch the tie the section
+turns on — both layouts sit 1st/2nd and 3rd/2nd, whichever pool you score them
+in — but the larger sums are softer than they look, and are not a metric to
+carry anywhere else.
 
 **The choice is unchanged and its justification is not.** On the old corpus the
 rank sum separated `L19@4 C6@3` (5) from `L26@3 C6@3` (10) and that gap is what
