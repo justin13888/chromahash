@@ -348,16 +348,23 @@ Two defects in the shipped encoder, both free to fix:
 
 | Layout | shipped | ac_nearest | scale_fit=1 | scale_fit=2 | fit2 + nearest |
 |---|---|---|---|---|---|
-| 21 B | 11.698 | — | — | — | 11.666 (−0.27%) |
-| 32 B | 10.434 | 10.429 (−0.05%) | 10.381 (−0.51%) | 10.392 (−0.40%) | 10.390 (−0.43%) |
-| 108 B | 8.571 | — | — | — | 8.491 (−0.93%) |
-| 411 B | 7.093 | — | — | — | 6.967 (−1.78%) |
+| 21 B | 12.702 | — | — | — | 12.679 (−0.18%) |
+| 32 B | 11.655 | 11.653 (−0.02%) | 11.638 (−0.14%) | 11.619 (−0.30%) | 11.619 (−0.30%) |
+| 108 B | 9.721 | — | — | — | 9.667 (−0.56%) |
+| 411 B | 7.908 | — | — | — | 7.826 (−1.04%) |
 
-`ac_nearest` alone is worth 0.05% — µ-law's compressed-domain rounding is
+`ac_nearest` alone is worth 0.02% — µ-law's compressed-domain rounding is
 already near reconstruction-optimal, an independent confirmation of the
-companding choice. **The scale mismatch is the real defect**, the free mode-1
-fix captures nearly all of it at 32 B, and the gain grows with tier because more
-coefficients share one scale.
+companding choice. **The scale mismatch is the real defect**, and the gain grows
+with tier because more coefficients share one scale: −0.18% at 21 B to −1.04% at
+411 B.
+
+Round 1 read mode 1 as capturing nearly all of the mode-2 gain, on numbers that
+put the free fix (−0.51%) *ahead* of the search (−0.40%). That ordering does not
+survive: mode 1 is −0.14% and mode 2 −0.30%, so the search is worth about twice
+the one-line fix rather than slightly less than it. The free fix is still free
+and still points the right way; it is no longer a substitute for the search, and
+`scale_fit = 2` is what §8.2 adopts.
 
 ### 4.5 Stacking, and the holdout verdict
 
@@ -1181,8 +1188,8 @@ synthesis window.
 
 | Knob | Value | Why |
 |---|---|---|
-| `scale_fit` | **2** | The shipped encoder normalizes AC by the unquantized max\|AC\| while the decoder uses the rounded scale code. Mode 1 fixes the mismatch for free; mode 2 searches the code. −0.43% at 32 B, −1.8% at 411 B. |
-| `ac_nearest` | **1** | Pick the code nearest in reconstruction rather than in the companded domain. Worth 0.05% — keep it because it is free and principled, not because it is large. |
+| `scale_fit` | **2** | The shipped encoder normalizes AC by the unquantized max\|AC\| while the decoder uses the rounded scale code. Mode 1 fixes the mismatch for free; mode 2 searches the code and is worth about twice as much (§4.4). −0.30% at 32 B, −1.0% at 411 B. |
+| `ac_nearest` | **1** | Pick the code nearest in reconstruction rather than in the companded domain. Worth 0.02% — keep it because it is free and principled, not because it is large. |
 
 **Optional high-effort mode** (~54× encode time, decode untouched):
 `refine_passes=2 refine_grid=1 refine_obj=3 refine_wc=3 refine_dc=1 refine_scale=1`.
