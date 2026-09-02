@@ -172,6 +172,16 @@ Three things this says that `RATIONALE.md` does not:
    all score 5.80 against tier 3's 6.26. The coding machinery stops paying for
    itself somewhere between 411 B and 1623 B.
 
+> **Round 1's readings of round 1's table, and the third has since inverted.**
+> These three are not re-derived on the Wikimedia corpus — §2 is not re-run —
+> and the figures in them are the retired set's. Claim 1 survives and §11.14
+> restates it at the shipped anchors. Claim 2's current form is in §4.3, where
+> the shipped shape still wins ΔE00 and still loses SSIMULACRA2 and Butteraugli.
+> **Claim 3 no longer holds**: measured now, tier 3 is **6.73** against RGB565's
+> **6.96**, so the coding machinery does still pay for itself at the top of the
+> ladder. What beats tier 3 at ~1.6 kB is a real codec — WebP 5.79, JPEG 5.93,
+> AVIF 5.46 — which is §11.14's finding rather than this one.
+
 ## 3. The optimal budget
 
 > Built on §2 and superseded with it by **§11.14** — the crossovers below are
@@ -532,8 +542,8 @@ decoder must understand.
 
 | # | Idea | Sizing |
 |---|---|---|
-| U6 | **Budget-dependent precision** — 3 b luma below 20 B, 4 b to ~56 B, 5 b above; chroma one bit under luma. | Measured (§4.2): −4.7% at 16 B, −2.0% at 32 B, 0 at ≥80 B. Breaks the constant-precision tier axiom. |
-| U7 | **Corpus-trained selection order**, generalizing `aniso`. | Measured headroom (§4.10): +1.5 energy points; `aniso=1.2` already captures most of it. |
+| U6 | **Budget-dependent precision** — 3 b luma below 20 B, 4 b to ~56 B, 5 b above; chroma one bit under luma. | Measured (§4.2): −3.9% at 16 B, −1.7% at 32 B, −0.2% at 80 B, 0 at 108 B. Breaks the constant-precision tier axiom. |
+| U7 | **Corpus-trained selection order**, generalizing `aniso`. | Measured headroom (§4.10): +1.3 energy points; `aniso=1.2` already captures most of it. |
 | U8 | **Shrink the prefix.** 54 b is 21% of tier 0 and 32% of a 21 B hash. Aspect 8 b → 5 b (≈2.5% ratio error, still 3× better than ThumbHash); scales 6/6/5 b → 5/4/4 b with log-spaced codes; 1 reserved bit; 1 unused tier bit. | ~10 bits ≈ 2–3 extra luma coefficients at a small budget. **Untested** — the highest-value unmeasured item on this list. |
 | U9 | **Derive the b scale from the a scale** instead of storing both. | 5 bits. Untested; `RATIONALE.md`'s range-asymmetry proxy suggests they are far from independent. |
 
@@ -1535,6 +1545,7 @@ reproduces what did not change is measuring the corpus rather than the weather.
 | Metric-targeted RDO optimum | −0.80% | **−0.07%** | **evaporated** (§7.2) |
 | `fit2+nearest` at 32 B | −0.43% | −0.30% | narrowed; mode 1 / mode 2 order reversed (§4.4) |
 | Count-vs-precision at 32 B | −2.0% | −1.7% | thesis intact, restated (§4.2) |
+| Tier 3 vs raw RGB565, ~1.6 kB | pixels win, 5.80 vs 6.26 | **ChromaHash wins, 6.73 vs 6.96** | **inverted** (§2) |
 
 **Nothing that ships changed, and two things that were concluded did.** Every
 adopted constant in §8.1 still clears its bar and every item in §8.4 is still
