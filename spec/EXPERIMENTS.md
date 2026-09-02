@@ -263,31 +263,43 @@ and 108 B):
 
 | Allocation | 32 B ΔE00 | 108 B ΔE00 |
 |---|---|---|
-| L26@5 C9@4 — **shipped** | 10.434 | **8.571** |
-| L28@4 C15@3 | **10.224** (−2.0%) | 8.853 (+3.3%) |
-| L38@4 C8@3 | 10.238 (−1.9%) | 8.831 (+3.0%) |
-| L28@4 C11@4 | 10.269 (−1.6%) | 8.729 (+1.8%) |
-| L44@3 C11@3 | 10.616 (+1.7%) | 9.692 (+13%) |
-| L29@5 C9@3 | 10.349 (−0.8%) | 8.668 (+1.1%) |
+| L26@5 C9@4 — **shipped** | 11.655 | **9.721** |
+| L28@4 C15@3 | 11.546 (−0.9%) | 9.913 (+2.0%) |
+| L38@4 C8@3 | **11.458** (−1.7%) | 9.927 (+2.1%) |
+| L28@4 C11@4 | 11.542 (−1.0%) | 9.767 (+0.5%) |
+| L44@3 C11@3 | 11.660 (+0.0%) | 10.721 (+10%) |
+| L29@5 C9@3 | 11.608 (−0.4%) | 9.833 (+1.2%) |
 
 The optimum moves with the budget. Sweeping six precision families across five
 budgets (`sweeps/precision-by-budget.json`, tune) gives the trend cleanly:
 
 | Budget | 16 B | 21 B | 24 B | 32 B | 48 B | 80 B | 108 B |
 |---|---|---|---|---|---|---|---|
-| best luma bits | **3** | 3 (4 ties) | **4** | **4** | **4** | **5** | **5** |
-| best ΔE00 | 11.76 | 11.19 | 10.82 | 10.22 | 9.69 | 8.98 | 8.57 |
-| shipped-shape ΔE00 | 12.35 | 11.70 | 11.14 | 10.43 | 9.73 | 8.98 | 8.57 |
-| gain | −4.7% | −4.3% | −2.8% | −2.0% | −0.5% | 0% | 0% |
+| best luma bits | **3** | **3** | **3** | **4** | **4** | **4** | **5** |
+| best ΔE00 | 12.91 | 12.27 | 12.01 | 11.46 | 10.86 | 10.14 | 9.72 |
+| shipped-shape ΔE00 | 13.44 | 12.64 | 12.29 | 11.65 | 10.96 | 10.16 | 9.72 |
+| gain | −3.9% | −2.9% | −2.2% | −1.7% | −0.9% | −0.2% | 0% |
 
-Chroma wants exactly one bit less than luma at every budget measured, except
-where luma is already at the 3-bit floor and chroma cannot follow it down.
+(`precision-by-budget` sweeps 16/21/24/48/80 B; the 32 B and 108 B columns are
+the same six families read off `allocation-grid`, which covers those two
+budgets. The two sweeps share an incumbent and agree on it to the digit.)
+
+Chroma wants one bit less than luma where it can: at 32 B, 48 B and 108 B the
+best allocation is 4/3, 4/3 and 5/4. It cannot at 16–24 B, where luma is already
+on the 3-bit floor and chroma has nowhere below to go, and it does not at 80 B,
+where 4/4 (10.139) edges out 4/3 (10.209) — the one budget measured where
+chroma wants the same width as luma rather than one less.
 
 **This contradicts the format's central tier axiom.** "Count ×4^tier at constant
-precision" is right above ~64 B and wrong below it: at 32 B the shipped layout
+precision" is right at 108 B and wrong below it: at 32 B the shipped layout
 spends a bit per luma coefficient that would buy more as a whole extra
-coefficient. The axiom was never wrong where it was tested — it was only ever
-tested at tier 1.
+coefficient, and the penalty grows as the budget shrinks — −1.7% at 32 B, −2.2%
+at 24 B, −3.9% at 16 B. The axiom was never wrong where it was tested; it was
+only ever tested at tier 1, which is the one budget here where it holds.
+
+The gap closes smoothly rather than at a threshold (−0.9% at 48 B, −0.2% at
+80 B, 0% at 108 B), so "above ~80 B" is a description of where the effect stops
+mattering, not a boundary in the format.
 
 ### 4.3 The low-budget allocation, retuned
 
@@ -404,13 +416,18 @@ per-image ΔE00 across the 29-allocation grid (tune):
 
 | | 32 B | 108 B |
 |---|---|---|
-| shipped fixed layout | 10.434 | 8.571 |
-| best single fixed layout | 10.224 | 8.571 |
-| per-image **oracle** layout | 10.010 | 8.401 |
-| oracle gain beyond the best fixed layout | −2.1% | −2.0% |
+| shipped fixed layout | 11.655 | 9.721 |
+| best single fixed layout | 11.458 | 9.707 |
+| per-image **oracle** layout | 11.242 | 9.567 |
+| oracle gain beyond the best fixed layout | −1.9% | −1.4% |
 
-A perfect oracle over 29 layouts buys 2%; a header-derivable rule would capture
-a fraction of that. Not worth a wire change.
+A perfect oracle over 29 layouts buys 1.4–1.9%; a header-derivable rule would
+capture a fraction of that. Not worth a wire change.
+
+That the oracle is worth *less* at 108 B than at 32 B is the same finding as
+§4.2's: at 108 B the shipped allocation is already within 0.14% of the best
+fixed one, so there is little for a per-image rule to recover. The room is at
+the low budgets, where the fixed layout is furthest from right.
 
 ### 4.8 Chroma-from-luma — the roadmap's "largest expected win" is small
 
@@ -662,7 +679,7 @@ perceived colour error are actively anti-correlated. (`refine_obj=1` finding
 −0.38% on a supposedly separable objective is the scale mismatch of §4.4 turning
 up again through a different door.)
 
-### 7.2 U5 — metric-targeted RDO is the version that pays
+### 7.2 U5 — metric-targeted RDO: the objective is what matters, and it stopped paying
 
 Since the objective is what matters, `refine_obj=3` weights the clipped-OKLAB L
 term by `refine_wl` and the chroma terms by `refine_wc`
@@ -670,18 +687,32 @@ term by `refine_wl` and the chroma terms by `refine_wc`
 
 | chroma weight | 0.5 | 1 | 2 | **3** | 4 | 6 | 10 |
 |---|---|---|---|---|---|---|---|
-| ΔE00 Δ% | +0.33% | −0.51% | −0.66% | **−0.80%** | −0.76% | −0.59% | −0.36% |
+| ΔE00 Δ% | +1.09% | +0.13% | −0.01% | **−0.07%** | −0.02% | −0.02% | +0.30% |
 
-A clean optimum at `wc ≈ 3–4`. Adding the DC and scale coordinates takes it to
-**−1.11%** (−1.24% at `wc = 4`), four passes to −1.21%, and on the retuned
-4-bit layout of §4.2 to **−3.18%** (against −2.01% for that layout alone) — so
-the refinement contributes about **−1.2 pp** on top of a good layout, and
-−1.4 pp at tier 1.
+The shape survives — a shallow optimum around `wc ≈ 3`, with 0.5 and 10 clearly
+worse either side of it — but the depth does not. Round 2 measured that optimum
+at −0.80%; on this corpus it is **−0.07%**, and the three arms from `wc = 2` to
+`wc = 6` sit inside 0.06 pp of each other and of the incumbent. Adding the DC
+and scale coordinates takes it to **−0.23%** (−0.27% at `wc = 4`); four passes
+do not improve on two (−0.22%); at tier 1 it is −0.52%.
+
+The comparison round 2 drew against "the retuned 4-bit layout" is no longer
+available: `L28@4 C15@3` is the adopted default, so those arms and the plain
+`obj3` arms are the same configuration and report the same number. What the
+sweep can still say is that refinement on top of today's default buys −0.23%,
+not the −1.2 pp round 2 attributed to it.
+
+(This sweep's incumbent is the shipped default rather than a reconstructed
+pre-adoption one, so these deltas are refinement measured on top of the adopted
+recipe — which is the question worth asking now, and not the one round 2 asked.)
 
 Also measured: `refine_grid=1` moves the objective onto the decoder's natural
 render grid (scored against the ideal full-basis downsample of the source)
-instead of the encoder input. **It makes no difference at all** — 10.37 vs 10.38
-at `obj=2`. The grid was a red herring; only the error metric mattered.
+instead of the encoder input. **It makes no difference at all** — 11.485 vs
+11.488 at `obj=2`, a gap of 0.02%. That reproduces round 2's reading exactly:
+the grid was a red herring; only the error metric mattered. It is also the one
+claim in this section the re-baseline left untouched, which is what a genuine
+null looks like next to an effect that shrank by a factor of ten.
 
 **Cost.** Refinement is ~54× the shipped encode (0.86 ms → 46 ms at tier 0,
 3.2 ms → 275 ms at tier 1, on this machine). Decode is untouched.
