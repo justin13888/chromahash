@@ -373,16 +373,16 @@ and still points the right way; it is no longer a substitute for the search, and
 
 | Variant | Bytes | ΔE00 | Δ% | SSIM2 | Butter | DSSIM | Guards |
 |---|---|---|---|---|---|---|---|
-| shipped | 32 | 11.298 | — | −303.7 | 28.16 | 0.2623 | (base) |
-| L38@4 C8@3 | 32 | 11.430 | 1.17% | −284.7 | 27.05 | 0.2624 | ok |
-| L28@4 C15@3 | 32 | 11.298 | 0.00% | −303.7 | 28.16 | 0.2623 | ok |
-| shipped + stack | 32 | 11.298 | 0.00% | −303.7 | 28.16 | 0.2623 | ok |
-| L38@4 C8@3 + stack | 32 | 11.430 | 1.17% | −284.7 | 27.05 | 0.2624 | ok |
-| **L28@4 C15@3 + stack** | 32 | **11.298** | **0.00%** | −303.7 | 28.16 | 0.2623 | **ok** |
-| tier 1 shipped | 108 | 9.517 | −15.76% | −174.1 | 22.75 | 0.2582 | ok |
-| tier 1 + stack | 108 | 9.517 | −15.76% | −174.1 | 22.75 | 0.2582 | ok |
+| shipped | 32 | 11.735 | — | −318.4 | 28.66 | 0.2630 | (base) |
+| L38@4 C8@3 | 32 | 11.577 | −1.35% | −293.7 | 27.18 | 0.2628 | ok |
+| L28@4 C15@3 | 32 | 11.490 | −2.09% | −314.3 | 28.29 | 0.2628 | ok |
+| shipped + stack | 32 | 11.563 | −1.46% | −311.1 | 28.33 | 0.2628 | ok |
+| L38@4 C8@3 + stack | 32 | 11.464 | −2.31% | −287.8 | 27.07 | 0.2624 | ok |
+| **L28@4 C15@3 + stack** | 32 | **11.340** | **−3.37%** | −308.1 | 28.10 | 0.2624 | **ok** |
+| tier 1 shipped | 108 | 9.696 | −17.38% | −184.9 | 23.00 | 0.2589 | ok |
+| tier 1 + stack | 108 | 9.535 | −18.75% | −178.7 | 22.89 | 0.2583 | ok |
 
-**−3.16% holdout ΔE00 with every guard improving clears the pre-registered ≥3%
+**−3.37% holdout ΔE00 with every guard improving clears the pre-registered ≥3%
 retune threshold** — the first candidate in the project's history to do so. Two
 caveats before it can enter the spec: `aniso` still needs the integer
 reformulation `RATIONALE.md` flags, and a changed encoder changes every test
@@ -967,25 +967,32 @@ and much worse on ΔE00. Progressive is affordable; it is an operational feature
 
 | Variant | Bytes | ΔE00 | Δ% | SSIM2 | Butter | DSSIM | Guards |
 |---|---|---|---|---|---|---|---|
-| shipped | 32 | 11.298 | — | −303.7 | 28.16 | 0.2623 | (base) |
-| shipped layout + stack | 32 | 11.298 | 0.00% | −303.7 | 28.16 | 0.2623 | ok |
-| L36C9 stack | 32 | 11.377 | 0.70% | −287.1 | 27.23 | 0.2623 | ok |
-| L32C12 stack | 32 | 11.371 | 0.65% | −296.7 | 27.65 | 0.2624 | ok |
-| L30C13 stack | 32 | 11.364 | 0.58% | −302.0 | 27.93 | 0.2624 | ok |
-| L28C15 stack, hv = 0 | 32 | 11.298 | 0.00% | −303.7 | 28.16 | 0.2623 | ok |
-| **L28C15 stack** | 32 | **11.298** | **0.00%** | −303.7 | 28.16 | 0.2623 | **ok** |
-| **L28C15 stack + REFINE** | 32 | **11.265** | **−0.29%** | −303.0 | 28.14 | 0.2628 | **ok** |
-| tier 1 base | 108 | 9.517 | −15.76% | −174.1 | 22.75 | 0.2582 | ok |
-| tier 1 stack | 108 | 9.517 | −15.76% | −174.1 | 22.75 | 0.2582 | ok |
-| tier 1 stack + REFINE | 108 | 9.489 | −16.01% | −173.0 | 22.78 | 0.2587 | ok |
-| tier 2 stack | 411 | 7.783 | −31.11% | −76.8 | 17.94 | 0.2507 | ok |
+| shipped | 32 | 11.735 | — | −318.4 | 28.66 | 0.2630 | (base) |
+| shipped layout + stack | 32 | 11.539 | −1.67% | −308.5 | 28.19 | 0.2626 | ok |
+| L36C9 stack | 32 | 11.377 | −3.05% | −287.1 | 27.23 | 0.2623 | ok |
+| L32C12 stack | 32 | 11.371 | −3.10% | −296.7 | 27.65 | 0.2624 | ok |
+| L30C13 stack | 32 | 11.364 | −3.16% | −302.0 | 27.93 | 0.2624 | ok |
+| L28C15 stack, hv = 0 | 32 | 11.340 | −3.37% | −308.1 | 28.10 | 0.2624 | ok |
+| **L28C15 stack** | 32 | **11.298** | **−3.72%** | −303.7 | 28.16 | 0.2623 | **ok** |
+| **L28C15 stack + REFINE** | 32 | **11.265** | **−4.01%** | −303.0 | 28.14 | 0.2628 | **ok** |
+| tier 1 base | 108 | 9.696 | −17.38% | −184.9 | 23.00 | 0.2589 | ok |
+| tier 1 stack | 108 | 9.517 | −18.90% | −174.1 | 22.75 | 0.2582 | ok |
+| tier 1 stack + REFINE | 108 | 9.489 | −19.14% | −173.0 | 22.78 | 0.2587 | ok |
+| tier 2 stack | 411 | 7.783 | −33.68% | −76.8 | 17.94 | 0.2507 | ok |
 
 Both winners clear the pre-registered ≥3% holdout threshold with **every guard
-improving** — on the revised corpus as on the old one (−3.50% here against
-−3.51% before; see §9). `sel_hv = 0.15` generalizes: it beats `hv = 0` out of
-sample (−3.50% vs −3.16%) while `hv = 0.3` — which is *better* on tune (−3.20%
-vs −2.41%) — drops to −2.83% on holdout. 0.15 is the right value, and the
-selection weights now earn their keep only out of sample (§7.4).
+improving**: the constants-only stack at **−3.72%** and the same stack with the
+refinement pass at **−4.01%**. `sel_hv = 0.15` generalizes — it beats `hv = 0`
+out of sample, −3.72% against −3.37% — and `hv = 0.3` lands between them at
+−3.19%. Of the three, 0.15 is the right value.
+
+What the re-baseline changed is the tune side of this, not the holdout side.
+Round 3 could say `hv = 0.3` was *better* on tune and reject it out of sample
+anyway; on the Wikimedia corpus `hv = 0.3` is +0.40% on tune with a CI
+straddling zero, and the arm that clears zero there is `hv = 0`, pointing the
+other way (§11.5). So the holdout ordering is unchanged and still picks 0.15 —
+but it is no longer overturning a tune result, it is the only evidence the
+selection weights have. They earn their keep out of sample and nowhere else.
 
 The whole ladder under the constants-only recipe
 (`sweeps/budget-ladder-optimized.json`):
@@ -998,11 +1005,15 @@ The whole ladder under the constants-only recipe
 | holdout, optimized | 13.30 | 12.72 | 12.15 | 11.88 | 11.55 | 11.38 | 10.98 | 10.67 | 10.35 | 9.99 | 9.51 | 8.92 | 8.39 | 7.82 |
 
 (The 32 B row of this ladder uses the ratio-derived `L33@4 C11@3`; the *measured*
-optimum `L28@4 C15@3` is better still — 11.150 on holdout, in the table above.)
+optimum `L28@4 C15@3` is better still — 11.298 on holdout, in the table above.)
 
-**The compact way to say it: the optimized 32-byte encode equals the shipped
-format at 40 bytes** (holdout 11.150 vs 11.138) — a **20% byte saving at equal
-quality**, rising to ~24% with the refinement pass.
+> **The two `pre-adoption shipped` rows are round 2's baseline and are not on
+> this corpus.** Their sweep no longer exists: `budget-ladder` resizes the
+> layout but inherits today's adopted knobs, so it is a ladder of the format
+> that ships rather than the one round 2 compared against. Read the `optimized`
+> rows against each other, not across the pair — and see §8.3, where the
+> equal-quality byte saving that used to be stated here is withdrawn for the
+> same reason.
 
 
 ### 7.13 U11 — entropy-coded AC, with a real coder instead of an entropy
@@ -1193,7 +1204,7 @@ synthesis window.
 
 **Optional high-effort mode** (~54× encode time, decode untouched):
 `refine_passes=2 refine_grid=1 refine_obj=3 refine_wc=3 refine_dc=1 refine_scale=1`.
-Worth a further −0.6 pp on holdout at tier 0 and −0.4 pp at tier 1. Offer it as
+Worth a further −0.3 pp on holdout at tier 0 and −0.3 pp at tier 1. Offer it as
 an encoder quality setting, not a default: 0.86 ms → 46 ms per image at tier 0.
 If only one number is wanted, `refine_wc = 3` is the whole discovery — the
 search was never the hard part, the objective was.
@@ -1456,7 +1467,7 @@ rejected. The two casualties are both *tune-only* selection-order results —
 to shrink or reverse a selection-order effect, exactly as §4.10 predicts for
 anything that exploits a dominant orientation structure.
 
-#### Three defects this found, and one it could not fix
+#### Four defects this found
 
 The re-run was more informative about the tools than about the format.
 
@@ -1473,6 +1484,17 @@ The re-run was more informative about the tools than about the format.
    count `15/31` to `16/31` re-appended the "unit" it had already parsed,
    producing `16/31/31`. It reported success and left seven cells malformed.
 
+4. **Every arm that named a pre-adoption constant was measuring the adopted
+   one.** A `tune` string is applied on top of `Tunables::DEFAULT`, so an
+   omitted knob inherits whatever ships. Once §10 made the §8 recipe the
+   default, an arm labelled `32B SHIPPED L26@5 C9@4` *was* `L28@4 C15@3` with
+   the full stack. Four arms of `holdout-candidates` returned one number;
+   `thumbhash-headtohead` printed each plain layout and its own `+stack` twin
+   as two rows of the twin; `encoder-compute`'s control already contained both
+   levers it exists to measure; `final-candidates`'s `hv = 0` arm was
+   `hv = 0.15`. §7.4 is the case that was caught before this re-run. It was
+   never the only one.
+
 The first two are the same defect: **nothing in the harness distinguishes a
 tier code from a render level.** §11.10 records the library hitting this and
 solving it with `render_level(tier)`; the tools have no such function, so the
@@ -1480,10 +1502,28 @@ sweep that fixed the library seeded three of these in `tools/comparison`. A
 type — or even a named `levelOf`, which is what these fixes add — is the
 durable answer, and it is not applied everywhere yet.
 
-The one that could not be fixed here is **`sweeps/selection-hv.json`**, whose
-arms set one selection parameter and inherit the adopted value for the other
-(§7.4). Its table is retired in place rather than re-transcribed, because a
-number measured at a point the label does not name is worse than no number.
+The fourth is that defect one level up: a label naming a constant the run does
+not set. **Seven configs are fixed here** — `allocation-grid`,
+`precision-by-budget`, `encoder-compute`, `holdout-candidates`,
+`final-candidates`, `thumbhash-headtohead` and `refine-ablation` — by pinning
+all four selection/encoder knobs in every arm, the way `adopted-defaults`
+already did and is the only sweep that survived the adoption intact. §4.2, §4.3,
+§4.4, §4.5, §4.7, §7.1, §7.6 and §7.12 are re-measured from them.
+
+**Two groups are not fixed, and are disclosed instead.** `selection-hv` is
+retired in place (§7.4): a number measured at a point its label does not name is
+worse than no number, and `selection-weights` already is its corrected
+replacement. Separately, `cfl`, `prefix-shrink`, `retune-32b`,
+`combined-optimizer`, `detail-synthesis`, `refine-grid`, `refine-objective`,
+`embedded-tiers` and `budget-ladder-optimized` carry an inaccurate *incumbent
+label* but a valid set of deltas around it, because every arm in them shares one
+base. Relabelling would move no number and would change the row keys the
+bindings match on, so they are left alone: read their "shipped" row as "the
+default as of that run", not as the pre-adoption format.
+
+A check that reconciles an arm's label against the constants it sets would have
+caught all of this, and is the obvious next thing to build. It is not in this
+change.
 
 #### What was not re-measured
 
@@ -1495,11 +1535,14 @@ Stated so their absence is not mistaken for agreement:
 * **§2, §3 and §8.6** are the round-1 and round-2 cross-format records,
   explicitly superseded by §11.14 and kept as history. They are not re-run.
 * **§10.2's decode timings** are not a corpus measurement.
-* The unbound derived tables in §4.2, §4.4, §4.7, §7.2, §7.6, §7.9, §8.3,
-  §11.0, §11.2, §11.3 and §11.12 are hand-derived from sweeps that *were*
-  re-run, and are **not** re-transcribed here. Their sweeps' bound tables are
-  current; these views onto them are not. `verify:experiments --list-unbound`
-  is the list.
+* Of the unbound derived tables, **§4.2, §4.4, §4.7, §7.2, §7.6, §8.3 and
+  §11.12 are re-transcribed** in this change, along with §4.9 and §4.10 — the
+  claim that a view onto a current sweep is itself current does not hold, and
+  four of them had a conclusion that no longer followed. **§7.9 is not**: its
+  alphabet is `selection-hv`'s, so it inherits that config's retirement and
+  says so in place. **§11.0, §11.2 and §11.3** are the synthetic fixture and the
+  alpha corpus, which the re-source did not touch.
+  `verify:experiments --list-unbound` is the full list.
 
 ## 10. Adoption: making §8 the default (2026-08)
 
@@ -1515,7 +1558,7 @@ the sweeps did not.
 | Selection weights `aniso = 1.2`, `sel_hv = 0.15` | **yes** | spec §6.2 |
 | `scale_fit = 2` (scale code by reconstruction SSE) | **yes** | spec §7.2 |
 | `ac_nearest = 1` (nearest-reconstruction AC code) | **yes** | spec §7.3 |
-| Optional refinement (`refine_*`) | no | §8.2 asks for an encoder quality setting, not a default: −0.6 pp for 54× encode time |
+| Optional refinement (`refine_*`) | no | §8.2 asks for an encoder quality setting, not a default: −0.3 pp for 54× encode time |
 | 21-byte compact tier | no | §8.1's own footnote — tune and holdout disagree on its layout, and the choice should be made against the alpha-mode layout that does not exist yet |
 | Alpha-mode tier-0 rebalance | no | never measured; the photographic corpus has no alpha (§9.4) |
 
@@ -1849,7 +1892,7 @@ A fired deadzone now short-circuits the search, and the knob measures again:
 | **no deadzone (shipped)** | 11.473 | — |
 | `deadzone_l = 0.02` | 11.473 | 0.00% |
 | `deadzone_l = 0.05` | 11.482 | 0.08% |
-| both = 0.03 | 11.472 | -0.01% |
+| both = 0.03 | 11.472 | −0.01% |
 
 Rejected — now on evidence rather than on an artifact.
 

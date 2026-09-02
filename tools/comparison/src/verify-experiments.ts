@@ -452,6 +452,15 @@ function compare(
   }
 }
 
+/** Whether the document writes negatives with U+2212 rather than an ASCII hyphen. */
+let docMinusCache: boolean | undefined;
+function docUsesUnicodeMinus(): boolean {
+  if (docMinusCache === undefined) {
+    docMinusCache = readFileSync(DOC, "utf8").includes("\u2212");
+  }
+  return docMinusCache;
+}
+
 /**
  * Put a corrected value into a cell without disturbing anything else about it:
  * the document uses bold to mark winners, a unicode minus, and trailing units,
@@ -460,7 +469,11 @@ function compare(
 function rewriteCell(raw: string, value: string): string {
   const bold = raw.trim().startsWith("**") && raw.trim().endsWith("**");
   const body = raw.trim().replace(/^\*\*|\*\*$/g, "");
-  const usesUnicodeMinus = /[\u2212]/.test(body);
+  // The minus convention belongs to the document, not to the cell being
+  // replaced. Reading it from the cell alone gets it wrong in exactly the case
+  // that matters: a cell whose old value was positive has no minus to copy, so
+  // a newly-negative measurement lands as an ASCII hyphen among unicode ones.
+  const usesUnicodeMinus = /[\u2212]/.test(body) || docUsesUnicodeMinus();
   let next = value;
   if (usesUnicodeMinus) next = next.replace(/^-/, "\u2212");
   // Preserve a trailing unit or annotation ("%", " B", " @32 px", "pp") \u2014 but
