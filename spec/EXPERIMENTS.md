@@ -310,27 +310,40 @@ Best found at 21 B against ThumbHash's own 21 B
 
 | Layout | Bytes | ΔE00 | SSIM2 | Butter | DSSIM |
 |---|---|---|---|---|---|
-| ThumbHash | 20.9 | 12.038 | −282.5 | 32.10 | 0.2210 |
-| shipped shape L13@5 C6@4 | 21 | 12.573 | −393.8 | 34.38 | 0.2688 |
-| L26@3 C6@3 | 21 | 12.161 | −361.9 | 32.86 | 0.2671 |
-| L19@4 C6@3 | 21 | 12.147 | −371.1 | 32.01 | 0.2664 |
-| **L19@4 C6@3 + stack** | 21 | **12.147** | **−371.1** | **32.01** | **0.2664** |
-| L22@4 C8@3 + stack | 24 | 11.933 | −361.8 | 31.37 | 0.2652 |
+| ThumbHash | 21.0 | 13.171 | −380.6 | 33.16 | 0.2723 |
+| shipped shape L13@5 C6@4 | 21 | 12.702 | −399.2 | 35.17 | 0.2691 |
+| L26@3 C6@3 | 21 | 12.224 | −360.3 | 31.95 | 0.2682 |
+| L19@4 C6@3 | 21 | 12.308 | −375.3 | 32.38 | 0.2675 |
+| **L19@4 C6@3 + stack** | 21 | **12.181** | **−373.0** | **32.19** | **0.2664** |
+| L22@4 C8@3 + stack | 24 | 11.983 | −364.1 | 31.55 | 0.2654 |
 
 **Holdout split**
 
 | Layout | Bytes | ΔE00 | SSIM2 | Butter | DSSIM |
 |---|---|---|---|---|---|
-| ThumbHash | 21.1 | 12.851 | −326.3 | 31.75 | 0.2589 |
-| shipped shape L13@5 C6@4 | 21 | 12.493 | −354.0 | 31.98 | 0.2656 |
-| **L26@3 C6@3 + stack** | 21 | **12.129** | **−318.6** | **29.41** | **0.2639** |
-| L22@3 C8@3 + stack | 21 | 12.094 | −328.2 | 30.17 | 0.2644 |
-| L19@4 C6@3 + stack | 21 | 12.146 | −333.9 | 30.07 | 0.2638 |
-| L22@4 C8@3 + stack | 24 | 11.882 | −322.1 | 29.19 | 0.2637 |
+| ThumbHash | 21.0 | 12.807 | −337.2 | 30.98 | 0.2647 |
+| shipped shape L13@5 C6@4 | 21 | 12.726 | −361.0 | 32.49 | 0.2656 |
+| **L26@3 C6@3 + stack** | 21 | **12.136** | **−321.6** | **29.57** | **0.2641** |
+| L22@3 C8@3 + stack | 21 | 12.120 | −332.2 | 30.51 | 0.2642 |
+| L19@4 C6@3 + stack | 21 | 12.203 | −335.0 | 30.03 | 0.2641 |
+| L22@4 C8@3 + stack | 24 | 11.920 | −326.4 | 29.44 | 0.2635 |
 
 A 21-byte ChromaHash that beats ThumbHash on **all four** metrics exists and
-validates on holdout (−6.7% ΔE00, +23 SSIMULACRA2, −5.3% Butteraugli, −0.5%
-DSSIM). The format has no way to encode it.
+validates on holdout (−5.2% ΔE00, +16 SSIMULACRA2, −4.6% Butteraugli, −0.2%
+DSSIM). All three of the stacked 21 B layouts do, not just the bolded one. The
+format has no way to encode any of them.
+
+Both ThumbHash rows are the npm encoder rather than a sweep arm, so they are
+transcribed from `rd-budget` and not checked by `verify:experiments` against
+this sweep — the binding says as much. They had been carrying figures from a
+corpus two revisions back, which is what made this table appear to contradict
+§11.14; it now agrees with it to the digit.
+
+Note that "+stack" here is the three-knob form — `aniso`, `scale_fit`,
+`ac_nearest`, without `sel_hv` — so these rows sit on a different base from
+§11.10's, which is the adopted default. The two orderings of `L19@4 C6@3` and
+`L26@3 C6@3` differ for that reason and not because either is wrong: the
+compact-tier pick turns on `sel_hv`, which §11.10 has and this table does not.
 
 ### 4.4 Encoder-only levers (zero wire cost, decoder untouched)
 
@@ -775,10 +788,14 @@ landscape** (§9): on the old 22-image split the same cell measured −2.09%, an
 the horizon-driven H/V asymmetry, and a *fixed* trained order can encode only
 one asymmetry. Round 2 also read the retuned L28@4 C15@3 layout as having already taken what
 the weights were taking, at −1.99% against −2.01%. That comparison is not
-readable either: both of its arms are in the collision above and now report one
-number between them. §11.5 measures the family correctly, and §7.12 is where the
-out-of-sample decision is made. The honest size of this lever is the +1.3 energy
-points `coeff-stats` now measures (§4.10), not +2.2.
+readable either: both of its arms are in the collision above, and they now
+report one number between them.
+
+Where the weights do still pay is out of sample, and only there — §7.12 puts
+`sel_hv = 0.15` at −3.72% on holdout against −3.37% for `hv = 0`, while §11.5
+has `hv = 0` clearing zero on tune in the opposite direction. The honest size of
+the lever is the +1.3 energy points `coeff-stats` now measures (§4.10), not
++2.2.
 
 **Cost:** the weighted order is a float sort over every candidate, and it is
 **+32% decode time** (302 → 399 µs) — the integer reformulation `RATIONALE.md`
@@ -836,14 +853,22 @@ were still reserved at this point). With the round-2 recipe at ThumbHash's own 2
 
 | | ΔE00 | SSIM2 | Butteraugli | DSSIM |
 |---|---|---|---|---|
-| ThumbHash (21.1 B) | 12.851 | −326.3 | 31.75 | 0.2589 |
-| ChromaHash 21 B, shipped-shape layout | 12.611 | −349.2 | 33.04 | 0.2587 |
-| **ChromaHash 21 B, L19@4 C6@3 + stack** | **12.047** | **−323.2** | **30.52** | **0.2576** |
-| ChromaHash 21 B, + refinement | **11.970** | −321.9 | 30.57 | 0.2582 |
+| ThumbHash (21.0 B) | 12.807 | −337.2 | 30.98 | 0.2647 |
+| ChromaHash 21 B, shipped-shape layout | 12.726 | −361.0 | 32.49 | 0.2656 |
+| **ChromaHash 21 B, L19@4 C6@3 + stack** | **12.203** | **−335.0** | **30.03** | **0.2641** |
+| ChromaHash 21 B, L26@3 C6@3 + stack | 12.136 | −321.6 | 29.57 | 0.2641 |
 
-−6.3% ΔE00 against ThumbHash while also winning SSIMULACRA2, Butteraugli and
-DSSIM, validated out of sample (and the 3-bit variant of §4.3 does better still,
-−6.7%). This remains the single largest structural gap.
+−4.7% ΔE00 against ThumbHash while also winning SSIMULACRA2, Butteraugli and
+DSSIM, validated out of sample — and the 3-bit variant of §4.3 does better
+still, −5.2%, with far more of the margin on SSIMULACRA2 (+15.6 against +2.2).
+This remains the single largest structural gap, though a narrower one than round
+2 recorded: −6.3% then, −4.7% now, most of the change being ThumbHash scoring
+better on this corpus rather than ChromaHash scoring worse.
+
+These are §4.3's holdout rows, which are bound; this table is the view onto
+them. The refinement row round 2 carried here is dropped rather than
+re-transcribed — it came from a different sweep on a different base, and §7.12
+now states the refinement delta against a control that matches it.
 
 ### 7.7 U11 — entropy-coded AC
 
